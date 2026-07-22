@@ -44,6 +44,7 @@ import { PaymentDialog } from './PaymentDialog';
 import { UnsettledPanel } from './UnsettledPanel';
 import { EditPriceDialog } from './EditPriceDialog';
 import { ReservationPanel } from './ReservationPanel';
+import { RenameFloorDialog } from './RenameFloorDialog';
 import { ToastProvider, useToast } from './Toast';
 import { useAuth } from '../../hooks/useAuth';
 import ConfirmActionDialog from '../pos/ConfirmActionDialog';
@@ -240,6 +241,7 @@ function FloorPlanInner({ language }: { language: Language }) {
   const [deletePending, setDeletePending] = useState(false);
   const [isAddingFloor, setIsAddingFloor] = useState(false);
   const [pendingFloorId, setPendingFloorId] = useState<string | null>(null);
+  const [floorToRename, setFloorToRename] = useState<FloorPlanType | null>(null);
   const [floorToDelete, setFloorToDelete] = useState<FloorPlanType | null>(null);
   const addFloorPendingRef = useRef(false);
 
@@ -301,18 +303,22 @@ function FloorPlanInner({ language }: { language: Language }) {
     }
   };
 
-  const handleRenameFloor = async (floor: FloorPlanType) => {
+  const handleRenameFloor = (floor: FloorPlanType) => {
     if (floor.id.startsWith('legacy-') || pendingFloorId) return;
-    const requestedName = window.prompt(t('billiard.rename'), floor.name);
-    if (requestedName === null) return;
-    const name = requestedName.trim();
-    if (!name || name === floor.name) return;
+
+    setFloorToRename(floor);
+  };
+
+  const confirmRenameFloor = async (name: string) => {
+    if (!floorToRename || pendingFloorId) return;
+    const floor = floorToRename;
 
     setPendingFloorId(floor.id);
     try {
       await billiardApi.updateFloorPlan(floor.id, { name });
       await refetchFloorPlans();
       toast.success(t('billiard.rename'));
+      setFloorToRename(null);
     } catch (err: any) {
       toast.error(err?.message || t('billiard.renameFailed'));
     } finally {
@@ -1180,6 +1186,17 @@ function FloorPlanInner({ language }: { language: Language }) {
       )}
 
       {/* Dialogs */}
+      <RenameFloorDialog
+        open={Boolean(floorToRename)}
+        floorName={floorToRename?.name || ''}
+        isPending={Boolean(floorToRename && pendingFloorId === floorToRename.id)}
+        language={language}
+        onOpenChange={(open) => {
+          if (!open && !pendingFloorId) setFloorToRename(null);
+        }}
+        onSave={confirmRenameFloor}
+      />
+
       <ConfirmActionDialog
         open={Boolean(floorToDelete)}
         tier="light"

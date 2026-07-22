@@ -190,6 +190,7 @@ describe('billiard desktop/backend contract', () => {
 
   it('guards floor creation and reconciles floor CRUD with the local cache', () => {
     const floorPlan = readSource('../src/renderer/components/billiard/BilliardFloorPlan.tsx');
+    const renameFloorDialog = readSource('../src/renderer/components/billiard/RenameFloorDialog.tsx');
     const floorTabs = readSource('../src/renderer/components/billiard/FloorTabs.tsx');
     const apiHook = readSource('../src/renderer/hooks/useBilliardApi.ts');
     const floorRepo = readSource('../src/main/database/repos/billiard-floor-plan-repo.ts');
@@ -199,8 +200,12 @@ describe('billiard desktop/backend contract', () => {
     expect(floorPlan).not.toContain('addFloor();');
     expect(floorPlan).toContain('onRenameFloor={handleRenameFloor}');
     expect(floorPlan).toContain('onDeleteFloor={handleDeleteFloor}');
+    expect(floorPlan).toContain('<RenameFloorDialog');
     expect(floorPlan).toContain('<ConfirmActionDialog');
+    expect(floorPlan).not.toContain('window.prompt');
     expect(floorPlan).not.toContain('window.confirm');
+    expect(renameFloorDialog).toContain('id="rename-floor-name"');
+    expect(renameFloorDialog).toContain('onSubmit=');
     expect(floorTabs).toContain('disabled={isAddingFloor}');
     expect(apiHook).toContain("onlineApi('DELETE', `/billiard/floor-plans/${id}`)");
     expect(floorRepo).toContain('syncSnapshot(plans: any[])');
