@@ -681,8 +681,10 @@ export const NO_PRINTER_RESULT: { success: boolean; receiptPrinted: boolean } = 
 
 /** Billiard namespace (P1 online-only; reads degrade to empty, writes reject). */
 export function buildBilliardNamespace({ transport }: StubDeps) {
+  // Key set MUST match the real assembleOverview (billiard-transport.ts) — the
+  // UI reads pendingPayments on the offline default too.
   const EMPTY_OVERVIEW = () => ({
-    tables: [], floorPlans: [], layouts: [], sessions: [], _fromCache: true,
+    tables: [], floorPlans: [], layouts: [], sessions: [], pendingPayments: [], _fromCache: true,
   });
   return {
     getFloorOverview: () => withTransport(transport.billiardGetOverview, [], () => EMPTY_OVERVIEW()),

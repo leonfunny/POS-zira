@@ -57,28 +57,66 @@ export interface BilliardTransportMethods {
 // billiard write onto an arbitrary staff-JWT route (auth, admin, /print-agent/
 // connect/my-key). Every real billiard flow (useBilliardData.ts +
 // useBilliardApi.ts) targets one of these prefixes, so the guard never blocks a
-// legitimate call. Trailing-slash prefixes cover children; the bare '/resources'
-// covers the exact collection.
-const API_ALLOWED_PREFIXES = ['/billiard/', '/resources/', '/restaurant/', '/resources'];
+// legitimate call. Trailing-slash prefixes cover children; the exact-match set
+// covers the bare collections ('/resources' POST create) WITHOUT opening
+// sibling routes like '/resources-admin' to a startsWith match.
+const API_ALLOWED_PREFIXES = ['/billiard/', '/resources/', '/restaurant/'];
+const API_ALLOWED_EXACT = ['/resources'];
 const ALLOWED_HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+
+/** Repeatedly percent-decode until stable so nested encodings (%252e → %2e →
+ *  '.') cannot smuggle traversal past the checks. Malformed or >3-deep
+ *  encodings are hostile by definition — reject. */
+function fullyDecodePath(path: string): string {
+  let current = path;
+  for (let i = 0; i < 3; i++) {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(current);
+    } catch {
+      throw new Error('Invalid API path');
+    }
+    if (decoded === current) return decoded;
+    current = decoded;
+  }
+  throw new Error('Invalid API path');
+}
 
 /**
  * Validate a generic billiard write/proxy request the SAME way apiCall does — a
- * real HTTP verb, no path traversal (`..` / `//`), and an allowlisted prefix.
- * Throws on a violation (the async callers turn the throw into a rejection, so
- * the money path still propagates a real error — it never fakes success).
- * Returns the normalized method so callers pass the uppercased verb to request.
+ * real HTTP verb, no path traversal, and an allowlisted prefix. Traversal is
+ * checked on the FULLY DECODED path (so '/billiard/%2e%2e/admin' is rejected,
+ * not forwarded for the backend router to maybe-normalize), and the prefix
+ * must hold for both the raw and decoded forms. Throws on a violation (the
+ * async callers turn the throw into a rejection, so the money path still
+ * propagates a real error — it never fakes success). Returns the normalized
+ * method so callers pass the uppercased verb to request.
  */
 function assertAllowedRequest(method: string, path: string): string {
   const m = method.toUpperCase();
   if (!ALLOWED_HTTP_METHODS.includes(m)) {
     throw new Error(`Invalid HTTP method: ${method}`);
   }
-  if (path.includes('..') || path.includes('//')) {
-    throw new Error('Invalid API path');
-  }
-  if (!API_ALLOWED_PREFIXES.some((p) => path.startsWith(p))) {
-    throw new Error(`API path not allowed: ${path}`);
+  const decoded = fullyDecodePath(path);
+  for (const candidate of [path, decoded]) {
+    if (
+      candidate.includes('..')
+      || candidate.includes('//')
+      || candidate.includes('\\')
+      || /^[a-z][a-z0-9+.-]*:/i.test(candidate) // absolute URL / scheme smuggling
+    ) {
+      throw new Error('Invalid API path');
+    }
+    // Prefix check runs on the path WITHOUT its query string — '?x=/billiard/'
+    // must not rescue a disallowed path, and '/resources?limit=9' is still the
+    // bare collection.
+    const pathnameOnly = candidate.split('?')[0];
+    if (
+      !API_ALLOWED_EXACT.includes(pathnameOnly)
+      && !API_ALLOWED_PREFIXES.some((p) => pathnameOnly.startsWith(p))
+    ) {
+      throw new Error(`API path not allowed: ${path}`);
+    }
   }
   return m;
 }
@@ -141,6 +179,16 @@ export function createBilliardTransport({ request, pollMs = 10_000 }: BilliardTr
   let online = false;
   const listeners = new Set<(d: { type: string }) => void>();
   let timer: ReturnType<typeof setInterval> | null = null;
+  // Tenant/lifecycle epoch: dispose() bumps it and wipes the cache, so an
+  // in-flight refresh started before logout can NEVER write salon A's data
+  // into the cache salon B reads after re-login (the transport is a
+  // process-lifetime singleton reused across logins).
+  let epoch = 0;
+  // Refresh ordering: only a refresh newer than the last applied one may write
+  // the cache — a slow pre-mutation response resolving after the post-payment
+  // refresh must not revert the floor plan to stale money state.
+  let refreshSeq = 0;
+  let appliedSeq = 0;
   // The backend has NO /billiard/fnb/* routes (verified 404 in Task 2). The
   // add-item product modal therefore shows an empty list until a real F&B route
   // ships (P2 follow-up). Log once so a developer sees why, then stay silent.
@@ -163,11 +211,22 @@ export function createBilliardTransport({ request, pollMs = 10_000 }: BilliardTr
   };
 
   async function refreshOverview(): Promise<any> {
+    const myEpoch = epoch;
+    const mySeq = ++refreshSeq;
     const [dash, plans] = await Promise.all([
       request('GET', '/billiard/dashboard'),
-      request('GET', '/billiard/floor-plans').catch(() => []),
+      // A transient floor-plans failure must NOT wipe the visible plans/layouts
+      // while the dashboard read succeeded — fall back to the previously cached
+      // floorPlans instead of an empty list (null = "keep previous").
+      request('GET', '/billiard/floor-plans').catch(() => null),
     ]);
-    const overview = assembleOverview(dash, plans);
+    const plansResp = plans === null ? (cache.overview?.floorPlans ?? []) : plans;
+    const overview = assembleOverview(dash, plansResp);
+    // Drop the write when a dispose() happened mid-flight (tenant boundary) or
+    // a newer refresh already applied (ordering) — still return the data so the
+    // direct caller renders it, but the shared cache never goes stale/backward.
+    if (myEpoch !== epoch || mySeq <= appliedSeq) return overview;
+    appliedSeq = mySeq;
     cache = { overview, fetchedAt: Date.now() };
     lastSync = new Date().toISOString();
     online = true;
@@ -176,6 +235,10 @@ export function createBilliardTransport({ request, pollMs = 10_000 }: BilliardTr
 
   function startPolling() {
     if (timer) return;
+    // Poll only while someone is listening — the timer is started by
+    // onDataUpdated subscriptions and stopped when the last subscriber leaves
+    // (stopPollingIfIdle), so switching away from the Bi-a tab does not keep
+    // hitting the backend every pollMs for the rest of the session.
     // Best-effort background refresh every pollMs (matches the Windows 10s
     // dashboard poll). A failed poll flips offline but never throws to the
     // timer — the next caller's getOverview surfaces a hard failure.
@@ -184,11 +247,20 @@ export function createBilliardTransport({ request, pollMs = 10_000 }: BilliardTr
     }, pollMs);
   }
 
+  function stopPollingIfIdle() {
+    if (listeners.size === 0 && timer) {
+      clearInterval(timer);
+      timer = null;
+    }
+  }
+
   return {
     billiardGetOverview: async () => {
       try {
         const o = await refreshOverview();
-        startPolling();
+        // Polling stays subscription-driven (onDataUpdated) — a lone read must
+        // not arm a timer nobody is listening to.
+        if (listeners.size > 0) startPolling();
         return o;
       } catch (e) {
         online = false;
@@ -243,15 +315,29 @@ export function createBilliardTransport({ request, pollMs = 10_000 }: BilliardTr
       // MONEY PATH: the request throws on failure and we let it propagate — no
       // catch fakes success. A post-mutation cache refresh is best-effort so a
       // refresh blip never swallows a write error or hides a charge.
-      const result = await request(m, path, body);
-      refreshOverview().then(() => emit('dashboard')).catch(() => { /* best-effort refresh */ });
-      return result;
+      try {
+        const result = await request(m, path, body);
+        refreshOverview().then(() => emit('dashboard')).catch(() => { /* best-effort refresh */ });
+        return result;
+      } catch (err) {
+        // The server may have COMMITTED the write even though the response was
+        // lost (network drop after commit). Reconcile with an authoritative
+        // refresh so the cashier does not retry a charge against stale "unpaid"
+        // data — then still propagate the original error (never fake success).
+        refreshOverview().then(() => emit('dashboard')).catch(() => { /* reconcile is best-effort */ });
+        throw err;
+      }
     },
     billiardSyncStatus: async () => ({ pending: 0, lastSync, online }),
     billiardOnDataUpdated: (cb: (d: { type: string }) => void) => {
       listeners.add(cb);
       startPolling();
-      return () => { listeners.delete(cb); };
+      return () => {
+        listeners.delete(cb);
+        // Last subscriber gone (e.g. Bi-a → POS tab switch unmounted the floor
+        // plan) → stop hitting the backend every pollMs.
+        stopPollingIfIdle();
+      };
     },
     // No local receipt printer on Android — mirror the Windows no-printer return
     // (sync.module.ts:390) so payment settle never blocks on printing. Task 5
@@ -261,6 +347,19 @@ export function createBilliardTransport({ request, pollMs = 10_000 }: BilliardTr
       const m = assertAllowedRequest(method, path); // throws → rejection (see above)
       return request(m, path, body);
     },
-    dispose: () => { if (timer) clearInterval(timer); timer = null; listeners.clear(); },
+    dispose: () => {
+      if (timer) clearInterval(timer);
+      timer = null;
+      listeners.clear();
+      // Tenant boundary: the transport is a process-lifetime singleton reused
+      // across logout → re-login. Wipe the cached overview and bump the epoch
+      // so (a) salon B can never be served salon A's tables/sessions/charges
+      // from the stale-cache fallback, and (b) an in-flight refresh from the
+      // old session cannot write after this point.
+      epoch += 1;
+      cache = { overview: null, fetchedAt: 0 };
+      lastSync = null;
+      online = false;
+    },
   };
 }

@@ -1,8 +1,11 @@
 name: POS dual-platform build-only evidence
 
 # Trigger narrowed 2026-07-21 (merge-to-main prep): '**' made EVERY main push
-# run 4 jobs (2× windows-latest billed). Android evidence only needs to run on
-# the android workstream branches + PRs + manual dispatch.
+# run 4 jobs (2× windows-latest billed — owner cost blocker). Evidence runs on
+# the android workstream branches, every pull_request, and workflow_dispatch.
+# KNOWN GAP (accepted 2026-07-22 review): DIRECT pushes to main get no run —
+# land via a codex/android-* branch or a PR, or trigger workflow_dispatch on
+# main for on-demand evidence. Do not restore '**' without owner sign-off.
 on:
   push:
     branches:

@@ -102,17 +102,27 @@ export default function AndroidBootApp() {
   // Bi-a tab hidden and the plain POSApp shown (identical to pre-billiard
   // behavior). Language mirrors App.tsx:518 (`config.language as Language`).
   useEffect(() => {
-    if (state !== 'pos') return;
+    if (state !== 'pos') {
+      // Leaving the POS state (logout / auth-expiry) must drop the entitlement:
+      // the next login may be a different salon, and until its entitlements
+      // resolve the Bi-a tab must not render on a stale flag.
+      setBilliardEnabled(false);
+      return;
+    }
     const api = (window as any).electronAPI;
+    let cancelled = false;
     api.entitlements
       .get()
-      .then((e: any) => setBilliardEnabled(!!e?.features?.billiard?.enabled))
-      .catch(() => setBilliardEnabled(false));
+      .then((e: any) => { if (!cancelled) setBilliardEnabled(!!e?.features?.billiard?.enabled); })
+      .catch(() => { if (!cancelled) setBilliardEnabled(false); });
     api.getConfig()
       .then((c: any) => {
-        if (c?.language) setLanguage((c.language as Language) || 'en');
+        if (!cancelled && c?.language) setLanguage((c.language as Language) || 'en');
       })
       .catch(() => { /* default 'en' is fine */ });
+    // Cancelled on unmount OR on state flip — a delayed response from a
+    // previous session must not win after re-login (stale entitlement race).
+    return () => { cancelled = true; };
   }, [state]);
 
   const switchMode = (next: PosMode) => {

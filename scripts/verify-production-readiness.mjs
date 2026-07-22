@@ -26,6 +26,9 @@ export const REQUIRED_REGISTER_IDS = [
   'hardware-evidence',
   'dependency-advisories',
   'remote-ci-evidence',
+  // Wave B-1 (2026-07-21): billiard on Android is online-only — owner must
+  // approve live-salon use knowing network loss = read-only floor view.
+  'billiard-online-only',
 ];
 
 const MERGED_MANIFESTS = [

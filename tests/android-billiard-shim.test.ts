@@ -29,7 +29,7 @@ const deps = { configStore: fakeConfigStore(), transport: {} } as any;
 describe('billiard shim stub defaults (contract S1 §2.N)', () => {
   it('getFloorOverview returns empty overview', async () => {
     const b = buildBilliardNamespace(deps);
-    await expect(b.getFloorOverview()).resolves.toEqual({ tables: [], floorPlans: [], layouts: [], sessions: [], _fromCache: true });
+    await expect(b.getFloorOverview()).resolves.toEqual({ tables: [], floorPlans: [], layouts: [], sessions: [], pendingPayments: [], _fromCache: true });
   });
   it('getSyncStatus reports offline with no transport', async () => {
     const b = buildBilliardNamespace(deps);

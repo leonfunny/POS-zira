@@ -37,8 +37,9 @@ const token =
   loginBody?.data?.access_token ??
   null;
 if (!token) {
-  console.error('No accessToken in login response — raw body:');
-  console.error(JSON.stringify(loginBody, null, 2));
+  // Never dump the raw body — it can contain accessToken/refreshToken and this
+  // output lands in shell history / CI logs. Shape (keys) is enough to debug.
+  console.error('No accessToken in login response — top-level keys:', Object.keys(loginBody ?? {}).join(', '));
   process.exit(1);
 }
 

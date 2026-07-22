@@ -131,4 +131,140 @@ describe('billiard online-only transport', () => {
     expect(request).not.toHaveBeenCalled();
     t.dispose();
   });
+
+  // ── 2026-07-22 review-hardening regressions ────────────────────────────────
+
+  it('dispose wipes the cache — salon B can never be served salon A\'s floor data (cross-tenant boundary)', async () => {
+    const map: Record<string, any> = { 'GET /billiard/dashboard': dashboard, 'GET /billiard/floor-plans': floorPlans };
+    const request = vi.fn(async (method: string, path: string) => {
+      const hit = map[`${method} ${path}`];
+      if (hit instanceof Error) throw hit;
+      if (hit === undefined) throw new Error(`unexpected ${method} ${path}`);
+      return hit;
+    });
+    const t = createBilliardTransport({ request });
+    await t.billiardGetOverview(); // salon A cached
+    t.dispose(); // logout
+    // salon B logs in, network fails on its first read — the transport must
+    // reject (nothing to show), NOT fall back to salon A's cached overview.
+    map['GET /billiard/dashboard'] = new Error('network down');
+    await expect(t.billiardGetOverview()).rejects.toThrow('network down');
+    await expect(t.billiardSyncStatus()).resolves.toMatchObject({ online: false, lastSync: null });
+  });
+
+  it('an in-flight refresh started before dispose() never writes the cache (epoch guard)', async () => {
+    let resolveDash!: (v: any) => void;
+    const request = vi.fn(async (method: string, path: string) => {
+      if (`${method} ${path}` === 'GET /billiard/dashboard') {
+        return new Promise((res) => { resolveDash = res; }); // hang until we say so
+      }
+      if (`${method} ${path}` === 'GET /billiard/floor-plans') return floorPlans;
+      throw new Error(`unexpected ${method} ${path}`);
+    });
+    const t = createBilliardTransport({ request });
+    const inflight = t.billiardGetOverview(); // starts, blocks on dashboard
+    t.dispose(); // logout while the old session's refresh is still in flight
+    resolveDash(dashboard); // old response finally lands
+    await inflight; // caller still gets its data back...
+    // ...but the shared cache/status stayed wiped — the old session's response
+    // did not resurrect online/lastSync after logout.
+    await expect(t.billiardSyncStatus()).resolves.toMatchObject({ online: false, lastSync: null });
+  });
+
+  it('unsubscribing the last onDataUpdated listener stops the poll timer (no background polling after tab switch)', async () => {
+    vi.useFakeTimers();
+    try {
+      const request = makeRequest({ 'GET /billiard/dashboard': dashboard, 'GET /billiard/floor-plans': floorPlans });
+      const t = createBilliardTransport({ request, pollMs: 1000 });
+      const unsubscribe = t.billiardOnDataUpdated(() => {});
+      await vi.advanceTimersByTimeAsync(2100);
+      const callsWhileSubscribed = request.mock.calls.length;
+      expect(callsWhileSubscribed).toBeGreaterThan(0); // poll ran
+      unsubscribe(); // Bi-a → POS tab switch
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(request.mock.calls.length).toBe(callsWhileSubscribed); // no further polls
+      t.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('an older slow refresh cannot overwrite a newer applied one (ordering guard on money state)', async () => {
+    const dashOld = [{ resource: { id: 'r1' }, status: 'occupied', layout: null, session: { id: 's1', paymentStatus: 'PENDING' } }];
+    const dashNew = [{ resource: { id: 'r1' }, status: 'free', layout: null, session: null }];
+    let call = 0;
+    let resolveFirst!: (v: any) => void;
+    const request = vi.fn(async (method: string, path: string) => {
+      if (`${method} ${path}` === 'GET /billiard/floor-plans') return [];
+      if (`${method} ${path}` === 'GET /billiard/dashboard') {
+        call += 1;
+        if (call === 1) return new Promise((res) => { resolveFirst = res; }); // slow pre-payment read
+        return dashNew; // fast post-payment read
+      }
+      throw new Error(`unexpected ${method} ${path}`);
+    });
+    const t = createBilliardTransport({ request });
+    const slow = t.billiardGetOverview(); // seq 1 — hangs
+    await t.billiardGetOverview(); // seq 2 — applies dashNew (paid/free)
+    resolveFirst(dashOld); // stale pre-payment response lands LAST
+    await slow;
+    // A failing read now serves the cache — it must be the NEWER (paid) state.
+    (request as any).mockImplementationOnce(async () => { throw new Error('blip'); });
+    const served = await t.billiardGetOverview();
+    expect(served._fromCache).toBe(true);
+    expect(served.tables).toEqual(dashNew);
+    t.dispose();
+  });
+
+  it('a transient floor-plans failure keeps the previous plans instead of wiping them', async () => {
+    const map: Record<string, any> = { 'GET /billiard/dashboard': dashboard, 'GET /billiard/floor-plans': floorPlans };
+    const request = vi.fn(async (method: string, path: string) => {
+      const hit = map[`${method} ${path}`];
+      if (hit instanceof Error) throw hit;
+      if (hit === undefined) throw new Error(`unexpected ${method} ${path}`);
+      return hit;
+    });
+    const t = createBilliardTransport({ request });
+    const first = await t.billiardGetOverview();
+    expect(first.floorPlans.length).toBeGreaterThan(0);
+    map['GET /billiard/floor-plans'] = new Error('HTTP 500'); // transient blip
+    const second = await t.billiardGetOverview();
+    expect(second.floorPlans).toEqual(first.floorPlans); // kept, not []
+    t.dispose();
+  });
+
+  it('a failed mutate still triggers a reconcile refresh (server may have committed before the response was lost)', async () => {
+    const request = vi.fn(async (method: string, path: string) => {
+      if (`${method} ${path}` === 'POST /billiard/sessions/s1/pay') throw new Error('socket hang up');
+      if (`${method} ${path}` === 'GET /billiard/dashboard') return dashboard;
+      if (`${method} ${path}` === 'GET /billiard/floor-plans') return floorPlans;
+      throw new Error(`unexpected ${method} ${path}`);
+    });
+    const t = createBilliardTransport({ request });
+    await expect(t.billiardMutate('pay', 'POST', '/billiard/sessions/s1/pay', {})).rejects.toThrow('socket hang up');
+    await vi.waitFor(() => {
+      expect(request.mock.calls.some(([m, p]) => m === 'GET' && p === '/billiard/dashboard')).toBe(true);
+    });
+    t.dispose();
+  });
+
+  it('allowlist rejects encoded traversal, sibling prefixes, backslashes and absolute URLs; allows the bare collections', async () => {
+    const request = makeRequest({ 'GET /resources': [], 'GET /resources?limit=1': [] });
+    const t = createBilliardTransport({ request });
+    // Encoded traversal — single and double encoded — must die BEFORE the network.
+    await expect(t.apiCall('GET', '/billiard/%2e%2e/admin/users')).rejects.toThrow(/Invalid/);
+    await expect(t.billiardMutate('x', 'POST', '/billiard/%252e%252e/admin', {})).rejects.toThrow(/Invalid/);
+    // startsWith('/resources') must not open sibling routes.
+    await expect(t.apiCall('GET', '/resources-admin')).rejects.toThrow(/not allowed/);
+    // Backslash and scheme smuggling.
+    await expect(t.apiCall('GET', '/billiard/..\\admin')).rejects.toThrow(/Invalid/);
+    await expect(t.apiCall('GET', 'https://evil.example/billiard/')).rejects.toThrow(/Invalid/);
+    // Query string cannot rescue a disallowed path.
+    await expect(t.apiCall('GET', '/admin?x=/billiard/')).rejects.toThrow(/not allowed/);
+    expect(request).not.toHaveBeenCalled();
+    // The legitimate bare collection (and with a query) still works.
+    await expect(t.apiCall('GET', '/resources')).resolves.toEqual([]);
+    await expect(t.apiCall('GET', '/resources?limit=1')).resolves.toEqual([]);
+    t.dispose();
+  });
 });
