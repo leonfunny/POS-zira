@@ -100,10 +100,11 @@ describe('POS embedded numpad → PaymentModal wiring', () => {
     expect(PAYMENT_MODAL).toContain('scanCommands?: {');
     expect(PAYMENT_MODAL).toContain("document.body.dataset.posPaymentOpen = 'true';");
     expect(PAYMENT_MODAL).toContain("if (method === 'CARD')");
-    expect(PAYMENT_MODAL).toContain('if (canComplete) void handleComplete();');
+    expect(PAYMENT_MODAL).toMatch(/if \(method === 'CARD'\)[\s\S]{0,240}void completePayment\(\{[\s\S]{0,120}method: 'CARD',[\s\S]{0,120}splitMode: false/);
     expect(PAYMENT_MODAL).toContain("setCashAmount(totalZl.toFixed(2));");
     expect(PAYMENT_MODAL).toContain("const shouldCompleteCash = method === 'CASH';");
-    expect(PAYMENT_MODAL).toContain('if (shouldCompleteCash) void completePayment(grandTotal);');
+    expect(PAYMENT_MODAL).toMatch(/if \(shouldCompleteCash\)[\s\S]{0,240}void completePayment\(\{[\s\S]{0,120}method: 'CASH',[\s\S]{0,120}splitMode: false/);
+    expect(PAYMENT_MODAL).toContain('cashAmountGrosze: grandTotal');
     expect(PAYMENT_MODAL).toContain('candidate.startsWith(commandCandidate)');
     expect(PAYMENT_MODAL).toContain('if (commandCandidate.length > 1)');
     expect(PAYMENT_MODAL).toContain('removeScannedCommandFromActiveInput(commandCandidate.slice(0, -1));');

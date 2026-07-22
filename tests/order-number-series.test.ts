@@ -24,7 +24,7 @@ describe('order number series split', () => {
   });
 
   it('cashier assigns ZAM to cash/BLIK/invoice and POS to card/transfer', () => {
-    expect(modalSource).toContain("seriesHasCash || seriesHasBlik || method === 'INVOICE' ? 'ORDER' : 'FISCAL'");
+    expect(modalSource).toContain("seriesHasCash || seriesHasBlik || paymentMethod === 'INVOICE' ? 'ORDER' : 'FISCAL'");
     expect(modalSource).toContain('number_series: numberSeries');
   });
 

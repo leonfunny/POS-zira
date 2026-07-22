@@ -42,22 +42,26 @@ describe('PaymentModal order creation idempotency', () => {
     expect(completePayment).not.toMatch(/crypto\.randomUUID\s*\(/);
   });
 
-  it('persists a protected tender in a separate UI step before order creation', () => {
+  it('persists a protected tender before creating the order in one UI submission', () => {
+    const payableIndex = completePayment.indexOf('if (!submission.complete)');
     const boundaryIndex = completePayment.indexOf('billiardCheckout.beginTender(');
     const restoredBoundaryIndex = completePayment.indexOf('billiardCheckout.beginRestoredTender(');
     const preparedIndex = completePayment.indexOf('setTenderPrepared(true)');
-    const boundaryReturnIndex = completePayment.indexOf('return;', preparedIndex);
+    const orderIdIndex = completePayment.indexOf('const orderId = orderAttemptIdRef.current;', preparedIndex);
     const createIndex = saveOrderAndFinish.indexOf('pos.orders.create(order, items)');
-    expect(boundaryIndex).toBeGreaterThan(-1);
+    expect(payableIndex).toBeGreaterThan(-1);
+    expect(boundaryIndex).toBeGreaterThan(payableIndex);
     expect(restoredBoundaryIndex).toBeGreaterThan(boundaryIndex);
     expect(preparedIndex).toBeGreaterThan(restoredBoundaryIndex);
-    expect(boundaryReturnIndex).toBeGreaterThan(preparedIndex);
+    expect(orderIdIndex).toBeGreaterThan(preparedIndex);
+    expect(completePayment.slice(preparedIndex, orderIdIndex)).not.toContain('return;');
     expect(createIndex).toBeGreaterThan(-1);
     expect(saveOrderAndFinish).not.toContain('beginTender(');
     expect(saveOrderAndFinish).not.toContain('beginRestoredTender(');
     expect(saveOrderAndFinish).not.toContain('rollbackTender');
     expect(completePayment).not.toContain('rollbackTender');
-    expect(PAYMENT_MODAL).toContain('Do not collect cash or confirm the card terminal yet.');
+    expect(PAYMENT_MODAL).not.toContain('pos.payment.prepareSafeTender');
+    expect(PAYMENT_MODAL).not.toContain('Do not collect cash or confirm the card terminal yet.');
   });
 
   it('marks the order completed immediately after local order creation succeeds', () => {
@@ -91,7 +95,8 @@ describe('PaymentModal order creation idempotency', () => {
     const blockedIndex = runPaymentScanCommand.indexOf('const submitBlocked =');
     const cardBlockedReturn = runPaymentScanCommand.indexOf('if (submitBlocked) return true;');
     const firstMutation = runPaymentScanCommand.indexOf('setSplitMode(false)');
-    const cashComplete = runPaymentScanCommand.indexOf('void completePayment(grandTotal)');
+    const cardComplete = runPaymentScanCommand.indexOf("method: 'CARD'");
+    const cashComplete = runPaymentScanCommand.indexOf("method: 'CASH'", cardComplete + 1);
 
     expect(blockedIndex).toBeGreaterThan(-1);
     expect(runPaymentScanCommand).toContain('saving');
@@ -102,7 +107,10 @@ describe('PaymentModal order creation idempotency', () => {
     expect(runPaymentScanCommand).toContain('fiscalPrompt');
     expect(cardBlockedReturn).toBeGreaterThan(blockedIndex);
     expect(firstMutation).toBeGreaterThan(cardBlockedReturn);
+    expect(cardComplete).toBeGreaterThan(cardBlockedReturn);
     expect(cashComplete).toBeGreaterThan(cardBlockedReturn);
+    expect(runPaymentScanCommand.match(/splitMode: false/g)).toHaveLength(2);
+    expect(runPaymentScanCommand.match(/tenders: \[\]/g)).toHaveLength(2);
   });
 
   it('retries only the existing recovery order receipt, never order creation', () => {

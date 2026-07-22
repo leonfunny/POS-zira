@@ -11,6 +11,13 @@ import { useConfig } from '../../hooks/useConfig';
 import { resolveFiscalAction, type FiscalAction } from './payment-fiscal-prompt-mode';
 import type { RestoredCartReconciliation } from '../../../shared/billiard-pos-handoff';
 import { buildImmediateRestoredCartReconciliation } from './restored-cart-reconciliation';
+import {
+  resolvePaymentSubmission,
+  type PaymentMethod,
+  type PaymentSubmissionOverrides,
+  type ResolvedPaymentSubmission,
+  type Tender,
+} from './payment-submission';
 
 interface PaymentModalProps {
   cart: CartState;
@@ -33,13 +40,6 @@ interface PaymentModalProps {
     cash?: string;
   };
   extraOrderFields?: Record<string, any>;
-}
-
-type PaymentMethod = 'CASH' | 'CARD' | 'BLIK' | 'TRANSFER' | 'INVOICE';
-
-interface Tender {
-  method: PaymentMethod;
-  amount: number; // grosze
 }
 
 type PaymentSnapshot = {
@@ -463,15 +463,26 @@ export default function PaymentModal({
 
   // ─── Save order ───────────────────────────────────────────
 
-  const saveOrderAndFinish = async (orderId: string, paymentAmount: number) => {
+  const saveOrderAndFinish = async (
+    orderId: string,
+    submission: ResolvedPaymentSubmission,
+  ) => {
+    const {
+      method: paymentMethod,
+      splitMode: paymentSplitMode,
+      tenders: paymentTenders,
+      paymentAmount,
+      cashAmountGrosze: submittedCashAmountGrosze,
+      changeGrosze: paymentChangeGrosze,
+    } = submission;
     // Determine primary method (largest tender or single method)
-    let primaryMethod = method;
+    let primaryMethod = paymentMethod;
     let tendersJson: string | null = null;
 
-    if (splitMode && tenders.length > 0) {
-      const sorted = [...tenders].sort((a, b) => b.amount - a.amount);
+    if (paymentSplitMode && paymentTenders.length > 0) {
+      const sorted = [...paymentTenders].sort((a, b) => b.amount - a.amount);
       primaryMethod = sorted[0].method;
-      tendersJson = JSON.stringify(tenders);
+      tendersJson = JSON.stringify(paymentTenders);
     }
 
     // Numbering series: CARD/TRANSFER auto-print the fiscal paragon -> the
@@ -479,10 +490,14 @@ export default function PaymentModal({
     // explicit prompt) and INVOICE prints neither -> the separate ZAM-
     // order-copy series, so non-fiscal slips never interleave with the
     // fiscal numbering.
-    const seriesHasCash = splitMode ? tenders.some(t => t.method === 'CASH') : method === 'CASH';
-    const seriesHasBlik = splitMode ? tenders.some(t => t.method === 'BLIK') : method === 'BLIK';
+    const seriesHasCash = paymentSplitMode
+      ? paymentTenders.some(t => t.method === 'CASH')
+      : paymentMethod === 'CASH';
+    const seriesHasBlik = paymentSplitMode
+      ? paymentTenders.some(t => t.method === 'BLIK')
+      : paymentMethod === 'BLIK';
     const numberSeries: 'FISCAL' | 'ORDER' =
-      seriesHasCash || seriesHasBlik || method === 'INVOICE' ? 'ORDER' : 'FISCAL';
+      seriesHasCash || seriesHasBlik || paymentMethod === 'INVOICE' ? 'ORDER' : 'FISCAL';
 
     const kitchenSelfOrderCheckout = checkoutDraft?.kitchenSelfOrder?.kitchenAlreadyReleased === true;
     const order = {
@@ -496,7 +511,7 @@ export default function PaymentModal({
       total: cart.total,
       payment_method: primaryMethod,
       payment_amount: paymentAmount,
-      change_amount: splitMode ? 0 : (method === 'CASH' ? changeGrosze : 0),
+      change_amount: paymentChangeGrosze,
       staff_id: staffId,
       staff_name: staffName,
       customer_id: extraOrderFields?.customer_id ?? null,
@@ -584,14 +599,14 @@ export default function PaymentModal({
       rlog.warn('[PaymentModal] Immediate order sync failed:', err);
     });
 
-    const hasCash = splitMode
-      ? tenders.some(t => t.method === 'CASH')
-      : method === 'CASH';
-    const hasBlik = splitMode
-      ? tenders.some(t => t.method === 'BLIK')
-      : method === 'BLIK';
+    const hasCash = paymentSplitMode
+      ? paymentTenders.some(t => t.method === 'CASH')
+      : paymentMethod === 'CASH';
+    const hasBlik = paymentSplitMode
+      ? paymentTenders.some(t => t.method === 'BLIK')
+      : paymentMethod === 'BLIK';
 
-    if (method === 'INVOICE' && extraOrderFields?.customer_id) {
+    if (paymentMethod === 'INVOICE' && extraOrderFields?.customer_id) {
       try { await window.electronAPI.pos.customers.increaseDebt(extraOrderFields.customer_id, cart.total); }
       catch (err) { rlog.warn('[PaymentModal] Failed to increase customer debt:', err); }
     }
@@ -606,11 +621,11 @@ export default function PaymentModal({
     // INVOICE: skip both prints (debt already increased above).
     const printOrderCopy = hasCash || hasBlik;
     const printOrderCopyWithDrawer = hasCash;
-    const autoPrintFiscal = !printOrderCopy && method !== 'INVOICE';
+    const autoPrintFiscal = !printOrderCopy && paymentMethod !== 'INVOICE';
     const fiscalAction = resolveFiscalAction({
       printOrderCopy,
       hasFiscalPrinter,
-      method,
+      method: paymentMethod,
       mode: fiscalOnCashSale,
     });
 
@@ -653,8 +668,10 @@ export default function PaymentModal({
       total: cart.total,
       tip,
       grandTotal: cart.total + tip,
-      cashAmountGrosze: method === 'CASH' && !splitMode ? paymentAmount : cashAmountGrosze,
-      changeGrosze: splitMode ? 0 : (method === 'CASH' ? Math.max(0, paymentAmount - (cart.total + tip)) : 0),
+      cashAmountGrosze: paymentMethod === 'CASH' && !paymentSplitMode
+        ? paymentAmount
+        : submittedCashAmountGrosze,
+      changeGrosze: paymentChangeGrosze,
     });
     if (!checkoutDraft?.billiard) {
       dispatch({ type: 'display/setMode', payload: { mode: 'thankyou', lastOrderTotal: cart.total } });
@@ -776,7 +793,7 @@ export default function PaymentModal({
     void finishReceiptRecovery(receiptRecovery);
   };
 
-  const completePayment = useCallback(async (paymentAmountOverride?: number) => {
+  const completePayment = useCallback(async (overrides: PaymentSubmissionOverrides = {}) => {
     if (
       saving ||
       paymentCompleteInFlightRef.current ||
@@ -794,6 +811,21 @@ export default function PaymentModal({
     try {
       if (!customerNipValid) {
         setError(tOr('pos.payment.customerNipInvalid', 'NIP must have exactly 10 digits.'));
+        setSaving(false);
+        return;
+      }
+
+      const submission = resolvePaymentSubmission({
+        method,
+        splitMode,
+        tenders,
+        cashAmountGrosze,
+        grandTotal,
+      }, overrides);
+      if (!submission.complete) {
+        setError(submission.splitMode
+          ? tOr('pos.split.incomplete', 'Split payment incomplete')
+          : tOr('pos.payment.insufficient', 'Insufficient cash'));
         setSaving(false);
         return;
       }
@@ -823,23 +855,16 @@ export default function PaymentModal({
           }
           throw new Error(boundary?.error || 'Could not persist the tender safety boundary.');
         }
-        // This is deliberately a separate UI step. The cashier is instructed
-        // to collect/confirm tender only after main has fsynced the boundary.
+        // Main has fsynced the anti-duplicate boundary. Keep this renderer
+        // locked and continue to the existing POS order commit in the same
+        // cashier action; any post-boundary failure remains fail-closed below.
         tenderBoundaryCrossedRef.current = true;
         setTenderPrepared(true);
         setNipPadOpen(false);
-        return;
       }
 
       const orderId = orderAttemptIdRef.current;
-
-      if (splitMode) {
-        if (!splitComplete) { setError(t('pos.split.incomplete') || 'Split payment incomplete'); setSaving(false); return; }
-        await saveOrderAndFinish(orderId, tendersTotal);
-      } else {
-        const paymentAmount = method === 'CASH' ? (paymentAmountOverride ?? cashAmountGrosze) : grandTotal;
-        await saveOrderAndFinish(orderId, paymentAmount);
-      }
+      await saveOrderAndFinish(orderId, submission);
     } catch (err) {
       rlog.error('[PaymentModal] Failed to complete payment:', err);
       if (
@@ -870,7 +895,7 @@ export default function PaymentModal({
       setSaving(false);
       paymentCompleteInFlightRef.current = false;
     }
-  }, [cashAmountGrosze, checkoutDraft, customerNipForOrder, customerNipValid, fiscalPrompt, grandTotal, method, onTenderOutcomeUncertain, protectedTender, receiptRecovery, receiptRetrying, saving, shiftId, splitComplete, splitMode, staffId, staffName, t, tOr, tendersTotal]);
+  }, [cashAmountGrosze, checkoutDraft, customerNipForOrder, customerNipValid, fiscalPrompt, grandTotal, method, onTenderOutcomeUncertain, protectedTender, receiptRecovery, receiptRetrying, saving, shiftId, splitMode, staffId, staffName, t, tOr, tenders]);
 
   const handleComplete = useCallback(() => {
     void completePayment();
@@ -903,11 +928,9 @@ export default function PaymentModal({
   const loyaltyCancelCount = loyaltyOwner?.cancelCount ?? 0;
   const loyaltyRiskTotal = loyaltyNoShowCount + loyaltyLateCount + loyaltyCancelCount;
   const activeMethodLabel = splitMode ? tOr('pos.split.toggle', 'Split') : methodLabel(method);
-  const completeButtonLabel = protectedTender && !tenderPrepared
-    ? tOr('pos.payment.prepareSafeTender', 'Prepare payment safely')
-    : method === 'CARD' && !splitMode
-      ? tOr('pos.payment.cardReceived', 'Card payment received')
-      : t('pos.payment.complete');
+  const completeButtonLabel = method === 'CARD' && !splitMode
+    ? tOr('pos.payment.cardReceived', 'Card payment received')
+    : t('pos.payment.complete');
   const completeButtonShortLabel = tOr('pos.payment.completeShort', completeButtonLabel);
   const cashHasChange = method === 'CASH' && !splitMode && changeGrosze > 0;
   const cashHasShortfall = method === 'CASH' && !splitMode && cashShortfall > 0;
@@ -972,7 +995,12 @@ export default function PaymentModal({
       setPrintWarning(null);
 
       if (method === 'CARD') {
-        if (canComplete) void handleComplete();
+        void completePayment({
+          method: 'CARD',
+          splitMode: false,
+          tenders: [],
+          cashAmountGrosze: 0,
+        });
       } else {
         setMethod('CARD');
       }
@@ -990,12 +1018,19 @@ export default function PaymentModal({
       setCashAmount(totalZl.toFixed(2));
       setError(null);
       setPrintWarning(null);
-      if (shouldCompleteCash) void completePayment(grandTotal);
+      if (shouldCompleteCash) {
+        void completePayment({
+          method: 'CASH',
+          splitMode: false,
+          tenders: [],
+          cashAmountGrosze: grandTotal,
+        });
+      }
       return true;
     }
 
     return false;
-  }, [canComplete, completePayment, fiscalPrompt, grandTotal, handleComplete, method, receiptRecovery, receiptRetrying, saving, scanCommands?.card, scanCommands?.cash, tenderPrepared, totalZl]);
+  }, [completePayment, fiscalPrompt, grandTotal, method, receiptRecovery, receiptRetrying, saving, scanCommands?.card, scanCommands?.cash, tenderPrepared, totalZl]);
 
   useEffect(() => {
     const commandCodes = [scanCommands?.card, scanCommands?.cash]
@@ -1197,18 +1232,6 @@ export default function PaymentModal({
             </button>
           </div>
         </div>
-
-        {protectedTender && (
-          <div className={`shrink-0 border-b px-4 py-2.5 text-sm font-bold ${
-            tenderPrepared
-              ? 'border-amber-300 bg-amber-50 text-amber-950'
-              : 'border-blue-200 bg-blue-50 text-blue-950'
-          }`} role="status">
-            {tenderPrepared
-              ? 'Safety boundary saved. Collect or confirm the selected tender now, then record the order below. Do not close or charge twice.'
-              : 'Do not collect cash or confirm the card terminal yet. First press “Prepare payment safely” so POS can save the anti-duplicate boundary.'}
-          </div>
-        )}
 
         <div className="min-h-0 flex-1 overflow-y-auto bg-slate-100 p-3">
           <div className="grid min-h-0 gap-3 lg:grid-cols-[0.8fr_1.4fr]">
