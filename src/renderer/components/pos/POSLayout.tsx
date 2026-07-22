@@ -31,6 +31,7 @@ import RetailTemplate from './templates/retail/RetailTemplate';
 import SalonTemplate from './templates/salon/SalonTemplate';
 import B2BTemplate from './templates/b2b/B2BTemplate';
 import RestaurantTemplate from './templates/restaurant/RestaurantTemplate';
+import PaymentModal from './PaymentModal';
 import SyncConflictBanner from './SyncConflictBanner';
 import ScanImportModal, { type ScanImportCategoryOption, type ScanImportDraftPreview } from './ScanImportModal';
 import QuickAddCameraModal, {
@@ -41,6 +42,11 @@ import QuickAddCameraModal, {
 import AddProductWebviewPanel from './AddProductWebviewPanel';
 import DebtWebviewPanel from './DebtWebviewPanel';
 import { buildRetailCartItem, formatRetailSaleError, resolveRetailCartItem } from './retail-sale-flow';
+import type {
+  BilliardPaymentIntent,
+  RestoredCartReconciliation,
+  UncertainTenderResolutionTarget,
+} from '../../../shared/billiard-pos-handoff';
 
 type PosMode = 'retail' | 'salon' | 'b2b' | 'restaurant';
 
@@ -255,6 +261,13 @@ function ManualWeightModal({ prompt, tOr, onClose, onSubmit }: ManualWeightModal
 interface POSLayoutProps {
   onFullscreen?: () => void;
   onEditProduct?: (variantId: string) => void;
+  billiardPaymentIntent?: BilliardPaymentIntent | null;
+  restoredCartReconciliation?: RestoredCartReconciliation | null;
+  onBilliardPaymentIntentConsumed?: (nonce: string) => void;
+  canResolveUncertainTender?: boolean;
+  onBilliardTenderResolved?: (intent: BilliardPaymentIntent) => void;
+  onRestoredTenderResolved?: () => void;
+  onRestoredCartTenderOutcomeUncertain?: (reconciliation: RestoredCartReconciliation) => void;
 }
 
 type ScanToastType = 'ok' | 'warn' | 'err';
@@ -285,9 +298,19 @@ function getPickupKitchenPrintBadge(statusValue: unknown): { text: string; class
   return { text: 'Chờ bếp', className: 'bg-slate-50 text-slate-600 border-slate-200' };
 }
 
-export default function POSLayout({ onFullscreen, onEditProduct }: POSLayoutProps = {}) {
+export default function POSLayout({
+  onFullscreen,
+  onEditProduct,
+  billiardPaymentIntent,
+  restoredCartReconciliation,
+  onBilliardPaymentIntentConsumed,
+  canResolveUncertainTender = false,
+  onBilliardTenderResolved,
+  onRestoredTenderResolved,
+  onRestoredCartTenderOutcomeUncertain,
+}: POSLayoutProps = {}) {
   useBarcodeForwarder();
-  const { state, dispatch } = usePosStore();
+  const { state, dispatch, dispatchError, clearDispatchError } = usePosStore();
   const { config, saveConfig } = useConfig();
   const allowOversell = config?.allowOversell === true;
   const [language, setLanguage] = useState<Language>((config?.posLanguage as Language) || (config?.language as Language) || 'pl');
@@ -314,6 +337,19 @@ export default function POSLayout({ onFullscreen, onEditProduct }: POSLayoutProp
   // P6: a fiscal receipt that ended in an ambiguous (UNKNOWN) state — the cashier
   // must reconcile it in order history before that order can print again.
   const [fiscalAlert, setFiscalAlert] = useState<{ orderNumber?: string } | null>(null);
+  const [activeBilliardIntent, setActiveBilliardIntent] = useState<BilliardPaymentIntent | null>(null);
+  const [billiardPaymentOpen, setBilliardPaymentOpen] = useState(false);
+  const [billiardPaymentError, setBilliardPaymentError] = useState<string | null>(null);
+  const [billiardPaymentSnapshot, setBilliardPaymentSnapshot] = useState<{
+    cart: NonNullable<typeof state>['cart'];
+    checkoutDraft: NonNullable<typeof state>['checkoutDraft'];
+  } | null>(null);
+  const handledBilliardNonceRef = useRef<string | null>(null);
+  const [tenderResolutionTarget, setTenderResolutionTarget] = useState<UncertainTenderResolutionTarget | null>(null);
+  const [tenderResolutionReason, setTenderResolutionReason] = useState('');
+  const [tenderResolutionConfirmed, setTenderResolutionConfirmed] = useState(false);
+  const [tenderResolutionSaving, setTenderResolutionSaving] = useState(false);
+  const [tenderResolutionError, setTenderResolutionError] = useState<string | null>(null);
   // Cashier pickup queue: kitchen self-orders waiting to be paid at the counter.
   const [pickupOrders, setPickupOrders] = useState<PickupOrderRow[]>([]);
   const [pickupPanelOpen, setPickupPanelOpen] = useState(false);
@@ -427,6 +463,113 @@ export default function POSLayout({ onFullscreen, onEditProduct }: POSLayoutProp
     const translated = t(key);
     return translated && translated !== key ? translated : fallback;
   }, [t]);
+  const session = state?.session ?? { shiftId: null, staffId: null, staffName: null, isOpen: false, openedAt: null };
+
+  const openBilliardPayment = useCallback(async (intent: BilliardPaymentIntent) => {
+    if (!state) return;
+    if (intent.tenderOutcomeUncertain) {
+      setBilliardPaymentError('Payment outcome is uncertain. Do not charge again; reconcile cash/card and Order History with the owner.');
+      return;
+    }
+    const context = state.checkoutDraft.billiard;
+    if (
+      !context
+      || context.origin.checkoutId !== intent.checkoutId
+      || context.orderId !== intent.orderId
+      || context.clientAttemptId !== intent.clientAttemptId
+    ) {
+      setBilliardPaymentError('The active POS cart does not match this Billiard checkout. Recover or hold the other cart first.');
+      return;
+    }
+    if (context.orderCommitted) {
+      setBilliardPaymentError('Payment is already recorded locally. Do not charge again; POS recovery will retry disk/sync verification.');
+      return;
+    }
+    if (!session.isOpen) {
+      setBilliardPaymentError('Open a POS shift to continue this Billiard payment. The frozen cart remains safe.');
+      return;
+    }
+    const opened = await window.electronAPI.pos.billiardCheckout.markPaymentOpened(intent.checkoutId);
+    if (!opened?.success) {
+      setBilliardPaymentError(opened?.error || 'Could not safely open Billiard payment.');
+      return;
+    }
+    setBilliardPaymentError(null);
+    // Pin immutable props because main may restore the interrupted cart as
+    // soon as the local paid order crosses its disk barrier.
+    setBilliardPaymentSnapshot({ cart: state.cart, checkoutDraft: state.checkoutDraft });
+    setBilliardPaymentOpen(true);
+    handledBilliardNonceRef.current = intent.nonce;
+    onBilliardPaymentIntentConsumed?.(intent.nonce);
+  }, [onBilliardPaymentIntentConsumed, session.isOpen, state]);
+
+  const activateBilliardIntent = useCallback((intent: BilliardPaymentIntent) => {
+    if (!intent || handledBilliardNonceRef.current === intent.nonce) return;
+    setActiveBilliardIntent(intent);
+    setBilliardPaymentError(null);
+    if (intent.shouldAutoOpen) {
+      void openBilliardPayment(intent);
+      return;
+    }
+    handledBilliardNonceRef.current = intent.nonce;
+    onBilliardPaymentIntentConsumed?.(intent.nonce);
+  }, [onBilliardPaymentIntentConsumed, openBilliardPayment]);
+
+  const openTenderResolution = useCallback((target: UncertainTenderResolutionTarget) => {
+    if (!canResolveUncertainTender) return;
+    setTenderResolutionTarget(target);
+    setTenderResolutionReason('');
+    setTenderResolutionConfirmed(false);
+    setTenderResolutionError(null);
+  }, [canResolveUncertainTender]);
+
+  const submitTenderResolution = useCallback(async () => {
+    if (
+      !tenderResolutionTarget
+      || tenderResolutionSaving
+      || tenderResolutionReason.trim().length < 3
+      || !tenderResolutionConfirmed
+    ) return;
+    setTenderResolutionSaving(true);
+    setTenderResolutionError(null);
+    try {
+      const result = await window.electronAPI.pos.billiardCheckout.resolveUncertainTender({
+        target: tenderResolutionTarget,
+        reason: tenderResolutionReason.trim(),
+        confirmedNoPaymentRemains: true,
+      });
+      if (!result?.success) {
+        setTenderResolutionError(result?.error || 'Could not save the owner payment resolution.');
+        return;
+      }
+      if (tenderResolutionTarget.type === 'BILLIARD' && result.intent) {
+        setActiveBilliardIntent(result.intent);
+        setBilliardPaymentError(null);
+        onBilliardTenderResolved?.(result.intent);
+      } else if (tenderResolutionTarget.type === 'RESTORED_CART') {
+        onRestoredTenderResolved?.();
+      }
+      setTenderResolutionTarget(null);
+      setTenderResolutionReason('');
+      setTenderResolutionConfirmed(false);
+    } catch (error: any) {
+      setTenderResolutionError(error?.message || 'Could not save the owner payment resolution.');
+    } finally {
+      setTenderResolutionSaving(false);
+    }
+  }, [
+    onBilliardTenderResolved,
+    onRestoredTenderResolved,
+    tenderResolutionConfirmed,
+    tenderResolutionReason,
+    tenderResolutionSaving,
+    tenderResolutionTarget,
+  ]);
+
+  useEffect(() => {
+    const intent = billiardPaymentIntent;
+    if (intent) activateBilliardIntent(intent);
+  }, [activateBilliardIntent, billiardPaymentIntent]);
 
   useEffect(() => {
     if (!headerMenuOpen) return;
@@ -1234,7 +1377,6 @@ export default function POSLayout({ onFullscreen, onEditProduct }: POSLayoutProp
     return () => unsub?.();
   }, []);
 
-  const session = state?.session ?? { shiftId: null, staffId: null, staffName: null, isOpen: false, openedAt: null };
   const hideNonFiscalOrders = config?.showNonFiscalOrders === false;
 
   const handleShiftOpen = async (data: { staffId?: string; staffName?: string; openingCash?: number; closingCash?: number }) => {
@@ -1389,6 +1531,91 @@ export default function POSLayout({ onFullscreen, onEditProduct }: POSLayoutProp
       />
       {/* Sync conflict banner (Path B) */}
       <SyncConflictBanner />
+      {dispatchError && (
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-red-300 bg-red-50 px-5 py-2 text-sm font-bold text-red-900" role="alert">
+          <span>{dispatchError}</span>
+          <button type="button" onClick={clearDispatchError} className="min-h-9 rounded-md border border-red-300 bg-white px-3 text-xs font-bold text-red-800 hover:bg-red-100">
+            Dismiss
+          </button>
+        </div>
+      )}
+      {restoredCartReconciliation && (
+        <div className="shrink-0 border-b border-amber-300 bg-amber-50 px-5 py-2.5 text-amber-950" role="alert">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-extrabold">Restored POS cart · payment reconciliation required</div>
+              <div className="mt-0.5 text-xs font-bold">{restoredCartReconciliation.message}</div>
+              <div className="mt-1 text-[11px] font-semibold tabular-nums text-amber-800">Order safety ID: {restoredCartReconciliation.orderId}</div>
+            </div>
+            {canResolveUncertainTender && (
+              <button
+                type="button"
+                onClick={() => openTenderResolution({ type: 'RESTORED_CART', holdId: restoredCartReconciliation.holdId })}
+                className="min-h-11 rounded-md border border-amber-700 bg-white px-4 text-xs font-extrabold text-amber-900 hover:bg-amber-100"
+              >
+                Owner resolution
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+      {activeBilliardIntent && (
+        <div className={`shrink-0 border-b px-5 py-2.5 ${
+          activeBilliardIntent.tenderOutcomeUncertain
+            ? 'border-amber-300 bg-amber-50 text-amber-950'
+            : 'border-blue-200 bg-blue-50 text-blue-950'
+        }`}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-white ${
+                  activeBilliardIntent.tenderOutcomeUncertain ? 'bg-amber-700' : 'bg-blue-700'
+                }`}>
+                  Billiard
+                </span>
+                <span className="text-sm font-extrabold">
+                  {activeBilliardIntent.tenderOutcomeUncertain
+                    ? 'Payment outcome uncertain · reconciliation required'
+                    : state.checkoutDraft.billiard
+                    ? (state.checkoutDraft.billiard.orderCommitted ? 'Payment recorded · recovery pending' : 'Frozen checkout ready')
+                    : 'Payment recorded · sync pending'}
+                </span>
+              </div>
+              <div className={`mt-1 text-xs font-semibold tabular-nums ${
+                activeBilliardIntent.tenderOutcomeUncertain ? 'text-amber-900' : 'text-blue-800'
+              }`}>
+                {state.checkoutDraft.billiard?.tableName || `Session ${activeBilliardIntent.sessionId.slice(0, 8)}`}
+                {state.checkoutDraft.billiard ? ` · ${(state.cart.total / 100).toFixed(2)} zł` : ''}
+              </div>
+              {activeBilliardIntent.tenderOutcomeUncertain && (
+                <div className="mt-1 max-w-3xl text-xs font-bold text-amber-900">
+                  Do not charge again. Check the cash/card terminal and POS Order History, then reconcile with the owner.
+                </div>
+              )}
+              {billiardPaymentError && <div className="mt-1 text-xs font-bold text-red-700">{billiardPaymentError}</div>}
+            </div>
+            {activeBilliardIntent.tenderOutcomeUncertain && canResolveUncertainTender && (
+              <button
+                type="button"
+                onClick={() => openTenderResolution({ type: 'BILLIARD', checkoutId: activeBilliardIntent.checkoutId })}
+                className="min-h-11 rounded-md border border-amber-700 bg-white px-4 text-xs font-extrabold text-amber-900 hover:bg-amber-100"
+              >
+                Owner resolution
+              </button>
+            )}
+            {!activeBilliardIntent.tenderOutcomeUncertain && state.checkoutDraft.billiard && !state.checkoutDraft.billiard.orderCommitted && !billiardPaymentOpen && (
+              <button
+                type="button"
+                onClick={() => void openBilliardPayment(activeBilliardIntent)}
+                className="min-h-11 rounded-md bg-blue-700 px-4 text-sm font-bold text-white hover:bg-blue-800 disabled:opacity-50"
+                disabled={!session.isOpen}
+              >
+                {session.isOpen ? 'Resume payment' : 'Open shift first'}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       {/* Header - shared across all modes */}
       <div className="flex items-center justify-between px-5 py-2.5 border-b border-slate-200 bg-white shrink-0">
         <div className="flex items-center gap-3">
@@ -1636,12 +1863,41 @@ export default function POSLayout({ onFullscreen, onEditProduct }: POSLayoutProp
             onManualWeightRequired={openManualWeightPrompt}
             onAddProductFeedback={handleRetailAddProductFeedback}
             onEditProduct={onEditProduct}
+            onBilliardIntentPrepared={activateBilliardIntent}
+            onRestoredTenderOutcomeUncertain={onRestoredCartTenderOutcomeUncertain}
             homeResetKey={homeResetKey}
           />
         )}
-        {posMode === 'salon' && <SalonTemplate state={state} dispatch={dispatch} t={t} language={language} session={session} />}
-        {posMode === 'b2b' && <B2BTemplate state={state} dispatch={dispatch} t={t} language={language} session={session} />}
-        {posMode === 'restaurant' && <RestaurantTemplate state={state} dispatch={dispatch} t={t} language={language} session={session} />}
+        {posMode === 'salon' && (
+          <SalonTemplate
+            state={state}
+            dispatch={dispatch}
+            t={t}
+            language={language}
+            session={session}
+            onRestoredTenderOutcomeUncertain={onRestoredCartTenderOutcomeUncertain}
+          />
+        )}
+        {posMode === 'b2b' && (
+          <B2BTemplate
+            state={state}
+            dispatch={dispatch}
+            t={t}
+            language={language}
+            session={session}
+            onRestoredTenderOutcomeUncertain={onRestoredCartTenderOutcomeUncertain}
+          />
+        )}
+        {posMode === 'restaurant' && (
+          <RestaurantTemplate
+            state={state}
+            dispatch={dispatch}
+            t={t}
+            language={language}
+            session={session}
+            onRestoredTenderOutcomeUncertain={onRestoredCartTenderOutcomeUncertain}
+          />
+        )}
       </div>
 
       {/* Shift modals - shared */}
@@ -1669,12 +1925,111 @@ export default function POSLayout({ onFullscreen, onEditProduct }: POSLayoutProp
           t={t}
         />
       )}
+      {tenderResolutionTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4" role="dialog" aria-modal="true" aria-labelledby="tender-resolution-title">
+          <div className="w-full max-w-xl rounded-xl border border-amber-300 bg-white p-5 shadow-2xl">
+            <h2 id="tender-resolution-title" className="text-lg font-extrabold text-slate-950">
+              Confirm no payment remains
+            </h2>
+            <p className="mt-2 text-sm font-bold text-amber-900">
+              Owner action only. First verify cash, the card/BLIK terminal, and Order History. If a payment was ever collected, reverse or refund it externally before continuing.
+            </p>
+            <p className="mt-2 text-xs font-semibold text-slate-600">
+              This audited action reopens the same cart for a new payment attempt. It does not create a receipt or pretend a previous tender was paid.
+            </p>
+            <label className="mt-4 block text-xs font-extrabold uppercase tracking-wide text-slate-700" htmlFor="tender-resolution-reason">
+              Resolution reason
+            </label>
+            <textarea
+              id="tender-resolution-reason"
+              value={tenderResolutionReason}
+              onChange={(event) => setTenderResolutionReason(event.target.value.slice(0, 500))}
+              disabled={tenderResolutionSaving}
+              rows={4}
+              maxLength={500}
+              placeholder="Describe checks performed and any external reversal/refund"
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-950 focus:border-amber-600 focus:outline-none focus:ring-2 focus:ring-amber-100 disabled:bg-slate-100"
+            />
+            <div className="mt-1 text-right text-[11px] font-semibold text-slate-500">{tenderResolutionReason.trim().length}/500</div>
+            <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-bold text-amber-950">
+              <input
+                type="checkbox"
+                checked={tenderResolutionConfirmed}
+                onChange={(event) => setTenderResolutionConfirmed(event.target.checked)}
+                disabled={tenderResolutionSaving}
+                className="mt-0.5 h-5 w-5 rounded border-amber-400 text-amber-700"
+              />
+              <span>I confirm that no cash/card/BLIK payment remains for this attempt and any previously collected external payment has been reversed or refunded.</span>
+            </label>
+            {tenderResolutionError && (
+              <div className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm font-bold text-red-800">{tenderResolutionError}</div>
+            )}
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setTenderResolutionTarget(null)}
+                disabled={tenderResolutionSaving}
+                className="min-h-12 rounded-lg border border-slate-300 bg-white px-4 text-sm font-extrabold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void submitTenderResolution()}
+                disabled={tenderResolutionSaving || tenderResolutionReason.trim().length < 3 || !tenderResolutionConfirmed}
+                className="min-h-12 rounded-lg bg-amber-700 px-4 text-sm font-extrabold text-white hover:bg-amber-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                {tenderResolutionSaving ? 'Saving audit…' : 'Confirm and reopen payment'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {manualWeightPrompt && (
         <ManualWeightModal
           prompt={manualWeightPrompt}
           tOr={tOr}
           onClose={closeManualWeightPrompt}
           onSubmit={submitManualWeight}
+        />
+      )}
+      {billiardPaymentOpen && billiardPaymentSnapshot && activeBilliardIntent && (
+        <PaymentModal
+          cart={billiardPaymentSnapshot.cart}
+          checkoutDraft={billiardPaymentSnapshot.checkoutDraft}
+          dispatch={dispatch}
+          onClose={() => setBilliardPaymentOpen(false)}
+          onTenderOutcomeUncertain={(message) => {
+            setBilliardPaymentOpen(false);
+            setBilliardPaymentSnapshot(null);
+            setBilliardPaymentError(message);
+            setActiveBilliardIntent((current) => current
+              ? { ...current, shouldAutoOpen: false, tenderOutcomeUncertain: true }
+              : current);
+          }}
+          onComplete={({ orderId }) => {
+            setBilliardPaymentOpen(false);
+            const checkoutId = activeBilliardIntent.checkoutId;
+            void window.electronAPI.pos.billiardCheckout.complete(checkoutId, orderId).then((result: {
+              success: boolean;
+              restored?: boolean;
+              durabilityError?: string;
+              error?: string;
+            }) => {
+              if (!result?.success) {
+                setBilliardPaymentError(result?.error || result?.durabilityError || 'Payment is recorded but handoff cleanup needs recovery.');
+                return;
+              }
+              setActiveBilliardIntent(null);
+              setBilliardPaymentSnapshot(null);
+              setBilliardPaymentError(null);
+            });
+          }}
+          t={t}
+          shiftId={session.shiftId}
+          staffId={session.staffId}
+          staffName={session.staffName}
+          extraOrderFields={{ mode: posMode }}
         />
       )}
     </div>

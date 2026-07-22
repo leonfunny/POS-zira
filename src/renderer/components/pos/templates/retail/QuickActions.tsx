@@ -1,11 +1,14 @@
 import React, { useState } from 'react';
-import type { PosAction, CartItem } from '../../../../hooks/usePosStore';
+import type { PosAction } from '../../../../hooks/usePosStore';
 
 interface HeldCart {
   id: string;
-  items: CartItem[];
+  title: string;
+  items: number;
   total: number;
   createdAt: string;
+  protected?: boolean;
+  holdReason?: 'MANUAL' | 'BILLIARD_INTERRUPTION';
 }
 
 interface QuickActionsProps {
@@ -101,22 +104,26 @@ export default function QuickActions({
         <div className="flex items-center gap-1.5 px-2 py-1.5 overflow-x-auto border-b border-slate-200 bg-slate-50" style={{ scrollbarWidth: 'none' }}>
           {heldCarts.map((held) => (
             <div key={held.id} className="flex items-center gap-1.5 px-2 py-1 bg-white border border-slate-300 rounded-lg shrink-0 shadow-sm">
+              <span className="max-w-32 truncate text-xs font-semibold text-slate-600">{held.title}</span>
               <span className="text-xs text-slate-700 font-bold tabular-nums">{(held.total / 100).toFixed(2)} {t('pos.currency')}</span>
               <button
                 onClick={() => { onRecall?.(held.id); setShowHeld(false); }}
-                className="h-8 px-2.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 text-xs font-bold cursor-pointer"
+                disabled={held.protected}
+                className="h-8 px-2.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 text-xs font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {tOr('pos.recall', 'Use')}
+                {held.protected ? 'Auto restore' : tOr('pos.recall', 'Use')}
               </button>
-              <button
-                onClick={() => onDiscardHeld?.(held.id)}
-                className="w-8 h-8 flex items-center justify-center rounded-md text-slate-500 hover:text-red-700 hover:bg-red-50 border border-transparent hover:border-red-200 cursor-pointer"
-                aria-label="Discard held cart"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+              {!held.protected && (
+                <button
+                  onClick={() => onDiscardHeld?.(held.id)}
+                  className="w-8 h-8 flex items-center justify-center rounded-md text-slate-500 hover:text-red-700 hover:bg-red-50 border border-transparent hover:border-red-200 cursor-pointer"
+                  aria-label="Discard held cart"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
             </div>
           ))}
         </div>

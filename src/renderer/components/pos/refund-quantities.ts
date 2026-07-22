@@ -11,9 +11,11 @@ export interface RefundQuantityItem {
   name: string;
   price: number;
   quantity: number;
+  billiard_json?: string | null;
 }
 
 export interface RefundLineLike {
+  billiardLineKey?: string | null;
   variantId?: string | null;
   variant_id?: string | null;
   sku?: string | null;
@@ -34,6 +36,11 @@ function parseRefundLines(raw: string | null | undefined): RefundLineLike[] | nu
 }
 
 function lineMatchesItem(line: RefundLineLike, item: RefundQuantityItem): boolean {
+  if (line.billiardLineKey && item.billiard_json) {
+    try {
+      if (JSON.parse(item.billiard_json)?.lineKey === line.billiardLineKey) return true;
+    } catch { /* fall through to legacy identities */ }
+  }
   const lineVariantId = line.variantId ?? line.variant_id;
   if (lineVariantId && item.variant_id) return lineVariantId === item.variant_id;
   if (line.sku && item.sku) return line.sku === item.sku;
@@ -74,4 +81,3 @@ export function getRemainingRefundableItems<T extends RefundQuantityItem>(
 
   return { items: remainingItems, unsafeMissingRefundLines: false };
 }
-

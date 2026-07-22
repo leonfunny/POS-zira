@@ -100,6 +100,15 @@ export function installShim(options: InstallShimOptions = {}): InstalledShim {
       return Promise.resolve();
     },
     onStateChanged: (cb: (state: PosState) => void): (() => void) => posStore.onStateChanged(cb),
+    billiardCheckout: {
+      prepare: async () => ({ success: false, error: 'Billiard checkout handoff requires the desktop POS.' }),
+      recover: async () => ({ success: true, intent: null }),
+      markPaymentOpened: async () => ({ success: false, error: 'desktop-only' }),
+      beginTender: async () => ({ success: false, error: 'desktop-only' }),
+      beginRestoredTender: async () => ({ success: false, error: 'desktop-only' }),
+      resolveUncertainTender: async () => ({ success: false, error: 'desktop-only' }),
+      complete: async () => ({ success: false, error: 'desktop-only' }),
+    },
     products: buildProductsNamespace(stubDeps),
     categories: buildCategoriesNamespace(stubDeps),
     payment: buildPaymentNamespace(stubDeps),

@@ -222,6 +222,25 @@ export function resolveBilliardOutstandingBalance(session: any): number {
   );
 }
 
+/** A finalized/no-balance session must never open a zero-value POS tender. */
+export function shouldSkipBilliardPosPayment(session: any): boolean {
+  const status = canonicalBilliardSessionStatus(session?.status);
+  const paymentStatus = String(session?.paymentStatus ?? session?.payment_status ?? '').toUpperCase();
+  const isFinal = status === 'COMPLETED' || status === 'CANCELLED' || paymentStatus === 'PAID';
+  return isFinal && resolveBilliardOutstandingBalance(session) <= 0;
+}
+
+/** A frozen server checkout is immutable and may no longer be written off. */
+export function isBilliardPosCheckoutFrozen(session: any): boolean {
+  const checkoutId = session?.posCheckoutId
+    ?? session?.pos_checkout_id
+    ?? session?.posCheckout?.checkoutId
+    ?? session?.posCheckoutSnapshot?.checkoutId
+    ?? session?.posOrderId
+    ?? session?.pos_order_id;
+  return typeof checkoutId === 'string' && checkoutId.trim().length > 0;
+}
+
 export interface NormalizedBilliardCatalogProduct {
   variantId: string | undefined;
   name: string;

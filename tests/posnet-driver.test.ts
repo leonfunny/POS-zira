@@ -5,6 +5,11 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+vi.mock('electron', () => ({
+  app: { getPath: () => '/tmp/zira-posnet-test', isPackaged: false },
+  BrowserWindow: { getAllWindows: () => [] },
+}));
+
 vi.mock('../src/main/logger', () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
@@ -32,7 +37,7 @@ vi.mock('util', () => ({
 
 import { withPortLock } from '../src/main/hardware/posnet/port-mutex';
 import { listSerialPorts } from '../src/main/hardware/port-utils';
-import { PosnetDriver } from '../src/main/hardware/posnet/posnet-driver';
+import { buildPosnetFiscalFrames, PosnetDriver } from '../src/main/hardware/posnet/posnet-driver';
 
 const mockWithPortLock = vi.mocked(withPortLock);
 const mockListSerialPorts = vi.mocked(listSerialPorts);
@@ -177,9 +182,176 @@ describe('PosnetDriver port mutex integration', () => {
     });
 
     const frames = sendSpy.mock.calls[0][0];
-    expect(frames).toContainEqual(['trline', 'naRieng cu', 'vt2', 'pr8000', 'il0.238']);
+    expect(frames).toContainEqual(['trline', 'naRieng cu', 'vt2', 'pr8000', 'il0.238', 'wa1904']);
     expect(frames).toContainEqual(['trpayment', 'ty2', 'wa1904']);
     expect(frames).toContainEqual(['trend', 'to1904']);
+  });
+
+  it('keeps exact frozen discounts on mixed-VAT, weighted, multi-quantity, and fully-discounted lines', () => {
+    const { frames, payableTotal } = buildPosnetFiscalFrames({
+      orderId: 'billiard-fiscal-1',
+      items: [
+        {
+          name: 'Czas gry 60 min',
+          quantity: 1,
+          unitPrice: 3600,
+          totalPrice: 3600,
+          allocatedDiscount: 3600,
+          vatRate: 23,
+          unit: 'min',
+        },
+        {
+          name: 'Owoce na wage',
+          quantity: 0.238,
+          unitPrice: 8000,
+          totalPrice: 1904,
+          allocatedDiscount: 104,
+          vatRate: 5,
+          unit: 'kg',
+        },
+        {
+          name: 'Napoj x3',
+          quantity: 3,
+          unitPrice: 333,
+          totalPrice: 999,
+          allocatedDiscount: 1,
+          vatRate: 8,
+        },
+      ],
+      payment: { method: 'CASH', amount: 5000 },
+      subtotal: 6503,
+      discount: 3705,
+      total: 2798,
+    });
+
+    expect(frames).toContainEqual([
+      'trline', 'naCzas gry 60 min', 'vt0', 'pr3600', 'il1.000', 'wa3600', 'rd1', 'rw3600', 'rnRabat',
+    ]);
+    expect(frames).toContainEqual([
+      'trline', 'naOwoce na wage', 'vt2', 'pr8000', 'il0.238', 'wa1904', 'rd1', 'rw104', 'rnRabat',
+    ]);
+    expect(frames).toContainEqual([
+      'trline', 'naNapoj x3', 'vt1', 'pr333', 'il3.000', 'wa999', 'rd1', 'rw1', 'rnRabat',
+    ]);
+    expect(frames).toContainEqual(['trpayment', 'ty0', 'wa2798']);
+    expect(frames).toContainEqual(['trend', 'to2798']);
+    expect(payableTotal).toBe(2798);
+  });
+
+  it('allocates an ordinary cart-level discount before validating POSNET payable total', () => {
+    const { frames, payableTotal } = buildPosnetFiscalFrames({
+      orderId: 'ordinary-discount-1',
+      items: [{
+        name: 'Ordinary product',
+        quantity: 1,
+        unitPrice: 1000,
+        totalPrice: 1000,
+        vatRate: 23,
+      }],
+      payment: { method: 'CARD', amount: 900 },
+      subtotal: 1000,
+      discount: 100,
+      total: 900,
+    });
+
+    expect(frames).toContainEqual([
+      'trline', 'naOrdinary product', 'vt0', 'pr1000', 'il1.000', 'wa1000', 'rd1', 'rw100', 'rnRabat',
+    ]);
+    expect(frames).toContainEqual(['trend', 'to900']);
+    expect(payableTotal).toBe(900);
+  });
+
+  it('refuses mismatched discounted arithmetic before frames can be sent', () => {
+    expect(() => buildPosnetFiscalFrames({
+      orderId: 'billiard-bad-total',
+      items: [{
+        name: 'Czas gry',
+        quantity: 1,
+        unitPrice: 1000,
+        totalPrice: 1000,
+        allocatedDiscount: 1000,
+        vatRate: 23,
+      }],
+      payment: { method: 'CASH', amount: 1 },
+      subtotal: 1000,
+      discount: 1000,
+      total: 1,
+    })).toThrow('POSNET_FISCAL_PAYABLE_MISMATCH');
+  });
+
+  it('fails closed on a zero unit price instead of sending POSNET pr0', () => {
+    expect(() => buildPosnetFiscalFrames({
+      orderId: 'zero-price',
+      items: [{ name: 'Free line', quantity: 1, unitPrice: 0, totalPrice: 0, vatRate: 23 }],
+      payment: { method: 'CASH', amount: 0 },
+      subtotal: 0,
+      total: 0,
+    })).toThrow('POSNET_FISCAL_PRICE_INVALID');
+  });
+
+  it('rejects an unsupported VAT rate instead of falling back to POSNET VAT A/23', () => {
+    expect(() => buildPosnetFiscalFrames({
+      orderId: 'unsupported-vat-frame',
+      items: [{ name: 'Unsupported VAT', quantity: 1, unitPrice: 1000, totalPrice: 1000, vatRate: 12 }],
+      payment: { method: 'CASH', amount: 1000 },
+      subtotal: 1000,
+      total: 1000,
+    })).toThrow(
+      'POSNET_FISCAL_VAT_UNSUPPORTED: VAT rate 12 is not mapped to a POSNET fiscal VAT code. Supported rates: 23, 8, 5, 0, -1.',
+    );
+  });
+
+  it('rejects unsupported VAT before creating a fiscal attempt or sending any printer byte', async () => {
+    const fiscalJournal = {
+      findBlockingAttempt: vi.fn(),
+      findReconcilableAttempt: vi.fn(),
+      resolveReconcilable: vi.fn(),
+      getNextAttemptNo: vi.fn(),
+      createPending: vi.fn(),
+      markSent: vi.fn(),
+      markSuccess: vi.fn(),
+      markFailed: vi.fn(),
+      markUnknown: vi.fn(),
+      markBlocked: vi.fn(),
+    };
+    const driver = new PosnetDriver('COM6', 9600, 'POSNET', { fiscalJournal: fiscalJournal as any });
+    (driver as any).connectionState = 'protocol_ready';
+    const sendSpy = vi.spyOn(driver as any, 'sendPosnetSequence').mockResolvedValue([]);
+
+    await expect(driver.printReceipt({
+      orderId: 'unsupported-vat-print',
+      items: [{ name: 'Unsupported VAT', quantity: 1, unitPrice: 1000, totalPrice: 1000, vatRate: 12 }],
+      payment: { method: 'CARD', amount: 1000 },
+      subtotal: 1000,
+      total: 1000,
+    })).rejects.toThrow('POSNET_FISCAL_VAT_UNSUPPORTED');
+
+    expect(fiscalJournal.findBlockingAttempt).not.toHaveBeenCalled();
+    expect(fiscalJournal.getNextAttemptNo).not.toHaveBeenCalled();
+    expect(fiscalJournal.createPending).not.toHaveBeenCalled();
+    expect(fiscalJournal.markSent).not.toHaveBeenCalled();
+    expect(sendSpy).not.toHaveBeenCalled();
+  });
+
+  it('keeps an entirely discounted positive-price service at zero payable', () => {
+    const { frames, payableTotal } = buildPosnetFiscalFrames({
+      orderId: 'fully-discounted-time',
+      items: [{
+        name: 'Czas gry',
+        quantity: 1,
+        unitPrice: 1000,
+        totalPrice: 1000,
+        allocatedDiscount: 1000,
+        vatRate: 23,
+      }],
+      payment: { method: 'CASH', amount: 0 },
+      subtotal: 1000,
+      discount: 1000,
+      total: 0,
+    });
+    expect(payableTotal).toBe(0);
+    expect(frames).toContainEqual(['trpayment', 'ty0', 'wa0']);
+    expect(frames).toContainEqual(['trend', 'to0']);
   });
 });
 

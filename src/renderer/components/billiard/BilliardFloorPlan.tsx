@@ -48,6 +48,7 @@ import { RenameFloorDialog } from './RenameFloorDialog';
 import { ToastProvider, useToast } from './Toast';
 import { useAuth } from '../../hooks/useAuth';
 import ConfirmActionDialog from '../pos/ConfirmActionDialog';
+import { isBilliardPosCheckoutFrozen } from '../../../shared/billiard-contract';
 
 // ─── Zoom Controls (inside TransformWrapper context) ─────────────────
 
@@ -179,7 +180,12 @@ function normalizeFloorPlanList(rawFloorPlans: any, rawOverview: any): FloorPlan
   return Array.isArray(source) ? source.map(normalizeFloorPlan) : [];
 }
 
-function FloorPlanInner({ language }: { language: Language }) {
+interface BilliardFloorPlanProps {
+  language: Language;
+  onPayInPos?: (input: { posCheckout: any; tableName?: string | null }) => Promise<void>;
+}
+
+function FloorPlanInner({ language, onPayInPos }: BilliardFloorPlanProps) {
   const { t } = useTranslation(language);
   const toast = useToast();
   const { user } = useAuth();
@@ -1295,6 +1301,14 @@ function FloorPlanInner({ language }: { language: Language }) {
         voidPending={voidSession.isPending || voidSessions.isPending}
         onVoid={async (ids, reason) => {
           try {
+            const frozenIds = ids.filter((id) => {
+              const session = pendingPayments.find((row: any) => row.id === id);
+              return !session || isBilliardPosCheckoutFrozen(session);
+            });
+            if (frozenIds.length > 0) {
+              toast.error('Frozen POS checkout cannot be voided. Settle it or use owner correction after payment.');
+              return;
+            }
             const result = ids.length === 1
               ? await voidSession.mutate({ sessionId: ids[0], reason })
               : await voidSessions.mutate({ ids, reason });
@@ -1317,6 +1331,7 @@ function FloorPlanInner({ language }: { language: Language }) {
           onOpenChange={(v) => { if (!v) setPaymentSession(null); }}
           language={language}
           onRefetch={refetchOverview}
+          onPayInPos={onPayInPos}
         />
       )}
 
@@ -1357,10 +1372,10 @@ function FloorPlanInner({ language }: { language: Language }) {
 
 // ─── Exported component with ToastProvider wrapper ────────────────────
 
-export default function BilliardFloorPlan({ language }: { language: Language }) {
+export default function BilliardFloorPlan({ language, onPayInPos }: BilliardFloorPlanProps) {
   return (
     <ToastProvider>
-      <FloorPlanInner language={language} />
+      <FloorPlanInner language={language} onPayInPos={onPayInPos} />
     </ToastProvider>
   );
 }

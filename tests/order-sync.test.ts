@@ -32,11 +32,19 @@ vi.mock('../src/main/database/repos/local-variant-imports-repo', () => ({
   },
 }));
 
+vi.mock('../src/main/database/repos/billiard-pos-handoff-repo', () => ({
+  billiardPosHandoffRepo: {
+    getByOrderId: vi.fn(),
+    markState: vi.fn(() => true),
+  },
+}));
+
 vi.mock('../src/main/database/database', () => ({
   database: {
     get: vi.fn(),
     run: vi.fn(),
     save: vi.fn(),
+    saveCoalesced: vi.fn(),
     markDirty: vi.fn(),
     all: vi.fn(),
   },
@@ -58,6 +66,7 @@ vi.mock('../src/main/logger', () => ({
 import { apiClient } from '../src/main/network/api-client';
 import { orderRepo } from '../src/main/database/repos/order-repo';
 import { database } from '../src/main/database/database';
+import { billiardPosHandoffRepo } from '../src/main/database/repos/billiard-pos-handoff-repo';
 import { getSecureAuthToken } from '../src/main/config/store';
 import { OrderSync } from '../src/main/sync/order-sync';
 
@@ -129,6 +138,7 @@ describe('OrderSync DTO mapping', () => {
     vi.mocked(getSecureAuthToken).mockReturnValue('secure-token');
     vi.mocked(apiClient.createPosOrder).mockResolvedValue({ id: 'backend-order-1' });
     vi.mocked(apiClient.finishOrder).mockResolvedValue({});
+    vi.mocked(database.saveCoalesced).mockResolvedValue({ success: true } as any);
   });
 
   it('preserves zero and non-zero local item prices and converts split tenders to PLN', async () => {
@@ -236,6 +246,41 @@ describe('OrderSync DTO mapping', () => {
       backendId: 'backend-order-1',
       orderNumber: 'POS260506-0005',
     });
+  });
+
+  it('marks a paid Billiard handoff SETTLED after create succeeds and never calls finish twice', async () => {
+    vi.mocked(orderRepo.getUnsynced).mockReturnValue([
+      makeOrder({
+        billiard_origin_json: JSON.stringify({
+          type: 'BILLIARD_SESSION',
+          sessionId: 'session-1',
+          checkoutId: 'checkout-1',
+          snapshotVersion: 1,
+        }),
+        client_attempt_id: 'billiard:checkout-1',
+      }) as any,
+    ]);
+    vi.mocked(orderRepo.getItemsByOrderId).mockReturnValue([
+      makeItem({
+        billiard_json: JSON.stringify({
+          lineKey: 'fnb-1',
+          kind: 'FNB',
+          sessionItemId: 'session-item-1',
+          displayName: 'Cola',
+        }),
+      }) as any,
+    ]);
+    vi.mocked(billiardPosHandoffRepo.getByOrderId).mockReturnValue({
+      checkoutId: 'checkout-1',
+      state: 'POS_PAID_SYNC_PENDING',
+    } as any);
+
+    const summary = await new OrderSync().syncPendingOrders();
+
+    expect(apiClient.finishOrder).not.toHaveBeenCalled();
+    expect(billiardPosHandoffRepo.markState).toHaveBeenCalledWith('checkout-1', 'SETTLED');
+    expect(database.saveCoalesced).toHaveBeenCalledTimes(1);
+    expect(summary).toMatchObject({ synced: 1, failed: 0 });
   });
 });
 

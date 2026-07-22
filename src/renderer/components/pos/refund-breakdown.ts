@@ -11,9 +11,11 @@ export interface RefundBreakdownItem {
   total: number;
   sale_unit?: string | null;
   sell_by?: string | null;
+  billiard_json?: string | null;
 }
 
 export interface RefundBreakdownLine {
+  billiardLineKey?: string | null;
   orderItemId?: string | null;
   variantId?: string | null;
   variant_id?: string | null;
@@ -69,6 +71,7 @@ export function parseRefundBreakdownLines(raw: string | null | undefined): Refun
     if (!Array.isArray(parsed)) return [];
     return parsed
       .map((line: any): RefundBreakdownLine => ({
+        billiardLineKey: line.billiardLineKey ?? line.billiard_line_key ?? null,
         orderItemId: line.orderItemId ?? line.order_item_id ?? null,
         variantId: line.variantId ?? line.variant_id ?? null,
         variant_id: line.variant_id ?? null,
@@ -97,6 +100,11 @@ export function parseRefundBreakdownLines(raw: string | null | undefined): Refun
 }
 
 function lineMatchesStableIdentity(line: RefundBreakdownLine, item: RefundBreakdownItem): boolean {
+  if (line.billiardLineKey && item.billiard_json) {
+    try {
+      if (JSON.parse(item.billiard_json)?.lineKey === line.billiardLineKey) return true;
+    } catch { /* fall through to legacy identities */ }
+  }
   const lineVariantId = line.variantId ?? line.variant_id;
   if (lineVariantId && item.variant_id && lineVariantId === item.variant_id) return true;
   if (line.sku && item.sku && line.sku === item.sku) return true;
@@ -130,6 +138,7 @@ export function getRefundBreakdownLines(
     const item = resolveLineItem(line, items);
     return {
       ...line,
+      billiardLineKey: line.billiardLineKey ?? null,
       orderItemId: item?.id ?? line.orderItemId ?? null,
       variantId: line.variantId ?? line.variant_id ?? item?.variant_id ?? null,
       sku: line.sku ?? item?.sku ?? null,

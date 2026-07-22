@@ -335,6 +335,19 @@ function applyOrder(entry: SyncLogEntry): boolean {
     }
   }
 
+  // Enrich an existing locally-created order with first-class Billiard
+  // origin/line policy fields from the canonical server mirror. Match lines
+  // by stable lineKey inside orderRepo; never by variant or local UUID.
+  if (Array.isArray(p?.items) && p.items.length > 0) {
+    try {
+      const adapted = { ...adaptServerOrder(p), id: localId };
+      const adaptedItems = p.items.map((it: any) => adaptServerOrderItem(it, localId!, p));
+      orderRepo.upsertFromServer(adapted, adaptedItems);
+    } catch (e: any) {
+      logger.warn(`[EntityApplicator] Could not enrich Billiard order ${localId}: ${e?.message || e}`);
+    }
+  }
+
   // Update server-side status mirror (don't overwrite local status
   // unless the payload signals a refund/cancel terminal — those need
   // to be visible on the local row so Order History shows the right

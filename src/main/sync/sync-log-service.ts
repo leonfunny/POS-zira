@@ -15,6 +15,7 @@ import { randomUUID } from 'crypto';
 import { apiClient } from '../network/api-client';
 import { database } from '../database/database';
 import { localVariantImportsRepo } from '../database/repos/local-variant-imports-repo';
+import { billiardPosHandoffRepo } from '../database/repos/billiard-pos-handoff-repo';
 import { getSecureAuthToken, getConfigValue } from '../config/store';
 import { syncLogRepo, type LocalSyncLogRow, type SyncConflictRow } from './sync-log-repo';
 import { applyEntry, type SyncLogEntry } from './entity-applicators';
@@ -321,6 +322,7 @@ export class SyncLogService {
         }
 
         // Process results
+        let billiardSettlementChanged = false;
         database.transaction(() => {
           for (const r of result.results) {
             const entry = ready.find(e => e.entry.source_tx === r.source_tx)?.entry;
@@ -388,6 +390,11 @@ export class SyncLogService {
                    WHERE id = ?`,
                   [backendId, entry.entity_id],
                 );
+                const handoff = billiardPosHandoffRepo.getByOrderId(entry.entity_id);
+                if (handoff?.state === 'POS_PAID_SYNC_PENDING') {
+                  billiardPosHandoffRepo.markState(handoff.checkoutId, 'SETTLED');
+                  billiardSettlementChanged = true;
+                }
               }
             } else {
               syncLogRepo.markRejected(entry.id, r.code || 'UNKNOWN', r.detail || '');
@@ -407,6 +414,12 @@ export class SyncLogService {
           }
         });
         database.markDirty();
+        if (billiardSettlementChanged) {
+          const flush = await database.saveCoalesced();
+          if (!flush.success) {
+            throw new Error(`Billiard settlement was accepted but local durability failed: ${flush.error || 'database flush failed'}`);
+          }
+        }
 
         if (ready.length < pending.length) {
           logger.debug(`[SyncLog] Deferred ${pending.length - ready.length} entries waiting for local variant reconciliation`);

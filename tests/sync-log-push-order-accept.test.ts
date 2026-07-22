@@ -24,8 +24,16 @@ vi.mock('../src/main/database/database', () => ({
     run: vi.fn(),
     get: vi.fn(),
     save: vi.fn(),
+    saveCoalesced: vi.fn(),
     markDirty: vi.fn(),
     transaction: vi.fn((fn: () => void) => fn()),
+  },
+}));
+
+vi.mock('../src/main/database/repos/billiard-pos-handoff-repo', () => ({
+  billiardPosHandoffRepo: {
+    getByOrderId: vi.fn(),
+    markState: vi.fn(() => true),
   },
 }));
 
@@ -71,6 +79,7 @@ vi.mock('../src/main/logger', () => ({
 import { database } from '../src/main/database/database';
 import { apiClient } from '../src/main/network/api-client';
 import { syncLogRepo } from '../src/main/sync/sync-log-repo';
+import { billiardPosHandoffRepo } from '../src/main/database/repos/billiard-pos-handoff-repo';
 import { SyncLogService } from '../src/main/sync/sync-log-service';
 
 function makePendingOrderEntry(overrides: Partial<any> = {}) {
@@ -102,6 +111,7 @@ function makePendingOrderEntry(overrides: Partial<any> = {}) {
 describe('SyncLogService.pushToServer — order/created accept marks local order synced', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(database.saveCoalesced).mockResolvedValue({ success: true } as any);
     // First getPending returns a single pending order; subsequent calls
     // return [] so the push loop terminates after one batch.
     vi.mocked(syncLogRepo.getPending)
@@ -135,6 +145,22 @@ describe('SyncLogService.pushToServer — order/created accept marks local order
     // WHERE clause keys on the local entry.entity_id (last param).
     const params = orderUpdate![1] as unknown[];
     expect(params[params.length - 1]).toBe('order-1');
+  });
+
+  it('durably marks the Billiard handoff SETTLED on an accepted order create', async () => {
+    vi.mocked(billiardPosHandoffRepo.getByOrderId).mockReturnValue({
+      checkoutId: 'checkout-1',
+      state: 'POS_PAID_SYNC_PENDING',
+    } as any);
+    vi.mocked(apiClient.syncPush).mockResolvedValueOnce({
+      results: [{ source_tx: 'tx-uuid-1', accepted: true, seq: 11 }],
+    } as any);
+
+    const result = await new SyncLogService().pushToServer();
+
+    expect(result).toEqual({ accepted: 1, rejected: 0 });
+    expect(billiardPosHandoffRepo.markState).toHaveBeenCalledWith('checkout-1', 'SETTLED');
+    expect(database.saveCoalesced).toHaveBeenCalledTimes(1);
   });
 
   it('prefers a backend-supplied id over the local entry.entity_id', async () => {

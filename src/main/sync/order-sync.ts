@@ -1,6 +1,7 @@
 import { BrowserWindow } from 'electron';
 import { apiClient } from '../network/api-client';
 import { orderRepo } from '../database/repos/order-repo';
+import { billiardPosHandoffRepo } from '../database/repos/billiard-pos-handoff-repo';
 import { localVariantImportsRepo } from '../database/repos/local-variant-imports-repo';
 import { database } from '../database/database';
 import { getSecureAuthToken } from '../config/store';
@@ -174,6 +175,14 @@ export class OrderSync {
               return buildBackendOrderItem(item, () => serverVariantId);
             }),
         };
+        if (order.billiard_origin_json) {
+          try {
+            dto.billiardOrigin = JSON.parse(order.billiard_origin_json);
+            dto.clientAttemptId = order.client_attempt_id;
+          } catch {
+            throw new Error('Invalid persisted billiard order origin');
+          }
+        }
 
         // Skip if all items were filtered out
         if (dto.items.length === 0) {
@@ -229,17 +238,35 @@ export class OrderSync {
 
         // Finalize immediately — POS orders are paid at the counter, no draft stage.
         // This triggers stock deduction on the backend.
-        try {
-          const finishResult = await apiClient.finishOrder(token, backendId);
-          backendOrderNumber = getBackendOrderNumber(finishResult) ?? backendOrderNumber;
-          logger.info(`[OrderSync] Finished order ${backendId} → ${JSON.stringify(finishResult)?.substring(0, 200)}`);
-        } catch (e) {
-          logger.warn(`[OrderSync] finishOrder failed for ${backendId} (non-fatal): ${e}`);
+        if (!order.billiard_origin_json) {
+          try {
+            const finishResult = await apiClient.finishOrder(token, backendId);
+            backendOrderNumber = getBackendOrderNumber(finishResult) ?? backendOrderNumber;
+            logger.info(`[OrderSync] Finished order ${backendId} → ${JSON.stringify(finishResult)?.substring(0, 200)}`);
+          } catch (e) {
+            logger.warn(`[OrderSync] finishOrder failed for ${backendId} (non-fatal): ${e}`);
+          }
+        } else {
+          // The authoritative Billiard create endpoint atomically creates a
+          // DELIVERED order and settles checkoutId. Calling finish again is a
+          // false failure ("already finished"). A successful create response
+          // is the settlement acknowledgement for this origin.
+          logger.info(`[OrderSync] Billiard order ${backendId} was finalized atomically by createPosOrder`);
         }
 
         orderRepo.markSynced(order.id, backendId, backendOrderNumber);
+        const billiardHandoff = billiardPosHandoffRepo.getByOrderId(order.id);
+        if (billiardHandoff?.state === 'POS_PAID_SYNC_PENDING') {
+          billiardPosHandoffRepo.markState(billiardHandoff.checkoutId, 'SETTLED');
+        }
         database.run('UPDATE orders SET sync_error = NULL WHERE id = ?', [order.id]);
         database.markDirty();
+        if (billiardHandoff) {
+          const flush = await database.saveCoalesced();
+          if (!flush.success) {
+            throw new Error(`Billiard settlement was accepted but local durability failed: ${flush.error || 'database flush failed'}`);
+          }
+        }
         summary.synced++;
         summary.results.push({ orderId: order.id, orderNumber: backendOrderNumber ?? order.order_number, status: 'synced', backendId });
         logger.info(`[OrderSync] Synced order ${order.order_number} → backend ${backendId}`);

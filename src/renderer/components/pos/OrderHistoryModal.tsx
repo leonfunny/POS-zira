@@ -23,10 +23,19 @@ import ConfirmActionDialog from './ConfirmActionDialog';
 import Modal from '../shared/Modal';
 import { buildConfirmCopy, type ConfirmActionKind } from './confirm-action-copy';
 import {
+  buildRefundLineAmountBasis,
   calculateRefundLineAmount,
   getRefundLineUnitPrice,
 } from './refund-line-amount';
 import { calculateLineTotalGrosze, formatSaleQuantity, normalizeSaleUnit, normalizeSellBy } from '../../../shared/pos-sale';
+import type { BilliardPaymentIntent } from '../../../shared/billiard-pos-handoff';
+import {
+  canSubmitBilliardOwnerCorrection,
+  canShowBilliardOwnerCorrection,
+  createBilliardCorrectionRequestId,
+  hasBilliardCorrectionExternalSettlementRisk,
+  isBilliardCorrectionInvoiceLinked,
+} from './billiard-owner-correction';
 
 interface OrderRow {
   id: string;
@@ -53,6 +62,9 @@ interface OrderRow {
   sync_error?: string | null;
   sync_attempts?: number;
   has_fiscal?: number;
+  billiard_origin_json?: string | null;
+  requires_invoice?: boolean | null;
+  invoice_id?: string | null;
   _origin?: 'server';
 }
 
@@ -69,11 +81,19 @@ interface OrderItemRow {
   sell_by?: string | null;
   total: number;
   vat_rate: number;
+  billiard_json?: string | null;
+  inventory_policy?: string | null;
+  refund_policy?: string | null;
+  allocated_discount?: number | null;
+  payable_total?: number | null;
 }
 
 interface OrderHistoryModalProps {
   onClose: () => void;
   t: (key: string) => string;
+  shiftOpen: boolean;
+  shiftId?: string | null;
+  onBilliardReplacementReady?: (intent: BilliardPaymentIntent) => void;
 }
 
 type RefundStatus = 'none' | 'full' | 'partial';
@@ -117,6 +137,21 @@ const REFUND_REASONS = [
 function tOr(t: (key: string) => string, key: string, fallback: string): string {
   const value = t(key);
   return value && value !== key ? value : fallback;
+}
+
+function getBilliardLineMetadata(item: OrderItemRow): Record<string, any> | null {
+  if (!item.billiard_json) return null;
+  try {
+    const parsed = JSON.parse(item.billiard_json);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function isBilliardRefundForbidden(item: OrderItemRow): boolean {
+  const metadata = getBilliardLineMetadata(item);
+  return metadata?.refundPolicy === 'FORBIDDEN' || item.refund_policy === 'FORBIDDEN';
 }
 
 function confirmCopyBaseKey(titleKey: string): string {
@@ -240,6 +275,7 @@ function toGrosze(value: unknown, fallback = 0): number {
 }
 
 type RefundFallbackLine = {
+  billiardLineKey?: string;
   name?: string;
   quantity: number;
   refundAmount: number;
@@ -253,14 +289,17 @@ function getRefundSuccessLines(result: any, fallbackLines: RefundFallbackLine[])
   if (Array.isArray(result?.refundedLines) && result.refundedLines.length > 0) {
     return result.refundedLines
       .map((line: any): RefundBreakdownLine => {
+        const billiardLineKey = line.billiardLineKey ?? line.billiard_line_key ?? null;
         const variantId = line.variantId ?? line.variant_id ?? null;
         const sku = line.sku ?? null;
         const fallback = fallbackLines.find((candidate) => (
-          (variantId && candidate.variantId === variantId)
+          (billiardLineKey && candidate.billiardLineKey === billiardLineKey)
+          || (variantId && candidate.variantId === variantId)
           || (sku && candidate.sku === sku)
           || (line.name && candidate.name === line.name)
         ));
         return {
+          billiardLineKey: billiardLineKey ?? fallback?.billiardLineKey ?? null,
           orderItemId: line.orderItemId ?? line.order_item_id ?? null,
           variantId,
           sku: sku ?? fallback?.sku ?? null,
@@ -280,6 +319,7 @@ function getRefundSuccessLines(result: any, fallbackLines: RefundFallbackLine[])
   }
 
   return fallbackLines.map((line): RefundBreakdownLine => ({
+    billiardLineKey: line.billiardLineKey ?? null,
     variantId: line.variantId ?? null,
     sku: line.sku ?? null,
     name: line.name || '',
@@ -464,10 +504,12 @@ function RefundPanel({
   onCancel: () => void;
   onComplete: (options?: RefundPanelCompleteOptions) => void;
 }) {
-  const [refundType, setRefundType] = useState<'FULL' | 'PARTIAL'>('FULL');
+  const hasForbiddenBilliardLines = items.some(isBilliardRefundForbidden);
+  const isBilliardOrder = Boolean(order.billiard_origin_json) || items.some((item) => Boolean(getBilliardLineMetadata(item)));
+  const [refundType, setRefundType] = useState<'FULL' | 'PARTIAL'>(() => hasForbiddenBilliardLines ? 'PARTIAL' : 'FULL');
   const [selectedQtys, setSelectedQtys] = useState<Record<string, number>>({});
   const [weightQtyDrafts, setWeightQtyDrafts] = useState<Record<string, string>>({});
-  const [restock, setRestock] = useState(true);
+  const [restock, setRestock] = useState(() => !isBilliardOrder);
   const [reason, setReason] = useState('customerRequest');
   const [customReason, setCustomReason] = useState('');
   const [confirmStep, setConfirmStep] = useState(false);
@@ -485,7 +527,9 @@ function RefundPanel({
   const remainingTotal = getSafeRemainingTotal(order);
   const refundOverage = hasRefundOverage(order);
   const refundableResult = getRemainingRefundableItems(order, items);
-  const refundableItems = refundableResult.items;
+  const allRemainingItems = refundableResult.items;
+  const refundableItems = allRemainingItems.filter((item) => !isBilliardRefundForbidden(item));
+  const effectiveRestock = isBilliardOrder ? false : restock;
   const refundBlockedByMissingLines = refundableResult.unsafeMissingRefundLines;
   const refundBreakdownById = useMemo(
     () => new Map(getItemRefundBreakdowns(order, items).map((entry) => [entry.item.id, entry])),
@@ -493,12 +537,18 @@ function RefundPanel({
   );
   const getRefundAmountItem = (item: typeof refundableItems[number]) => {
     const breakdown = refundBreakdownById.get(item.id);
-    return {
+    const billiardMetadata = getBilliardLineMetadata(item);
+    return buildRefundLineAmountBasis({
       price: item.price,
-      quantity: item.maxQty,
-      total: breakdown?.remainingAmount ?? item.total,
+      quantity: item.quantity,
+      remainingQuantity: item.maxQty,
+      total: item.total,
+      // A Billiard discount is allocated per frozen line by the server. Keep
+      // that allocation authoritative through partial and repeated refunds.
+      authoritativePayableTotal: billiardMetadata ? item.payable_total : null,
+      refundedAmount: breakdown?.refundedAmount ?? 0,
       sell_by: item.sell_by,
-    };
+    });
   };
 
   const selectedRefundLines = refundableItems
@@ -506,6 +556,7 @@ function RefundPanel({
     .map(item => {
       const refundAmountItem = getRefundAmountItem(item);
       return {
+        billiardLineKey: getBilliardLineMetadata(item)?.lineKey ?? undefined,
         variantId: item.variant_id ?? undefined,
         sku: item.sku ?? undefined,
         name: item.name,
@@ -513,7 +564,7 @@ function RefundPanel({
         unit: normalizeSaleUnit({ sale_unit: item.sale_unit, sellBy: normalizeSellBy(item.sell_by) }),
         unitPrice: getRefundLineUnitPrice(refundAmountItem),
         refundAmount: calculateRefundLineAmount(refundAmountItem, selectedQtys[item.id]),
-        restock,
+        restock: effectiveRestock,
         vatRate: item.vat_rate,
       };
     });
@@ -523,11 +574,12 @@ function RefundPanel({
     : selectedRefundLines.reduce((sum, l) => sum + l.refundAmount, 0);
 
   const isValid = !refundOverage && !refundBlockedByMissingLines && (refundType === 'FULL'
-    ? remainingTotal > 0 && refundableItems.some(item => item.maxQty > 0)
+    ? !hasForbiddenBilliardLines && remainingTotal > 0 && refundableItems.some(item => item.maxQty > 0)
     : selectedRefundLines.length > 0 && computedRefundTotal > 0)
     && (reason !== 'other' || customReason.trim().length > 0);
 
   const setType = (next: 'FULL' | 'PARTIAL') => {
+    if (next === 'FULL' && hasForbiddenBilliardLines) return;
     resetRefundRequestId();
     setRefundType(next);
     setConfirmStep(false);
@@ -589,6 +641,7 @@ function RefundPanel({
         refundItems = refundableItems.filter(item => item.maxQty > 0).map(item => {
           const refundAmountItem = getRefundAmountItem(item);
           return {
+            billiardLineKey: getBilliardLineMetadata(item)?.lineKey ?? undefined,
             variantId: item.variant_id ?? undefined,
             sku: item.sku ?? undefined,
             name: item.name,
@@ -596,7 +649,7 @@ function RefundPanel({
             unit: normalizeSaleUnit({ sale_unit: item.sale_unit, sellBy: normalizeSellBy(item.sell_by) }),
             unitPrice: getRefundLineUnitPrice(refundAmountItem),
             refundAmount: calculateRefundLineAmount(refundAmountItem, item.maxQty),
-            restock,
+            restock: effectiveRestock,
             vatRate: item.vat_rate,
           };
         });
@@ -796,11 +849,16 @@ function RefundPanel({
 
       <div className="mt-4 grid grid-cols-2 gap-3">
         <button onClick={() => setType('FULL')}
+          disabled={hasForbiddenBilliardLines}
           className={`min-h-14 rounded-lg border px-4 text-left text-sm font-extrabold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-200 ${
-            refundType === 'FULL' ? 'border-red-600 bg-red-600 text-white' : 'border-slate-300 bg-white text-slate-800 hover:border-red-300 hover:bg-red-50'
+            hasForbiddenBilliardLines
+              ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
+              : refundType === 'FULL' ? 'border-red-600 bg-red-600 text-white' : 'border-slate-300 bg-white text-slate-800 hover:border-red-300 hover:bg-red-50'
           }`}>
           <span className="block">{tOr(t, 'pos.refund.full', 'Full Refund')}</span>
-          <span className="mt-0.5 block text-xs opacity-85">{formatMoney(remainingTotal, currency)}</span>
+          <span className="mt-0.5 block text-xs opacity-85">
+            {hasForbiddenBilliardLines ? 'Playing time is non-refundable' : formatMoney(remainingTotal, currency)}
+          </span>
         </button>
         <button onClick={() => setType('PARTIAL')}
           className={`min-h-14 rounded-lg border px-4 text-left text-sm font-extrabold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-200 ${
@@ -817,21 +875,30 @@ function RefundPanel({
           <div className="text-xs font-bold text-slate-500">{refundableItems.filter((item) => item.maxQty > 0).length}</div>
         </div>
         <div className="divide-y divide-slate-100">
-          {refundableItems.filter((item) => item.maxQty > 0).map(item => {
+          {allRemainingItems.filter((item) => item.maxQty > 0).map(item => {
             const qty = selectedQtys[item.id] ?? 0;
             const sellBy = normalizeSellBy(item.sell_by);
             const unit = normalizeSaleUnit({ sale_unit: item.sale_unit, sellBy });
             const refundAmountItem = getRefundAmountItem(item);
-            const effectiveQty = refundType === 'FULL' ? item.maxQty : qty;
+            const refundForbidden = isBilliardRefundForbidden(item);
+            const billiardMetadata = getBilliardLineMetadata(item);
+            const effectiveQty = refundForbidden ? 0 : (refundType === 'FULL' ? item.maxQty : qty);
             return (
               <div key={item.id} className="grid min-h-[72px] grid-cols-[minmax(0,1fr)_170px_120px] items-center gap-4 px-4 py-3">
                 <div className="min-w-0">
                   <div className="whitespace-normal break-words text-sm font-bold leading-5 text-slate-950">{item.name}</div>
+                  {billiardMetadata && (
+                    <div className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${refundForbidden ? 'bg-slate-200 text-slate-700' : 'bg-blue-50 text-blue-700'}`}>
+                      {billiardMetadata.kind}{refundForbidden ? ' · Non-refundable' : ' · No restock'}
+                    </div>
+                  )}
                   <div className="mt-1 text-xs font-medium text-slate-500">
                     {item.sku ? `${item.sku} · ` : ''}{formatMoney(getRefundLineUnitPrice(refundAmountItem), currency)} / {displaySaleUnit(unit, sellBy, t)} · {tOr(t, 'pos.refund.available', 'Available')} {formatSaleQuantity(item.maxQty, sellBy)} {displaySaleUnit(unit, sellBy, t)}
                   </div>
                 </div>
-                {refundType === 'FULL' ? (
+                {refundForbidden ? (
+                  <div className="text-right text-xs font-extrabold text-slate-500">Locked</div>
+                ) : refundType === 'FULL' ? (
                   <div className="text-right text-sm font-extrabold tabular-nums text-slate-800">
                     {formatSaleQuantity(item.maxQty, sellBy)} {displaySaleUnit(unit, sellBy, t)}
                   </div>
@@ -894,9 +961,9 @@ function RefundPanel({
           </select>
         </div>
         <label className="flex min-h-12 cursor-pointer items-center gap-3 self-end rounded-lg border border-slate-200 bg-slate-50 px-4 text-sm font-bold text-slate-700">
-          <input type="checkbox" checked={restock} onChange={e => { resetRefundRequestId(); setRestock(e.target.checked); }}
+          <input type="checkbox" checked={effectiveRestock} disabled={isBilliardOrder} onChange={e => { resetRefundRequestId(); setRestock(e.target.checked); }}
             className="h-5 w-5 rounded border-slate-300 text-brand-600 focus:ring-brand-200" />
-          {tOr(t, 'pos.refund.restock', 'Restock items to inventory')}
+          {isBilliardOrder ? 'Billiard refunds never restock inventory' : tOr(t, 'pos.refund.restock', 'Restock items to inventory')}
         </label>
       </div>
 
@@ -917,7 +984,7 @@ function RefundPanel({
 
       {confirmStep && (
         <div className="mt-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm font-bold text-red-800">
-          {tOr(t, 'pos.refund.confirmAsk', 'Are you sure?')} · {tOr(t, 'pos.refund.amount', 'Refund amount')}: {formatMoney(computedRefundTotal, currency)} · {restock
+          {tOr(t, 'pos.refund.confirmAsk', 'Are you sure?')} · {tOr(t, 'pos.refund.amount', 'Refund amount')}: {formatMoney(computedRefundTotal, currency)} · {effectiveRestock
             ? tOr(t, 'pos.refund.willRestock', 'Items will be restocked')
             : tOr(t, 'pos.refund.willNotRestock', 'Items will not be restocked')}
         </div>
@@ -1186,6 +1253,190 @@ function ServerActionsPanel({
   );
 }
 
+function BilliardOwnerCorrectionPanel({
+  order,
+  shiftOpen,
+  shiftId,
+  t,
+  onReplacementReady,
+}: {
+  order: OrderRow;
+  shiftOpen: boolean;
+  shiftId?: string | null;
+  t: (key: string) => string;
+  onReplacementReady: (intent: BilliardPaymentIntent) => void;
+}) {
+  const [reason, setReason] = useState('');
+  const [confirming, setConfirming] = useState(false);
+  const [externalReversalAcknowledged, setExternalReversalAcknowledged] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<ReprintStatus>(null);
+  const correctionRequestIdRef = useRef<string | null>(null);
+  const invoiceLinked = isBilliardCorrectionInvoiceLinked({
+    customerNip: order.customer_nip,
+    requiresInvoice: order.requires_invoice,
+    invoiceId: order.invoice_id,
+  });
+  const hasExternalSettlementRisk = hasBilliardCorrectionExternalSettlementRisk({
+    paymentMethod: order.payment_method,
+    paymentTendersJson: order.payment_tenders,
+    hasFiscal: order.has_fiscal,
+  });
+  const canSubmit = canSubmitBilliardOwnerCorrection({
+    reason,
+    shiftOpen,
+    shiftId,
+    invoiceLinked,
+    externalReversalAcknowledged,
+  }) && !busy;
+
+  useEffect(() => {
+    correctionRequestIdRef.current = null;
+    setExternalReversalAcknowledged(false);
+    setConfirming(false);
+    setStatus(null);
+  }, [order.id]);
+
+  const changeReason = (value: string) => {
+    setReason(value.slice(0, 500));
+    correctionRequestIdRef.current = null;
+    setConfirming(false);
+    setStatus(null);
+  };
+
+  const submit = async () => {
+    if (!canSubmit) return;
+    if (!confirming) {
+      setConfirming(true);
+      setStatus(null);
+      return;
+    }
+
+    setBusy(true);
+    setStatus(null);
+    try {
+      const correctionRequestId = correctionRequestIdRef.current ?? createBilliardCorrectionRequestId();
+      correctionRequestIdRef.current = correctionRequestId;
+      const result = await window.electronAPI.pos.orders.correctBilliard(order.id, {
+        correctionRequestId,
+        reason: reason.trim(),
+      });
+      if (!result?.success || !result.intent) {
+        const message = result?.code === 'BILLIARD_CORRECTION_INVOICE_BLOCKED'
+          ? tOr(t, 'pos.billiardCorrection.invoiceBlocked', 'This order has an invoice. Use the invoice correction workflow.')
+          : result?.code === 'BILLIARD_CORRECTION_ACTIVE_SHIFT_REQUIRED'
+            ? tOr(t, 'pos.billiardCorrection.shiftRequired', 'Open a synced POS shift before correcting this order.')
+            : result?.error || result?.durabilityError || tOr(t, 'pos.billiardCorrection.failed', 'Billiard correction failed');
+        setStatus({ type: 'error', message });
+        setConfirming(false);
+        return;
+      }
+
+      // Main has already durably mirrored the reversal and prepared the new
+      // checkout/hold. Route only its returned intent to the normal POS modal.
+      void window.electronAPI.pos.sync.orders().catch(() => undefined);
+      onReplacementReady(result.intent as BilliardPaymentIntent);
+    } catch (error: any) {
+      setStatus({ type: 'error', message: error?.message || tOr(t, 'pos.billiardCorrection.failed', 'Billiard correction failed') });
+      setConfirming(false);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="rounded-lg border border-amber-300 bg-amber-50 p-4">
+      <h3 className="text-sm font-extrabold text-amber-950">
+        {tOr(t, 'pos.billiardCorrection.title', 'Owner Billiard correction')}
+      </h3>
+      <p className="mt-1 text-xs font-medium text-amber-900">
+        {tOr(t, 'pos.billiardCorrection.hint', 'Fully reverse this paid order, then reopen its replacement checkout in the normal POS payment flow.')}
+      </p>
+
+      {invoiceLinked ? (
+        <div className="mt-3 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs font-bold text-red-800">
+          {tOr(t, 'pos.billiardCorrection.invoiceBlocked', 'This order has an invoice. Use the invoice correction workflow.')}
+        </div>
+      ) : (
+        <>
+          <label className="mt-3 block text-xs font-bold uppercase tracking-wide text-amber-900" htmlFor={`billiard-correction-${order.id}`}>
+            {tOr(t, 'pos.billiardCorrection.reason', 'Mandatory correction reason')}
+          </label>
+          <textarea
+            id={`billiard-correction-${order.id}`}
+            value={reason}
+            onChange={(event) => changeReason(event.target.value)}
+            disabled={busy}
+            rows={3}
+            maxLength={500}
+            className="mt-1 w-full resize-none rounded-md border border-amber-300 bg-white px-3 py-2 text-sm font-medium text-slate-900 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-200 disabled:opacity-60"
+          />
+          {!shiftOpen || !shiftId ? (
+            <div className="mt-2 text-xs font-bold text-red-700">
+              {tOr(t, 'pos.billiardCorrection.shiftRequired', 'Open a synced POS shift before correcting this order.')}
+            </div>
+          ) : null}
+          <div className={`mt-3 rounded-md border px-3 py-3 text-xs font-bold ${
+            hasExternalSettlementRisk
+              ? 'border-red-300 bg-red-50 text-red-900'
+              : 'border-amber-300 bg-white text-amber-950'
+          }`}>
+            {tOr(
+              t,
+              'pos.billiardCorrection.externalWarning',
+              'This reverses only the Zira ledger. It does not cancel an external card-terminal transaction or a fiscal receipt. Complete the terminal and fiscal correction separately.',
+            )}
+          </div>
+          <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-md border border-amber-300 bg-white px-3 py-3 text-xs font-bold text-slate-800">
+            <input
+              type="checkbox"
+              checked={externalReversalAcknowledged}
+              onChange={(event) => {
+                setExternalReversalAcknowledged(event.target.checked);
+                setConfirming(false);
+                setStatus(null);
+              }}
+              disabled={busy}
+              className="mt-0.5 h-4 w-4 shrink-0 accent-red-700"
+            />
+            <span>
+              {tOr(
+                t,
+                'pos.billiardCorrection.externalAcknowledge',
+                'I understand and will complete any required terminal refund and fiscal correction outside this action.',
+              )}
+            </span>
+          </label>
+          <button
+            type="button"
+            onClick={submit}
+            disabled={!canSubmit}
+            className={`mt-3 flex min-h-11 w-full items-center justify-center rounded-md px-4 text-sm font-extrabold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+              confirming ? 'bg-red-700 text-white hover:bg-red-800' : 'border border-amber-400 bg-white text-amber-950 hover:bg-amber-100'
+            }`}
+          >
+            {busy
+              ? tOr(t, 'pos.billiardCorrection.processing', 'Correcting...')
+              : confirming
+                ? tOr(t, 'pos.billiardCorrection.confirm', 'Confirm full reversal and reopen')
+                : tOr(t, 'pos.billiardCorrection.review', 'Review owner correction')}
+          </button>
+        </>
+      )}
+
+      {status && (
+        <div className={`mt-3 rounded-md border px-3 py-2 text-xs font-bold ${
+          status.type === 'ok'
+            ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+            : 'border-red-200 bg-red-50 text-red-800'
+        }`}>
+          {status.message}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function OrderMutationPanel({
   order,
   items,
@@ -1427,7 +1678,13 @@ function OrderMutationPanel({
   );
 }
 
-export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps) {
+export default function OrderHistoryModal({
+  onClose,
+  t,
+  shiftOpen,
+  shiftId,
+  onBilliardReplacementReady,
+}: OrderHistoryModalProps) {
   const { config } = useConfig();
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [totalOrders, setTotalOrders] = useState(0);
@@ -1923,6 +2180,13 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
     const isMirroring = mirroringId === order.id;
     const notSynced = !order.backend_id && order.synced !== 1;
     const canDeleteLocal = order._origin !== 'server' && !order.backend_id && order.synced !== 1 && order.synced !== 2;
+    const showBilliardOwnerCorrection = Boolean(onBilliardReplacementReady) && canShowBilliardOwnerCorrection({
+      role: config?.authUser?.role,
+      billiardOriginJson: order.billiard_origin_json,
+      backendId: order.backend_id,
+      synced: order.synced,
+      status: order.status,
+    });
     const requestCancelOrder = async () => {
       if (cancelling || isMirroring) return;
       if (!(await ensureMirrored(order))) return;
@@ -2203,6 +2467,16 @@ export default function OrderHistoryModal({ onClose, t }: OrderHistoryModalProps
             </div>
 
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
+              {showBilliardOwnerCorrection && onBilliardReplacementReady && !showRefund && (
+                <BilliardOwnerCorrectionPanel
+                  order={order}
+                  shiftOpen={shiftOpen}
+                  shiftId={shiftId}
+                  t={t}
+                  onReplacementReady={onBilliardReplacementReady}
+                />
+              )}
+
               {showRefund && canRefund && (
                 <RefundPanel
                   order={order}

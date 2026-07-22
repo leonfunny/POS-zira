@@ -2854,6 +2854,44 @@ export class ApiClient {
   }
 
   /**
+   * Owner-only, full financial reversal of a settled Billiard POS order.
+   * The response contains a new authoritative checkout for the replacement
+   * unpaid session; callers must route that bundle through the normal POS
+   * handoff instead of reconstructing it locally.
+   */
+  async correctBilliardOrder(
+    token: string,
+    orderId: string,
+    data: {
+      correctionRequestId: string;
+      reason: string;
+      shiftId: string;
+      tenderAllocations?: Array<{ method: string; amount: number }>;
+    },
+  ): Promise<Record<string, any>> {
+    const url = `${this.baseUrl}/api/v1/b2b/pos/orders/${encodeURIComponent(orderId)}/billiard-correction`;
+    const response = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(data),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(body.message || body.error || `HTTP ${response.status}`) as Error & {
+        code?: string;
+        status?: number;
+      };
+      error.code = body.error || body.code;
+      error.status = response.status;
+      throw error;
+    }
+    return body;
+  }
+
+  /**
    * Download receipt or invoice PDF for a POS order.
    * GET /api/v1/b2b/pos/orders/cash/:id/receipt-pdf
    * GET /api/v1/b2b/pos/orders/invoiced/:id/invoice-pdf?type=VAT|PROFORMA

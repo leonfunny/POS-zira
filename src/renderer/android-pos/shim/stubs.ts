@@ -327,6 +327,8 @@ export function buildOrdersNamespace({ transport }: StubDeps) {
       [orderId, data],
       () => ({ success: false as boolean, error: 'refund-unavailable' as string | undefined }),
     ),
+    // Owner Billiard correction requires the desktop durable handoff journal.
+    correctBilliard: async () => ({ success: false, error: 'desktop-only' }),
     downloadPdf: async () => ({ success: false, error: 'no-printer' }),
     // Delegate to the transport so a synced order is really invoiced server-side
     // + the local customer_nip is persisted (E3a); the S2 fake-success let an
@@ -614,8 +616,11 @@ export function buildExcludedPosNamespaces(deps: Pick<StubDeps, 'transport'> = {
     },
     hold: {
       create: async () => ({ success: true }),
+      createCurrent: async () => ({ success: false, error: 'desktop-only' }),
+      importLegacy: async () => ({ success: false, error: 'desktop-only' }),
       list: async () => [],
       get: async () => null,
+      recall: async () => ({ success: false, error: 'desktop-only' }),
       remove: async () => ({ success: true }),
     },
     // Boot subscriptions that fire unconditionally (S1 §7.8) — STUB no-op unsubs.

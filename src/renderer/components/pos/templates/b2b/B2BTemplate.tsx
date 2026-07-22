@@ -7,6 +7,7 @@ import ProductGrid from '../../ProductGrid';
 import Cart from '../../Cart';
 import PaymentModal from '../../PaymentModal';
 import CustomerPanel from './CustomerPanel';
+import type { RestoredCartReconciliation } from '../../../../../shared/billiard-pos-handoff';
 
 interface B2BCustomer {
   id: string;
@@ -25,9 +26,10 @@ interface B2BTemplateProps {
   t: (key: string) => string;
   language?: string;
   session: PosState['session'];
+  onRestoredTenderOutcomeUncertain?: (reconciliation: RestoredCartReconciliation) => void;
 }
 
-export default function B2BTemplate({ state, dispatch, t, language, session }: B2BTemplateProps) {
+export default function B2BTemplate({ state, dispatch, t, language, session, onRestoredTenderOutcomeUncertain }: B2BTemplateProps) {
   const [customers, setCustomers] = useState<B2BCustomer[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<B2BCustomer | null>(null);
   const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
@@ -46,9 +48,19 @@ export default function B2BTemplate({ state, dispatch, t, language, session }: B
     const value = t(key);
     return value !== key ? value : fallback;
   }, [t]);
-  const shiftPaymentOpen = session.isOpen;
+  const protectedCartBlocked = Boolean(
+    state.checkoutDraft.holdRecallPending
+    || (state.checkoutDraft.restoredInterruption
+      && (state.checkoutDraft.restoredInterruption.persistenceError
+        || state.checkoutDraft.restoredInterruption.tenderState !== 'READY')),
+  );
+  const shiftPaymentOpen = session.isOpen && !protectedCartBlocked;
   const shiftBlockedMessage = !session.isOpen
     ? tOr('pos.shift.openRequired', 'Open a shift to accept payments')
+    : state.checkoutDraft.holdRecallPending
+      ? 'Held cart recall is still being saved. Wait before paying.'
+      : protectedCartBlocked
+        ? 'This protected cart requires payment reconciliation. Do not charge again.'
     : undefined;
 
   // Load customers
@@ -264,6 +276,11 @@ export default function B2BTemplate({ state, dispatch, t, language, session }: B
           cart={cart}
           dispatch={dispatch}
           onClose={handleClosePayment}
+          onTenderOutcomeUncertain={(_message, reconciliation) => {
+            if (!reconciliation) return;
+            handleClosePayment();
+            onRestoredTenderOutcomeUncertain?.(reconciliation);
+          }}
           t={t}
           shiftId={session.shiftId}
           staffId={session.staffId}

@@ -29,6 +29,7 @@ import { useRemoteControl } from './hooks/useRemoteControl';
 import { useEntitlements } from './hooks/useEntitlements';
 import { useKeyboardManager } from './hooks/useKeyboardManager';
 import { resetProductAdminCapabilitiesCache, useProductAdminCapabilities } from './hooks/useProductAdminCapabilities';
+import type { BilliardPaymentIntent, RestoredCartReconciliation } from '../shared/billiard-pos-handoff';
 
 // DEFAULT_ENTITLEMENTS now comes from shared/types — single source shared
 // with the main process (the two copies used to diverge: pos true here,
@@ -67,6 +68,11 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [touchKeyboardHeight, setTouchKeyboardHeight] = useState(0);
   const [productEditRequest, setProductEditRequest] = useState<{ variantId: string; returnTo: Tab } | null>(null);
+  const [billiardPaymentIntent, setBilliardPaymentIntent] = useState<BilliardPaymentIntent | null>(null);
+  const [restoredCartReconciliation, setRestoredCartReconciliation] = useState<RestoredCartReconciliation | null>(null);
+  const billiardRecoveryKeyRef = useRef<string | null>(null);
+  const billiardAsyncGenerationRef = useRef(0);
+  const rendererAuthBoundaryRef = useRef<string | null>(null);
 
   // Hooks
   const { config, setConfig, updateConfig, saveConfig, refresh: refreshConfig } = useConfig();
@@ -75,6 +81,18 @@ export default function App() {
   const { entitlements, loading: entitlementsLoading, refresh: refreshEntitlements } = useEntitlements();
   const { visible: keyboardVisible, mode: keyboardMode, onKey, onBackspace, onDone } = useKeyboardManager();
   const { capabilities: productAdminCapabilities } = useProductAdminCapabilities(isAuthenticated);
+
+  const rendererAuthBoundaryKey = isAuthenticated
+    ? `${authUser?.id || ''}:${config?.salonId || authUser?.salonId || ''}:${(config as any)?.registerCode || config?.machineId || config?.agentId || ''}`
+    : 'anonymous';
+  useEffect(() => {
+    if (rendererAuthBoundaryRef.current === rendererAuthBoundaryKey) return;
+    rendererAuthBoundaryRef.current = rendererAuthBoundaryKey;
+    billiardAsyncGenerationRef.current += 1;
+    billiardRecoveryKeyRef.current = null;
+    setBilliardPaymentIntent(null);
+    setRestoredCartReconciliation(null);
+  }, [rendererAuthBoundaryKey]);
 
   // Kiosk swipe-to-exit (must be top-level — used inside conditional render blocks below)
   const swipeTouchStartY = useRef<number | null>(null);
@@ -135,6 +153,62 @@ export default function App() {
   // page for any tab force-enabled via Settings → Module Manager (the sidebar
   // shows the tab but its body never mounts).
   const isTabAvailable = useCallback((tab: Tab): boolean => visibleTabs.includes(tab), [visibleTabs]);
+
+  const handlePayBilliardInPos = useCallback(async (input: { posCheckout: any; tableName?: string | null }) => {
+    if (!visibleTabs.includes('pos')) {
+      throw new Error('Enable the POS module on this register before handing off a Billiard payment.');
+    }
+    const generation = ++billiardAsyncGenerationRef.current;
+    const result = await window.electronAPI.pos.billiardCheckout.prepare(input);
+    if (generation !== billiardAsyncGenerationRef.current) {
+      throw new Error('The signed-in POS user changed while the Billiard checkout was being prepared.');
+    }
+    if (!result?.success || !result.intent) {
+      throw new Error(result?.error || result?.durabilityError || 'Could not prepare the frozen Billiard cart in POS.');
+    }
+    setBilliardPaymentIntent(result.intent as BilliardPaymentIntent);
+    setActiveTab('pos');
+  }, [visibleTabs]);
+
+  // Crash/login recovery is scoped by the authenticated user and configured
+  // register. Main will only return an intent after it has activated the exact
+  // frozen cart (or verified that its local order is already committed).
+  useEffect(() => {
+    if (!isAuthenticated || authLoading || !visibleTabs.includes('pos')) return;
+    const recoveryKey = `${authUser?.id || ''}:${config?.salonId || authUser?.salonId || ''}:${(config as any)?.registerCode || config?.machineId || config?.agentId || ''}`;
+    if (!recoveryKey || billiardRecoveryKeyRef.current === recoveryKey) return;
+    billiardRecoveryKeyRef.current = recoveryKey;
+    const generation = ++billiardAsyncGenerationRef.current;
+    let cancelled = false;
+    void window.electronAPI.pos.billiardCheckout.recover().then((result: {
+      success: boolean;
+      intent?: BilliardPaymentIntent;
+      restoredCartReconciliation?: RestoredCartReconciliation;
+      error?: string;
+      durabilityError?: string;
+    }) => {
+      if (cancelled || generation !== billiardAsyncGenerationRef.current) return;
+      setRestoredCartReconciliation(result?.restoredCartReconciliation ?? null);
+      if (result?.restoredCartReconciliation) setActiveTab('pos');
+      if (!result?.success) {
+        rlog.warn(`[App] Billiard POS recovery deferred: ${result?.error || 'unknown error'}`);
+        return;
+      }
+      setBilliardPaymentIntent(result.intent ? result.intent as BilliardPaymentIntent : null);
+      if (result.intent) {
+        setActiveTab('pos');
+      }
+    }).catch((err: unknown) => {
+      if (cancelled || generation !== billiardAsyncGenerationRef.current) return;
+      rlog.warn('[App] Billiard POS recovery failed:', err);
+    });
+    return () => {
+      cancelled = true;
+      if (generation === billiardAsyncGenerationRef.current) {
+        billiardAsyncGenerationRef.current += 1;
+      }
+    };
+  }, [authLoading, authUser?.id, authUser?.salonId, config?.agentId, config?.machineId, (config as any)?.registerCode, config?.salonId, isAuthenticated, visibleTabs]);
 
   // Ensure activeTab is visible, otherwise switch to first visible tab
   useEffect(() => {
@@ -250,15 +324,17 @@ export default function App() {
     }
   };
 
-  // Clear renderer-side transient state (held orders, connection status)
+  // Clear renderer-side transient state (connection status only). Legacy
+  // held carts are removed solely after their durable SQLite import succeeds.
   // Note: per-user cart (pos.activeCart.<userId>) is intentionally preserved
   // so it restores when the same user logs back in.
   const clearRendererState = useCallback(() => {
     resetProductAdminCapabilitiesCache();
+    billiardAsyncGenerationRef.current += 1;
+    billiardRecoveryKeyRef.current = null;
+    setBilliardPaymentIntent(null);
+    setRestoredCartReconciliation(null);
     setProductEditRequest(null);
-    try {
-      window.localStorage.removeItem('pos.heldCarts');
-    } catch {}
     setConnectionStatus({ connected: false });
     setDeviceStatus(null);
   }, []);
@@ -416,7 +492,23 @@ export default function App() {
           className="flex-1 overflow-y-auto"
           style={{ paddingBottom: posFullscreenKeyboardInset > 0 ? `${posFullscreenKeyboardInset}px` : '0' }}
         >
-          <POSLayout />
+          <POSLayout
+            billiardPaymentIntent={billiardPaymentIntent}
+            restoredCartReconciliation={restoredCartReconciliation}
+            canResolveUncertainTender={String(authUser?.role || '').toUpperCase() === 'OWNER'}
+            onBilliardTenderResolved={(intent) => {
+              setBilliardPaymentIntent(intent);
+              setRestoredCartReconciliation(null);
+            }}
+            onRestoredTenderResolved={() => setRestoredCartReconciliation(null)}
+            onRestoredCartTenderOutcomeUncertain={(reconciliation) => {
+              setRestoredCartReconciliation(reconciliation);
+              setActiveTab('pos');
+            }}
+            onBilliardPaymentIntentConsumed={(nonce) => {
+              setBilliardPaymentIntent((current) => current?.nonce === nonce ? null : current);
+            }}
+          />
         </div>
         <TouchKeyboard
           visible={keyboardVisible}
@@ -506,6 +598,21 @@ export default function App() {
                 <POSLayout
                   onFullscreen={() => { setIsPosFullscreen(true); window.electronAPI.window.setKiosk(true); }}
                   onEditProduct={canEditProductsFromSale ? (variantId) => requestProductEdit(variantId, 'pos') : undefined}
+                  billiardPaymentIntent={billiardPaymentIntent}
+                  restoredCartReconciliation={restoredCartReconciliation}
+                  canResolveUncertainTender={String(authUser?.role || '').toUpperCase() === 'OWNER'}
+                  onBilliardTenderResolved={(intent) => {
+                    setBilliardPaymentIntent(intent);
+                    setRestoredCartReconciliation(null);
+                  }}
+                  onRestoredTenderResolved={() => setRestoredCartReconciliation(null)}
+                  onRestoredCartTenderOutcomeUncertain={(reconciliation) => {
+                    setRestoredCartReconciliation(reconciliation);
+                    setActiveTab('pos');
+                  }}
+                  onBilliardPaymentIntentConsumed={(nonce) => {
+                    setBilliardPaymentIntent((current) => current?.nonce === nonce ? null : current);
+                  }}
                 />
               )}
               {activeTab === 'label' && isTabAvailable('label') && (
@@ -515,7 +622,10 @@ export default function App() {
                 <SelfCheckoutTab language={(config?.language as Language) || 'en'} />
               )}
               {activeTab === 'billiard' && isTabAvailable('billiard') && (
-                <BilliardFloorPlan language={(config?.language as Language) || 'en'} />
+                <BilliardFloorPlan
+                  language={(config?.language as Language) || 'en'}
+                  onPayInPos={handlePayBilliardInPos}
+                />
               )}
               {activeTab === 'chat' && isTabAvailable('chat') && (
                 <Chat language={(config?.language as Language) || 'en'} />

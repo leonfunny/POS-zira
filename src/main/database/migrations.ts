@@ -1715,4 +1715,80 @@ export const migrations: Migration[] = [
       ALTER TABLE billiard_sessions ADD COLUMN payload_json TEXT;
     `,
   },
+  {
+    version: 60,
+    name: 'billiard_pos_checkout_handoff',
+    up: `
+      ALTER TABLE orders ADD COLUMN client_attempt_id TEXT;
+      ALTER TABLE orders ADD COLUMN billiard_origin_json TEXT;
+      ALTER TABLE order_items ADD COLUMN billiard_json TEXT;
+      ALTER TABLE order_items ADD COLUMN inventory_policy TEXT;
+      ALTER TABLE order_items ADD COLUMN refund_policy TEXT;
+      ALTER TABLE order_items ADD COLUMN allocated_discount INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE order_items ADD COLUMN payable_total INTEGER;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_client_attempt_id
+        ON orders(client_attempt_id) WHERE client_attempt_id IS NOT NULL;
+
+      CREATE TABLE IF NOT EXISTS pos_billiard_handoffs (
+        checkout_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        order_id TEXT NOT NULL UNIQUE,
+        client_attempt_id TEXT NOT NULL UNIQUE,
+        salon_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        register_id TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('POS_READY', 'POS_PAYMENT_OPEN', 'POS_PAID_SYNC_PENDING', 'SETTLED')),
+        snapshot_json TEXT NOT NULL,
+        interrupted_hold_id TEXT,
+        auto_open_consumed INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_pos_billiard_handoffs_recovery
+        ON pos_billiard_handoffs(salon_id, user_id, register_id, state, updated_at);
+      CREATE INDEX IF NOT EXISTS idx_pos_billiard_handoffs_session
+        ON pos_billiard_handoffs(session_id, created_at);
+    `,
+  },
+  {
+    version: 61,
+    name: 'billiard_pos_tender_boundary',
+    // SQLite cannot alter a CHECK constraint in place. Rebuild the one local
+    // journal table and preserve every row before enabling the two tender
+    // boundary states used by crash recovery.
+    up: `
+      CREATE TABLE pos_billiard_handoffs_v61 (
+        checkout_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        order_id TEXT NOT NULL UNIQUE,
+        client_attempt_id TEXT NOT NULL UNIQUE,
+        salon_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        register_id TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('POS_READY', 'POS_PAYMENT_OPEN', 'POS_TENDER_COMMITTING', 'POS_TENDER_UNCERTAIN', 'POS_PAID_SYNC_PENDING', 'SETTLED')),
+        snapshot_json TEXT NOT NULL,
+        interrupted_hold_id TEXT,
+        auto_open_consumed INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO pos_billiard_handoffs_v61 (
+        checkout_id, session_id, order_id, client_attempt_id,
+        salon_id, user_id, register_id, state, snapshot_json,
+        interrupted_hold_id, auto_open_consumed, created_at, updated_at
+      )
+      SELECT
+        checkout_id, session_id, order_id, client_attempt_id,
+        salon_id, user_id, register_id, state, snapshot_json,
+        interrupted_hold_id, auto_open_consumed, created_at, updated_at
+      FROM pos_billiard_handoffs;
+      DROP TABLE pos_billiard_handoffs;
+      ALTER TABLE pos_billiard_handoffs_v61 RENAME TO pos_billiard_handoffs;
+      CREATE INDEX IF NOT EXISTS idx_pos_billiard_handoffs_recovery
+        ON pos_billiard_handoffs(salon_id, user_id, register_id, state, updated_at);
+      CREATE INDEX IF NOT EXISTS idx_pos_billiard_handoffs_session
+        ON pos_billiard_handoffs(session_id, created_at);
+    `,
+  },
 ];

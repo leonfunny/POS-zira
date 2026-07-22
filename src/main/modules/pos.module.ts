@@ -17,7 +17,12 @@ import { SERVICE_TOKENS } from '../core/tokens';
 import { repairOrphanBookings } from '../sync/booking-sync';
 import { PosStore } from '../pos/pos-store';
 import { PaymentController, FiscalReceiptJournalInput, ReceiptPrintJournalInput } from '../pos/payment-controller';
-import { buildBackendOrderItem, getLineSaleQuantity, getLineSaleUnit, getLineSellBy, getLineTotalGrosze } from '../pos/order-line-contract';
+import {
+  assertTenderFiscalCompatibilityForProtocol,
+  hasTenderFiscalDiscount,
+  type TenderFiscalLine,
+} from '../pos/fiscal-tender-preflight';
+import { buildBackendOrderItem, getLineSaleQuantity, getLineSaleUnit, getLineSellBy, getLineTotalGrosze, shouldDecrementStockAtCheckout } from '../pos/order-line-contract';
 import { submitSharedReceiptPrint } from '../printing/shared-receipt-printer';
 import { getSharedFiscalPrinterStatus, submitSharedFiscalPrint } from '../printing/shared-fiscal-printer';
 import { toCashDrawerIpcResult } from '../pos/cash-drawer-ipc-result';
@@ -25,12 +30,16 @@ import {
   buildRefundMutationError,
   getRefundBackendResponseSummary,
   allocateRefundTenders,
+  getRefundLinesForRequest,
   mergeRefundLines,
+  shouldApplyRefundRequestLocally,
   toRefundBackendPayload,
   validateRefundBackendResponse,
   type RefundBackendValidationResult,
   type RefundIpcPayload,
 } from '../pos/refund-backend-payload';
+import { sanitizeBilliardRefundRequest } from '../pos/billiard-refund-policy';
+import { assertPosPaymentAccounting, assertProtectedPosPaymentMethods } from '../pos/payment-accounting';
 import { canReconcileActiveShift, ShiftController } from '../pos/shift-controller';
 import { toQuickAddVariantRow } from '../pos/quick-add-product';
 import {
@@ -105,6 +114,34 @@ import { tableRepo } from '../database/repos/table-repo';
 import { customerRepo } from '../database/repos/customer-repo';
 import { staffRepo } from '../database/repos/staff-repo';
 import { holdOrderRepo } from '../database/repos/hold-repo';
+import { billiardPosHandoffRepo } from '../database/repos/billiard-pos-handoff-repo';
+import {
+  assertBilliardCheckoutSnapshotIntegrity,
+  assertBilliardCorrectionHandoffPreflight,
+  adoptPosCheckoutSnapshotScope,
+  buildBilliardInterruptionHoldPayload,
+  buildBilliardCheckoutSnapshot,
+  capturePosCheckoutSnapshot,
+  currentPosSnapshotScope,
+  hasEquivalentOrdinaryCart,
+  isActiveBilliardCheckoutSnapshot,
+  isActiveRestoredCartSnapshot,
+  isValidRestoredCartCheckoutJournal,
+  getRestorableBilliardInterruptionSnapshot,
+  restoredCartRecoveryDisposition,
+  sameRestoredCartCheckoutIdentity,
+  samePosSalonRegister,
+  samePosSnapshotScope,
+  withRestoredInterruptionMarker,
+  withoutRestoredInterruptionMarker,
+  type PosSnapshotScope,
+} from '../pos/billiard-pos-handoff';
+import { PosAuthEpochGuard, type PosAuthContext } from '../pos/pos-auth-epoch';
+import {
+  isBilliardCorrectionSourceForOwner,
+  resolveBilliardCorrectionCommand,
+} from '../pos/billiard-correction-journal';
+import { buildLegacyHeldCartImport } from '../pos/legacy-held-cart';
 import { quickKeyLayoutRepo } from '../database/repos/quickkey-layout-repo';
 import { checkinRepo } from '../database/repos/checkin-repo';
 import { bookingRepo } from '../database/repos/booking-repo';
@@ -178,7 +215,7 @@ import {
 } from '../../shared/kitchen-self-order';
 import { resolveCustomerDisplayProfile } from '../../shared/customer-display-profile';
 import { seedIfEmpty } from '../database/seed';
-import { adaptServerOrder, adaptServerOrderItem, normalizeRefundLinesJson } from '../sync/pos-order-adapter';
+import { adaptServerOrder, adaptServerOrderItem, normalizeRefundLinesJson, toGrosze } from '../sync/pos-order-adapter';
 import type { SyncLogService } from '../sync/sync-log-service';
 import { notifyPosRenderers } from '../windows/notify-pos-renderers';
 import {
@@ -190,6 +227,48 @@ import {
   type WalkInBookingInput,
 } from '../sync/booking-sync';
 import logger from '../logger';
+import {
+  normalizeBilliardPosCheckout,
+  POS_CHECKOUT_SNAPSHOT_VERSION,
+  requiresBilliardTenderReconciliation,
+  type BilliardCartLineMetadata,
+  type BilliardPaymentIntent,
+  type BilliardPosCheckoutLine,
+  type PosHoldPayload,
+  type ResolveUncertainTenderInput,
+  type RestoredCartCheckoutJournal,
+  type RestoredCartReconciliation,
+  type TenderNoPaymentResolutionAudit,
+} from '../../shared/billiard-pos-handoff';
+
+type BilliardHandoffRecord = NonNullable<ReturnType<typeof billiardPosHandoffRepo.get>>;
+
+function billiardLineMetadata(line: BilliardPosCheckoutLine): BilliardCartLineMetadata {
+  return {
+    kind: line.kind,
+    sessionItemId: line.sessionItemId,
+    lineKey: line.lineKey,
+    durationMinutes: line.durationMinutes,
+    displayName: line.displayName,
+    inventoryPolicy: line.inventoryPolicy,
+    refundPolicy: line.refundPolicy,
+    sellBy: line.sellBy,
+    saleUnit: line.saleUnit,
+    grossTotalGrosze: line.grossTotalGrosze,
+    allocatedDiscountGrosze: line.allocatedDiscountGrosze,
+    payableGrosze: line.payableGrosze,
+  };
+}
+
+function parseBilliardJson(value: unknown, label: string): Record<string, any> {
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('invalid');
+    return parsed as Record<string, any>;
+  } catch {
+    throw new Error(`Invalid ${label} Billiard metadata.`);
+  }
+}
 
 function getExternalProductLookupOptions(): ExternalProductLookupOptions {
   return {
@@ -354,6 +433,8 @@ type NailTurnCheckoutGroup = {
 function moneyGroszeToPln(grosze: number): number {
   return Math.max(0, Math.round(grosze)) / 100;
 }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function positiveGrosze(value: unknown): number {
   const amount = Math.round(Number(value) || 0);
@@ -524,9 +605,39 @@ export class PosModule extends BaseModule {
   private fiscalReceiptSyncInFlight = false;
   private productAdminMutationOutbox: ProductAdminMutationOutbox | null = null;
   private productAdminMutationReplayTimer: ReturnType<typeof setInterval> | null = null;
+  private billiardHandoffInFlight = new Map<string, Promise<any>>();
+  private restoredCartDispatchQueue: Promise<void> = Promise.resolve();
+  private frozenRestoredCartHolds = new Set<string>();
+  private posAuthEpoch = new PosAuthEpochGuard();
+  private holdRecallInFlight: { holdId: string; authContext: PosAuthContext } | null = null;
 
   constructor(private container: ServiceContainer) {
     super();
+  }
+
+  private capturePosAuthContext(scope = currentPosSnapshotScope(getConfig())): PosAuthContext {
+    return this.posAuthEpoch.capture(scope);
+  }
+
+  private isPosAuthContextCurrent(context: PosAuthContext): boolean {
+    try {
+      const current = currentPosSnapshotScope(getConfig());
+      return this.posAuthEpoch.isCurrent(context, current);
+    } catch {
+      return false;
+    }
+  }
+
+  /** Must match PaymentController's local-first fiscal route selection. */
+  private getLocalPrinterForType(type: string): any | null {
+    const hardware = this.container.getOptional<any>(SERVICE_TOKENS.HARDWARE_MODULE);
+    const printer = typeof hardware?.getPrinterForType === 'function'
+      ? hardware.getPrinterForType(type as PrinterType)
+      : null;
+    if (printer) return printer;
+
+    const printers = this.container.getOptional<Record<string, any>>(SERVICE_TOKENS.PRINTERS) || {};
+    return printers[type] || null;
   }
 
   async init(): Promise<void> {
@@ -536,16 +647,7 @@ export class PosModule extends BaseModule {
     this.windowManager = new WindowManager(this.posStore);
 
     // Get printer accessor from hardware module
-    const getPrinterForType = (type: string) => {
-      const hardware = this.container.getOptional<any>(SERVICE_TOKENS.HARDWARE_MODULE);
-      const printer = typeof hardware?.getPrinterForType === 'function'
-        ? hardware.getPrinterForType(type as PrinterType)
-        : null;
-      if (printer) return printer;
-
-      const printers = this.container.getOptional<Record<string, any>>(SERVICE_TOKENS.PRINTERS) || {};
-      return printers[type] || null;
-    };
+    const getPrinterForType = (type: string) => this.getLocalPrinterForType(type);
     const isConnected = () => {
       const socket = this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET);
       return socket?.isConnected() || false;
@@ -1017,6 +1119,796 @@ export class PosModule extends BaseModule {
     return week ? { week, authMode: 'agent' } : null;
   }
 
+  private applyBilliardHandoffSnapshot(record: NonNullable<ReturnType<typeof billiardPosHandoffRepo.get>>, scope: ReturnType<typeof currentPosSnapshotScope>): void {
+    if (!this.posStore || !samePosSnapshotScope(record.checkoutSnapshot, scope)) {
+      throw new Error('Billiard checkout belongs to a different salon, user, or register.');
+    }
+    const configuredMode = String(getConfig().posMode || 'retail');
+    if (record.checkoutSnapshot.posMode !== configuredMode) {
+      throw new Error(`This checkout was frozen in ${record.checkoutSnapshot.posMode} mode. Switch POS back to that mode before resuming it.`);
+    }
+    assertBilliardCheckoutSnapshotIntegrity(record);
+    this.posStore.dispatch({
+      type: 'state/replaceCheckoutSnapshot',
+      payload: { snapshot: record.checkoutSnapshot },
+    });
+    if (!isActiveBilliardCheckoutSnapshot(this.posStore.getState(), record.checkoutSnapshot)) {
+      throw new Error('POS refused to activate the exact frozen Billiard cart.');
+    }
+  }
+
+  private billiardIntent(record: NonNullable<ReturnType<typeof billiardPosHandoffRepo.get>>, recovered = false): BilliardPaymentIntent {
+    const tenderOutcomeUncertain = requiresBilliardTenderReconciliation(record.state);
+    return {
+      checkoutId: record.checkoutId,
+      sessionId: record.sessionId,
+      orderId: record.orderId,
+      clientAttemptId: record.clientAttemptId,
+      nonce: randomUUID(),
+      shouldAutoOpen: !tenderOutcomeUncertain && !record.autoOpenConsumed && record.state === 'POS_READY',
+      recovered,
+      tenderOutcomeUncertain: tenderOutcomeUncertain || undefined,
+    };
+  }
+
+  private assertBilliardOrderLines(
+    record: BilliardHandoffRecord,
+    order: Record<string, any>,
+    items: Array<Record<string, any>>,
+  ): void {
+    assertBilliardCheckoutSnapshotIntegrity(record);
+    const savedCart = (record.checkoutSnapshot.state as any)?.cart;
+    const expectedSubtotal = record.bundle.lines.reduce((sum, line) => sum + line.grossTotalGrosze, 0);
+    if (
+      String(order.id || '') !== record.orderId
+      || String(order.client_attempt_id || '') !== record.clientAttemptId
+      || Number(order.subtotal) !== expectedSubtotal
+      || Number(order.discount || 0) !== record.bundle.discountGrosze
+      || Number(order.tax || 0) !== Number(savedCart?.tax || 0)
+      || Number(order.total) !== record.bundle.totalGrosze
+      || items.length !== record.bundle.lines.length
+    ) {
+      throw new Error('Billiard order totals or identity do not match the frozen checkout.');
+    }
+
+    const byLineKey = new Map<string, Record<string, any>>();
+    for (const item of items) {
+      const metadata = parseBilliardJson(item.billiard_json, 'order-line');
+      const lineKey = String(metadata.lineKey || '');
+      if (!lineKey || byLineKey.has(lineKey)) {
+        throw new Error('Billiard order contains a missing or duplicate line key.');
+      }
+      byLineKey.set(lineKey, item);
+    }
+
+    for (const line of record.bundle.lines) {
+      const item = byLineKey.get(line.lineKey);
+      if (!item) throw new Error(`Billiard order is missing frozen line ${line.lineKey}.`);
+      const metadata = parseBilliardJson(item.billiard_json, 'order-line');
+      const expectedMetadata = billiardLineMetadata(line);
+      if (
+        JSON.stringify(metadata) !== JSON.stringify(expectedMetadata)
+        || String(item.id || '') !== `${record.orderId}:${line.lineKey}`
+        || String(item.order_id || '') !== record.orderId
+        || String(item.variant_id || '') !== line.variantId
+        || String(item.name || '') !== line.displayName
+        || String(item.sku ?? '') !== String(line.sku ?? '')
+        || Number(item.price) !== line.unitPriceGrosze
+        || Number(item.quantity) !== line.quantity
+        || Number(item.sale_quantity ?? item.quantity) !== line.quantity
+        || String(item.sell_by || '') !== line.sellBy
+        || String(item.sale_unit || '') !== line.saleUnit
+        || Number(item.total) !== line.grossTotalGrosze
+        || Number(item.vat_rate) !== line.vatRate
+        || String(item.inventory_policy || '') !== line.inventoryPolicy
+        || String(item.refund_policy || '') !== line.refundPolicy
+        || Number(item.allocated_discount || 0) !== line.allocatedDiscountGrosze
+        || Number(item.payable_total) !== line.payableGrosze
+      ) {
+        throw new Error(`Billiard order line ${line.lineKey} differs from the frozen server snapshot.`);
+      }
+    }
+  }
+
+  private resolveBilliardOrderRequest(
+    order: Record<string, any>,
+    items: Array<Record<string, any>>,
+    requireActiveCart: boolean,
+  ): BilliardHandoffRecord | null {
+    const hasBilliardData = Boolean(
+      order?.billiard_origin_json
+      || items.some((item) => item?.billiard_json),
+    );
+    if (!hasBilliardData) {
+      if (String(order?.client_attempt_id || '').startsWith('billiard:')) {
+        throw new Error('Billiard client attempt is missing its frozen order origin.');
+      }
+      return null;
+    }
+
+    const origin = parseBilliardJson(order?.billiard_origin_json, 'order-origin');
+    if (origin.type !== 'BILLIARD_SESSION') throw new Error('Unsupported Billiard order origin.');
+    const checkoutId = String(origin.checkoutId || '');
+    const record = billiardPosHandoffRepo.get(checkoutId);
+    if (!record) throw new Error('Billiard checkout safety journal was not found.');
+    const scope = currentPosSnapshotScope(getConfig());
+    if (
+      record.salonId !== scope.salonId
+      || record.userId !== scope.userId
+      || record.registerId !== scope.registerId
+      || origin.sessionId !== record.sessionId
+      || Number(origin.snapshotVersion) !== record.bundle.schemaVersion
+      || order.client_attempt_id !== record.clientAttemptId
+    ) {
+      throw new Error('Billiard order does not belong to this frozen checkout and register.');
+    }
+    if (record.state === 'SETTLED' && !orderRepo.getById(record.orderId)) {
+      throw new Error('A settled Billiard checkout cannot create another local order.');
+    }
+    if (requireActiveCart) {
+      if (record.state !== 'POS_TENDER_COMMITTING') {
+        throw new Error(`Billiard tender is not authorized from state ${record.state}.`);
+      }
+      if (!this.posStore || !isActiveBilliardCheckoutSnapshot(this.posStore.getState(), record.checkoutSnapshot)) {
+        throw new Error('The active POS cart does not exactly match this frozen Billiard checkout.');
+      }
+    }
+    this.assertBilliardOrderLines(record, order, items);
+    return record;
+  }
+
+  private assertExistingBilliardOrder(record: BilliardHandoffRecord): void {
+    const existing = orderRepo.getById(record.orderId);
+    if (!existing) throw new Error('Committed Billiard order is missing locally.');
+    let origin: Record<string, any>;
+    try { origin = JSON.parse(existing.billiard_origin_json || ''); }
+    catch { throw new Error('Committed Billiard order has invalid origin metadata.'); }
+    if (
+      existing.client_attempt_id !== record.clientAttemptId
+      || origin.type !== 'BILLIARD_SESSION'
+      || origin.checkoutId !== record.checkoutId
+      || origin.sessionId !== record.sessionId
+      || Number(origin.snapshotVersion) !== record.bundle.schemaVersion
+    ) {
+      throw new Error('Existing local order conflicts with the Billiard checkout identity.');
+    }
+    this.assertBilliardOrderLines(record, existing as any, orderRepo.getItemsByOrderId(record.orderId) as any);
+  }
+
+  private assertRestoredCartOrderRequest(
+    context: NonNullable<ReturnType<PosStore['getState']>['checkoutDraft']['restoredInterruption']>,
+    payload: PosHoldPayload,
+    order: Record<string, any>,
+    items: Array<Record<string, any>>,
+  ): RestoredCartCheckoutJournal {
+    const journal = payload.restoredCheckout;
+    if (!this.posStore || !isValidRestoredCartCheckoutJournal(journal)) {
+      throw new Error('Restored-cart payment journal is invalid.');
+    }
+    if (!sameRestoredCartCheckoutIdentity(context, journal)) {
+      throw new Error('Renderer restored-cart identity does not match the main-process journal.');
+    }
+    if (
+      String(order.id || '') !== journal.orderId
+      || String(order.client_attempt_id || '') !== journal.clientAttemptId
+      || order.billiard_origin_json != null
+    ) {
+      throw new Error('Restored-cart order identity was not issued by Electron main.');
+    }
+    if (journal.state !== 'TENDER_COMMITTING') {
+      throw new Error(`Restored-cart tender is not authorized from state ${journal.state}.`);
+    }
+    const state = this.posStore.getState();
+    if (!isActiveRestoredCartSnapshot(state, payload.snapshot)) {
+      throw new Error('The active restored cart does not exactly match its durable protected snapshot.');
+    }
+    const cart = state.cart;
+    if (
+      Number(order.subtotal) !== cart.subtotal
+      || Number(order.discount) !== cart.discount
+      || Number(order.tax) !== cart.tax
+      || Number(order.total) !== cart.total
+      || items.length !== cart.items.length
+    ) {
+      throw new Error('Restored-cart order totals do not match the main-process cart.');
+    }
+    cart.items.forEach((cartItem, index) => {
+      const item = items[index];
+      if (
+        !item
+        || String(item.variant_id || '') !== String(cartItem.variantId || '')
+        || String(item.name || '') !== String(cartItem.name || '')
+        || Number(item.price) !== cartItem.price
+        || Number(item.quantity) !== cartItem.quantity
+        || Number(item.total) !== cartItem.total
+        || Number(item.vat_rate ?? 23) !== Number(cartItem.vatRate ?? 23)
+      ) {
+        throw new Error(`Restored-cart order line ${index + 1} does not match the main-process cart.`);
+      }
+    });
+    return journal;
+  }
+
+  private assertExistingRestoredCartOrder(journal: RestoredCartCheckoutJournal): void {
+    const existing = orderRepo.getById(journal.orderId);
+    if (!existing || existing.client_attempt_id !== journal.clientAttemptId || existing.billiard_origin_json != null) {
+      throw new Error('Existing local order conflicts with the restored-cart payment identity.');
+    }
+  }
+
+  private scopedBilliardInterruptionHolds(scope = currentPosSnapshotScope(getConfig())) {
+    const posMode = String(getConfig().posMode || 'retail');
+    return holdOrderRepo.listDetailed().filter((held) => (
+      held.payload.protected === true
+      && held.payload.holdReason === 'BILLIARD_INTERRUPTION'
+      && held.payload.snapshot?.posMode === posMode
+      && samePosSnapshotScope(held.payload.snapshot, scope)
+    ));
+  }
+
+  private discoverOwnerUncertainRestoredCart(scope: PosSnapshotScope): {
+    reconciliation: RestoredCartReconciliation;
+    changed: boolean;
+  } | null {
+    const found = holdOrderRepo.listDetailed().find((held) => {
+      const journal = held.payload?.restoredCheckout;
+      return held.payload?.protected === true
+        && held.payload?.holdReason === 'BILLIARD_INTERRUPTION'
+        && held.payload?.restoreState === 'ACTIVE_CART_BACKUP'
+        && samePosSalonRegister(held.payload.snapshot, scope)
+        && isValidRestoredCartCheckoutJournal(journal)
+        && ['TENDER_COMMITTING', 'TENDER_UNCERTAIN'].includes(journal.state)
+        && !orderRepo.getById(journal.orderId);
+    });
+    if (!found || !isValidRestoredCartCheckoutJournal(found.payload.restoredCheckout)) return null;
+
+    const journal = found.payload.restoredCheckout;
+    const uncertain = journal.state === 'TENDER_UNCERTAIN'
+      ? journal
+      : {
+          ...journal,
+          state: 'TENDER_UNCERTAIN' as const,
+          updatedAt: new Date().toISOString(),
+        };
+    if (uncertain !== journal) {
+      holdOrderRepo.replaceProtected(found.id, found.title, {
+        ...found.payload,
+        restoredCheckout: uncertain,
+      });
+      database.markDirty();
+    }
+    return {
+      changed: uncertain !== journal,
+      reconciliation: this.restoredCartReconciliation(
+        found.id,
+        String(found.payload.autoRestoreForCheckoutId || ''),
+        uncertain,
+      ),
+    };
+  }
+
+  private createRestoredCartCheckoutJournal(): RestoredCartCheckoutJournal {
+    const orderId = randomUUID();
+    return {
+      orderId,
+      clientAttemptId: `restored:${orderId}`,
+      state: 'READY',
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  private configuredLocalFiscalProtocol(printer: any): string {
+    const cfg = getConfig();
+    const fiscalConfig = (cfg.printers || {})[PrinterType.FISCAL] as any;
+    const legacyFiscalConfig = (cfg.printers || {})[PrinterType.RECEIPT] as any;
+    const legacyProtocol = String(legacyFiscalConfig?.protocol || '').toUpperCase();
+    const configured = String(
+      fiscalConfig?.protocol
+      || (['POSNET', 'ELZAB_STX'].includes(legacyProtocol) ? legacyProtocol : ''),
+    ).toUpperCase();
+    if (configured) return configured;
+
+    // Legacy installs may have an instantiated driver but no migrated slot.
+    // Constructor identity is used only as a compatibility fallback for the
+    // same object PaymentController will actually call.
+    const driverName = String(printer?.constructor?.name || '').toUpperCase();
+    if (driverName.includes('POSNET')) return 'POSNET';
+    if (driverName.includes('ELZAB')) return 'ELZAB_STX';
+    return '';
+  }
+
+  private assertLocalTenderFiscalCompatibility(
+    lines: TenderFiscalLine[],
+    checkoutDiscountGrosze = 0,
+  ): void {
+    const localPrinter = this.getLocalPrinterForType(PrinterType.FISCAL);
+    if (!localPrinter) return;
+    const protocol = this.configuredLocalFiscalProtocol(localPrinter);
+    if (
+      hasTenderFiscalDiscount(lines, { checkoutDiscountGrosze })
+      && !['POSNET', 'ELZAB_STX'].includes(protocol)
+    ) {
+      throw new Error(
+        'FISCAL_PROTOCOL_UNKNOWN_FOR_DISCOUNT: the active local fiscal route protocol cannot be verified before payment.',
+      );
+    }
+    assertTenderFiscalCompatibilityForProtocol(protocol, lines, { checkoutDiscountGrosze });
+  }
+
+  private async assertTenderFiscalCompatibility(
+    lines: TenderFiscalLine[],
+    checkoutDiscountGrosze = 0,
+  ): Promise<void> {
+    const localPrinter = this.getLocalPrinterForType(PrinterType.FISCAL);
+    if (localPrinter) {
+      this.assertLocalTenderFiscalCompatibility(lines, checkoutDiscountGrosze);
+      return;
+    }
+
+    const shared = await getSharedFiscalPrinterStatus();
+    if (!shared.printerId) return;
+    const protocol = String(shared.protocol || '').toUpperCase();
+    if (
+      hasTenderFiscalDiscount(lines, { checkoutDiscountGrosze })
+      && !['POSNET', 'ELZAB_STX'].includes(protocol)
+    ) {
+      throw new Error(
+        'SHARED_FISCAL_PROTOCOL_UNKNOWN_FOR_DISCOUNT: the assigned shared fiscal printer protocol cannot be verified before payment.',
+      );
+    }
+    assertTenderFiscalCompatibilityForProtocol(protocol, lines, { checkoutDiscountGrosze });
+  }
+
+  private ensureRestoredCartCheckoutJournal(payload: PosHoldPayload): {
+    payload: PosHoldPayload;
+    journal: RestoredCartCheckoutJournal;
+  } {
+    if (isValidRestoredCartCheckoutJournal(payload.restoredCheckout)) {
+      return { payload, journal: payload.restoredCheckout };
+    }
+    if (payload.restoredCheckout != null) {
+      throw new Error('Protected restored-cart payment journal is invalid. Reconciliation is required.');
+    }
+    const journal = this.createRestoredCartCheckoutJournal();
+    return {
+      payload: { ...payload, restoredCheckout: journal },
+      journal,
+    };
+  }
+
+  private restoredCartReconciliation(
+    holdId: string,
+    checkoutId: string,
+    journal: RestoredCartCheckoutJournal,
+  ): RestoredCartReconciliation {
+    return {
+      holdId,
+      checkoutId,
+      orderId: journal.orderId,
+      clientAttemptId: journal.clientAttemptId,
+      reason: 'TENDER_OUTCOME_UNCERTAIN',
+      message: 'Payment outcome is uncertain. Do not charge this cart again. Reconcile cash/card and POS Order History with the owner.',
+    };
+  }
+
+  private markLiveRestoredCart(
+    held: { id: string; payload: PosHoldPayload },
+    checkoutId: string,
+    persistenceError?: string,
+    authContext?: PosAuthContext,
+  ): void {
+    if (authContext && !this.isPosAuthContextCurrent(authContext)) return;
+    if (!this.posStore || !isValidRestoredCartCheckoutJournal(held.payload.restoredCheckout)) return;
+    this.posStore.dispatch({
+      type: 'state/replaceCheckoutSnapshot',
+      payload: {
+        snapshot: withRestoredInterruptionMarker(
+          held.payload.snapshot,
+          held.id,
+          checkoutId,
+          held.payload.restoredCheckout,
+          persistenceError,
+        ),
+      },
+    });
+  }
+
+  private async markRestoredCartTenderUncertain(
+    holdId: string,
+    expectedOrderId: string,
+    authContext?: PosAuthContext,
+  ): Promise<{ reconciliation: RestoredCartReconciliation | null; durabilityError?: string }> {
+    const held = holdOrderRepo.get(holdId);
+    const payload = held?.payload as PosHoldPayload | undefined;
+    const journal = payload?.restoredCheckout;
+    if (!held || !payload || !isValidRestoredCartCheckoutJournal(journal) || journal.orderId !== expectedOrderId) {
+      return { reconciliation: null };
+    }
+    const uncertain = journal.state === 'TENDER_UNCERTAIN'
+      ? journal
+      : {
+          ...journal,
+          state: 'TENDER_UNCERTAIN' as const,
+          updatedAt: new Date().toISOString(),
+        };
+    const nextPayload: PosHoldPayload = {
+      ...payload,
+      restoreState: 'ACTIVE_CART_BACKUP',
+      restoredCheckout: uncertain,
+    };
+    holdOrderRepo.replaceProtected(held.id, held.title, nextPayload);
+    this.markLiveRestoredCart(
+      { id: held.id, payload: nextPayload },
+      String(payload.autoRestoreForCheckoutId || ''),
+      undefined,
+      authContext,
+    );
+    database.markDirty();
+    const flush = await database.saveCoalesced();
+    return {
+      reconciliation: this.restoredCartReconciliation(
+        held.id,
+        String(payload.autoRestoreForCheckoutId || ''),
+        uncertain,
+      ),
+      durabilityError: flush.success ? undefined : flush.error || 'database flush failed',
+    };
+  }
+
+  /**
+   * Rehydrate the full cart backup even after the Billiard handoff itself is
+   * SETTLED. This is deliberately independent from the payment journal state:
+   * the protected Hold owns the restored cart until its next explicit outcome.
+   */
+  private recoverProtectedBilliardInterruptionCart(): {
+    restored: boolean;
+    error?: string;
+    reconciliation?: RestoredCartReconciliation;
+  } {
+    if (!this.posStore) return { restored: false, error: 'POS is not ready.' };
+    const scope = currentPosSnapshotScope(getConfig());
+    const posMode = String(getConfig().posMode || 'retail');
+    const found = this.scopedBilliardInterruptionHolds(scope).find((row) => (
+      row.payload.restoreState === 'ACTIVE_CART_BACKUP'
+      || row.payload.restoreState === 'WAITING_FOR_BILLIARD_PAYMENT'
+      || row.payload.restoreState == null
+    ));
+    if (!found) return { restored: false };
+    let held = found;
+    const checkoutId = String(held.payload.autoRestoreForCheckoutId || '');
+    const sessionId = String(held.payload.sourceBilliardSessionId || '');
+    const snapshot = getRestorableBilliardInterruptionSnapshot({
+      payload: held.payload,
+      checkoutId,
+      sessionId,
+      scope,
+      posMode,
+    });
+    if (!snapshot) return { restored: false, error: 'Protected Billiard interruption Hold is invalid.' };
+
+    if (held.payload.restoreState !== 'ACTIVE_CART_BACKUP') {
+      const record = billiardPosHandoffRepo.get(checkoutId);
+      if (!record || !orderRepo.getById(record.orderId)) return { restored: false };
+      this.assertExistingBilliardOrder(record);
+      return this.finalizeBilliardCartAfterLocalCommit(record);
+    }
+
+    const ensured = this.ensureRestoredCartCheckoutJournal(held.payload);
+    if (ensured.payload !== held.payload) {
+      holdOrderRepo.replaceProtected(held.id, held.title, ensured.payload);
+      held = { ...held, payload: ensured.payload };
+    }
+    let journal = ensured.journal;
+    const recoveryDisposition = restoredCartRecoveryDisposition(
+      held.payload,
+      orderRepo.getById(journal.orderId) != null,
+    );
+    if (recoveryDisposition === 'RECONCILE' && journal.state === 'TENDER_COMMITTING') {
+      journal = {
+        ...journal,
+        state: 'TENDER_UNCERTAIN',
+        updatedAt: new Date().toISOString(),
+      };
+      const payload = { ...held.payload, restoredCheckout: journal };
+      holdOrderRepo.replaceProtected(held.id, held.title, payload);
+      held = { ...held, payload };
+    }
+    if (recoveryDisposition === 'RECONCILE' || journal.state === 'TENDER_UNCERTAIN') {
+      return {
+        restored: false,
+        reconciliation: this.restoredCartReconciliation(held.id, checkoutId, journal),
+      };
+    }
+    if (recoveryDisposition !== 'RESTORE' || journal.state !== 'READY') return { restored: false };
+
+    const current = this.posStore.getState();
+    const marker = current.checkoutDraft.restoredInterruption;
+    if (marker?.holdId === held.id && marker.checkoutId === checkoutId) {
+      if (!sameRestoredCartCheckoutIdentity(marker, journal)) {
+        return { restored: false, error: 'The active restored cart has a different durable payment identity.' };
+      }
+      return { restored: true };
+    }
+    if (current.checkoutDraft.billiard) return { restored: false };
+    if (current.cart.items.length > 0 && !hasEquivalentOrdinaryCart(current, snapshot)) {
+      return {
+        restored: false,
+        error: 'Another POS cart is active. Hold it before restoring the interrupted cart.',
+      };
+    }
+    this.posStore.dispatch({
+      type: 'state/replaceCheckoutSnapshot',
+      payload: { snapshot: withRestoredInterruptionMarker(snapshot, held.id, checkoutId, journal) },
+    });
+    return { restored: true };
+  }
+
+  /**
+   * Called synchronously after the paid order and handoff state commit in
+   * sql.js. It clears only the exact frozen cart, then restores the protected
+   * interruption Hold without consuming that safety row yet.
+   */
+  private finalizeBilliardCartAfterLocalCommit(record: BilliardHandoffRecord): { restored: boolean; restoredHoldId: string | null } {
+    if (!this.posStore) throw new Error('POS is not ready.');
+    const state = this.posStore.getState();
+    const liveCheckoutId = state.checkoutDraft.billiard?.origin.checkoutId;
+    if (liveCheckoutId) {
+      if (
+        liveCheckoutId !== record.checkoutId
+        || !isActiveBilliardCheckoutSnapshot(state, record.checkoutSnapshot)
+      ) {
+        throw new Error('Refused to clear a POS cart that differs from the committed Billiard checkout.');
+      }
+      if (!this.posStore.markBilliardOrderCommitted(record.checkoutId, record.orderId)) {
+        throw new Error('Could not authorize clearing the committed Billiard cart.');
+      }
+      this.posStore.dispatch({ type: 'cart/completeCheckout' });
+    }
+
+    const afterClear = this.posStore.getState();
+    if (!record.interruptedHoldId) {
+      return { restored: false, restoredHoldId: null };
+    }
+    const held = holdOrderRepo.get(record.interruptedHoldId);
+    const payload = held?.payload as PosHoldPayload | undefined;
+    const scope = currentPosSnapshotScope(getConfig());
+    const restorableSnapshot = getRestorableBilliardInterruptionSnapshot({
+      payload,
+      checkoutId: record.checkoutId,
+      sessionId: record.sessionId,
+      scope,
+      posMode: String(getConfig().posMode || 'retail'),
+    });
+    if (!restorableSnapshot) {
+      return { restored: false, restoredHoldId: null };
+    }
+    if (afterClear.cart.items.length > 0 && !hasEquivalentOrdinaryCart(afterClear, restorableSnapshot)) {
+      return { restored: false, restoredHoldId: null };
+    }
+    const ensured = this.ensureRestoredCartCheckoutJournal(payload!);
+    if (ensured.journal.state !== 'READY') {
+      return { restored: false, restoredHoldId: record.interruptedHoldId };
+    }
+    const activePayload: PosHoldPayload = {
+      ...ensured.payload,
+      restoreState: 'ACTIVE_CART_BACKUP',
+    };
+    holdOrderRepo.replaceProtected(record.interruptedHoldId, held!.title, activePayload);
+    const existingMarker = afterClear.checkoutDraft.restoredInterruption;
+    if (
+      existingMarker?.holdId === record.interruptedHoldId
+      && existingMarker.checkoutId === record.checkoutId
+      && sameRestoredCartCheckoutIdentity(existingMarker, ensured.journal)
+    ) {
+      return { restored: true, restoredHoldId: record.interruptedHoldId };
+    }
+    this.posStore.dispatch({
+      type: 'state/replaceCheckoutSnapshot',
+      payload: {
+        snapshot: withRestoredInterruptionMarker(
+          restorableSnapshot,
+          record.interruptedHoldId,
+          record.checkoutId,
+          ensured.journal,
+        ),
+      },
+    });
+    return { restored: true, restoredHoldId: record.interruptedHoldId };
+  }
+
+  private async prepareBilliardHandoff(input: any): Promise<any> {
+    const bundle = normalizeBilliardPosCheckout(input?.posCheckout);
+    const existingFlight = this.billiardHandoffInFlight.get(bundle.checkoutId);
+    if (existingFlight) return existingFlight;
+
+    const work = (async () => {
+      if (!this.posStore) throw new Error('POS is not ready.');
+      const config = getConfig();
+      const scope = currentPosSnapshotScope(config);
+      const authContext = this.capturePosAuthContext(scope);
+      const existing = billiardPosHandoffRepo.get(bundle.checkoutId);
+      if (existing) {
+        if (
+          existing.salonId !== scope.salonId
+          || existing.userId !== scope.userId
+          || existing.registerId !== scope.registerId
+          || existing.sessionId !== bundle.sessionId
+          || JSON.stringify(existing.bundle) !== JSON.stringify(bundle)
+        ) {
+          throw new Error('This Billiard checkout ID already has a different frozen snapshot.');
+        }
+        assertBilliardCheckoutSnapshotIntegrity(existing);
+        // A previous prepare may have changed sql.js memory but failed its
+        // disk barrier. Never activate that cart until a fresh barrier wins.
+        database.markDirty();
+        const journalFlush = await database.saveCoalesced();
+        if (!journalFlush.success) {
+          throw new Error(`Billiard checkout safety journal is not durable yet: ${journalFlush.error || 'database flush failed'}`);
+        }
+        if (!this.isPosAuthContextCurrent(authContext)) {
+          throw new Error('POS user changed while the Billiard handoff journal was being saved.');
+        }
+        if (orderRepo.getById(existing.orderId)) {
+          this.assertExistingBilliardOrder(existing);
+          if (existing.state !== 'SETTLED') {
+            billiardPosHandoffRepo.markState(existing.checkoutId, 'POS_PAID_SYNC_PENDING');
+          }
+          database.markDirty();
+          this.posStore.markBilliardOrderCommitted(existing.checkoutId, existing.orderId);
+          const flush = await database.saveCoalesced();
+          if (!this.isPosAuthContextCurrent(authContext)) {
+            return {
+              success: false,
+              paymentCommitted: true,
+              error: 'POS user changed while the committed Billiard order was being verified.',
+            };
+          }
+          if (flush.success) {
+            this.finalizeBilliardCartAfterLocalCommit(existing);
+            database.markDirty();
+            await database.saveCoalesced();
+          }
+          return {
+            success: true,
+            paymentCommitted: true,
+            durabilityError: flush.success ? undefined : flush.error,
+            intent: this.billiardIntent({ ...existing, state: 'POS_PAID_SYNC_PENDING' }, true),
+          };
+        }
+        if (requiresBilliardTenderReconciliation(existing.state)) {
+          return {
+            success: true,
+            outcomeUncertain: true,
+            intent: this.billiardIntent(existing, true),
+          };
+        }
+        const liveCheckout = this.posStore.getState().checkoutDraft.billiard?.origin.checkoutId;
+        const liveItems = this.posStore.getState().cart.items.length;
+        if (liveItems > 0 && liveCheckout !== existing.checkoutId) {
+          throw new Error('Another POS cart is active. Hold it before resuming this Billiard checkout.');
+        }
+        if (liveCheckout === existing.checkoutId) {
+          if (!isActiveBilliardCheckoutSnapshot(this.posStore.getState(), existing.checkoutSnapshot)) {
+            throw new Error('The active POS cart does not exactly match the frozen Billiard checkout.');
+          }
+        } else {
+          if (!this.isPosAuthContextCurrent(authContext)) {
+            throw new Error('POS user changed before the Billiard checkout could be activated.');
+          }
+          this.applyBilliardHandoffSnapshot(existing, scope);
+        }
+        return { success: true, intent: this.billiardIntent(existing, true) };
+      }
+
+      const unresolved = billiardPosHandoffRepo.getRecoverable(scope);
+      // Ambiguous money ownership is register-wide. An OWNER must not be able
+      // to hide a STAFF/MANAGER uncertain tender by opening a newer checkout;
+      // pre-tender carts remain user-private through getRecoverable(scope).
+      const registerUncertain = billiardPosHandoffRepo.getUncertainForOwner(scope);
+      if (unresolved || registerUncertain) {
+        throw new Error('Another Billiard checkout is still unresolved on this register.');
+      }
+
+      const current = this.posStore.getState();
+      if (current.checkoutDraft.kitchenSelfOrder?.pickupOrderId) {
+        throw new Error('Finish or release the active kitchen pickup order before paying a Billiard session.');
+      }
+      if (current.checkoutDraft.billiard) {
+        throw new Error('Another frozen Billiard checkout is already active.');
+      }
+      const previousRestored = current.checkoutDraft.restoredInterruption;
+      const previousProtectedHold = previousRestored
+        ? holdOrderRepo.get(previousRestored.holdId)
+        : null;
+      if (previousRestored && (
+        !previousProtectedHold
+        || previousProtectedHold.payload?.protected !== true
+        || previousProtectedHold.payload?.restoreState !== 'ACTIVE_CART_BACKUP'
+        || !isValidRestoredCartCheckoutJournal(previousProtectedHold.payload?.restoredCheckout)
+        || !sameRestoredCartCheckoutIdentity(previousRestored, previousProtectedHold.payload.restoredCheckout)
+        || previousProtectedHold.payload.restoredCheckout.state !== 'READY'
+        || this.frozenRestoredCartHolds.has(previousRestored.holdId)
+      )) {
+        throw new Error('The current restored cart is not in a safe durable state for another Billiard handoff.');
+      }
+
+      const orderId = randomUUID();
+      const interruptedHoldId = current.cart.items.length > 0
+        ? `billiard-interruption:${bundle.checkoutId}`
+        : null;
+      const posMode = String(config.posMode || 'retail');
+      const interruptedSnapshot = interruptedHoldId
+        ? withoutRestoredInterruptionMarker(capturePosCheckoutSnapshot(current, scope, posMode))
+        : null;
+      const checkoutSnapshot = buildBilliardCheckoutSnapshot({
+        currentState: current,
+        bundle,
+        scope,
+        posMode,
+        orderId,
+        interruptedHoldId,
+        tableName: input?.tableName ? String(input.tableName) : null,
+      });
+
+      database.transaction(() => {
+        if (interruptedHoldId && interruptedSnapshot) {
+          const holdPayload = buildBilliardInterruptionHoldPayload({
+            snapshot: interruptedSnapshot,
+            sessionId: bundle.sessionId,
+            checkoutId: bundle.checkoutId,
+          });
+          holdOrderRepo.upsert(interruptedHoldId, 'Cart interrupted by Billiard payment', holdPayload);
+        }
+        if (previousRestored) holdOrderRepo.remove(previousRestored.holdId, true);
+        billiardPosHandoffRepo.create({
+          checkoutId: bundle.checkoutId,
+          sessionId: bundle.sessionId,
+          orderId,
+          clientAttemptId: `billiard:${bundle.checkoutId}`,
+          salonId: scope.salonId,
+          userId: scope.userId,
+          registerId: scope.registerId,
+          state: 'POS_READY',
+          bundle,
+          checkoutSnapshot,
+          interruptedHoldId,
+          autoOpenConsumed: false,
+        });
+      });
+      database.markDirty();
+      const flush = await database.saveCoalesced();
+      if (!flush.success) {
+        // Revert sql.js memory to the still-live cart ownership. A failed
+        // atomic export leaves the previous on-disk Hold untouched as well.
+        try {
+          database.transaction(() => {
+            database.run('DELETE FROM pos_billiard_handoffs WHERE checkout_id = ?', [bundle.checkoutId]);
+            if (interruptedHoldId) holdOrderRepo.remove(interruptedHoldId, true);
+            if (previousRestored && previousProtectedHold) {
+              holdOrderRepo.upsert(previousRestored.holdId, previousProtectedHold.title, previousProtectedHold.payload);
+            }
+          });
+          database.markDirty();
+          void database.saveCoalesced();
+        } catch {}
+        throw new Error(`Could not safely hold the current POS cart: ${flush.error || 'database flush failed'}`);
+      }
+
+      if (!this.isPosAuthContextCurrent(authContext)) {
+        throw new Error('POS user changed while the Billiard handoff was being saved. The old user can recover it after login.');
+      }
+
+      const record = billiardPosHandoffRepo.get(bundle.checkoutId);
+      if (!record) throw new Error('Billiard checkout journal was not created.');
+      this.applyBilliardHandoffSnapshot(record, scope);
+      return { success: true, intent: this.billiardIntent(record) };
+    })().finally(() => {
+      this.billiardHandoffInFlight.delete(bundle.checkoutId);
+    });
+    this.billiardHandoffInFlight.set(bundle.checkoutId, work);
+    return work;
+  }
+
   registerIpcHandlers(): void {
     // State & dispatch
     ipcMain.handle('pos:get-state', (e) => {
@@ -1024,7 +1916,760 @@ export class PosModule extends BaseModule {
       logger.info(`[PosModule] IPC pos:get-state from window="${e.sender.getTitle?.() ?? 'unknown'}" → mode=${state?.display?.mode}`);
       return state;
     });
-    ipcMain.handle('pos:dispatch', (_e, action) => { this.posStore?.dispatch(action); return { success: true }; });
+    ipcMain.handle('pos:dispatch', async (_e, rendererAction) => {
+      let authContext: PosAuthContext;
+      try { authContext = this.capturePosAuthContext(); }
+      catch { return { success: false, error: 'POS authentication context is unavailable.' }; }
+      const expectedRestoredHoldId = this.posStore?.getState().checkoutDraft.restoredInterruption?.holdId ?? null;
+      const execute = async () => {
+        if (!this.isPosAuthContextCurrent(authContext)) {
+          return { success: false, error: 'POS user changed before this update could be applied.' };
+        }
+        let action = rendererAction;
+        if (action?.type === 'state/replaceCheckoutSnapshot') {
+          return { success: false, error: 'main_process_only_action' };
+        }
+        if (action?.type === 'checkoutDraft/update') {
+          const {
+            billiard: _billiard,
+            restoredInterruption: _restored,
+            holdRecallPending: _recallPending,
+            ...rendererDraft
+          } = action.payload || {};
+          action = { ...action, payload: rendererDraft };
+        }
+        if (action?.type === 'cart/addItem') {
+          const { billiard: _billiard, locked: _locked, ...rendererItem } = action.payload || {};
+          action = { ...action, payload: rendererItem };
+        }
+        const posStore = this.posStore;
+        if (!posStore) return { success: false, error: 'POS is not ready.' };
+        const before = posStore.getState();
+        const isNonFinancialUiAction = action?.type === 'display/setMode' || action?.type === 'session/open';
+        if (this.holdRecallInFlight && !isNonFinancialUiAction) {
+          return {
+            success: false,
+            error: 'Held cart recall is still being saved. Wait before editing or paying this cart.',
+          };
+        }
+        const restored = before.checkoutDraft.restoredInterruption;
+        if (expectedRestoredHoldId && restored?.holdId !== expectedRestoredHoldId) {
+          return { success: false, error: 'Stale restored-cart edit was ignored after its ownership changed.' };
+        }
+        if (
+          action?.type === 'session/close'
+          && (before.checkoutDraft.billiard || restored)
+        ) {
+          return {
+            success: false,
+            error: 'Pay, hold, or discard the protected POS cart before closing this shift.',
+          };
+        }
+        const protectedHold = restored ? holdOrderRepo.get(restored.holdId) : null;
+        if (restored && action?.type === 'cart/completeCheckout' && protectedHold?.payload?.protected === true) {
+          return { success: false, error: 'The restored cart can complete only after its order is committed.' };
+        }
+        if (restored && (!protectedHold
+          || protectedHold.payload?.restoreState !== 'ACTIVE_CART_BACKUP'
+          || !isValidRestoredCartCheckoutJournal(protectedHold.payload?.restoredCheckout)
+          || !sameRestoredCartCheckoutIdentity(restored, protectedHold.payload.restoredCheckout))) {
+          return { success: false, error: 'The durable backup for this restored cart is unavailable or has changed.' };
+        }
+
+        if (restored && !isNonFinancialUiAction) {
+          if (this.frozenRestoredCartHolds.has(restored.holdId) || restored.persistenceError) {
+            return { success: false, error: restored.persistenceError || 'Restored cart is frozen after a disk persistence failure. Restart POS before editing it.' };
+          }
+          if (protectedHold!.payload.restoredCheckout.state !== 'READY') {
+            return { success: false, error: 'This restored cart crossed the tender boundary. Do not edit or charge it again.' };
+          }
+        }
+
+        posStore.dispatch(action);
+        if (!restored || isNonFinancialUiAction) return { success: true };
+
+        const after = posStore.getState();
+        if (after.cart.items.length === 0) {
+          // An explicit pre-tender discard releases ownership only after the
+          // protected row deletion crosses its own disk barrier.
+          holdOrderRepo.remove(restored.holdId, true);
+          database.markDirty();
+          const flush = await database.saveCoalesced();
+          if (!flush.success) {
+            holdOrderRepo.upsert(restored.holdId, protectedHold!.title, protectedHold!.payload);
+            const error = flush.error || 'Could not durably discard the restored cart.';
+            this.frozenRestoredCartHolds.add(restored.holdId);
+            this.markLiveRestoredCart(
+              { id: restored.holdId, payload: protectedHold!.payload },
+              restored.checkoutId,
+              error,
+              authContext,
+            );
+            database.markDirty();
+            void database.saveCoalesced();
+            return { success: false, error };
+          }
+          return { success: true };
+        }
+
+        const scope = currentPosSnapshotScope(getConfig());
+        const snapshot = withoutRestoredInterruptionMarker(capturePosCheckoutSnapshot(
+          after,
+          scope,
+          String(getConfig().posMode || 'retail'),
+        ));
+        const nextPayload: PosHoldPayload = {
+          ...protectedHold!.payload,
+          snapshot,
+          restoreState: 'ACTIVE_CART_BACKUP',
+        };
+        holdOrderRepo.replaceProtected(restored.holdId, protectedHold!.title, nextPayload);
+        database.markDirty();
+        const flush = await database.saveCoalesced();
+        if (!flush.success) {
+          // Restored-cart IPC actions are serialized, so reverting this exact
+          // before-image cannot erase a later successful edit.
+          holdOrderRepo.replaceProtected(restored.holdId, protectedHold!.title, protectedHold!.payload);
+          const error = flush.error || 'Could not update the restored cart backup.';
+          this.frozenRestoredCartHolds.add(restored.holdId);
+          this.markLiveRestoredCart(
+            { id: restored.holdId, payload: protectedHold!.payload },
+            restored.checkoutId,
+            error,
+            authContext,
+          );
+          database.markDirty();
+          void database.saveCoalesced();
+          return { success: false, error };
+        }
+        return { success: true };
+      };
+
+      if (!expectedRestoredHoldId) return execute();
+      const queued = this.restoredCartDispatchQueue.then(execute, execute);
+      this.restoredCartDispatchQueue = queued.then(() => undefined, () => undefined);
+      return queued;
+    });
+    ipcMain.handle('pos:billiard:prepare-handoff', async (_e, input: any) => {
+      try { return await this.prepareBilliardHandoff(input); }
+      catch (error: any) { return { success: false, error: error?.message || String(error) }; }
+    });
+    ipcMain.handle('pos:billiard:recover-handoff', async () => {
+      try {
+        if (!this.posStore) return { success: false, error: 'POS is not ready.' };
+        const config = getConfig();
+        const scope = currentPosSnapshotScope(config);
+        const authContext = this.capturePosAuthContext(scope);
+        const isOwner = String(config.authUser?.role || '').toUpperCase() === 'OWNER';
+        const record = billiardPosHandoffRepo.getRecoverable(scope)
+          ?? (isOwner ? billiardPosHandoffRepo.getUncertainForOwner(scope) : null);
+        if (!record) {
+          if (isOwner) {
+            const ownerRestored = this.discoverOwnerUncertainRestoredCart(scope);
+            if (ownerRestored) {
+              if (ownerRestored.changed) {
+                const ownerRecoveryFlush = await database.saveCoalesced();
+                if (!ownerRecoveryFlush.success) {
+                  return {
+                    success: false,
+                    intent: null,
+                    restoredCartReconciliation: ownerRestored.reconciliation,
+                    error: ownerRecoveryFlush.error || 'Owner tender-recovery state was not made durable.',
+                  };
+                }
+              }
+              if (!this.isPosAuthContextCurrent(authContext)) {
+                return { success: false, intent: null, error: 'POS user changed during owner tender discovery.' };
+              }
+              return {
+                success: true,
+                intent: null,
+                outcomeUncertain: true,
+                restoredCartReconciliation: ownerRestored.reconciliation,
+              };
+            }
+          }
+          const protectedRecovery = this.recoverProtectedBilliardInterruptionCart();
+          if (protectedRecovery.error) {
+            return { success: false, intent: null, error: protectedRecovery.error };
+          }
+          if (protectedRecovery.restored || protectedRecovery.reconciliation) {
+            database.markDirty();
+            const flush = await database.saveCoalesced();
+            if (!flush.success) {
+              return {
+                success: false,
+                intent: null,
+                restoredCartReconciliation: protectedRecovery.reconciliation,
+                error: flush.error || 'Restored-cart recovery state was not made durable.',
+              };
+            }
+          }
+          return {
+            success: true,
+            intent: null,
+            restoredCart: protectedRecovery.restored,
+            restoredCartReconciliation: protectedRecovery.reconciliation,
+          };
+        }
+        assertBilliardCheckoutSnapshotIntegrity(record);
+        if (orderRepo.getById(record.orderId)) {
+          this.assertExistingBilliardOrder(record);
+          if (record.state !== 'SETTLED') {
+            billiardPosHandoffRepo.markState(record.checkoutId, 'POS_PAID_SYNC_PENDING');
+          }
+          database.markDirty();
+          this.posStore.markBilliardOrderCommitted(record.checkoutId, record.orderId);
+          const flush = await database.saveCoalesced();
+          if (!this.isPosAuthContextCurrent(authContext)) {
+            return { success: false, intent: null, paymentCommitted: true, error: 'POS user changed during Billiard recovery.' };
+          }
+          let restoredCartReconciliation: RestoredCartReconciliation | undefined;
+          if (flush.success) {
+            this.finalizeBilliardCartAfterLocalCommit(record);
+            database.markDirty();
+            await database.saveCoalesced();
+            if (!this.isPosAuthContextCurrent(authContext)) {
+              return { success: false, intent: null, paymentCommitted: true, error: 'POS user changed during Billiard cart recovery.' };
+            }
+            const protectedRecovery = this.recoverProtectedBilliardInterruptionCart();
+            restoredCartReconciliation = protectedRecovery.reconciliation;
+            if (restoredCartReconciliation) {
+              database.markDirty();
+              await database.saveCoalesced();
+            }
+          }
+          return {
+            success: true,
+            paymentCommitted: true,
+            durabilityError: flush.success ? undefined : flush.error,
+            restoredCartReconciliation,
+            intent: this.billiardIntent({ ...record, state: 'POS_PAID_SYNC_PENDING' }, true),
+          };
+        }
+        if (record.state === 'POS_TENDER_COMMITTING') {
+          if (!billiardPosHandoffRepo.markTenderUncertain(record.checkoutId)) {
+            return { success: false, intent: null, error: 'Could not lock the interrupted Billiard tender for reconciliation.' };
+          }
+          database.markDirty();
+          const uncertainFlush = await database.saveCoalesced();
+          if (!this.isPosAuthContextCurrent(authContext)) {
+            return { success: false, intent: null, outcomeUncertain: true, error: 'POS user changed during tender recovery.' };
+          }
+          const uncertainRecord = billiardPosHandoffRepo.get(record.checkoutId) || {
+            ...record,
+            state: 'POS_TENDER_UNCERTAIN' as const,
+          };
+          return {
+            success: true,
+            outcomeUncertain: true,
+            durabilityError: uncertainFlush.success ? undefined : uncertainFlush.error,
+            intent: this.billiardIntent(uncertainRecord, true),
+          };
+        }
+        if (record.state === 'POS_TENDER_UNCERTAIN') {
+          return {
+            success: true,
+            outcomeUncertain: true,
+            intent: this.billiardIntent(record, true),
+          };
+        }
+        const current = this.posStore.getState();
+        const liveCheckout = current.checkoutDraft.billiard?.origin.checkoutId;
+        if (current.cart.items.length === 0) {
+          this.applyBilliardHandoffSnapshot(record, scope);
+        } else if (
+          liveCheckout !== record.checkoutId
+          || !isActiveBilliardCheckoutSnapshot(current, record.checkoutSnapshot)
+        ) {
+          return {
+            success: false,
+            intent: null,
+            error: 'Another POS cart is active. Hold it before resuming this Billiard checkout.',
+          };
+        }
+        return { success: true, intent: this.billiardIntent(record, true) };
+      } catch (error: any) {
+        return { success: false, error: error?.message || String(error) };
+      }
+    });
+    ipcMain.handle('pos:billiard:mark-payment-opened', async (_e, checkoutId: string) => {
+      try {
+        if (this.holdRecallInFlight) {
+          return { success: false, error: 'A held cart recall is still being saved. Wait before opening payment.' };
+        }
+        const scope = currentPosSnapshotScope(getConfig());
+        const authContext = this.capturePosAuthContext(scope);
+        const record = billiardPosHandoffRepo.get(String(checkoutId || ''));
+        if (!record || record.salonId !== scope.salonId || record.userId !== scope.userId || record.registerId !== scope.registerId) {
+          return { success: false, error: 'Billiard checkout not found on this register.' };
+        }
+        if (!this.posStore?.getState().session.isOpen) {
+          return { success: false, error: 'Open a POS shift before starting this Billiard payment.' };
+        }
+        if (!isActiveBilliardCheckoutSnapshot(this.posStore.getState(), record.checkoutSnapshot)) {
+          return { success: false, error: 'The active POS cart does not match this frozen Billiard checkout.' };
+        }
+        await this.assertTenderFiscalCompatibility(record.bundle.lines, record.bundle.discountGrosze);
+        if (!billiardPosHandoffRepo.markPaymentOpened(record.checkoutId)) {
+          return { success: false, error: `Billiard checkout cannot open payment from state ${record.state}.` };
+        }
+        database.markDirty();
+        const flush = await database.saveCoalesced();
+        if (!flush.success) {
+          billiardPosHandoffRepo.rollbackPaymentOpenedBeforeTender(record.checkoutId);
+          database.markDirty();
+          const rollbackFlush = await database.saveCoalesced();
+          return {
+            success: false,
+            error: flush.error || 'Could not persist the Billiard payment-open boundary.',
+            rollbackDurabilityError: rollbackFlush.success ? undefined : rollbackFlush.error,
+          };
+        }
+        if (!this.isPosAuthContextCurrent(authContext)) {
+          return { success: false, error: 'POS user changed while Billiard payment was opening.' };
+        }
+        return { success: true };
+      } catch (error: any) {
+        return { success: false, error: error?.message || String(error) };
+      }
+    });
+    ipcMain.handle('pos:billiard:begin-tender', async (_e, checkoutId: string) => {
+      try {
+        if (this.holdRecallInFlight) {
+          return { success: false, error: 'A held cart recall is still being saved. Wait before starting tender.' };
+        }
+        const scope = currentPosSnapshotScope(getConfig());
+        const authContext = this.capturePosAuthContext(scope);
+        const record = billiardPosHandoffRepo.get(String(checkoutId || ''));
+        if (!record || record.salonId !== scope.salonId || record.userId !== scope.userId || record.registerId !== scope.registerId) {
+          return { success: false, error: 'Billiard checkout not found on this register.' };
+        }
+        if (orderRepo.getById(record.orderId)) {
+          return { success: false, paymentCommitted: true, orderId: record.orderId, error: 'Payment is already recorded locally. Do not charge again.' };
+        }
+        if (!this.posStore?.getState().session.isOpen) {
+          return { success: false, error: 'Open a POS shift before starting this Billiard tender.' };
+        }
+        if (!isActiveBilliardCheckoutSnapshot(this.posStore.getState(), record.checkoutSnapshot)) {
+          return { success: false, error: 'The active POS cart does not match this frozen Billiard checkout.' };
+        }
+        await this.assertTenderFiscalCompatibility(record.bundle.lines, record.bundle.discountGrosze);
+        if (record.state === 'POS_TENDER_COMMITTING') {
+          return {
+            success: false,
+            outcomeUncertain: true,
+            error: 'This Billiard tender was started by an earlier process or request. Do not charge again; reconcile it.',
+          };
+        }
+        if (!billiardPosHandoffRepo.markTenderCommitting(record.checkoutId)) {
+          return {
+            success: false,
+            outcomeUncertain: requiresBilliardTenderReconciliation(record.state),
+            error: `Billiard tender cannot start from state ${record.state}.`,
+          };
+        }
+        database.markDirty();
+        const flush = await database.saveCoalesced();
+        if (!flush.success) {
+          // Renderer has not been released past the tender boundary, so this
+          // is the only safe automatic backward transition.
+          billiardPosHandoffRepo.rollbackTenderBeforeCharge(record.checkoutId, true);
+          database.markDirty();
+          const rollbackFlush = await database.saveCoalesced();
+          return {
+            success: false,
+            error: flush.error || 'Could not persist the Billiard tender boundary.',
+            rollbackDurabilityError: rollbackFlush.success ? undefined : rollbackFlush.error,
+          };
+        }
+        if (!this.isPosAuthContextCurrent(authContext)) {
+          const rolledBack = billiardPosHandoffRepo.rollbackTenderBeforeCharge(record.checkoutId, true);
+          database.markDirty();
+          const rollbackFlush = await database.saveCoalesced();
+          if (!rolledBack || !rollbackFlush.success) {
+            billiardPosHandoffRepo.markTenderUncertainAfterRollbackFailure(record.checkoutId);
+            database.markDirty();
+            const uncertainFlush = await database.saveCoalesced();
+            return {
+              success: false,
+              outcomeUncertain: true,
+              error: 'POS user changed after the tender boundary was saved and its safe rollback could not be confirmed. Do not charge; owner reconciliation is required.',
+              durabilityError: uncertainFlush.success ? undefined : uncertainFlush.error,
+            };
+          }
+          return { success: false, error: 'POS user changed before tender collection. No payment was authorized.' };
+        }
+        return { success: true };
+      } catch (error: any) {
+        return { success: false, error: error?.message || String(error) };
+      }
+    });
+    ipcMain.handle('pos:restored-cart:begin-tender', async (_e, holdId: string) => {
+      let authContext: PosAuthContext;
+      try { authContext = this.capturePosAuthContext(); }
+      catch { return { success: false, error: 'POS authentication context is unavailable.' }; }
+      const execute = async () => {
+        try {
+          if (this.holdRecallInFlight) {
+            return { success: false, error: 'A held cart recall is still being saved. Wait before starting tender.' };
+          }
+          if (!this.isPosAuthContextCurrent(authContext)) {
+            return { success: false, error: 'POS user changed before this tender could start.' };
+          }
+          if (!this.posStore) return { success: false, error: 'POS is not ready.' };
+          const state = this.posStore.getState();
+          const context = state.checkoutDraft.restoredInterruption;
+          if (!context || context.holdId !== String(holdId || '')) {
+            return { success: false, error: 'The active restored cart does not match this tender request.' };
+          }
+          const held = holdOrderRepo.get(context.holdId);
+          const payload = held?.payload as PosHoldPayload | undefined;
+          const journal = payload?.restoredCheckout;
+          if (
+            !held
+            || !payload
+            || payload.protected !== true
+            || payload.restoreState !== 'ACTIVE_CART_BACKUP'
+            || !samePosSnapshotScope(payload.snapshot, authContext.scope)
+            || !isValidRestoredCartCheckoutJournal(journal)
+            || !sameRestoredCartCheckoutIdentity(context, journal)
+          ) {
+            return { success: false, error: 'The restored cart payment journal is unavailable or has changed.' };
+          }
+          if (orderRepo.getById(journal.orderId)) {
+            return {
+              success: false,
+              paymentCommitted: true,
+              orderId: journal.orderId,
+              error: 'Payment is already recorded locally. Do not charge again.',
+            };
+          }
+          if (journal.state === 'TENDER_COMMITTING' || journal.state === 'TENDER_UNCERTAIN') {
+            return {
+              success: false,
+              outcomeUncertain: true,
+              error: 'This restored-cart tender already crossed the safety boundary. Do not charge again; reconcile it.',
+            };
+          }
+          if (journal.state !== 'READY' || this.frozenRestoredCartHolds.has(held.id) || context.persistenceError) {
+            return { success: false, error: context.persistenceError || 'This restored cart is not safe to tender.' };
+          }
+          if (!state.session.isOpen) {
+            return { success: false, error: 'Open a POS shift before starting this payment.' };
+          }
+          if (!isActiveRestoredCartSnapshot(state, payload.snapshot)) {
+            return { success: false, error: 'The active cart does not exactly match its durable protected snapshot.' };
+          }
+          await this.assertTenderFiscalCompatibility(state.cart.items, state.cart.discount);
+
+          const committing: RestoredCartCheckoutJournal = {
+            ...journal,
+            state: 'TENDER_COMMITTING',
+            updatedAt: new Date().toISOString(),
+          };
+          const committingPayload: PosHoldPayload = {
+            ...payload,
+            restoredCheckout: committing,
+          };
+          holdOrderRepo.replaceProtected(held.id, held.title, committingPayload);
+          database.markDirty();
+          const flush = await database.saveCoalesced();
+          if (!flush.success) {
+            // The two-step renderer has not yet instructed the cashier to
+            // collect/confirm tender, so restoring READY is safe here.
+            holdOrderRepo.replaceProtected(held.id, held.title, payload);
+            const error = flush.error || 'Could not persist the restored-cart tender boundary.';
+            this.frozenRestoredCartHolds.add(held.id);
+            this.markLiveRestoredCart({ id: held.id, payload }, context.checkoutId, error, authContext);
+            database.markDirty();
+            const rollbackFlush = await database.saveCoalesced();
+            return {
+              success: false,
+              error,
+              rollbackDurabilityError: rollbackFlush.success ? undefined : rollbackFlush.error,
+            };
+          }
+          if (!this.isPosAuthContextCurrent(authContext)) {
+            holdOrderRepo.replaceProtected(held.id, held.title, payload);
+            database.markDirty();
+            const rollbackFlush = await database.saveCoalesced();
+            if (!rollbackFlush.success) {
+              const uncertain: RestoredCartCheckoutJournal = {
+                ...journal,
+                state: 'TENDER_UNCERTAIN',
+                updatedAt: new Date().toISOString(),
+              };
+              holdOrderRepo.replaceProtected(held.id, held.title, {
+                ...payload,
+                restoredCheckout: uncertain,
+              });
+              database.markDirty();
+              const uncertainFlush = await database.saveCoalesced();
+              return {
+                success: false,
+                outcomeUncertain: true,
+                error: 'POS user changed and the restored-cart tender rollback could not be confirmed. Do not charge; owner reconciliation is required.',
+                durabilityError: uncertainFlush.success ? undefined : uncertainFlush.error,
+              };
+            }
+            return { success: false, error: 'POS user changed before tender collection. No payment was authorized.' };
+          }
+          this.markLiveRestoredCart({ id: held.id, payload: committingPayload }, context.checkoutId, undefined, authContext);
+          return { success: true };
+        } catch (error: any) {
+          return { success: false, error: error?.message || String(error) };
+        }
+      };
+      const queued = this.restoredCartDispatchQueue.then(execute, execute);
+      this.restoredCartDispatchQueue = queued.then(() => undefined, () => undefined);
+      return queued;
+    });
+    ipcMain.handle('pos:billiard:resolve-uncertain-tender', async (
+      _e,
+      input: ResolveUncertainTenderInput,
+    ) => {
+      let authContext: PosAuthContext;
+      try {
+        const config = getConfig();
+        if (String(config.authUser?.role || '').toUpperCase() !== 'OWNER') {
+          return {
+            success: false,
+            code: 'OWNER_REQUIRED',
+            error: 'Only the salon owner can resolve an uncertain payment outcome.',
+          };
+        }
+        const ownerUserId = String(config.authUser?.id || '').trim();
+        const reason = String(input?.reason || '').trim();
+        if (!ownerUserId) return { success: false, error: 'Owner identity is unavailable.' };
+        if (reason.length < 3 || reason.length > 500) {
+          return { success: false, error: 'Resolution reason must contain 3 to 500 characters.' };
+        }
+        if (input?.confirmedNoPaymentRemains !== true) {
+          return {
+            success: false,
+            error: 'Explicit confirmation that no cash/card payment remains is required.',
+          };
+        }
+        if (this.holdRecallInFlight) {
+          return { success: false, error: 'Wait for the active held cart recall to finish.' };
+        }
+        const scope = currentPosSnapshotScope(config);
+        authContext = this.capturePosAuthContext(scope);
+        const audit: TenderNoPaymentResolutionAudit = {
+          ownerUserId,
+          reason,
+          confirmedAt: new Date().toISOString(),
+          action: 'NO_PAYMENT_REMAINS',
+        };
+
+        if (input?.target?.type === 'BILLIARD') {
+          const checkoutId = String(input.target.checkoutId || '').trim();
+          const record = billiardPosHandoffRepo.get(checkoutId);
+          if (
+            !record
+            || record.salonId !== scope.salonId
+            || record.registerId !== scope.registerId
+          ) {
+            return { success: false, error: 'Uncertain Billiard checkout was not found for this owner/register.' };
+          }
+          if (record.state !== 'POS_TENDER_UNCERTAIN') {
+            return { success: false, error: `Billiard tender cannot be resolved from state ${record.state}.` };
+          }
+          if (orderRepo.getById(record.orderId)) {
+            return { success: false, paymentCommitted: true, error: 'A local paid order exists. Reconcile it instead of resetting tender.' };
+          }
+          if (!this.posStore) return { success: false, error: 'POS is not ready.' };
+          const live = this.posStore.getState();
+          if (
+            live.cart.items.length > 0
+            && !isActiveBilliardCheckoutSnapshot(live, record.checkoutSnapshot)
+          ) {
+              return { success: false, error: 'Another POS cart is active. Hold it before resolving this tender.' };
+          }
+          const interruptionBefore = record.interruptedHoldId
+            ? holdOrderRepo.get(record.interruptedHoldId)
+            : null;
+          if (record.interruptedHoldId && (
+            !interruptionBefore
+            || interruptionBefore.payload?.protected !== true
+            || interruptionBefore.payload?.holdReason !== 'BILLIARD_INTERRUPTION'
+            || interruptionBefore.payload?.autoRestoreForCheckoutId !== record.checkoutId
+            || !samePosSalonRegister(interruptionBefore.payload.snapshot, scope)
+          )) {
+            return { success: false, error: 'The protected interrupted cart cannot be safely adopted on this owner/register.' };
+          }
+          let resolved = false;
+          database.transaction(() => {
+            resolved = billiardPosHandoffRepo.resolveUncertainTenderAsNoPayment(checkoutId, audit, scope);
+            if (resolved && interruptionBefore) {
+              holdOrderRepo.replaceProtected(interruptionBefore.id, interruptionBefore.title, {
+                ...interruptionBefore.payload,
+                snapshot: adoptPosCheckoutSnapshotScope(interruptionBefore.payload.snapshot, scope),
+              });
+            }
+          });
+          if (!resolved) {
+            return { success: false, error: 'The uncertain Billiard journal changed before it could be resolved.' };
+          }
+          database.markDirty();
+          const flush = await database.saveCoalesced();
+          if (!flush.success) {
+            database.transaction(() => {
+              billiardPosHandoffRepo.rollbackNoPaymentResolution(checkoutId, audit, record);
+              if (interruptionBefore) {
+                holdOrderRepo.replaceProtected(interruptionBefore.id, interruptionBefore.title, interruptionBefore.payload);
+              }
+            });
+            database.markDirty();
+            const rollbackFlush = await database.saveCoalesced();
+            return {
+              success: false,
+              error: flush.error || 'Owner resolution was not made durable.',
+              rollbackDurabilityError: rollbackFlush.success ? undefined : rollbackFlush.error,
+            };
+          }
+          if (!this.isPosAuthContextCurrent(authContext)) {
+            return {
+              success: false,
+              resolved: true,
+              error: 'The owner resolution was saved, but the POS user changed. Sign in as the original owner to recover the cart.',
+            };
+          }
+          const updated = billiardPosHandoffRepo.get(checkoutId);
+          if (!updated || updated.state !== 'POS_PAYMENT_OPEN') {
+            return { success: false, resolved: true, error: 'The owner resolution was saved but could not be reloaded.' };
+          }
+          if (this.posStore.getState().cart.items.length === 0) {
+            this.applyBilliardHandoffSnapshot(updated, scope);
+          }
+          return {
+            success: true,
+            resolved: true,
+            targetType: 'BILLIARD',
+            audit,
+            intent: this.billiardIntent(updated, true),
+          };
+        }
+
+        if (input?.target?.type === 'RESTORED_CART') {
+          const holdId = String(input.target.holdId || '').trim();
+          const held = holdOrderRepo.get(holdId);
+          const payload = held?.payload as PosHoldPayload | undefined;
+          const journal = payload?.restoredCheckout;
+          if (
+            !held
+            || !payload
+            || payload.protected !== true
+            || payload.holdReason !== 'BILLIARD_INTERRUPTION'
+            || payload.restoreState !== 'ACTIVE_CART_BACKUP'
+            || !samePosSalonRegister(payload.snapshot, scope)
+            || !isValidRestoredCartCheckoutJournal(journal)
+          ) {
+            return { success: false, error: 'Uncertain restored cart was not found for this owner/register.' };
+          }
+          if (journal.state !== 'TENDER_UNCERTAIN') {
+            return { success: false, error: `Restored-cart tender cannot be resolved from state ${journal.state}.` };
+          }
+          if (orderRepo.getById(journal.orderId)) {
+            return { success: false, paymentCommitted: true, error: 'A local paid order exists. Reconcile it instead of resetting tender.' };
+          }
+          if (!this.posStore) return { success: false, error: 'POS is not ready.' };
+          const live = this.posStore.getState();
+          const liveMarker = live.checkoutDraft.restoredInterruption;
+          if (
+            live.cart.items.length > 0
+            && (
+              liveMarker?.holdId !== holdId
+              || !isActiveRestoredCartSnapshot(live, payload.snapshot)
+            )
+          ) {
+            return { success: false, error: 'Another POS cart is active. Hold it before resolving this tender.' };
+          }
+          const readyJournal: RestoredCartCheckoutJournal = {
+            ...journal,
+            state: 'READY',
+            updatedAt: audit.confirmedAt,
+            resolutionAudits: [...(journal.resolutionAudits ?? []), audit],
+          };
+          const readyPayload: PosHoldPayload = {
+            ...payload,
+            snapshot: adoptPosCheckoutSnapshotScope(payload.snapshot, scope),
+            restoreState: 'ACTIVE_CART_BACKUP',
+            restoredCheckout: readyJournal,
+          };
+          holdOrderRepo.replaceProtected(held.id, held.title, readyPayload);
+          database.markDirty();
+          const flush = await database.saveCoalesced();
+          if (!flush.success) {
+            holdOrderRepo.replaceProtected(held.id, held.title, payload);
+            database.markDirty();
+            const rollbackFlush = await database.saveCoalesced();
+            return {
+              success: false,
+              error: flush.error || 'Owner resolution was not made durable.',
+              rollbackDurabilityError: rollbackFlush.success ? undefined : rollbackFlush.error,
+            };
+          }
+          if (!this.isPosAuthContextCurrent(authContext)) {
+            return {
+              success: false,
+              resolved: true,
+              error: 'The owner resolution was saved, but the POS user changed. Sign in as the original owner to recover the cart.',
+            };
+          }
+          this.frozenRestoredCartHolds.delete(held.id);
+          this.markLiveRestoredCart(
+            { id: held.id, payload: readyPayload },
+            String(payload.autoRestoreForCheckoutId || ''),
+            undefined,
+            authContext,
+          );
+          return {
+            success: true,
+            resolved: true,
+            targetType: 'RESTORED_CART',
+            restoredCart: true,
+            audit,
+          };
+        }
+
+        return { success: false, error: 'Unknown uncertain-tender resolution target.' };
+      } catch (error: any) {
+        return { success: false, error: error?.message || String(error) };
+      }
+    });
+    ipcMain.handle('pos:billiard:complete-handoff', async (_e, checkoutId: string, orderId: string) => {
+      try {
+        if (!this.posStore) return { success: false, error: 'POS is not ready.' };
+        const scope = currentPosSnapshotScope(getConfig());
+        const record = billiardPosHandoffRepo.get(String(checkoutId || ''));
+        if (
+          !record
+          || record.orderId !== orderId
+          || record.salonId !== scope.salonId
+          || record.userId !== scope.userId
+          || record.registerId !== scope.registerId
+          || !orderRepo.getById(orderId)
+        ) {
+          return { success: false, error: 'Committed Billiard order could not be verified.' };
+        }
+        this.assertExistingBilliardOrder(record);
+        if (record.state !== 'SETTLED') {
+          billiardPosHandoffRepo.markState(record.checkoutId, 'POS_PAID_SYNC_PENDING');
+        }
+        const restored = this.finalizeBilliardCartAfterLocalCommit(record);
+        database.markDirty();
+        const flush = await database.saveCoalesced();
+        return {
+          success: true,
+          restored: restored.restored,
+          durabilityError: flush.success ? undefined : flush.error,
+        };
+      } catch (error: any) {
+        return { success: false, error: error?.message || String(error) };
+      }
+    });
 
     // Seed demo data for offline mode
     ipcMain.handle('pos:seed-demo', () => {
@@ -3051,49 +4696,46 @@ export class PosModule extends BaseModule {
 
     // Orders
     ipcMain.handle('pos:orders:create', async (_e, order, items) => {
+      let committedBilliardRecord: BilliardHandoffRecord | null = null;
+      let tenderedBilliardCart: { checkoutId: string; orderId: string } | null = null;
+      let committedRestoredOrderId: string | null = null;
+      let tenderedRestoredCart: { holdId: string; orderId: string } | null = null;
+      let orderAuthContext: PosAuthContext | null = null;
       try {
-        const normalizedOrder = { ...(order || {}) };
-        const isPosOrder = (normalizedOrder.source ?? 'POS') === 'POS';
-        if (isPosOrder) {
-          const activeShift = database.get<{ id: string; staff_id: string | null; staff_name: string | null }>(
-            'SELECT id, staff_id, staff_name FROM shifts WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 1',
-          );
-          const staffMissing = !String(normalizedOrder.staff_name || '').trim();
-          const staffIdMissing = !String(normalizedOrder.staff_id || '').trim();
-          const shiftMissing = !normalizedOrder.shift_id;
-          if (activeShift && (staffMissing || shiftMissing || staffIdMissing)) {
-            normalizedOrder.shift_id = activeShift.id;
-            normalizedOrder.staff_id = activeShift.staff_id;
-            normalizedOrder.staff_name = activeShift.staff_name;
+        orderAuthContext = this.capturePosAuthContext();
+        const entryState = this.posStore?.getState();
+        const entryBilliardCheckoutId = entryState?.checkoutDraft.billiard?.origin.checkoutId;
+        if (entryBilliardCheckoutId) {
+          const entryRecord = billiardPosHandoffRepo.get(entryBilliardCheckoutId);
+          if (
+            entryRecord
+            && entryRecord.state === 'POS_TENDER_COMMITTING'
+            && entryRecord.salonId === orderAuthContext.scope.salonId
+            && entryRecord.userId === orderAuthContext.scope.userId
+            && entryRecord.registerId === orderAuthContext.scope.registerId
+            && !orderRepo.getById(entryRecord.orderId)
+          ) {
+            tenderedBilliardCart = { checkoutId: entryRecord.checkoutId, orderId: entryRecord.orderId };
           }
-          const requestedShiftId = String(normalizedOrder.shift_id || '').trim();
-          if (!requestedShiftId || !String(normalizedOrder.staff_id || '').trim() || !String(normalizedOrder.staff_name || '').trim()) {
-            return {
-              success: false,
-              error: 'Cannot create POS order without an active shift staff. Close and reopen the shift before payment.',
-            };
-          }
-          const orderShift = database.get<{ id: string; staff_id: string | null; staff_name: string | null }>(
-            'SELECT id, staff_id, staff_name FROM shifts WHERE id = ? AND closed_at IS NULL',
-            [requestedShiftId],
-          );
-          if (!orderShift) {
-            return {
-              success: false,
-              error: 'Cannot create POS order without a local active shift. Close and reopen the shift before payment.',
-            };
-          }
-          if (!String(orderShift.staff_id || '').trim() || !String(orderShift.staff_name || '').trim()) {
-            return {
-              success: false,
-              error: 'Cannot create POS order without an active shift staff. Close and reopen the shift before payment.',
-            };
-          }
-          normalizedOrder.shift_id = orderShift.id;
-          normalizedOrder.staff_id = orderShift.staff_id;
-          normalizedOrder.staff_name = orderShift.staff_name;
         }
-
+        const entryRestored = entryState?.checkoutDraft.restoredInterruption;
+        if (entryRestored) {
+          const entryHold = holdOrderRepo.get(entryRestored.holdId);
+          const entryJournal = entryHold?.payload?.restoredCheckout;
+          if (
+            entryHold?.payload?.protected === true
+            && isValidRestoredCartCheckoutJournal(entryJournal)
+            && entryJournal.state === 'TENDER_COMMITTING'
+            && sameRestoredCartCheckoutIdentity(entryRestored, entryJournal)
+            && !orderRepo.getById(entryJournal.orderId)
+          ) {
+            tenderedRestoredCart = { holdId: entryRestored.holdId, orderId: entryJournal.orderId };
+          }
+        }
+        if (this.holdRecallInFlight) {
+          throw new Error('A held cart recall is still being saved. Do not collect payment yet.');
+        }
+        const normalizedOrder = { ...(order || {}) };
         const normalizedItems = (items || []).map((item: any) => {
           const product = item.variant_id ? productRepo.getById(item.variant_id) : null;
           const sell_by = getLineSellBy({
@@ -3117,8 +4759,183 @@ export class PosModule extends BaseModule {
             total: getLineTotalGrosze({ ...item, price, quantity: sale_quantity, sale_quantity, sell_by }),
           };
         });
+        assertPosPaymentAccounting(normalizedOrder);
+        // Protected tenders already performed the async route-aware check
+        // before cashier collection. This post-tender commit guard must not
+        // introduce a fresh network dependency; re-check the local-first
+        // route only, matching PaymentController's actual selection.
+        this.assertLocalTenderFiscalCompatibility(normalizedItems, Number(normalizedOrder.discount) || 0);
 
-        const id = orderRepo.create(normalizedOrder, normalizedItems);
+        const billiardRecord = this.resolveBilliardOrderRequest(normalizedOrder, normalizedItems, false);
+        const restoredContext = !billiardRecord
+          ? this.posStore?.getState().checkoutDraft.restoredInterruption ?? null
+          : null;
+        if (billiardRecord || restoredContext) {
+          assertProtectedPosPaymentMethods(normalizedOrder);
+        }
+        const restoredHold = restoredContext ? holdOrderRepo.get(restoredContext.holdId) : null;
+        if (restoredContext && (
+          !restoredHold
+          || restoredHold.payload?.protected !== true
+          || restoredHold.payload?.holdReason !== 'BILLIARD_INTERRUPTION'
+          || !['ACTIVE_CART_BACKUP', 'PAID_TOMBSTONE'].includes(String(restoredHold.payload?.restoreState || ''))
+          || restoredHold.payload?.autoRestoreForCheckoutId !== restoredContext.checkoutId
+          || !samePosSnapshotScope(restoredHold.payload.snapshot, currentPosSnapshotScope(getConfig()))
+          || !isValidRestoredCartCheckoutJournal(restoredHold.payload?.restoredCheckout)
+          || restoredHold.payload.restoredCheckout.orderId !== restoredContext.orderId
+          || restoredHold.payload.restoredCheckout.clientAttemptId !== restoredContext.clientAttemptId
+        )) {
+          throw new Error('The restored cart does not match its durable interruption Hold.');
+        }
+        let restoredJournal: RestoredCartCheckoutJournal | null = null;
+        if (restoredContext && restoredHold) {
+          const durableJournal = restoredHold.payload.restoredCheckout;
+          if (!isValidRestoredCartCheckoutJournal(durableJournal)) {
+            throw new Error('The durable restored-cart payment identity is invalid.');
+          }
+          restoredJournal = durableJournal;
+          const existingRestoredOrder = orderRepo.getById(durableJournal.orderId);
+          if (existingRestoredOrder) {
+            if (
+              String(normalizedOrder.id || '') !== durableJournal.orderId
+              || String(normalizedOrder.client_attempt_id || '') !== durableJournal.clientAttemptId
+            ) {
+              throw new Error('Restored-cart retry does not match its main-process payment identity.');
+            }
+            this.assertExistingRestoredCartOrder(durableJournal);
+            const paidJournal: RestoredCartCheckoutJournal = {
+              ...durableJournal,
+              state: 'PAID_TOMBSTONE',
+              paidAt: durableJournal.paidAt || new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            };
+            holdOrderRepo.replaceProtected(restoredHold.id, restoredHold.title, {
+              ...restoredHold.payload,
+              restoreState: 'PAID_TOMBSTONE',
+              restoredCheckout: paidJournal,
+            });
+            this.posStore?.dispatch({ type: 'cart/completeCheckout' });
+            database.markDirty();
+            const duplicateFlush = await database.saveCoalesced();
+            if (!this.isPosAuthContextCurrent(orderAuthContext)) {
+              return {
+                success: false,
+                id: durableJournal.orderId,
+                paymentCommitted: true,
+                error: 'POS user changed while the restored-cart order was being verified.',
+              };
+            }
+            return duplicateFlush.success
+              ? { success: true, id: durableJournal.orderId, duplicate: true, paymentCommitted: true }
+              : {
+                  success: false,
+                  id: durableJournal.orderId,
+                  paymentCommitted: true,
+                  durabilityError: duplicateFlush.error || 'database flush failed',
+                };
+          }
+          restoredJournal = this.assertRestoredCartOrderRequest(
+            restoredContext,
+            restoredHold.payload,
+            normalizedOrder,
+            normalizedItems,
+          );
+          tenderedRestoredCart = { holdId: restoredContext.holdId, orderId: restoredJournal.orderId };
+        }
+        if (billiardRecord && orderRepo.getById(billiardRecord.orderId)) {
+          this.assertExistingBilliardOrder(billiardRecord);
+          if (billiardRecord.state !== 'SETTLED') {
+            billiardPosHandoffRepo.markState(billiardRecord.checkoutId, 'POS_PAID_SYNC_PENDING');
+          }
+          this.posStore?.markBilliardOrderCommitted(billiardRecord.checkoutId, billiardRecord.orderId);
+          database.markDirty();
+          const duplicateFlush = await database.saveCoalesced();
+          if (!this.isPosAuthContextCurrent(orderAuthContext)) {
+            return {
+              success: false,
+              id: billiardRecord.orderId,
+              paymentCommitted: true,
+              error: 'POS user changed while the Billiard order was being verified.',
+            };
+          }
+          if (duplicateFlush.success) {
+            this.finalizeBilliardCartAfterLocalCommit(billiardRecord);
+            database.markDirty();
+            await database.saveCoalesced();
+          }
+          return duplicateFlush.success
+            ? { success: true, id: billiardRecord.orderId, duplicate: true, paymentCommitted: true }
+            : {
+                success: false,
+                id: billiardRecord.orderId,
+                paymentCommitted: true,
+                durabilityError: duplicateFlush.error || 'database flush failed',
+              };
+        }
+        if (billiardRecord) {
+          // A new tender may open only while the exact frozen cart is active.
+          this.resolveBilliardOrderRequest(normalizedOrder, normalizedItems, true);
+          tenderedBilliardCart = { checkoutId: billiardRecord.checkoutId, orderId: billiardRecord.orderId };
+        }
+        const isPosOrder = (normalizedOrder.source ?? 'POS') === 'POS';
+        if (isPosOrder) {
+          const activeShift = database.get<{ id: string; staff_id: string | null; staff_name: string | null }>(
+            'SELECT id, staff_id, staff_name FROM shifts WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 1',
+          );
+          const staffMissing = !String(normalizedOrder.staff_name || '').trim();
+          const staffIdMissing = !String(normalizedOrder.staff_id || '').trim();
+          const shiftMissing = !normalizedOrder.shift_id;
+          if (activeShift && (staffMissing || shiftMissing || staffIdMissing)) {
+            normalizedOrder.shift_id = activeShift.id;
+            normalizedOrder.staff_id = activeShift.staff_id;
+            normalizedOrder.staff_name = activeShift.staff_name;
+          }
+          const requestedShiftId = String(normalizedOrder.shift_id || '').trim();
+          if (!requestedShiftId || !String(normalizedOrder.staff_id || '').trim() || !String(normalizedOrder.staff_name || '').trim()) {
+            throw new Error('Cannot create POS order without an active shift staff. Close and reopen the shift before payment.');
+          }
+          const orderShift = database.get<{ id: string; staff_id: string | null; staff_name: string | null }>(
+            'SELECT id, staff_id, staff_name FROM shifts WHERE id = ? AND closed_at IS NULL',
+            [requestedShiftId],
+          );
+          if (!orderShift) {
+            throw new Error('Cannot create POS order without a local active shift. Close and reopen the shift before payment.');
+          }
+          if (!String(orderShift.staff_id || '').trim() || !String(orderShift.staff_name || '').trim()) {
+            throw new Error('Cannot create POS order without an active shift staff. Close and reopen the shift before payment.');
+          }
+          normalizedOrder.shift_id = orderShift.id;
+          normalizedOrder.staff_id = orderShift.staff_id;
+          normalizedOrder.staff_name = orderShift.staff_name;
+        }
+
+        const id = orderRepo.create(normalizedOrder, normalizedItems, (billiardRecord || restoredContext) ? {
+          afterInsertInTransaction: () => {
+            if (billiardRecord && !billiardPosHandoffRepo.markState(billiardRecord.checkoutId, 'POS_PAID_SYNC_PENDING')) {
+              throw new Error('Could not commit the Billiard payment safety state.');
+            }
+            if (restoredContext && restoredHold && restoredJournal) {
+              holdOrderRepo.replaceProtected(restoredContext.holdId, restoredHold.title, {
+                ...restoredHold.payload,
+                restoreState: 'PAID_TOMBSTONE',
+                restoredCheckout: {
+                  ...restoredJournal,
+                  state: 'PAID_TOMBSTONE',
+                  paidAt: new Date().toISOString(),
+                  updatedAt: new Date().toISOString(),
+                },
+              });
+            }
+          },
+        } : undefined);
+        if (billiardRecord) {
+          committedBilliardRecord = billiardRecord;
+          // Renderer cannot forge this proof or use it to clear; it only
+          // prevents any subsequent tender attempt while the disk barrier is
+          // pending/uncertain.
+          this.posStore?.markBilliardOrderCommitted(billiardRecord.checkoutId, billiardRecord.orderId);
+        }
+        if (restoredContext) committedRestoredOrderId = id;
 
         // Settle the cashier pickup queue if this paid sale came from a kitchen
         // self-order (loaded via the list or a QR scan). Fire-and-forget with a
@@ -3132,7 +4949,10 @@ export class PosModule extends BaseModule {
         let stockChanged = false;
         const allowNegativeStock = getConfig().allowOversell === true;
         for (const item of normalizedItems) {
-          if (item.variant_id && item.quantity > 0) {
+          // Billiard F&B stock was consumed when it was added to the session;
+          // TIME/MISC are services. Payment must never deduct any of them a
+          // second time. A normal POS line has no authoritative handoff.
+          if (shouldDecrementStockAtCheckout(item, Boolean(billiardRecord))) {
             productRepo.decrementStock(item.variant_id, item.quantity, { allowNegative: allowNegativeStock });
             stockChanged = true;
           }
@@ -3173,6 +4993,12 @@ export class PosModule extends BaseModule {
             if (normalizedOrder.payment_amount > 0) dto.paymentAmount = normalizedOrder.payment_amount / 100;
             if (normalizedOrder.change_amount > 0) dto.changeAmount = normalizedOrder.change_amount / 100;
             if (normalizedOrder.tip && normalizedOrder.tip > 0) dto.tip = normalizedOrder.tip / 100;
+            if (billiardRecord) {
+              dto.billiardOrigin = JSON.parse(normalizedOrder.billiard_origin_json);
+              dto.clientAttemptId = billiardRecord.clientAttemptId;
+            } else if (restoredJournal) {
+              dto.clientAttemptId = restoredJournal.clientAttemptId;
+            }
             syncLog.writeLocalEntry('order', id, 'created', dto);
             }
           } catch (e) { logger.debug('[PosModule] Sync log write failed for order:', e); }
@@ -3186,14 +5012,102 @@ export class PosModule extends BaseModule {
           // sale (same pattern as the check-in flush above). Don't fail the
           // sale if the flush fails: the order is committed in memory + sync
           // log, the auto-save loop retries, and db:save-error notifies the UI.
-          const flush = await database.save();
+          const flush = await database.saveCoalesced();
+          const authStillCurrent = this.isPosAuthContextCurrent(orderAuthContext);
           if (!flush.success) {
             logger.error(`[PosModule] Order ${id} created but disk flush failed: ${flush.error}`);
+            if (billiardRecord || restoredContext) {
+              if (restoredContext && authStillCurrent) {
+                // sql.js contains the order + PAID_TOMBSTONE. Even if the
+                // export failed, the last durable file is COMMITTING and will
+                // reconcile rather than re-offer this cart after restart.
+                this.posStore?.dispatch({ type: 'cart/completeCheckout' });
+              }
+              return {
+                success: false,
+                id,
+                paymentCommitted: true,
+                durabilityError: flush.error || 'database flush failed',
+              };
+            }
+          } else if (billiardRecord && authStillCurrent) {
+            // Only now may the frozen cart disappear. Restore the interrupted
+            // cart and mark its Hold as the active durable backup in a second,
+            // independently recoverable barrier.
+            this.finalizeBilliardCartAfterLocalCommit(billiardRecord);
+            database.markDirty();
+            const cleanupFlush = await database.saveCoalesced();
+            if (!cleanupFlush.success) {
+              logger.error(`[PosModule] Order ${id} is durable but post-payment cart restore cleanup failed: ${cleanupFlush.error}`);
+            }
+          } else if (restoredContext && authStillCurrent) {
+            // The order row and removal of its protected backup crossed the
+            // same disk barrier. Clear the live cart now so an items-only
+            // renderer cache cannot resurrect a paid order after a crash.
+            this.posStore?.dispatch({ type: 'cart/completeCheckout' });
           }
 
-          return { success: true, id };
+          if (!authStillCurrent && (billiardRecord || restoredContext)) {
+            return {
+              success: false,
+              id,
+              paymentCommitted: true,
+              error: 'POS user changed after the protected order commit. The original user can recover it after login.',
+            };
+          }
+
+          return { success: true, id, paymentCommitted: Boolean(billiardRecord || restoredContext) };
       }
       catch (e: any) {
+        if (committedBilliardRecord && orderRepo.getById(committedBilliardRecord.orderId)) {
+          logger.error(`[PosModule] Billiard order ${committedBilliardRecord.orderId} committed before post-commit failure: ${e?.message || e}`);
+          return {
+            success: false,
+            id: committedBilliardRecord.orderId,
+            paymentCommitted: true,
+            durabilityError: e?.message || String(e),
+          };
+        }
+        if (committedRestoredOrderId && orderRepo.getById(committedRestoredOrderId)) {
+          logger.error(`[PosModule] Restored-cart order ${committedRestoredOrderId} committed before post-commit failure: ${e?.message || e}`);
+          return {
+            success: false,
+            id: committedRestoredOrderId,
+            paymentCommitted: true,
+            durabilityError: e?.message || String(e),
+          };
+        }
+        if (tenderedBilliardCart && !orderRepo.getById(tenderedBilliardCart.orderId)) {
+          const current = billiardPosHandoffRepo.get(tenderedBilliardCart.checkoutId);
+          const marked = current?.state === 'POS_TENDER_UNCERTAIN'
+            || billiardPosHandoffRepo.markTenderUncertain(tenderedBilliardCart.checkoutId);
+          database.markDirty();
+          const uncertainFlush = await database.saveCoalesced();
+          const uncertainRecord = billiardPosHandoffRepo.get(tenderedBilliardCart.checkoutId);
+          return {
+            success: false,
+            outcomeUncertain: true,
+            intent: uncertainRecord ? this.billiardIntent(uncertainRecord, true) : undefined,
+            durabilityError: marked && uncertainFlush.success
+              ? undefined
+              : uncertainFlush.error || 'Could not persist the uncertain Billiard tender state.',
+            error: `Billiard payment outcome is uncertain. Do not charge again. ${e?.message || String(e)}`,
+          };
+        }
+        if (tenderedRestoredCart) {
+          const uncertain = await this.markRestoredCartTenderUncertain(
+            tenderedRestoredCart.holdId,
+            tenderedRestoredCart.orderId,
+            orderAuthContext ?? undefined,
+          );
+          return {
+            success: false,
+            outcomeUncertain: true,
+            restoredCartReconciliation: uncertain.reconciliation || undefined,
+            durabilityError: uncertain.durabilityError,
+            error: `Restored-cart payment outcome is uncertain. Do not charge again. ${e?.message || String(e)}`,
+          };
+        }
         // Idempotency: kiosk/POS retries reuse the same order id, so a retry
         // racing an already-committed create (whose IPC reply was lost) hits
         // the orders.id primary key. If the row truly exists, the sale was
@@ -3545,14 +5459,276 @@ export class PosModule extends BaseModule {
       }
     });
 
-    // Hold orders
-    ipcMain.handle('pos:hold:create', (_e, id: string, title: string, payload: any) => {
-      try { holdOrderRepo.create(id, title, payload); holdOrderRepo.prune(); database.markDirty(); return { success: true }; }
-      catch (e: any) { return { success: false, error: e.message }; }
+    // Hold orders — SQLite is canonical. Every destructive transition waits
+    // for a disk barrier before the live cart is cleared/replaced.
+    ipcMain.handle('pos:hold:create-current', async (_e, id: string, title: string) => {
+      try {
+        if (!this.posStore) return { success: false, error: 'POS is not ready.' };
+        const state = this.posStore.getState();
+        if (state.cart.items.length === 0) return { success: false, error: 'Cart is empty.' };
+        if (state.checkoutDraft.billiard) return { success: false, error: 'Frozen Billiard checkout cannot be held.' };
+        if (state.checkoutDraft.kitchenSelfOrder?.pickupOrderId) {
+          return { success: false, error: 'Active kitchen pickup cannot be held.' };
+        }
+        const scope = currentPosSnapshotScope(getConfig());
+        const authContext = this.capturePosAuthContext(scope);
+        const restored = state.checkoutDraft.restoredInterruption;
+        const protectedHold = restored ? holdOrderRepo.get(restored.holdId) : null;
+        if (restored && (
+          !protectedHold
+          || protectedHold.payload?.protected !== true
+          || protectedHold.payload?.restoreState !== 'ACTIVE_CART_BACKUP'
+          || !isValidRestoredCartCheckoutJournal(protectedHold.payload?.restoredCheckout)
+          || !sameRestoredCartCheckoutIdentity(restored, protectedHold.payload.restoredCheckout)
+          || protectedHold.payload.restoredCheckout.state !== 'READY'
+          || this.frozenRestoredCartHolds.has(restored.holdId)
+        )) {
+          return { success: false, error: 'This restored cart is not in a safe state to hold.' };
+        }
+        const captured = capturePosCheckoutSnapshot(state, scope, String(getConfig().posMode || 'retail'));
+        const payload: PosHoldPayload = {
+          schemaVersion: POS_CHECKOUT_SNAPSHOT_VERSION,
+          holdReason: 'MANUAL',
+          protected: false,
+          snapshot: withoutRestoredInterruptionMarker(captured),
+        };
+        database.transaction(() => {
+          holdOrderRepo.upsert(id, title, payload);
+          if (restored) holdOrderRepo.remove(restored.holdId, true);
+          holdOrderRepo.prune();
+        });
+        database.markDirty();
+        const flush = await database.saveCoalesced();
+        if (!flush.success) {
+          // Restore in-memory ownership to match the still-live cart. The old
+          // on-disk protected row also remains authoritative after this failed
+          // barrier.
+          try {
+            holdOrderRepo.remove(id);
+            if (restored && protectedHold) {
+              holdOrderRepo.upsert(restored.holdId, protectedHold.title, protectedHold.payload);
+            }
+            database.markDirty();
+            void database.saveCoalesced();
+          } catch {}
+          return { success: false, error: flush.error || 'Held cart was not saved.' };
+        }
+        if (!this.isPosAuthContextCurrent(authContext)) {
+          return { success: false, error: 'POS user changed after the Hold was saved; the old user can recall it after login.' };
+        }
+        this.posStore.dispatch({ type: 'cart/clear' });
+        // A protected interruption backup may have been waiting behind this
+        // ordinary cart since startup. As soon as the ordinary cart is safely
+        // held, restore that backup in the same UX flow—no app restart needed.
+        const protectedRecovery = this.recoverProtectedBilliardInterruptionCart();
+        if (protectedRecovery.restored) {
+          database.markDirty();
+          const recoveryFlush = await database.saveCoalesced();
+          if (!this.isPosAuthContextCurrent(authContext)) {
+            return { success: false, restoredProtectedCart: false, error: 'POS user changed during protected-cart recovery.' };
+          }
+          return {
+            success: true,
+            restoredProtectedCart: true,
+            recoveryDurabilityError: recoveryFlush.success ? undefined : recoveryFlush.error,
+          };
+        }
+        return { success: true, recoveryError: protectedRecovery.error };
+      } catch (e: any) { return { success: false, error: e.message }; }
     });
-    ipcMain.handle('pos:hold:list', () => holdOrderRepo.list());
-    ipcMain.handle('pos:hold:get', (_e, id: string) => holdOrderRepo.get(id));
-    ipcMain.handle('pos:hold:remove', (_e, id: string) => { holdOrderRepo.remove(id); database.markDirty(); return { success: true }; });
+    ipcMain.handle('pos:hold:import-legacy', async (_e, rows: unknown) => {
+      try {
+        if (!this.posStore) return { success: false, error: 'POS is not ready.' };
+        if (!Array.isArray(rows)) return { success: false, error: 'Legacy held carts are malformed.' };
+        const scope = currentPosSnapshotScope(getConfig());
+        const currentState = this.posStore.getState();
+        const posMode = String(getConfig().posMode || 'retail');
+        const imports: ReturnType<typeof buildLegacyHeldCartImport>[] = [];
+        const errors: string[] = [];
+        rows.forEach((raw, index) => {
+          try {
+            imports.push(buildLegacyHeldCartImport({
+              raw: raw as any,
+              index,
+              currentState,
+              scope,
+              posMode,
+            }));
+          } catch (error: any) {
+            errors.push(error?.message || `Legacy held cart ${index + 1} is invalid`);
+          }
+        });
+        let imported = 0;
+        let skipped = 0;
+        database.transaction(() => {
+          for (const entry of imports) {
+            if (holdOrderRepo.get(entry.id)) {
+              skipped++;
+              continue;
+            }
+            holdOrderRepo.upsert(entry.id, entry.title, entry.payload);
+            imported++;
+          }
+          // Deliberately no prune here: rollout migration must not discard
+          // either an imported cart or a pre-existing durable Hold.
+        });
+        if (imported > 0) {
+          database.markDirty();
+          const flush = await database.saveCoalesced();
+          if (!flush.success) {
+            return {
+              success: false,
+              imported,
+              skipped,
+              errors,
+              error: flush.error || 'Legacy held carts were not made durable.',
+            };
+          }
+        }
+        return {
+          success: errors.length === 0,
+          imported,
+          skipped,
+          errors,
+          error: errors.length > 0 ? 'Some legacy held carts could not be imported.' : undefined,
+        };
+      } catch (e: any) {
+        return { success: false, error: e?.message || String(e) };
+      }
+    });
+    ipcMain.handle('pos:hold:recall', async (_e, id: string) => {
+      try {
+        if (!this.posStore) return { success: false, error: 'POS is not ready.' };
+        if (this.holdRecallInFlight) {
+          return { success: false, error: 'Another held cart recall is still being saved.' };
+        }
+        if (this.posStore.getState().cart.items.length > 0) {
+          return { success: false, error: 'Hold the current cart before recalling another one.' };
+        }
+        const held = holdOrderRepo.get(id);
+        const scope = currentPosSnapshotScope(getConfig());
+        const authContext = this.capturePosAuthContext(scope);
+        if (!held?.payload?.snapshot || !samePosSnapshotScope(held.payload.snapshot, scope)) {
+          return { success: false, error: 'Held cart does not belong to this salon, user, and register.' };
+        }
+        if (held.payload.protected === true) {
+          return { success: false, error: 'This protected Billiard interruption cart is restored automatically after payment.' };
+        }
+        if (held.payload.snapshot.posMode !== String(getConfig().posMode || 'retail')) {
+          return { success: false, error: `Switch POS to ${held.payload.snapshot.posMode} mode before recalling this cart.` };
+        }
+        const beforeSnapshot = capturePosCheckoutSnapshot(
+          this.posStore.getState(),
+          scope,
+          String(getConfig().posMode || 'retail'),
+        );
+        const pendingSnapshot = JSON.parse(JSON.stringify(held.payload.snapshot));
+        pendingSnapshot.state.checkoutDraft = {
+          ...(pendingSnapshot.state.checkoutDraft || {}),
+          holdRecallPending: { holdId: held.id },
+        };
+        const recallOwner = { holdId: held.id, authContext };
+        this.holdRecallInFlight = recallOwner;
+        try {
+          this.posStore.dispatch({
+            type: 'state/replaceCheckoutSnapshot',
+            payload: { snapshot: pendingSnapshot },
+          });
+          holdOrderRepo.remove(id);
+          database.markDirty();
+          const flush = await database.saveCoalesced();
+          if (!flush.success) {
+            holdOrderRepo.upsert(held.id, held.title, held.payload);
+            if (this.isPosAuthContextCurrent(authContext)) {
+              this.posStore.dispatch({
+                type: 'state/replaceCheckoutSnapshot',
+                payload: { snapshot: beforeSnapshot },
+              });
+            }
+            database.markDirty();
+            const rollbackFlush = await database.saveCoalesced();
+            return {
+              success: false,
+              error: flush.error || 'Held cart recall was not saved; live cart was rolled back.',
+              rollbackDurabilityError: rollbackFlush.success ? undefined : rollbackFlush.error,
+            };
+          }
+          if (!this.isPosAuthContextCurrent(authContext)) {
+            holdOrderRepo.upsert(held.id, held.title, held.payload);
+            database.markDirty();
+            const authRollbackFlush = await database.saveCoalesced();
+            return {
+              success: false,
+              error: 'POS user changed during Hold recall; the held cart was restored instead of opening it in another account.',
+              rollbackDurabilityError: authRollbackFlush.success ? undefined : authRollbackFlush.error,
+            };
+          }
+          this.posStore.dispatch({
+            type: 'state/replaceCheckoutSnapshot',
+            payload: { snapshot: held.payload.snapshot },
+          });
+          return { success: true };
+        } finally {
+          if (this.holdRecallInFlight === recallOwner) this.holdRecallInFlight = null;
+        }
+      } catch (e: any) { return { success: false, error: e.message }; }
+    });
+    ipcMain.handle('pos:hold:create', () => ({ success: false, error: 'Use createCurrent for durable Hold.' }));
+    ipcMain.handle('pos:hold:list', () => {
+      try {
+        const scope = currentPosSnapshotScope(getConfig());
+        return holdOrderRepo.list().filter((row) => {
+          const held = holdOrderRepo.get(row.id);
+          return held?.payload?.protected !== true
+            && !!held?.payload?.snapshot
+            && samePosSnapshotScope(held.payload.snapshot, scope);
+        });
+      } catch { return []; }
+    });
+    ipcMain.handle('pos:hold:get', (_e, id: string) => {
+      try {
+        const held = holdOrderRepo.get(id);
+        const scope = currentPosSnapshotScope(getConfig());
+        return held?.payload?.snapshot && samePosSnapshotScope(held.payload.snapshot, scope) ? held : null;
+      } catch { return null; }
+    });
+    ipcMain.handle('pos:hold:remove', async (_e, id: string) => {
+      try {
+        if (this.holdRecallInFlight) {
+          return { success: false, error: 'Wait for the active held cart recall to finish.' };
+        }
+        const held = holdOrderRepo.get(id);
+        const scope = currentPosSnapshotScope(getConfig());
+        const authContext = this.capturePosAuthContext(scope);
+        if (!held?.payload?.snapshot || !samePosSnapshotScope(held.payload.snapshot, scope)) {
+          return { success: false, error: 'Held cart not found on this register.' };
+        }
+        holdOrderRepo.remove(id);
+        database.markDirty();
+        const flush = await database.saveCoalesced();
+        if (!flush.success) {
+          holdOrderRepo.upsert(held.id, held.title, held.payload);
+          database.markDirty();
+          const rollbackFlush = await database.saveCoalesced();
+          return {
+            success: false,
+            error: flush.error || 'Held cart deletion was not saved.',
+            rollbackDurabilityError: rollbackFlush.success ? undefined : rollbackFlush.error,
+          };
+        }
+        if (!this.isPosAuthContextCurrent(authContext)) {
+          holdOrderRepo.upsert(held.id, held.title, held.payload);
+          database.markDirty();
+          const authRollbackFlush = await database.saveCoalesced();
+          return {
+            success: false,
+            error: 'POS user changed while the held cart was being removed; deletion was rolled back.',
+            rollbackDurabilityError: authRollbackFlush.success ? undefined : authRollbackFlush.error,
+          };
+        }
+        return { success: true };
+      } catch (e: any) { return { success: false, error: e.message }; }
+    });
 
     // Quick keys
     ipcMain.handle('pos:quickkeys:list', (_e, mode?: string) => quickKeyLayoutRepo.list(mode));
@@ -3730,6 +5906,13 @@ export class PosModule extends BaseModule {
         if (!order) return { success: false, error: 'Order not found' };
         if (!order.backend_id) return { success: false, error: 'Order not synced to server yet' };
         if (order.status === 'REFUNDED') return { success: false, error: 'Order already fully refunded' };
+        const refundRequestId = String(data?.refundRequestId || '').trim();
+        if (!UUID_RE.test(refundRequestId)) {
+          return { success: false, error: 'A stable refund request ID is required before refunding.' };
+        }
+        data = { ...data, refundRequestId };
+        const refundScope = currentPosSnapshotScope(getConfig());
+        const refundAuthContext = this.capturePosAuthContext(refundScope);
         if (order.status === 'PARTIAL_REFUND') {
           const alreadyRefunded = order.refund_amount ?? 0;
           const requestedAmount = data.type === 'FULL'
@@ -3738,6 +5921,23 @@ export class PosModule extends BaseModule {
           if (alreadyRefunded + requestedAmount > order.total) {
             return { success: false, error: `Refund would exceed order total (${order.total} grosze). Already refunded: ${alreadyRefunded}` };
           }
+        }
+        if (order.billiard_origin_json) {
+          const sanitized = sanitizeBilliardRefundRequest({
+            data,
+            orderItems: orderRepo.getItemsByOrderId(orderId),
+            refundLinesJson: order.refund_lines,
+            alreadyRefundedGrosze: order.refund_amount,
+          });
+          data = {
+            ...data,
+            amount: sanitized.amountGrosze,
+            lines: sanitized.lines,
+            // Main derives tender allocation from the committed sale. A
+            // renderer cannot redirect or inflate a Billiard refund tender.
+            tenderAllocations: undefined,
+            manualAdjustmentAmount: undefined,
+          };
         }
 
         const activeShift = database.get<{ id: string; backend_id: string | null; staff_id: string | null }>(
@@ -3759,6 +5959,9 @@ export class PosModule extends BaseModule {
               token,
               configuredMachineId || undefined,
             );
+            if (!this.isPosAuthContextCurrent(refundAuthContext)) {
+              return { success: false, requiresRefresh: true, error: 'POS user changed before the refund was submitted.' };
+            }
             if (serverShift?.id && canReconcileActiveShift(
               activeShift.id,
               activeShift.staff_id,
@@ -3813,6 +6016,9 @@ export class PosModule extends BaseModule {
 
         logger.info(`[PosModule] Refund ${order.order_number}: ${data.type}, ${lines.length} lines, payload=${JSON.stringify(backendPayload).substring(0, 300)}`);
 
+        if (!this.isPosAuthContextCurrent(refundAuthContext)) {
+          return { success: false, requiresRefresh: true, error: 'POS user changed before the refund was submitted.' };
+        }
         const result = await apiClient.refundOrder(token, order.backend_id, backendPayload);
         if (result === null) return { success: false, error: 'Refund endpoint not available' };
 
@@ -3841,12 +6047,17 @@ export class PosModule extends BaseModule {
           if (validation.mutationDetected) {
             lockRefundMutationLocally(orderId, order, validation, error, data.reason);
             database.markDirty();
+            const mutationLockFlush = await database.saveCoalesced();
             return {
               success: false,
               mutationDetected: true,
               requiresRefresh: true,
               overRefund: validation.overRefund,
-              error,
+              refundRequestId,
+              durabilityError: mutationLockFlush.success ? undefined : mutationLockFlush.error,
+              error: mutationLockFlush.success
+                ? error
+                : `${error} The local reconciliation lock could not be saved; do not retry with a new request ID.`,
               backendSummary: validation.summary,
             };
           }
@@ -3893,6 +6104,27 @@ export class PosModule extends BaseModule {
           shiftId: activeShift.id,
           items: deltaRefundLines,
         });
+        database.markDirty();
+        const refundFlush = await database.saveCoalesced();
+        if (!refundFlush.success) {
+          return {
+            success: false,
+            mutationDetected: true,
+            requiresRefresh: true,
+            refundRequestId,
+            durabilityError: refundFlush.error || 'database flush failed',
+            error: 'Refund completed on the server, but its local audit was not made durable. Do not pay out or retry with a new request ID; reconcile this refund.',
+          };
+        }
+        if (!this.isPosAuthContextCurrent(refundAuthContext)) {
+          return {
+            success: false,
+            mutationDetected: true,
+            requiresRefresh: true,
+            refundRequestId,
+            error: 'Refund is durably recorded, but the POS user changed. Do not open the drawer or pay out from the new session; refresh as the original user.',
+          };
+        }
 
         // Print refund receipt
         let receiptPrinted = false;
@@ -3939,6 +6171,389 @@ export class PosModule extends BaseModule {
         );
         if (e?.stack) logger.error(`[PosModule] Refund failure stack: ${e.stack}`);
         return { success: false, error: surfaced };
+      }
+    });
+
+    ipcMain.handle('pos:orders:billiard-correction', async (_e, orderId: string, data: {
+      correctionRequestId?: string;
+      reason?: string;
+    }) => {
+      try {
+        const config = getConfig();
+        if (String(config.authUser?.role || '').toUpperCase() !== 'OWNER') {
+          return { success: false, code: 'BILLIARD_CORRECTION_OWNER_REQUIRED', error: 'Only the salon owner can correct a paid Billiard order.' };
+        }
+        const correctionScope = currentPosSnapshotScope(config);
+        const correctionAuthContext = this.capturePosAuthContext(correctionScope);
+
+        const order = orderRepo.getById(orderId);
+        if (!order) return { success: false, error: 'Order not found' };
+        if (!order.backend_id || order.synced !== 1) {
+          return { success: false, error: 'The Billiard order must finish syncing before owner correction.' };
+        }
+        if (!order.billiard_origin_json) {
+          return { success: false, error: 'Owner Billiard correction is only available for Billiard POS orders.' };
+        }
+        if (order.customer_nip) {
+          return {
+            success: false,
+            code: 'BILLIARD_CORRECTION_INVOICE_BLOCKED',
+            error: 'This order is linked to an invoice and must be corrected through the invoice workflow.',
+          };
+        }
+
+        const requestedCorrectionRequestId = String(data?.correctionRequestId || '').trim();
+        const requestedReason = String(data?.reason || '').trim();
+        if (!UUID_RE.test(requestedCorrectionRequestId)) {
+          return { success: false, error: 'A valid correction request ID is required.' };
+        }
+        if (requestedReason.length < 3 || requestedReason.length > 500) {
+          return { success: false, error: 'Correction reason must contain 3 to 500 characters.' };
+        }
+
+        let origin: Record<string, any>;
+        try { origin = JSON.parse(order.billiard_origin_json); }
+        catch { return { success: false, error: 'Stored Billiard order origin is invalid.' }; }
+        if (origin?.type !== 'BILLIARD_SESSION' || !origin.sessionId || !origin.checkoutId) {
+          return { success: false, error: 'Stored Billiard order origin is incomplete.' };
+        }
+
+        // The original, settled handoff owns the durable correction command.
+        // If Electron died after HTTP dispatch, a new renderer UUID must never
+        // create a second correction: retry the exact journaled request/body.
+        const correctionSource = billiardPosHandoffRepo.getByOrderId(order.id);
+        if (!correctionSource || !isBilliardCorrectionSourceForOwner(correctionSource, correctionScope, origin)) {
+          return {
+            success: false,
+            error: 'The durable source journal for this Billiard correction is unavailable on this owner/register.',
+          };
+        }
+        const existingCorrectionIntent = correctionSource.correctionIntent;
+        if (existingCorrectionIntent && (
+          existingCorrectionIntent.orderId !== order.id
+          || !UUID_RE.test(existingCorrectionIntent.requestId)
+          || existingCorrectionIntent.reason.length < 3
+          || existingCorrectionIntent.reason.length > 500
+          || !['READY', 'SERVER_CONFIRMED'].includes(existingCorrectionIntent.state)
+        )) {
+          return {
+            success: false,
+            requiresRefresh: true,
+            error: 'The durable Billiard correction journal is invalid. Do not submit another correction.',
+          };
+        }
+        const correctionCommand = resolveBilliardCorrectionCommand(existingCorrectionIntent, {
+          requestId: requestedCorrectionRequestId,
+          reason: requestedReason,
+        });
+        const correctionRequestId = correctionCommand.requestId;
+        const reason = correctionCommand.reason;
+
+        const locallyCommittedCorrectionLines = getRefundLinesForRequest(
+          order.refund_lines,
+          correctionRequestId,
+        );
+        const localCorrectionAlreadyApplied = !shouldApplyRefundRequestLocally(
+          order.refund_lines,
+          correctionRequestId,
+        );
+        const sameCommittedCorrectionDelta = locallyCommittedCorrectionLines
+          .reduce((sum, line) => sum + Math.max(0, Math.round(Number(line?.refundAmount) || 0)), 0);
+        if (order.status === 'REFUNDED') {
+          if (sameCommittedCorrectionDelta <= 0) {
+            return { success: false, error: 'This Billiard order is already fully corrected.' };
+          }
+        }
+
+        if (!this.posStore) return { success: false, error: 'POS is not ready.' };
+        assertBilliardCorrectionHandoffPreflight({
+          state: this.posStore.getState(),
+          sessionId: String(origin.sessionId),
+          unresolved: billiardPosHandoffRepo.getRecoverable(correctionScope),
+        });
+
+        const activeShift = database.get<{ id: string; backend_id: string | null; staff_id: string | null }>(
+          'SELECT id, backend_id, staff_id FROM shifts WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 1',
+        );
+        if (!activeShift) {
+          return {
+            success: false,
+            code: 'BILLIARD_CORRECTION_ACTIVE_SHIFT_REQUIRED',
+            error: 'Open a POS shift before correcting this Billiard order.',
+          };
+        }
+
+        const token = getSecureAuthToken();
+        if (!token) return { success: false, error: 'Not authenticated' };
+
+        let backendShiftId = activeShift.backend_id;
+        if (!backendShiftId) {
+          const configuredMachineId = String(config.machineId || '').trim();
+          const serverShift = await apiClient.getActiveShift(token, configuredMachineId || undefined);
+          if (!this.isPosAuthContextCurrent(correctionAuthContext)) {
+            return {
+              success: false,
+              requiresRefresh: true,
+              error: 'POS user changed while the active shift was being verified. No correction was submitted.',
+            };
+          }
+          if (serverShift?.id && canReconcileActiveShift(
+            activeShift.id,
+            activeShift.staff_id,
+            serverShift,
+            configuredMachineId,
+          )) {
+            backendShiftId = serverShift.id;
+            database.run(
+              'UPDATE shifts SET backend_id = ?, synced = 1, sync_error = NULL WHERE id = ? AND backend_id IS NULL',
+              [backendShiftId, activeShift.id],
+            );
+            database.markDirty();
+          }
+        }
+        if (!backendShiftId) {
+          return {
+            success: false,
+            code: 'BILLIARD_CORRECTION_ACTIVE_SHIFT_REQUIRED',
+            error: 'The active POS shift has not synced to the server yet.',
+          };
+        }
+
+        const remainingGrosze = sameCommittedCorrectionDelta > 0
+          ? sameCommittedCorrectionDelta
+          : Math.max(0, Number(order.total) - Number(order.refund_amount || 0));
+        if (remainingGrosze <= 0) return { success: false, error: 'No paid amount remains to correct.' };
+        const tenderAllocationsMinor = allocateRefundTenders(
+          order.payment_tenders,
+          remainingGrosze,
+          order.payment_method,
+        );
+        let correctionIntent = existingCorrectionIntent;
+        if (!correctionIntent) {
+          const stagedIntent = {
+            orderId: order.id,
+            requestId: correctionRequestId,
+            reason,
+            state: 'READY' as const,
+            updatedAt: new Date().toISOString(),
+          };
+          if (!billiardPosHandoffRepo.setCorrectionIntent(order.id, stagedIntent)) {
+            return { success: false, error: 'Could not stage the durable Billiard correction command.' };
+          }
+          database.markDirty();
+          const intentFlush = await database.saveCoalesced();
+          if (!intentFlush.success) {
+            return {
+              success: false,
+              durabilityError: intentFlush.error || 'database flush failed',
+              error: 'Correction was not submitted because its request ID could not be made durable.',
+            };
+          }
+          correctionIntent = stagedIntent;
+        }
+        if (!this.isPosAuthContextCurrent(correctionAuthContext)) {
+          return {
+            success: false,
+            requiresRefresh: true,
+            error: 'POS user changed after the correction command was staged. No new server request was submitted.',
+          };
+        }
+
+        const result: any = correctionIntent.state === 'SERVER_CONFIRMED'
+          ? correctionIntent.response
+          : await apiClient.correctBilliardOrder(token, order.backend_id, {
+              correctionRequestId,
+              reason,
+              shiftId: backendShiftId,
+              tenderAllocations: tenderAllocationsMinor.map((allocation) => ({
+                method: allocation.method,
+                amount: moneyGroszeToPln(allocation.amount),
+              })),
+            });
+
+        // The server has already crossed the financial mutation boundary here.
+        // Fail closed if its response cannot safely drive local history and the
+        // replacement POS handoff; the same UUID remains retryable/idempotent.
+        const replacementCheckout = normalizeBilliardPosCheckout(result?.posCheckout);
+        const refundedDeltaGrosze = toGrosze(result?.refundAmount);
+        const totalRefundedGrosze = toGrosze(result?.totalRefundedAmount);
+        const rawLines = Array.isArray(result?.refundedLines) ? result.refundedLines : [];
+        const refundLineTotal = rawLines.reduce((sum: number, line: any) => sum + toGrosze(line?.refundAmount), 0);
+        const responseIsSafe = result?.success === true
+          && result?.status === 'REFUNDED'
+          && refundedDeltaGrosze === remainingGrosze
+          && totalRefundedGrosze === Number(order.total)
+          && Math.abs(refundLineTotal - refundedDeltaGrosze) <= 1
+          && rawLines.length > 0
+          && rawLines.every((line: any) => Boolean(line?.billiardLineKey) && line?.restock === false)
+          && Array.isArray(result?.stockMovementIds)
+          && result.stockMovementIds.length === 0
+          && replacementCheckout.sessionId === origin.sessionId
+          && replacementCheckout.checkoutId !== origin.checkoutId;
+        if (!responseIsSafe) {
+          return {
+            success: false,
+            mutationDetected: true,
+            requiresRefresh: true,
+            error: 'The owner correction completed on the server, but its replacement checkout response was incomplete. Retry with the same request.',
+          };
+        }
+        if (correctionIntent.state !== 'SERVER_CONFIRMED') {
+          const confirmedIntent = {
+            ...correctionIntent,
+            state: 'SERVER_CONFIRMED' as const,
+            response: result,
+            updatedAt: new Date().toISOString(),
+          };
+          if (!billiardPosHandoffRepo.setCorrectionIntent(order.id, confirmedIntent)) {
+            return {
+              success: false,
+              mutationDetected: true,
+              requiresRefresh: true,
+              error: 'The correction completed on the server, but its confirmed response could not be journaled. Retry this request only.',
+            };
+          }
+          database.markDirty();
+          const confirmedFlush = await database.saveCoalesced();
+          if (!confirmedFlush.success) {
+            return {
+              success: false,
+              mutationDetected: true,
+              requiresRefresh: true,
+              durabilityError: confirmedFlush.error || 'database flush failed',
+              error: 'The correction completed on the server, but local response durability failed. Retry this request only.',
+            };
+          }
+          correctionIntent = confirmedIntent;
+        }
+        if (!this.isPosAuthContextCurrent(correctionAuthContext)) {
+          return {
+            success: false,
+            mutationDetected: true,
+            requiresRefresh: true,
+            error: 'The correction is durably journaled, but the POS user changed before local recovery. Sign in as the original owner and retry.',
+          };
+        }
+
+        const refundOccurredAt = new Date().toISOString();
+        const refundMethod = tenderAllocationsMinor.length > 1
+          ? 'SPLIT'
+          : tenderAllocationsMinor[0]?.method || order.payment_method || undefined;
+        const normalizedRefundLines = normalizeRefundLinesJson(rawLines);
+        const deltaRefundLines = normalizedRefundLines
+          ? JSON.parse(normalizedRefundLines).map((line: any) => ({
+              ...line,
+              refundedAt: line.refundedAt || refundOccurredAt,
+              refundRequestId: line.refundRequestId || correctionRequestId,
+              reason: line.reason || reason,
+              refundMethod: line.refundMethod || refundMethod,
+              restock: false,
+            }))
+          : [];
+        if (!localCorrectionAlreadyApplied) {
+          const cumulativeRefundLines = mergeRefundLines(order.refund_lines, deltaRefundLines);
+          orderRepo.markRefunded(order.id, totalRefundedGrosze, reason, 'FULL', cumulativeRefundLines);
+          posEventEmitter.emitRefundIssued({
+            localOrderId: order.id,
+            backendOrderId: order.backend_id,
+            amountMinor: refundedDeltaGrosze,
+            method: order.payment_method,
+            tenderAllocations: tenderAllocationsMinor,
+            reason,
+            refundRequestId: correctionRequestId,
+            refundedAt: refundOccurredAt,
+            shiftId: activeShift.id,
+            items: deltaRefundLines,
+            approvedByStaffId: config.authUser?.id ?? null,
+          });
+          database.markDirty();
+          const saved = await database.saveCoalesced();
+          if (!saved.success) {
+            return {
+              success: false,
+              mutationDetected: true,
+              requiresRefresh: true,
+              durabilityError: saved.error || 'database flush failed',
+              error: 'Correction is recorded on the server. Do not create another correction; retry this request to recover locally.',
+            };
+          }
+          if (!this.isPosAuthContextCurrent(correctionAuthContext)) {
+            return {
+              success: false,
+              mutationDetected: true,
+              requiresRefresh: true,
+              error: 'The correction is recorded, but the POS user changed before its replacement checkout could be opened.',
+            };
+          }
+        }
+
+        if (!this.isPosAuthContextCurrent(correctionAuthContext)) {
+          return {
+            success: false,
+            mutationDetected: true,
+            requiresRefresh: true,
+            error: 'The correction is recorded, but the POS user changed before its replacement checkout could be prepared.',
+          };
+        }
+        const handoff = await this.prepareBilliardHandoff({
+          posCheckout: replacementCheckout,
+          tableName: result.tableName ?? result.resourceName ?? null,
+        });
+        if (!this.isPosAuthContextCurrent(correctionAuthContext)) {
+          return {
+            success: false,
+            mutationDetected: true,
+            requiresRefresh: true,
+            error: 'The correction is recorded, but the POS user changed during replacement checkout recovery.',
+          };
+        }
+        if (!handoff?.success || !handoff?.intent) {
+          return {
+            success: false,
+            mutationDetected: true,
+            requiresRefresh: true,
+            error: handoff?.error || handoff?.durabilityError || 'Correction succeeded, but the replacement Billiard checkout could not be prepared.',
+          };
+        }
+
+        let correctionJournalCleanupError: string | undefined;
+        if (!billiardPosHandoffRepo.setCorrectionIntent(order.id, null)) {
+          correctionJournalCleanupError = 'The completed correction command could not be cleared from its source journal.';
+        } else {
+          database.markDirty();
+          const cleanupFlush = await database.saveCoalesced();
+          if (!cleanupFlush.success) {
+            // The last durable image still contains SERVER_CONFIRMED and is
+            // safe to replay idempotently. The replacement handoff itself was
+            // already fsynced by prepareBilliardHandoff.
+            correctionJournalCleanupError = cleanupFlush.error || 'database flush failed';
+          }
+        }
+
+        return {
+          success: true,
+          status: result.status,
+          refundAmount: result.refundAmount,
+          totalRefundedAmount: result.totalRefundedAmount,
+          refundedLines: result.refundedLines,
+          correction: result.correction,
+          posCheckout: replacementCheckout,
+          tableName: result.tableName ?? result.resourceName ?? null,
+          intent: handoff.intent,
+          journalCleanupPending: correctionJournalCleanupError,
+        };
+      } catch (error: any) {
+        const code = String(error?.code || '').trim() || undefined;
+        const messageByCode: Record<string, string> = {
+          BILLIARD_CORRECTION_INVOICE_BLOCKED: 'This order is linked to an invoice and must be corrected through the invoice workflow.',
+          BILLIARD_CORRECTION_ACTIVE_SHIFT_REQUIRED: 'Open a synced POS shift before correcting this Billiard order.',
+          BILLIARD_CORRECTION_IDEMPOTENCY_MISMATCH: 'This correction request ID was already used with different details. Change the reason to start a new correction.',
+        };
+        return {
+          success: false,
+          code,
+          error: (code && messageByCode[code]) || error?.message || 'Billiard owner correction failed',
+        };
       }
     });
 
@@ -4710,6 +7325,15 @@ export class PosModule extends BaseModule {
     ipcMain.handle('pos:shift:close', async (_e, data: { shiftId: string; closingCash: number; fiscalOnly?: boolean }) => {
       try {
         if (!this.shiftController) return { success: false, error: 'Shift controller not initialized' };
+        if (
+          this.posStore?.getState().checkoutDraft.billiard
+          || this.posStore?.getState().checkoutDraft.restoredInterruption
+        ) {
+          return {
+            success: false,
+            error: 'Pay, hold, or discard the protected POS cart before closing this shift.',
+          };
+        }
 
         // Check shift exists in DB — if not, clear the ghost session and return gracefully
         const shiftExists = database.get<{ id: string }>('SELECT id FROM shifts WHERE id = ? AND closed_at IS NULL', [data.shiftId]);
@@ -5037,11 +7661,14 @@ export class PosModule extends BaseModule {
   registerEventHandlers(bus: EventBus): void {
     // Clear cart & shift on logout to prevent data leakage between accounts
     bus.on('user:logged-out', () => {
-      logger.info('[PosModule] User logged out — clearing POS state');
-      this.posStore?.dispatch({ type: 'cart/clear' });
-      this.posStore?.dispatch({ type: 'session/close' });
+      logger.info('[PosModule] User logged out — resetting POS RAM at the auth boundary');
+      this.posAuthEpoch.advance();
+      this.frozenRestoredCartHolds.clear();
+      this.holdRecallInFlight = null;
+      this.posStore?.resetForAuthBoundary();
     });
     bus.on('user:logged-in', () => {
+      this.posAuthEpoch.advance();
       this.replayProductAdminMutations('login');
     });
   }

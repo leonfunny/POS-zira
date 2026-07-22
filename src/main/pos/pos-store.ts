@@ -12,6 +12,13 @@ import type {
 import { resolveCustomerDisplayProfile } from '../../shared/customer-display-profile';
 import { calculateLineTotalGrosze, isValidSaleQuantity, normalizeSaleUnit, normalizeSellBy, roundSaleQuantity, type SellBy } from '../../shared/pos-sale';
 import { findLinePriceAnomaly, formatPriceAnomalyMessage } from '../../shared/pos-price-guard';
+import type {
+  BilliardCartLineMetadata,
+  BilliardCheckoutContext,
+  HoldRecallPendingContext,
+  PosCheckoutSnapshot,
+  RestoredInterruptionContext,
+} from '../../shared/billiard-pos-handoff';
 
 // === State interfaces ===
 
@@ -34,6 +41,9 @@ export interface CartItem {
   course?: number;        // Restaurant: course number (1=starter, 2=main, 3=dessert)
   vatRate?: number;       // VAT rate (e.g. 23, 8, 5, 0) - from product
   name_translations?: string | null;
+  /** Frozen server-origin line. Reducer and renderer must not mutate it. */
+  locked?: boolean;
+  billiard?: BilliardCartLineMetadata;
 }
 
 export interface CartState {
@@ -59,6 +69,9 @@ export interface CheckoutDraftState {
     /** Backend pickup_orders.id — used to settle the queue row on payment. */
     pickupOrderId?: string | null;
   };
+  billiard?: BilliardCheckoutContext;
+  restoredInterruption?: RestoredInterruptionContext;
+  holdRecallPending?: HoldRecallPendingContext;
 }
 
 export interface PosSessionState {
@@ -147,6 +160,7 @@ export type PosAction =
   | { type: 'cart/removeItem'; payload: { id: string } }
   | { type: 'cart/updateQuantity'; payload: { id: string; quantity: number } }
   | { type: 'cart/clear' }
+  | { type: 'cart/completeCheckout' }
   | { type: 'cart/applyDiscount'; payload: { amount: number; discountType?: 'fixed' | 'percentage' } }
   | { type: 'cart/clearDiscount' }
   | { type: 'cart/setItemNotes'; payload: { id: string; notes: string } }
@@ -162,7 +176,8 @@ export type PosAction =
   | { type: 'customer/select'; payload: { id: string; name: string; nip?: string } }
   | { type: 'customer/clear' }
   | { type: 'tip/set'; payload: { amount: number } }
-  | { type: 'tip/clear' };
+  | { type: 'tip/clear' }
+  | { type: 'state/replaceCheckoutSnapshot'; payload: { snapshot: PosCheckoutSnapshot } };
 
 // === Initial state ===
 
@@ -230,6 +245,19 @@ function recalcCart(cart: CartState): CartState {
   return { ...cart, subtotal, discount, tax, total };
 }
 
+/**
+ * Materialize a main-validated checkout snapshot. Frozen Billiard totals use
+ * server-allocated, post-discount VAT per line; generic recalc would replace
+ * that VAT with gross-line VAT and make the exact snapshot fail closed.
+ */
+export function restoreCheckoutSnapshotCart(
+  saved: CartState,
+  authoritativeBilliard: boolean,
+): CartState {
+  const cloned = { ...saved, items: saved.items.map((item) => ({ ...item })) };
+  return authoritativeBilliard ? cloned : recalcCart(cloned);
+}
+
 function normalizedCartItem(item: CartItem): CartItem {
   const sellBy = normalizeSellBy(item.sellBy);
   const quantity = roundSaleQuantity(Number(item.quantity) || 0, sellBy);
@@ -265,6 +293,10 @@ function posReducer(
 ): PosState {
   switch (action.type) {
     case 'cart/addItem': {
+      if (state.checkoutDraft.billiard) {
+        logger.warn('[PosStore] Ignored addItem while a frozen billiard checkout is active');
+        return state;
+      }
       const incomingSellBy = normalizeSellBy(action.payload.sellBy);
       if (!isValidSaleQuantity(action.payload.quantity, incomingSellBy)) {
         logger.warn(`[PosStore] Rejected invalid ${incomingSellBy} cart quantity: ${action.payload.quantity}`);
@@ -305,6 +337,7 @@ function posReducer(
     }
 
     case 'cart/removeItem': {
+      if (state.cart.items.some((item) => item.id === action.payload.id && item.locked)) return state;
       const items = state.cart.items.filter((i) => i.id !== action.payload.id);
       const display = items.length === 0 ? { ...state.display, mode: 'idle' as const } : state.display;
       const checkoutDraft = items.length === 0 ? createInitialState().checkoutDraft : state.checkoutDraft;
@@ -314,6 +347,7 @@ function posReducer(
     case 'cart/updateQuantity': {
       const existing = state.cart.items.find((item) => item.id === action.payload.id);
       if (!existing) return state;
+      if (existing.locked) return state;
       const sellBy = normalizeSellBy(existing.sellBy);
       if (!isValidSaleQuantity(action.payload.quantity, sellBy)) {
         logger.warn(`[PosStore] Rejected invalid ${sellBy} cart quantity: ${action.payload.quantity}`);
@@ -330,17 +364,45 @@ function posReducer(
     }
 
     case 'cart/clear': {
+      if (state.checkoutDraft.billiard) {
+        logger.warn('[PosStore] Ignored cart clear while a frozen billiard checkout is active');
+        return state;
+      }
       const display = state.display?.mode === 'cart' ? { ...state.display, mode: 'idle' as const } : state.display;
       return { ...state, cart: createInitialState().cart, checkoutDraft: createInitialState().checkoutDraft, tip: 0, display };
     }
 
-    case 'checkoutDraft/update':
-      return { ...state, checkoutDraft: { ...state.checkoutDraft, ...action.payload } };
+    case 'cart/completeCheckout': {
+      if (state.checkoutDraft.billiard && state.checkoutDraft.billiard.orderCommitted !== true) {
+        logger.warn('[PosStore] Refused to clear billiard cart before durable order commit');
+        return state;
+      }
+      const display = state.display?.mode === 'cart' ? { ...state.display, mode: 'idle' as const } : state.display;
+      return { ...state, cart: createInitialState().cart, checkoutDraft: createInitialState().checkoutDraft, tip: 0, display };
+    }
+
+    case 'checkoutDraft/update': {
+      const payload = state.checkoutDraft.billiard
+        ? {
+            customerNip: action.payload.customerNip,
+            customerName: action.payload.customerName,
+            requiresInvoice: action.payload.requiresInvoice,
+          }
+        : action.payload;
+      return { ...state, checkoutDraft: { ...state.checkoutDraft, ...payload } };
+    }
 
     case 'checkoutDraft/clear':
-      return { ...state, checkoutDraft: createInitialState().checkoutDraft };
+      if (state.checkoutDraft.billiard) return state;
+      return {
+        ...state,
+        checkoutDraft: state.checkoutDraft.restoredInterruption
+          ? { restoredInterruption: state.checkoutDraft.restoredInterruption }
+          : createInitialState().checkoutDraft,
+      };
 
     case 'cart/applyDiscount': {
+      if (state.checkoutDraft.billiard) return state;
       const { amount, discountType } = action.payload;
       const discount = discountType === 'percentage'
         ? Math.min(Math.round(state.cart.subtotal * amount / 100), state.cart.subtotal)
@@ -354,6 +416,7 @@ function posReducer(
     }
 
     case 'cart/clearDiscount': {
+      if (state.checkoutDraft.billiard) return state;
       return { ...state, cart: recalcCart({
         ...state.cart,
         discount: 0,
@@ -363,6 +426,7 @@ function posReducer(
     }
 
     case 'cart/setItemNotes': {
+      if (state.cart.items.some((item) => item.id === action.payload.id && item.locked)) return state;
       const items = state.cart.items.map((i) =>
         i.id === action.payload.id ? { ...i, notes: action.payload.notes } : i,
       );
@@ -372,6 +436,7 @@ function posReducer(
     case 'cart/setItemPrice': {
       const newPrice = Math.max(0, action.payload.price);
       const existingItem = state.cart.items.find((i) => i.id === action.payload.id);
+      if (existingItem?.locked) return state;
       if (existingItem && !validateCartItemCatalogPrice({ ...existingItem, price: newPrice })) return state;
       const items = state.cart.items.map((i) =>
         i.id === action.payload.id
@@ -382,6 +447,7 @@ function posReducer(
     }
 
     case 'cart/setItemStaff': {
+      if (state.cart.items.some((item) => item.id === action.payload.id && item.locked)) return state;
       const items = state.cart.items.map((i) =>
         i.id === action.payload.id
           ? { ...i, staffId: action.payload.staffId, staffName: action.payload.staffName }
@@ -391,6 +457,7 @@ function posReducer(
     }
 
     case 'cart/setItemCourse': {
+      if (state.cart.items.some((item) => item.id === action.payload.id && item.locked)) return state;
       const items = state.cart.items.map((i) =>
         i.id === action.payload.id ? { ...i, course: action.payload.course } : i,
       );
@@ -410,6 +477,10 @@ function posReducer(
       };
 
     case 'session/close':
+      if (state.checkoutDraft.billiard || state.checkoutDraft.restoredInterruption) {
+        logger.warn('[PosStore] Refused to close shift while a protected checkout cart is unresolved');
+        return state;
+      }
       return {
         ...state,
         session: createInitialState().session,
@@ -439,13 +510,51 @@ function posReducer(
       };
 
     case 'customer/clear':
-      return { ...state, activeCustomer: null, checkoutDraft: createInitialState().checkoutDraft };
+      if (state.checkoutDraft.billiard) {
+        return { ...state, activeCustomer: null };
+      }
+      return {
+        ...state,
+        activeCustomer: null,
+        checkoutDraft: state.checkoutDraft.restoredInterruption
+          ? { restoredInterruption: state.checkoutDraft.restoredInterruption }
+          : createInitialState().checkoutDraft,
+      };
 
     case 'tip/set':
       return { ...state, tip: action.payload.amount };
 
     case 'tip/clear':
       return { ...state, tip: 0 };
+
+    case 'state/replaceCheckoutSnapshot': {
+      const saved = action.payload.snapshot?.state as Partial<PosState> | undefined;
+      if (!saved?.cart || !Array.isArray(saved.cart.items)) {
+        logger.warn('[PosStore] Rejected invalid checkout snapshot');
+        return state;
+      }
+      const activeCheckoutId = state.checkoutDraft.billiard?.origin.checkoutId;
+      const incomingCheckoutId = saved.checkoutDraft?.billiard?.origin.checkoutId;
+      if (activeCheckoutId && activeCheckoutId !== incomingCheckoutId) {
+        logger.warn('[PosStore] Refused to overwrite an active frozen billiard checkout');
+        return state;
+      }
+      const cart = restoreCheckoutSnapshotCart(
+        saved.cart as CartState,
+        Boolean(saved.checkoutDraft?.billiard),
+      );
+      return {
+        ...state,
+        cart,
+        checkoutDraft: saved.checkoutDraft ? { ...saved.checkoutDraft } : {},
+        activeTable: saved.activeTable ?? null,
+        activeCustomer: saved.activeCustomer ? { ...saved.activeCustomer } : null,
+        tip: Number(saved.tip) || 0,
+        // Shift and display configuration are live process state, not recalled
+        // historical state. Only switch the customer display atomically.
+        display: { ...state.display, mode: cart.items.length > 0 ? 'cart' : 'idle' },
+      };
+    }
 
     default:
       return state;
@@ -472,6 +581,34 @@ export class PosStore {
 
   getState(): PosState {
     return this.state;
+  }
+
+  /**
+   * Authentication boundary owned by Electron main. Protected journals/Holds
+   * remain on disk, but no cart, shift, customer, or checkout identity from
+   * the previous user is allowed to remain in shared RAM/UI.
+   */
+  resetForAuthBoundary(): void {
+    this.transitionVersion++;
+    this.state = createInitialState();
+    this.broadcast();
+    this.handleDisplayTransitions();
+    this.resetIdleTimer();
+  }
+
+  /** Main-process-only money boundary; renderer dispatch cannot forge it. */
+  markBilliardOrderCommitted(checkoutId: string, orderId: string): boolean {
+    const billiard = this.state.checkoutDraft.billiard;
+    if (!billiard || billiard.origin.checkoutId !== checkoutId || billiard.orderId !== orderId) return false;
+    this.state = {
+      ...this.state,
+      checkoutDraft: {
+        ...this.state.checkoutDraft,
+        billiard: { ...billiard, orderCommitted: true },
+      },
+    };
+    this.broadcast();
+    return true;
   }
 
   private getCustomerDisplayProfile(): LiveCustomerDisplayProfile {

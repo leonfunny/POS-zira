@@ -519,3 +519,31 @@ describe('pos order adapter', () => {
     expect(item.total).toBe(600);
   });
 });
+
+describe('Billiard server order line display', () => {
+  it('uses the frozen Billiard display name instead of the generic service product name', () => {
+    const item = adaptServerOrderItem({
+      id: 'time-line-1',
+      variantId: 'billiard-time-service',
+      productName: 'BILLIARD-TIME',
+      billiardDisplayName: 'Table 2 · 63 min',
+      billiardLineKey: 'time-1',
+      billiardLineKind: 'TIME',
+      inventoryPolicy: 'NONE',
+      refundPolicy: 'FORBIDDEN',
+      durationMinutes: 63,
+      sellBy: 'PIECE',
+      saleUnit: 'min',
+      unitPrice: '63.00',
+      totalPrice: '63.00',
+      taxRate: '23',
+      quantity: 1,
+    }, 'order-1');
+
+    expect(item.name).toBe('Table 2 · 63 min');
+    expect(JSON.parse(item.billiard_json)).toMatchObject({
+      displayName: 'Table 2 · 63 min',
+      durationMinutes: 63,
+    });
+  });
+});

@@ -1,6 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { CustomerDisplayCatalogSection, CustomerDisplayProfile } from '../../shared/types';
 import type { SellBy } from '../../shared/pos-sale';
+import type {
+  BilliardCartLineMetadata,
+  BilliardCheckoutContext,
+  HoldRecallPendingContext,
+  PosCheckoutSnapshot,
+  RestoredInterruptionContext,
+} from '../../shared/billiard-pos-handoff';
 
 interface SelectedService {
   id: string;
@@ -32,6 +39,8 @@ interface CartItem {
   // cart without re-fetching products. Orders/fiscal lines still use `name`;
   // paper receipts localize separately at print time.
   name_translations?: string | null;
+  locked?: boolean;
+  billiard?: BilliardCartLineMetadata;
 }
 
 interface CartState {
@@ -57,6 +66,9 @@ export interface CheckoutDraftState {
     /** Backend pickup_orders.id — settle on payment / release on abandon. */
     pickupOrderId?: string | null;
   };
+  billiard?: BilliardCheckoutContext;
+  restoredInterruption?: RestoredInterruptionContext;
+  holdRecallPending?: HoldRecallPendingContext;
 }
 
 interface PosSessionState {
@@ -115,6 +127,7 @@ type PosAction =
   | { type: 'cart/removeItem'; payload: { id: string } }
   | { type: 'cart/updateQuantity'; payload: { id: string; quantity: number } }
   | { type: 'cart/clear' }
+  | { type: 'cart/completeCheckout' }
   | { type: 'cart/applyDiscount'; payload: { amount: number; discountType?: 'fixed' | 'percentage' } }
   | { type: 'cart/clearDiscount' }
   | { type: 'cart/setItemNotes'; payload: { id: string; notes: string } }
@@ -130,10 +143,12 @@ type PosAction =
   | { type: 'customer/select'; payload: { id: string; name: string; nip?: string } }
   | { type: 'customer/clear' }
   | { type: 'tip/set'; payload: { amount: number } }
-  | { type: 'tip/clear' };
+  | { type: 'tip/clear' }
+  | { type: 'state/replaceCheckoutSnapshot'; payload: { snapshot: PosCheckoutSnapshot } };
 
 export function usePosStore() {
   const [state, setState] = useState<PosState | null>(null);
+  const [dispatchError, setDispatchError] = useState<string | null>(null);
 
   useEffect(() => {
     window.electronAPI.pos.getState().then(setState);
@@ -141,11 +156,20 @@ export function usePosStore() {
     return unsub;
   }, []);
 
-  const dispatch = useCallback((action: PosAction) => {
-    window.electronAPI.pos.dispatch(action);
+  const dispatch = useCallback(async (action: PosAction) => {
+    try {
+      const result = await window.electronAPI.pos.dispatch(action) as any;
+      if (result?.success === false) {
+        setDispatchError(String(result.error || 'POS update was not saved.'));
+      } else {
+        setDispatchError(null);
+      }
+    } catch (error: any) {
+      setDispatchError(String(error?.message || error || 'POS update was not saved.'));
+    }
   }, []);
 
-  return { state, dispatch };
+  return { state, dispatch, dispatchError, clearDispatchError: () => setDispatchError(null) };
 }
 
 export type { CartItem, CartState, PosAction, DisplayState };

@@ -9,12 +9,18 @@ import {
 import { formatInitialCashAmount } from './format-cash-amount';
 import { useConfig } from '../../hooks/useConfig';
 import { resolveFiscalAction, type FiscalAction } from './payment-fiscal-prompt-mode';
+import type { RestoredCartReconciliation } from '../../../shared/billiard-pos-handoff';
+import { buildImmediateRestoredCartReconciliation } from './restored-cart-reconciliation';
 
 interface PaymentModalProps {
   cart: CartState;
   dispatch: (action: PosAction) => void;
   onClose: () => void;
-  onComplete?: () => void;
+  onComplete?: (result: { orderId: string }) => void;
+  onTenderOutcomeUncertain?: (
+    message: string,
+    restoredCartReconciliation?: RestoredCartReconciliation,
+  ) => void;
   t: (key: string) => string;
   shiftId: string | null;
   staffId: string | null;
@@ -92,6 +98,7 @@ export default function PaymentModal({
   dispatch,
   onClose,
   onComplete,
+  onTenderOutcomeUncertain,
   t,
   shiftId,
   staffId,
@@ -140,8 +147,15 @@ export default function PaymentModal({
   const scannerBufferRef = useRef('');
   const scannerLastKeyRef = useRef(0);
   const paymentCompleteInFlightRef = useRef(false);
-  const orderAttemptIdRef = useRef(crypto.randomUUID());
+  const orderAttemptIdRef = useRef(
+    checkoutDraft?.billiard?.orderId
+      || checkoutDraft?.restoredInterruption?.orderId
+      || crypto.randomUUID(),
+  );
   const completedOrderIdRef = useRef<string | null>(null);
+  const tenderBoundaryCrossedRef = useRef(false);
+  const [tenderPrepared, setTenderPrepared] = useState(false);
+  const protectedTender = Boolean(checkoutDraft?.billiard || checkoutDraft?.restoredInterruption);
   const tOr = (key: string, fallback: string) => {
     const value = t(key);
     return value !== key ? value : fallback;
@@ -195,6 +209,7 @@ export default function PaymentModal({
       .join('-');
   };
   const updateCustomerNip = (value: unknown) => {
+    if (tenderPrepared) return;
     const next = normalizeNipInput(value);
     setCustomerNip(next);
     dispatch({ type: 'checkoutDraft/update', payload: { customerNip: next } });
@@ -248,7 +263,8 @@ export default function PaymentModal({
   // Split payment calculations
   const tendersTotal = tenders.reduce((s, t) => s + t.amount, 0);
   const remaining = grandTotal - tendersTotal;
-  const splitComplete = tendersTotal >= grandTotal;
+  const splitComplete = tendersTotal === grandTotal;
+  const splitOverpaid = tendersTotal > grandTotal;
 
   // Temporarily keep BLIK out of new POS sales until the shop has a signed
   // BLIK contract. Leave the wider payment model intact so historical BLIK
@@ -257,6 +273,7 @@ export default function PaymentModal({
     ...(isB2B && hasCustomer ? ['INVOICE' as PaymentMethod] : [])];
 
   const handleNipToggle = () => {
+    if (tenderPrepared) return;
     if (nipOpen && !nipForcedOpen) {
       setNipOpen(false);
       setNipPadOpen(false);
@@ -295,10 +312,16 @@ export default function PaymentModal({
   }, [initialMethod]);
 
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape' && !saving) onClose(); };
+    const handler = (e: KeyboardEvent) => {
+      if (
+        e.key === 'Escape'
+        && !saving
+        && (!protectedTender || !tenderPrepared || !!completedOrderIdRef.current)
+      ) onClose();
+    };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [onClose, saving]);
+  }, [onClose, protectedTender, saving, tenderPrepared]);
 
   // ─── Denomination counters ────────────────────────────────
 
@@ -308,6 +331,7 @@ export default function PaymentModal({
   );
 
   const updateDenom = (denom: number, delta: number) => {
+    if (tenderPrepared) return;
     setDenomCounts((prev) => {
       const next = { ...prev };
       const nextCount = Math.max(0, (next[denom] ?? 0) + delta);
@@ -323,11 +347,13 @@ export default function PaymentModal({
   };
 
   const resetDenoms = () => {
+    if (tenderPrepared) return;
     setDenomCounts({});
     setCashAmount('');
   };
 
   const selectBlikPayment = () => {
+    if (tenderPrepared) return;
     setSplitMode(false);
     setMethod('BLIK');
     setDenomCounts({});
@@ -337,7 +363,8 @@ export default function PaymentModal({
   };
 
   const finishCompletedPayment = () => {
-    if (onComplete) { onComplete(); } else { onClose(); }
+    const orderId = completedOrderIdRef.current;
+    if (onComplete && orderId) { onComplete({ orderId }); } else { onClose(); }
   };
 
   const showFiscalWarningThenClose = (warning: string) => {
@@ -381,18 +408,26 @@ export default function PaymentModal({
   // ─── Add split tender ─────────────────────────────────────
 
   const addTender = () => {
+    if (tenderPrepared) return;
     const parsed = parseFloat(splitAmount || '0');
     const amountGrosze = Math.round(parsed * 100);
     if (amountGrosze <= 0) return;
+    if (remaining <= 0 || amountGrosze > remaining) {
+      setError('Split tender cannot exceed the exact remaining amount.');
+      return;
+    }
     setTenders(prev => [...prev, { method: splitMethod, amount: amountGrosze }]);
     setSplitAmount('');
+    setError(null);
   };
 
   const removeTender = (idx: number) => {
+    if (tenderPrepared) return;
     setTenders(prev => prev.filter((_, i) => i !== idx));
   };
 
   const addRemaining = () => {
+    if (tenderPrepared) return;
     if (remaining <= 0) return;
     setTenders(prev => [...prev, { method: splitMethod, amount: remaining }]);
     setSplitAmount('');
@@ -401,6 +436,7 @@ export default function PaymentModal({
   // ─── Numeric keypad ──────────────────────────────────────
 
   const handleKeypadPress = (key: string) => {
+    if (tenderPrepared) return;
     const setter = splitMode ? setSplitAmount : setCashAmount;
     // Any cash-side keypad press is a "manual override" — drop the
     // denomination counters so the displayed cash and the counter row
@@ -479,10 +515,18 @@ export default function PaymentModal({
       synced_at: null,
       payment_tenders: tendersJson,
       kitchen_number: kitchenSelfOrderCheckout ? checkoutDraft?.kitchenSelfOrder?.orderNumber ?? null : null,
+      client_attempt_id: checkoutDraft?.billiard?.clientAttemptId
+        ?? checkoutDraft?.restoredInterruption?.clientAttemptId
+        ?? null,
+      billiard_origin_json: checkoutDraft?.billiard
+        ? JSON.stringify(checkoutDraft.billiard.origin)
+        : null,
     };
 
     const items = cart.items.map((item) => ({
-      id: crypto.randomUUID(),
+      id: item.billiard
+        ? `${orderId}:${item.billiard.lineKey}`
+        : crypto.randomUUID(),
       order_id: orderId,
       variant_id: item.variantId ?? null,
       name: item.name,
@@ -498,10 +542,40 @@ export default function PaymentModal({
       staff_name: item.staffName ?? null,
       notes: item.notes ?? null,
       course: item.course ?? null,
+      billiard_json: item.billiard ? JSON.stringify(item.billiard) : null,
+      inventory_policy: item.billiard?.inventoryPolicy ?? null,
+      refund_policy: item.billiard?.refundPolicy ?? null,
+      allocated_discount: item.billiard?.allocatedDiscountGrosze ?? 0,
+      payable_total: item.billiard?.payableGrosze ?? item.total,
     }));
 
     const result = await window.electronAPI.pos.orders.create(order, items);
-    if (result && !result.success) throw new Error(result.error || 'Failed to save order');
+    if (result && !result.success) {
+      if (result.paymentCommitted) {
+        // Main crossed the local money boundary. Lock this modal permanently
+        // against a second tender even when the disk verification response is
+        // uncertain; recovery/sync will continue from the journal.
+        completedOrderIdRef.current = result.id || orderId;
+        setError(
+          result.durabilityError
+            ? `Payment was recorded, but local disk verification failed. Do not charge again. ${result.durabilityError}`
+            : 'Payment was recorded. Do not charge again; reopen POS to recover its sync status.',
+        );
+        return;
+      }
+      if (protectedTender && tenderBoundaryCrossedRef.current) {
+        const message =
+          'Payment outcome is uncertain. Do not charge again. Reconcile the cash/card terminal and POS Order History with the owner.';
+        completedOrderIdRef.current = orderId;
+        setError(message);
+        onTenderOutcomeUncertain?.(
+          message,
+          buildImmediateRestoredCartReconciliation(checkoutDraft?.restoredInterruption, message),
+        );
+        return;
+      }
+      throw new Error(result.error || 'Failed to save order');
+    }
     completedOrderIdRef.current = orderId;
 
     // Trigger immediate backend sync — don't wait 30s. Runs in parallel with print.
@@ -582,8 +656,10 @@ export default function PaymentModal({
       cashAmountGrosze: method === 'CASH' && !splitMode ? paymentAmount : cashAmountGrosze,
       changeGrosze: splitMode ? 0 : (method === 'CASH' ? Math.max(0, paymentAmount - (cart.total + tip)) : 0),
     });
-    dispatch({ type: 'display/setMode', payload: { mode: 'thankyou', lastOrderTotal: cart.total } });
-    dispatch({ type: 'cart/clear' });
+    if (!checkoutDraft?.billiard) {
+      dispatch({ type: 'display/setMode', payload: { mode: 'thankyou', lastOrderTotal: cart.total } });
+      dispatch({ type: 'cart/completeCheckout' });
+    }
 
     if (printOrderCopy && !outcome.receiptPrinted) {
       setSavingLabel('');
@@ -722,6 +798,39 @@ export default function PaymentModal({
         return;
       }
 
+      if (protectedTender && !tenderBoundaryCrossedRef.current) {
+        const boundary = checkoutDraft?.billiard
+          ? await window.electronAPI.pos.billiardCheckout.beginTender(checkoutDraft.billiard.handoffId)
+          : await window.electronAPI.pos.billiardCheckout.beginRestoredTender(
+              checkoutDraft!.restoredInterruption!.holdId,
+            );
+        if (!boundary?.success) {
+          if (boundary?.paymentCommitted) {
+            completedOrderIdRef.current = boundary.orderId || orderAttemptIdRef.current;
+            setError(boundary.error || 'Payment is already recorded locally. Do not charge again.');
+            return;
+          }
+          if (boundary?.outcomeUncertain) {
+            const message = boundary.error
+              || 'Payment outcome is uncertain. Do not charge again. Reconcile cash/card and POS Order History with the owner.';
+            completedOrderIdRef.current = orderAttemptIdRef.current;
+            setError(message);
+            onTenderOutcomeUncertain?.(
+              message,
+              buildImmediateRestoredCartReconciliation(checkoutDraft?.restoredInterruption, message),
+            );
+            return;
+          }
+          throw new Error(boundary?.error || 'Could not persist the tender safety boundary.');
+        }
+        // This is deliberately a separate UI step. The cashier is instructed
+        // to collect/confirm tender only after main has fsynced the boundary.
+        tenderBoundaryCrossedRef.current = true;
+        setTenderPrepared(true);
+        setNipPadOpen(false);
+        return;
+      }
+
       const orderId = orderAttemptIdRef.current;
 
       if (splitMode) {
@@ -733,6 +842,21 @@ export default function PaymentModal({
       }
     } catch (err) {
       rlog.error('[PaymentModal] Failed to complete payment:', err);
+      if (
+        protectedTender
+        && tenderBoundaryCrossedRef.current
+        && !completedOrderIdRef.current
+      ) {
+        const message =
+          'Payment outcome is uncertain. Do not charge again. Reconcile the cash/card terminal and POS Order History with the owner.';
+        completedOrderIdRef.current = orderAttemptIdRef.current;
+        setError(message);
+        onTenderOutcomeUncertain?.(
+          message,
+          buildImmediateRestoredCartReconciliation(checkoutDraft?.restoredInterruption, message),
+        );
+        return;
+      }
       const rawMessage = err instanceof Error
         ? err.message
         : (typeof err === 'string' ? err : '');
@@ -746,16 +870,21 @@ export default function PaymentModal({
       setSaving(false);
       paymentCompleteInFlightRef.current = false;
     }
-  }, [cashAmountGrosze, customerNipForOrder, customerNipValid, fiscalPrompt, grandTotal, method, receiptRecovery, receiptRetrying, saving, shiftId, splitComplete, splitMode, staffId, staffName, t, tOr, tendersTotal]);
+  }, [cashAmountGrosze, checkoutDraft, customerNipForOrder, customerNipValid, fiscalPrompt, grandTotal, method, onTenderOutcomeUncertain, protectedTender, receiptRecovery, receiptRetrying, saving, shiftId, splitComplete, splitMode, staffId, staffName, t, tOr, tendersTotal]);
 
   const handleComplete = useCallback(() => {
     void completePayment();
   }, [completePayment]);
 
-  const canComplete = !receiptRecovery && !fiscalPrompt && !completedOrderIdRef.current && !saving && customerNipValid && (
-    splitMode ? splitComplete
-    : method !== 'CASH' || cashAmountGrosze >= grandTotal
-  );
+  const selectedTenderIsComplete = splitMode
+    ? splitComplete
+    : method !== 'CASH' || cashAmountGrosze >= grandTotal;
+  const canComplete = !receiptRecovery
+    && !fiscalPrompt
+    && !completedOrderIdRef.current
+    && !saving
+    && customerNipValid
+    && selectedTenderIsComplete;
 
   const currency = t('pos.currency') || 'zl';
   const money = (amount: number) => `${(amount / 100).toFixed(2)} ${currency}`;
@@ -774,9 +903,11 @@ export default function PaymentModal({
   const loyaltyCancelCount = loyaltyOwner?.cancelCount ?? 0;
   const loyaltyRiskTotal = loyaltyNoShowCount + loyaltyLateCount + loyaltyCancelCount;
   const activeMethodLabel = splitMode ? tOr('pos.split.toggle', 'Split') : methodLabel(method);
-  const completeButtonLabel = method === 'CARD' && !splitMode
-    ? tOr('pos.payment.cardReceived', 'Card payment received')
-    : t('pos.payment.complete');
+  const completeButtonLabel = protectedTender && !tenderPrepared
+    ? tOr('pos.payment.prepareSafeTender', 'Prepare payment safely')
+    : method === 'CARD' && !splitMode
+      ? tOr('pos.payment.cardReceived', 'Card payment received')
+      : t('pos.payment.complete');
   const completeButtonShortLabel = tOr('pos.payment.completeShort', completeButtonLabel);
   const cashHasChange = method === 'CASH' && !splitMode && changeGrosze > 0;
   const cashHasShortfall = method === 'CASH' && !splitMode && cashShortfall > 0;
@@ -799,6 +930,10 @@ export default function PaymentModal({
   const splitProgress = grandTotal > 0
     ? Math.min(100, Math.max(0, (tendersTotal / grandTotal) * 100))
     : 0;
+  const closeBlocked = saving
+    || !!fiscalPrompt
+    || !!receiptRecovery
+    || (protectedTender && tenderPrepared && !completedOrderIdRef.current);
 
   const removeScannedCommandFromActiveInput = useCallback((code: string) => {
     window.setTimeout(() => {
@@ -823,7 +958,8 @@ export default function PaymentModal({
       !!completedOrderIdRef.current ||
       !!receiptRecovery ||
       receiptRetrying ||
-      !!fiscalPrompt;
+      !!fiscalPrompt ||
+      tenderPrepared;
 
     if (cardCommand && code === cardCommand) {
       if (submitBlocked) return true;
@@ -859,7 +995,7 @@ export default function PaymentModal({
     }
 
     return false;
-  }, [canComplete, completePayment, fiscalPrompt, grandTotal, handleComplete, method, receiptRecovery, receiptRetrying, saving, scanCommands?.card, scanCommands?.cash, totalZl]);
+  }, [canComplete, completePayment, fiscalPrompt, grandTotal, handleComplete, method, receiptRecovery, receiptRetrying, saving, scanCommands?.card, scanCommands?.cash, tenderPrepared, totalZl]);
 
   useEffect(() => {
     const commandCodes = [scanCommands?.card, scanCommands?.cash]
@@ -935,8 +1071,9 @@ export default function PaymentModal({
         {KEYPAD_KEYS.flat().map(key => (
           <button
             key={key}
-            type="button"
-            onClick={() => handleKeypadPress(key)}
+          type="button"
+          onClick={() => handleKeypadPress(key)}
+          disabled={tenderPrepared}
             className={`flex min-h-[44px] items-center justify-center rounded-md border text-lg font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 ${
               key === 'backspace' || key === 'clear'
                 ? 'border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100 active:bg-slate-200'
@@ -953,17 +1090,19 @@ export default function PaymentModal({
         <button
           type="button"
           onClick={() => handleKeypadPress('0')}
+          disabled={tenderPrepared}
           className="flex min-h-[44px] items-center justify-center rounded-md border border-slate-200 bg-white text-lg font-semibold text-slate-800 transition-colors hover:bg-slate-50 active:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
         >0</button>
         <button
           type="button"
           onClick={() => handleKeypadPress('00')}
+          disabled={tenderPrepared}
           className="flex min-h-[44px] items-center justify-center rounded-md border border-slate-200 bg-white text-lg font-semibold text-slate-800 transition-colors hover:bg-slate-50 active:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
         >00</button>
         <button
           type="button"
           onClick={() => handleKeypadPress(quickAction)}
-          disabled={quickDisabled}
+          disabled={tenderPrepared || quickDisabled}
           className="col-span-2 flex min-h-[44px] items-center justify-center rounded-md border border-brand-200 bg-brand-50 text-sm font-semibold text-brand-800 transition-colors hover:bg-brand-100 active:bg-brand-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {quickLabel}
@@ -1018,7 +1157,7 @@ export default function PaymentModal({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/55 p-2 sm:p-3"
-      onClick={(saving || fiscalPrompt || receiptRecovery) ? undefined : onClose}
+      onClick={closeBlocked ? undefined : onClose}
     >
       {fiscalPromptOverlay}
       <div
@@ -1037,7 +1176,7 @@ export default function PaymentModal({
             <button
               type="button"
               onClick={() => { setSplitMode(!splitMode); setTenders([]); setSplitAmount(''); }}
-              disabled={saving || !!receiptRecovery}
+              disabled={saving || !!receiptRecovery || tenderPrepared}
               aria-pressed={splitMode}
               className={`min-h-[44px] rounded-md border px-4 text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${
                 splitMode
@@ -1050,7 +1189,7 @@ export default function PaymentModal({
             <button
               type="button"
               onClick={onClose}
-              disabled={saving || !!receiptRecovery}
+              disabled={closeBlocked}
               aria-label="Close"
               className="flex h-11 w-11 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-950 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -1058,6 +1197,18 @@ export default function PaymentModal({
             </button>
           </div>
         </div>
+
+        {protectedTender && (
+          <div className={`shrink-0 border-b px-4 py-2.5 text-sm font-bold ${
+            tenderPrepared
+              ? 'border-amber-300 bg-amber-50 text-amber-950'
+              : 'border-blue-200 bg-blue-50 text-blue-950'
+          }`} role="status">
+            {tenderPrepared
+              ? 'Safety boundary saved. Collect or confirm the selected tender now, then record the order below. Do not close or charge twice.'
+              : 'Do not collect cash or confirm the card terminal yet. First press “Prepare payment safely” so POS can save the anti-duplicate boundary.'}
+          </div>
+        )}
 
         <div className="min-h-0 flex-1 overflow-y-auto bg-slate-100 p-3">
           <div className="grid min-h-0 gap-3 lg:grid-cols-[0.8fr_1.4fr]">
@@ -1136,7 +1287,7 @@ export default function PaymentModal({
                 <p className="text-xs font-semibold uppercase text-slate-500">{t('pos.payment')}</p>
                 <div className="mt-2 grid grid-cols-2 gap-2">
                   {availableMethods.map(pm => {
-                    const disabled = pm === 'INVOICE' && !canPayInvoice;
+                    const disabled = (pm === 'INVOICE' && !canPayInvoice) || tenderPrepared;
                     const selected = !splitMode && method === pm;
                     return (
                       <button
@@ -1344,9 +1495,10 @@ export default function PaymentModal({
                   data-keyboard="false"
                   maxLength={10}
                   value={customerNip}
+                  disabled={tenderPrepared}
                   onChange={(e) => updateCustomerNip(e.target.value)}
-                  onFocus={() => setNipPadOpen(true)}
-                  onClick={() => setNipPadOpen(true)}
+                  onFocus={() => { if (!tenderPrepared) setNipPadOpen(true); }}
+                  onClick={() => { if (!tenderPrepared) setNipPadOpen(true); }}
                   placeholder={tOr('pos.payment.customerNipPlaceholder', 'Tap to enter 10 digits')}
                   aria-invalid={!customerNipValid}
                   aria-labelledby="payment-customer-nip-label"
@@ -1371,6 +1523,7 @@ export default function PaymentModal({
                           key={k}
                           type="button"
                           onClick={() => appendNipDigit(k)}
+                          disabled={tenderPrepared}
                           className="flex min-h-[48px] items-center justify-center rounded-md border border-slate-200 bg-white text-xl font-semibold text-slate-800 transition-colors hover:bg-slate-100 active:bg-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
                         >
                           {k}
@@ -1379,6 +1532,7 @@ export default function PaymentModal({
                       <button
                         type="button"
                         onClick={backspaceNip}
+                        disabled={tenderPrepared}
                         aria-label={tOr('pos.payment.nipBackspace', 'Delete')}
                         className="flex min-h-[48px] items-center justify-center rounded-md border border-slate-200 bg-slate-100 text-slate-600 transition-colors hover:bg-slate-200 active:bg-slate-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
                       >
@@ -1389,6 +1543,7 @@ export default function PaymentModal({
                       <button
                         type="button"
                         onClick={() => appendNipDigit('0')}
+                        disabled={tenderPrepared}
                         className="flex min-h-[48px] items-center justify-center rounded-md border border-slate-200 bg-white text-xl font-semibold text-slate-800 transition-colors hover:bg-slate-100 active:bg-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
                       >
                         0
@@ -1405,6 +1560,7 @@ export default function PaymentModal({
                       <button
                         type="button"
                         onClick={() => updateCustomerNip('')}
+                        disabled={tenderPrepared}
                         className="mt-1.5 w-full rounded-md py-1 text-xs font-semibold text-slate-500 transition-colors hover:text-red-700"
                       >
                         {tOr('pos.payment.nipClear', 'Clear')}
@@ -1439,15 +1595,19 @@ export default function PaymentModal({
           {splitMode ? (
             <div className="space-y-3">
               <div className={`rounded-lg border p-4 ${
-                splitComplete ? 'border-emerald-300 bg-emerald-50' : 'border-amber-300 bg-amber-50'
+                splitOverpaid
+                  ? 'border-red-300 bg-red-50'
+                  : splitComplete ? 'border-emerald-300 bg-emerald-50' : 'border-amber-300 bg-amber-50'
               }`}>
                 <div className="flex flex-wrap items-end justify-between gap-3">
                   <div>
-                    <p className={`text-sm font-semibold ${splitComplete ? 'text-emerald-800' : 'text-amber-800'}`}>
-                      {splitComplete ? tOr('pos.split.complete', 'Fully covered') : tOr('pos.split.remaining', 'Remaining')}
+                    <p className={`text-sm font-semibold ${splitOverpaid ? 'text-red-800' : splitComplete ? 'text-emerald-800' : 'text-amber-800'}`}>
+                      {splitOverpaid
+                        ? 'Tender exceeds total'
+                        : splitComplete ? tOr('pos.split.complete', 'Fully covered') : tOr('pos.split.remaining', 'Remaining')}
                     </p>
-                    <p className={`mt-1 text-3xl font-semibold leading-none ${splitComplete ? 'text-emerald-900' : 'text-amber-900'}`}>
-                      {money(splitComplete ? 0 : Math.max(remaining, 0))}
+                    <p className={`mt-1 text-3xl font-semibold leading-none ${splitOverpaid ? 'text-red-900' : splitComplete ? 'text-emerald-900' : 'text-amber-900'}`}>
+                      {money(splitOverpaid ? -remaining : splitComplete ? 0 : Math.max(remaining, 0))}
                     </p>
                   </div>
                   <div className="text-right text-sm text-slate-700">
@@ -1468,6 +1628,7 @@ export default function PaymentModal({
                       <select
                         value={splitMethod}
                         onChange={e => setSplitMethod(e.target.value as PaymentMethod)}
+                        disabled={tenderPrepared}
                         className="h-12 w-full rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
                       >
                         {availableMethods.map(m => (
@@ -1484,6 +1645,7 @@ export default function PaymentModal({
                         data-keyboard="false"
                         value={splitAmount}
                         onChange={e => { if (/^\d*\.?\d*$/.test(e.target.value)) setSplitAmount(e.target.value); }}
+                        disabled={tenderPrepared}
                         placeholder={(Math.max(remaining, 0) / 100).toFixed(2)}
                         className="h-12 w-full rounded-md border border-slate-300 bg-white px-3 text-right text-lg font-semibold text-slate-950 focus:outline-none focus:ring-2 focus:ring-brand-500"
                         onKeyDown={e => { if (e.key === 'Enter') addTender(); }}
@@ -1492,7 +1654,12 @@ export default function PaymentModal({
                     <button
                       type="button"
                       onClick={addTender}
-                      disabled={!splitAmount || parseFloat(splitAmount) <= 0}
+                      disabled={
+                        tenderPrepared
+                        || !splitAmount
+                        || parseFloat(splitAmount) <= 0
+                        || Math.round(parseFloat(splitAmount) * 100) > Math.max(remaining, 0)
+                      }
                       aria-label="Add tender"
                       className="mt-0 flex min-h-[48px] min-w-[56px] items-center justify-center rounded-md bg-brand-600 px-5 text-xl font-semibold text-white transition-colors hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40 md:mt-6"
                     >
@@ -1503,6 +1670,7 @@ export default function PaymentModal({
                     <button
                       type="button"
                       onClick={addRemaining}
+                      disabled={tenderPrepared}
                       className="mt-3 min-h-[44px] w-full rounded-md border border-brand-300 bg-white px-4 text-sm font-semibold text-brand-800 transition-colors hover:bg-brand-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2"
                     >
                       {tOr('pos.split.addRemaining', 'Add remaining')} ({money(remaining)})
@@ -1538,6 +1706,7 @@ export default function PaymentModal({
                           <button
                             type="button"
                             onClick={() => removeTender(idx)}
+                            disabled={tenderPrepared}
                             aria-label="Remove tender"
                             className="flex h-11 w-11 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-500 transition-colors hover:border-red-300 hover:bg-red-50 hover:text-red-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2"
                           >
@@ -1561,13 +1730,14 @@ export default function PaymentModal({
                   type="text"
                   inputMode="decimal"
                   data-keyboard="false"
-                  value={cashAmount}
+                   value={cashAmount}
                   onChange={(e) => {
                     if (!/^\d*\.?\d*$/.test(e.target.value)) return;
                     setCashAmount(e.target.value);
                     setDenomCounts({});
                   }}
-                  placeholder={totalZl.toFixed(2)}
+                   placeholder={totalZl.toFixed(2)}
+                   disabled={tenderPrepared}
                   className="h-14 w-full rounded-md border border-slate-300 bg-white px-4 text-right text-3xl font-semibold text-slate-950 focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               </label>
@@ -1628,8 +1798,9 @@ export default function PaymentModal({
                 </div>
                 <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
                   <button
-                    type="button"
-                    onClick={selectBlikPayment}
+                     type="button"
+                     onClick={selectBlikPayment}
+                     disabled={tenderPrepared}
                     aria-label="Pay by BLIK"
                     className="min-h-[52px] rounded-lg border-2 border-slate-900 bg-slate-950 px-2 py-2 text-white transition-colors hover:bg-slate-800 active:bg-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-300"
                   >
@@ -1644,8 +1815,9 @@ export default function PaymentModal({
                     return (
                       <div key={denom} className="relative">
                         <button
-                          type="button"
-                          onClick={() => updateDenom(denom, +1)}
+                           type="button"
+                           onClick={() => updateDenom(denom, +1)}
+                           disabled={tenderPrepared}
                           aria-label={`Add ${denom / 100} ${currency} bill`}
                           className={`w-full min-h-[52px] rounded-lg border-2 px-2 py-2 flex flex-col items-center justify-center transition-colors cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-300 ${
                             active
@@ -1664,8 +1836,9 @@ export default function PaymentModal({
                         </button>
                         {active && (
                           <button
-                            type="button"
-                            onClick={() => updateDenom(denom, -1)}
+                             type="button"
+                             onClick={() => updateDenom(denom, -1)}
+                             disabled={tenderPrepared}
                             aria-label={`Remove one ${denom / 100} ${currency} bill`}
                             className="absolute -top-2.5 -right-2.5 w-10 h-10 rounded-full bg-slate-800 text-white text-xl font-bold leading-none flex items-center justify-center shadow-md hover:bg-slate-950 cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
                           >

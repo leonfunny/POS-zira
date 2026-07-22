@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import initSqlJs from 'sql.js';
 import { migrations } from '../src/main/database/migrations';
 
 describe('database migrations', () => {
@@ -109,5 +110,53 @@ describe('database migrations', () => {
     expect(migration!.up).toContain('ON pos_event_outbox(event_type, occurred_at)');
     expect(migration!.up).toContain('ON pos_event_outbox(event_type, local_order_id)');
     expect(migration!.up).toContain('ON pos_event_outbox(event_type, shift_id)');
+  });
+
+  it('rebuilds the Billiard handoff CHECK constraint for tender crash states without dropping rows', () => {
+    const migration = migrations.find((m) => m.name === 'billiard_pos_tender_boundary');
+    expect(migration).toBeDefined();
+    expect(migration!.version).toBe(61);
+    expect(migration!.up).toContain("'POS_TENDER_COMMITTING'");
+    expect(migration!.up).toContain("'POS_TENDER_UNCERTAIN'");
+    expect(migration!.up).toContain('INSERT INTO pos_billiard_handoffs_v61');
+    expect(migration!.up).toContain('FROM pos_billiard_handoffs');
+    expect(migration!.up).toContain('ALTER TABLE pos_billiard_handoffs_v61 RENAME TO pos_billiard_handoffs');
+  });
+
+  it('applies the tender-boundary rebuild to an existing v60 row', async () => {
+    const SQL = await initSqlJs();
+    const db = new SQL.Database();
+    db.run(`
+      CREATE TABLE pos_billiard_handoffs (
+        checkout_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        order_id TEXT NOT NULL UNIQUE,
+        client_attempt_id TEXT NOT NULL UNIQUE,
+        salon_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        register_id TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('POS_READY', 'POS_PAYMENT_OPEN', 'POS_PAID_SYNC_PENDING', 'SETTLED')),
+        snapshot_json TEXT NOT NULL,
+        interrupted_hold_id TEXT,
+        auto_open_consumed INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO pos_billiard_handoffs (
+        checkout_id, session_id, order_id, client_attempt_id, salon_id,
+        user_id, register_id, state, snapshot_json
+      ) VALUES ('checkout-1', 'session-1', 'order-1', 'attempt-1', 'salon-1', 'owner-1', 'register-1', 'POS_PAYMENT_OPEN', '{}');
+    `);
+
+    const migration = migrations.find((m) => m.name === 'billiard_pos_tender_boundary')!;
+    for (const statement of migration.up.split(';').map((part) => part.trim()).filter(Boolean)) {
+      db.run(statement);
+    }
+    db.run("UPDATE pos_billiard_handoffs SET state = 'POS_TENDER_COMMITTING' WHERE checkout_id = 'checkout-1'");
+    const rows = db.exec("SELECT checkout_id, state FROM pos_billiard_handoffs WHERE checkout_id = 'checkout-1'");
+    expect(rows[0].values).toEqual([['checkout-1', 'POS_TENDER_COMMITTING']]);
+    expect(() => db.run("UPDATE pos_billiard_handoffs SET state = 'BAD_STATE' WHERE checkout_id = 'checkout-1'"))
+      .toThrow(/CHECK constraint failed/i);
+    db.close();
   });
 });

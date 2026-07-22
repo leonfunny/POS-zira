@@ -785,9 +785,28 @@ interface ElectronAPI {
   // POS
   pos: {
     getState: () => Promise<any>;
-    dispatch: (action: any) => Promise<void>;
+    dispatch: (action: any) => Promise<{ success?: boolean; error?: string } | void>;
     seedDemo: () => Promise<{ success: boolean }>;
     onStateChanged: (callback: (state: any) => void) => () => void;
+    billiardCheckout: {
+      prepare: (input: { posCheckout: any; tableName?: string | null }) => Promise<{ success: boolean; intent?: any; paymentCommitted?: boolean; durabilityError?: string; error?: string }>;
+      recover: () => Promise<{ success: boolean; intent?: any; restoredCartReconciliation?: any; paymentCommitted?: boolean; durabilityError?: string; error?: string }>;
+      markPaymentOpened: (checkoutId: string) => Promise<{ success: boolean; error?: string }>;
+      beginTender: (checkoutId: string) => Promise<{ success: boolean; paymentCommitted?: boolean; orderId?: string; outcomeUncertain?: boolean; error?: string }>;
+      beginRestoredTender: (holdId: string) => Promise<{ success: boolean; paymentCommitted?: boolean; orderId?: string; outcomeUncertain?: boolean; error?: string }>;
+      resolveUncertainTender: (input: import('./billiard-pos-handoff').ResolveUncertainTenderInput) => Promise<{
+        success: boolean;
+        resolved?: boolean;
+        targetType?: 'BILLIARD' | 'RESTORED_CART';
+        intent?: import('./billiard-pos-handoff').BilliardPaymentIntent;
+        restoredCart?: boolean;
+        paymentCommitted?: boolean;
+        code?: string;
+        rollbackDurabilityError?: string;
+        error?: string;
+      }>;
+      complete: (checkoutId: string, orderId: string) => Promise<{ success: boolean; restored?: boolean; durabilityError?: string; error?: string }>;
+    };
     onFiscalUnknown: (callback: (info: { orderId?: string; orderNumber?: string; code: string; detail?: string }) => void) => () => void;
     onPickupOrderEvent: (callback: (msg: { event: string; data: any }) => void) => () => void;
     pickupOrders: {
@@ -843,7 +862,14 @@ interface ElectronAPI {
       deleteCategory: (categoryId: string, payload: ProductAdminCategoryDeleteInput) => Promise<ProductAdminIpcResult<ProductAdminCategoryDeleteResponse>>;
     };
     orders: {
-      create: (order: any, items: any[]) => Promise<{ success: boolean; id?: string; error?: string }>;
+      create: (order: any, items: any[]) => Promise<{
+        success: boolean;
+        id?: string;
+        error?: string;
+        duplicate?: boolean;
+        paymentCommitted?: boolean;
+        durabilityError?: string;
+      }>;
       getDailyStats: (date: string, options?: { fiscalOnly?: boolean }) => Promise<PosDailyStats>;
       getHistory: (filters: { from: string; to: string; paymentMethod?: string; staffName?: string; page?: number; limit?: number; fiscalOnly?: boolean }) => Promise<{ orders: PosOrderRow[]; total: number; page: number; limit: number }>;
       getDetail: (orderId: string) => Promise<{ order: PosOrderRow; items: PosOrderItemRow[] } | null>;
@@ -854,9 +880,28 @@ interface ElectronAPI {
         refundRequestId?: string;
         reason?: string;
         amount?: number;
-        lines?: Array<{ variantId?: string; sku?: string; name?: string; quantity: number; unit?: string; unitPrice: number; refundAmount: number; restock: boolean; vatRate?: number }>;
+        lines?: Array<{ billiardLineKey?: string; variantId?: string; sku?: string; name?: string; quantity: number; unit?: string; unitPrice: number; refundAmount: number; restock: boolean; vatRate?: number }>;
         manualAdjustmentAmount?: number;
       }) => Promise<{ success: boolean; receiptPrinted?: boolean; refundAmount?: number; totalRefundedAmount?: number; status?: string; restocked?: any[]; refundedLines?: any[]; stockMovementIds?: any[]; refundReason?: string; mutationDetected?: boolean; requiresRefresh?: boolean; overRefund?: boolean; backendSummary?: any; error?: string }>;
+      correctBilliard: (orderId: string, data: {
+        correctionRequestId: string;
+        reason: string;
+      }) => Promise<{
+        success: boolean;
+        status?: string;
+        refundAmount?: number;
+        totalRefundedAmount?: number;
+        refundedLines?: any[];
+        correction?: any;
+        posCheckout?: any;
+        intent?: any;
+        tableName?: string | null;
+        code?: string;
+        mutationDetected?: boolean;
+        requiresRefresh?: boolean;
+        durabilityError?: string;
+        error?: string;
+      }>;
       downloadPdf: (orderId: string, kind: 'receipt' | 'invoice', invoiceType?: 'VAT' | 'PROFORMA') => Promise<{ success: boolean; filePath?: string; error?: string }>;
       addInvoice: (orderId: string, data: { customerNip: string; invoiceType?: 'VAT' | 'PROFORMA' }) => Promise<{ success: boolean; order?: any; error?: string }>;
       generateProforma: (orderId: string) => Promise<{ success: boolean; proforma?: any; error?: string }>;
@@ -1065,9 +1110,27 @@ interface ElectronAPI {
     };
     hold: {
       create: (id: string, title: string, payload: any) => Promise<{ success: boolean }>;
-      list: () => Promise<Array<{ id: string; title: string; createdAt: string; items: number; total: number; staffName?: string | null }>>;
+      createCurrent: (id: string, title: string) => Promise<{ success: boolean; error?: string }>;
+      importLegacy: (rows: unknown[]) => Promise<{
+        success: boolean;
+        imported?: number;
+        skipped?: number;
+        errors?: string[];
+        error?: string;
+      }>;
+      list: () => Promise<Array<{
+        id: string;
+        title: string;
+        createdAt: string;
+        items: number;
+        total: number;
+        staffName?: string | null;
+        protected?: boolean;
+        holdReason?: 'MANUAL' | 'BILLIARD_INTERRUPTION';
+      }>>;
       get: (id: string) => Promise<{ id: string; title: string; payload: any; createdAt: string } | null>;
-      remove: (id: string) => Promise<{ success: boolean }>;
+      recall: (id: string) => Promise<{ success: boolean; error?: string }>;
+      remove: (id: string) => Promise<{ success: boolean; error?: string }>;
     };
     quickKeys: {
       list: (mode?: string) => Promise<any[]>;

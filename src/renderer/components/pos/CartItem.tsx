@@ -119,9 +119,20 @@ export default function CartItemRow({
       isActive ? 'bg-brand-50' : ''
     } ${fresh ? 'sc-cart-item-fresh pos-cart-item-fresh' : ''}`}>
       <div className="flex items-start justify-between gap-3">
-        <p className="flex-1 min-w-0 text-sm font-extrabold text-slate-950 leading-snug line-clamp-2">
-          {resolveName(item, lang)}
-        </p>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-extrabold text-slate-950 leading-snug line-clamp-2">
+            {resolveName(item, lang)}
+          </p>
+          {item.locked && item.billiard && (
+            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide">
+              <span className="rounded-full bg-blue-50 px-2 py-0.5 text-blue-700">Billiard · {item.billiard.kind}</span>
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">Locked</span>
+              {item.billiard.durationMinutes != null && (
+                <span className="normal-case text-slate-500 tabular-nums">{item.billiard.durationMinutes} min</span>
+              )}
+            </div>
+          )}
+        </div>
         <span className="text-base font-black text-slate-950 tabular-nums leading-none shrink-0">
           {lineTotalText}
         </span>
@@ -130,12 +141,13 @@ export default function CartItemRow({
       <div className="mt-0.5 flex items-center justify-between gap-2">
         <button
           type="button"
-          onClick={() => onEditPrice ? onEditPrice(item) : onSelectField?.(item.id, 'price')}
+          onClick={() => { if (!item.locked) (onEditPrice ? onEditPrice(item) : onSelectField?.(item.id, 'price')); }}
+          disabled={item.locked}
           title={tOr('pos.cart.editPrice', 'Edit price')}
           className={`min-h-11 min-w-0 flex-1 truncate rounded-md px-2 py-0.5 text-left text-sm font-semibold tabular-nums transition-colors cursor-pointer touch-manipulation ${
             priceHighlight
               ? 'bg-brand-100 text-brand-900 ring-1 ring-brand-400'
-              : 'text-slate-600 hover:text-brand-800'
+              : item.locked ? 'cursor-not-allowed text-slate-600' : 'text-slate-600 hover:text-brand-800'
           }`}
         >
           {unitPriceQtyText}
@@ -148,7 +160,7 @@ export default function CartItemRow({
             <button
               type="button"
               onClick={() => onReadScale(item)}
-              disabled={scaleBusy}
+              disabled={scaleBusy || item.locked}
               title={scaleBusy ? tOr('pos.scale.reading', 'Reading scale') : tOr('pos.scale.read', 'Read scale')}
               aria-label={tOr('pos.scale.read', 'Read scale')}
               className="w-11 h-11 flex items-center justify-center rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 active:bg-emerald-200 disabled:opacity-50 disabled:cursor-wait cursor-pointer touch-manipulation transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200"
@@ -160,11 +172,11 @@ export default function CartItemRow({
             {sellBy !== 'WEIGHT' && (
               <button
                 type="button"
-                onClick={() => item.quantity > 1 && onUpdateQuantity(item.id, item.quantity - 1)}
-                disabled={item.quantity <= 1}
+                onClick={() => !item.locked && item.quantity > 1 && onUpdateQuantity(item.id, item.quantity - 1)}
+                disabled={item.locked || item.quantity <= 1}
                 aria-label="Decrease quantity"
                 className={`w-12 h-12 flex items-center justify-center font-extrabold text-base touch-manipulation transition-colors ${
-                  item.quantity <= 1
+                  item.locked || item.quantity <= 1
                     ? 'text-slate-300 cursor-not-allowed'
                     : 'text-slate-700 hover:bg-slate-100 active:bg-slate-200 cursor-pointer'
                 }`}
@@ -172,12 +184,15 @@ export default function CartItemRow({
             )}
             <button
               type="button"
-              onClick={() => onSelectField?.(item.id, 'qty')}
+              onClick={() => { if (!item.locked) onSelectField?.(item.id, 'qty'); }}
+              disabled={item.locked}
               title={tOr('pos.tapToEdit', 'Tap to edit quantity')}
               className={`h-12 min-w-14 px-2 text-center text-sm font-extrabold cursor-pointer transition-colors ${
                 sellBy === 'WEIGHT' ? '' : 'border-x'
               } ${
-                qtyHighlight
+                item.locked
+                  ? 'cursor-not-allowed border-slate-200 bg-slate-50 text-slate-700'
+                  : qtyHighlight
                   ? 'bg-brand-100 text-brand-900 border-brand-400'
                   : 'bg-white text-slate-950 hover:text-brand-700 hover:bg-brand-50 border-slate-300'
               }`}
@@ -187,16 +202,17 @@ export default function CartItemRow({
             {sellBy !== 'WEIGHT' && (
               <button
                 type="button"
-                onClick={() => onUpdateQuantity(item.id, item.quantity + 1)}
+                onClick={() => { if (!item.locked) onUpdateQuantity(item.id, item.quantity + 1); }}
+                disabled={item.locked}
                 aria-label="Increase quantity"
-                className="w-12 h-12 flex items-center justify-center bg-slate-900 hover:bg-black active:bg-slate-800 text-white font-extrabold text-base cursor-pointer touch-manipulation transition-colors"
+                className="w-12 h-12 flex items-center justify-center bg-slate-900 hover:bg-black active:bg-slate-800 text-white font-extrabold text-base cursor-pointer touch-manipulation transition-colors disabled:cursor-not-allowed disabled:bg-slate-300"
               >+</button>
             )}
           </div>
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5">
-          {onPrintLabel && !editingNotes ? (
+          {!item.locked && onPrintLabel && !editingNotes ? (
             <>
               <button
                 type="button"
@@ -214,7 +230,7 @@ export default function CartItemRow({
                 <span>{labelState === 'printing' ? tOr('pos.label.printingShort', 'Printing') : tOr('pos.cart.printLabelShort', 'Print')}</span>
               </button>
             </>
-          ) : onSetNotes && !editingNotes && (
+          ) : !item.locked && onSetNotes && !editingNotes && (
             <button
               type="button"
               onClick={() => setEditingNotes(true)}
@@ -233,7 +249,7 @@ export default function CartItemRow({
               text buttons, and the cart column is 296px (360px at xl). A third
               label ("Sửa sản phẩm", "Edytuj produkt") overflows the row, and the
               quantity stepper — overflow-hidden — is what gets clipped. */}
-          {onEditProduct && item.variantId ? (
+          {!item.locked && onEditProduct && item.variantId ? (
             <button
               type="button"
               onClick={() => onEditProduct(item)}
@@ -244,7 +260,7 @@ export default function CartItemRow({
               <Pencil size={16} strokeWidth={2.4} aria-hidden="true" />
             </button>
           ) : null}
-          <button
+          {!item.locked && <button
             type="button"
             onClick={() => onRemove(item.id)}
             aria-label={tOr('pos.cart.removeItem', 'Remove item')}
@@ -252,7 +268,7 @@ export default function CartItemRow({
           >
             <Trash2 size={14} strokeWidth={2.4} aria-hidden="true" />
             <span>{tOr('pos.cart.remove', 'Remove')}</span>
-          </button>
+          </button>}
         </div>
       </div>
 

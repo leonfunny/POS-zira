@@ -126,4 +126,85 @@ describe('PaymentController receipt snapshot fallback', () => {
 
     expect(printer.printReceipt).not.toHaveBeenCalled();
   });
+
+  it('carries frozen Billiard line discounts into the receipt and validates payable total exactly', async () => {
+    const printer = fakePrinter();
+    orderRepoGetById.mockReturnValue({
+      id: 'billiard-order-1',
+      order_number: 'POS-B1',
+      subtotal: 2904,
+      discount: 1104,
+      tax: 187,
+      total: 1800,
+      payment_method: 'CARD',
+      payment_amount: 1800,
+      payment_tenders: null,
+      staff_name: 'Owner',
+    });
+    orderRepoGetItemsByOrderId.mockReturnValue([
+      {
+        id: 'time',
+        name: 'Czas gry',
+        price: 1000,
+        quantity: 1,
+        total: 1000,
+        vat_rate: 23,
+        billiard_json: JSON.stringify({ lineKey: 'time-1', kind: 'TIME' }),
+        allocated_discount: 1000,
+        payable_total: 0,
+      },
+      {
+        id: 'weighted',
+        name: 'Owoce',
+        price: 8000,
+        quantity: 0.238,
+        total: 1904,
+        vat_rate: 5,
+        billiard_json: JSON.stringify({ lineKey: 'fnb-1', kind: 'FNB' }),
+        allocated_discount: 104,
+        payable_total: 1800,
+      },
+    ]);
+
+    await expect(controller(printer).printReceipt('billiard-order-1')).resolves.toBe(true);
+    expect(printer.printReceipt).toHaveBeenCalledWith(expect.objectContaining({
+      total: 1800,
+      discount: 1104,
+      items: [
+        expect.objectContaining({ totalPrice: 1000, allocatedDiscount: 1000 }),
+        expect.objectContaining({ totalPrice: 1904, allocatedDiscount: 104 }),
+      ],
+    }));
+  });
+
+  it('fails closed when a frozen Billiard payable field differs from gross minus discount', async () => {
+    const printer = fakePrinter();
+    orderRepoGetById.mockReturnValue({
+      id: 'billiard-order-bad',
+      order_number: 'POS-BAD',
+      subtotal: 1000,
+      discount: 100,
+      tax: 168,
+      total: 900,
+      payment_method: 'CASH',
+      payment_amount: 900,
+      payment_tenders: null,
+    });
+    orderRepoGetItemsByOrderId.mockReturnValue([{
+      id: 'time',
+      name: 'Czas gry',
+      price: 1000,
+      quantity: 1,
+      total: 1000,
+      vat_rate: 23,
+      billiard_json: JSON.stringify({ lineKey: 'time-1', kind: 'TIME' }),
+      allocated_discount: 100,
+      payable_total: 901,
+    }]);
+
+    await expect(controller(printer).printReceipt('billiard-order-bad')).rejects.toThrow(
+      'FISCAL_BILLIARD_PAYABLE_INVALID',
+    );
+    expect(printer.printReceipt).not.toHaveBeenCalled();
+  });
 });

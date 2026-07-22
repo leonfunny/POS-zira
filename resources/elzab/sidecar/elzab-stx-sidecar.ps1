@@ -264,6 +264,17 @@ function Invoke-Receipt {
     return
   }
 
+  # The bundled official API surface only proves ReceiptEndEx (one global
+  # discount). It has no verified per-line discount call, so reject frozen
+  # Billiard allocations before opening the transport or ReceiptBegin.
+  foreach ($item in $items) {
+    $lineDiscount = [int](Get-Property $item 'allocatedDiscount' 0)
+    if ($lineDiscount -gt 0) {
+      Write-Result $false 'ELZAB_LINE_DISCOUNT_UNSUPPORTED' 'ELZAB sidecar cannot preserve allocated discounts per VAT line; no fiscal command was sent.' $null
+      return
+    }
+  }
+
   $open = Open-Elzab $Config
   if (!$open.ok) {
     Write-Result $false $open.code $open.detail $open.data

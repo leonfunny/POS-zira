@@ -3,6 +3,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { migrations } from '../src/main/database/migrations';
 import {
+  isBilliardPosCheckoutFrozen,
   billiardPaymentPayload,
   billiardTransferPayload,
   buildBilliardAvailabilityPath,
@@ -21,6 +22,7 @@ import {
   normalizeBilliardPendingPayments,
   resolveBilliardOutstandingBalance,
   resolveBilliardSessionTotal,
+  shouldSkipBilliardPosPayment,
 } from '../src/shared/billiard-contract';
 
 function readSource(relativePath: string): string {
@@ -133,6 +135,21 @@ describe('billiard desktop/backend contract', () => {
       totalCharge: 100,
       paidAmount: 120,
     })).toBe(0);
+  });
+
+  it('skips POS tender for a finalized zero-balance session, but still ends an active one first', () => {
+    expect(shouldSkipBilliardPosPayment({
+      status: 'COMPLETED',
+      paymentStatus: 'UNPAID',
+      totalCharge: 0,
+      paidAmount: 0,
+    })).toBe(true);
+    expect(shouldSkipBilliardPosPayment({
+      status: 'ACTIVE',
+      paymentStatus: 'UNPAID',
+      totalCharge: 0,
+      paidAmount: 0,
+    })).toBe(false);
   });
 
   it('renders and bills a local ProductVariantRow with the same price and stock', () => {
@@ -299,7 +316,7 @@ describe('billiard desktop/backend contract', () => {
     expect(translations).toContain("'billiard.reservations': 'Rezerwacje'");
   });
 
-  it('normalizes local F&B prices and keeps unsupported digital tenders hidden', () => {
+  it('normalizes local F&B prices and hands payment to the normal POS flow', () => {
     const addItem = readSource('../src/renderer/components/billiard/AddItemToTabModal.tsx');
     const contract = readSource('../src/shared/billiard-contract.ts');
     const payment = readSource('../src/renderer/components/billiard/PaymentDialog.tsx');
@@ -311,14 +328,13 @@ describe('billiard desktop/backend contract', () => {
     expect(addItem).toContain('combo.combo_price');
     expect(payment).toContain("setStep('review')");
     expect(payment).toContain('const snapshot = endedSnapshot ?? await ensureEnded()');
-    expect(payment).toContain("'GET',");
-    expect(payment).toContain("paymentMethod: 'CASH'");
-    expect(payment).toContain('amount: amountDue');
+    expect(payment).toContain('snapshot?.posCheckout');
+    expect(payment).toContain('await onPayInPos({');
     expect(payment).toContain('formatCurrency(paidAmount)');
-    expect(payment).toContain('alreadySettledZero');
-    expect(payment).toContain("recovery === 'paid'");
+    expect(payment).toContain('shouldSkipBilliardPosPayment');
     expect(payment).not.toContain('getSyncStatus()');
     expect(payment).not.toContain('cardPayment(');
+    expect(payment).not.toContain("paymentMethod: 'CASH'");
     expect(payment).not.toContain("paymentMethod: 'BLIK'");
     expect(payment).not.toContain('billiard.printReceipt');
     // The transfer grid is fed by the parent floor's table list (no private
@@ -469,5 +485,25 @@ describe('billiard desktop/backend contract', () => {
     expect(transfer).toContain('role="dialog"');
     expect(transfer).toContain('trapDialogFocus(event, dialogRef.current)');
     expect(transfer).toContain("document.addEventListener('keydown', handleKeyDown)");
+  });
+});
+
+describe('frozen Billiard checkout void guard', () => {
+  it('recognizes every server checkout identity shape and leaves unfrozen rows voidable', () => {
+    expect(isBilliardPosCheckoutFrozen({ posCheckoutId: 'checkout-1' })).toBe(true);
+    expect(isBilliardPosCheckoutFrozen({ posCheckout: { checkoutId: 'checkout-2' } })).toBe(true);
+    expect(isBilliardPosCheckoutFrozen({ posCheckoutSnapshot: { checkoutId: 'checkout-3' } })).toBe(true);
+    expect(isBilliardPosCheckoutFrozen({ posOrderId: 'order-1' })).toBe(true);
+    expect(isBilliardPosCheckoutFrozen({ posCheckoutId: null })).toBe(false);
+  });
+
+  it('disables row and bulk Void UI and defensively blocks the mutation callback', () => {
+    const panel = readSource('../src/renderer/components/billiard/UnsettledPanel.tsx');
+    const floorPlan = readSource('../src/renderer/components/billiard/BilliardFloorPlan.tsx');
+    expect(panel).toContain('disabled={!canVoid || checkoutFrozen}');
+    expect(panel).toContain('selectedVoidableIds');
+    expect(panel).toContain('!isBilliardPosCheckoutFrozen(session)');
+    expect(floorPlan).toContain('const frozenIds = ids.filter');
+    expect(floorPlan).toContain('Frozen POS checkout cannot be voided');
   });
 });

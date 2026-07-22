@@ -29,6 +29,7 @@ interface SessionDetailModalProps {
   onOpenChange: (open: boolean) => void;
   language: Language;
   onRefetch?: () => Promise<void>;
+  onPayInPos?: (input: { posCheckout: any; tableName?: string | null }) => Promise<void>;
 }
 
 function formatDuration(seconds: number): string {
@@ -65,6 +66,7 @@ export function SessionDetailModal({
   onOpenChange,
   language,
   onRefetch,
+  onPayInPos,
 }: SessionDetailModalProps) {
   const { t } = useTranslation(language);
   const toast = useToast();
@@ -378,6 +380,7 @@ export function SessionDetailModal({
         onOpenChange={setPaymentOpen}
         language={language}
         onRefetch={onRefetch}
+        onPayInPos={onPayInPos}
       />
       <TransferTableDialog
         sessionId={session.id}

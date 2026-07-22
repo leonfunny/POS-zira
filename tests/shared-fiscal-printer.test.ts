@@ -96,9 +96,41 @@ describe('submitSharedFiscalPrint', () => {
       configured: true,
       connected: true,
       printerId: 'fiscal-printer-1',
+      protocol: 'POSNET',
     });
     expect(listPrinterAssignments).toHaveBeenCalledTimes(1);
     expect(listSalonPrinters).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [' posnet ', 'POSNET'],
+    ['elzab', 'ELZAB_STX'],
+    ['stx', 'ELZAB_STX'],
+    ['vendor-specific', null],
+  ])('normalizes shared fiscal protocol %j to %j', async (rawProtocol, expectedProtocol) => {
+    listSalonPrinters.mockResolvedValue({
+      printers: [{ ...readyFiscalPrinter, protocol: rawProtocol }],
+    });
+
+    await expect(getSharedFiscalPrinterStatus()).resolves.toMatchObject({
+      configured: true,
+      connected: true,
+      printerId: 'fiscal-printer-1',
+      protocol: expectedProtocol,
+    });
+  });
+
+  it('preserves the normalized protocol when the resolved fiscal printer is not ready', async () => {
+    listSalonPrinters.mockResolvedValue({
+      printers: [{ ...readyFiscalPrinter, protocol: 'ELZAB-STX', isOnline: false }],
+    });
+
+    await expect(getSharedFiscalPrinterStatus()).resolves.toMatchObject({
+      configured: false,
+      connected: false,
+      printerId: 'fiscal-printer-1',
+      protocol: 'ELZAB_STX',
+    });
   });
 
   it('uses the print-agent API key when no staff JWT is available', async () => {

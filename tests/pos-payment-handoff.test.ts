@@ -75,16 +75,16 @@ describe('POS embedded numpad → PaymentModal wiring', () => {
     expect(PAYMENT_MODAL).toContain('onClick={handleNipToggle}');
   });
 
-  it('snapshots payment totals before clearing the cart for receipt prompts', () => {
+  it('snapshots payment totals before completing checkout for receipt prompts', () => {
     const snapshotIndex = PAYMENT_MODAL.indexOf('setPaymentSnapshot({');
-    const clearIndex = PAYMENT_MODAL.indexOf("dispatch({ type: 'cart/clear' })");
+    const completeCheckoutIndex = PAYMENT_MODAL.indexOf("dispatch({ type: 'cart/completeCheckout' })");
 
     expect(PAYMENT_MODAL).toContain('type PaymentSnapshot');
     expect(PAYMENT_MODAL).toContain('const displayGrandTotal = paymentSnapshot?.grandTotal ?? liveGrandTotal;');
     expect(PAYMENT_MODAL).toContain('const displayCashAmountGrosze = paymentSnapshot?.cashAmountGrosze ?? cashAmountGrosze;');
     expect(PAYMENT_MODAL).toContain('money(displayCashAmountGrosze)');
     expect(snapshotIndex).toBeGreaterThan(-1);
-    expect(clearIndex).toBeGreaterThan(snapshotIndex);
+    expect(completeCheckoutIndex).toBeGreaterThan(snapshotIndex);
   });
 
   it('wires retail scanner payment commands through SearchBar and PaymentModal', () => {

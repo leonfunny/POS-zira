@@ -200,6 +200,13 @@ export class ElzabDriver {
   async printReceipt(data: ReceiptData): Promise<void> {
     this.assertConnected();
     const fiscalData = toFiscalSafeReceiptData(data);
+    if (fiscalData.items.some((item) => Number(item.allocatedDiscount || 0) > 0)) {
+      const detail =
+        'This ELZAB sidecar exposes only a whole-receipt discount and cannot preserve frozen Billiard discounts per VAT line. ' +
+        'No fiscal command was sent. Use an accepted POSNET line-discount path or remove the allocated discount.';
+      this.lastDiagnostic = { code: 'ELZAB_LINE_DISCOUNT_UNSUPPORTED', detail };
+      throw new Error(`ELZAB_LINE_DISCOUNT_UNSUPPORTED: ${detail}`);
+    }
     const context = this.createReceiptAttempt(fiscalData);
 
     try {

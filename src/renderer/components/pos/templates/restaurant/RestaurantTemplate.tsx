@@ -9,6 +9,7 @@ import PaymentModal from '../../PaymentModal';
 import TableMap from './TableMap';
 import CourseSelector from './CourseSelector';
 import DiningOptions from './DiningOptions';
+import type { RestoredCartReconciliation } from '../../../../../shared/billiard-pos-handoff';
 
 interface TableState {
   id: string;
@@ -29,9 +30,10 @@ interface RestaurantTemplateProps {
   t: (key: string) => string;
   language?: string;
   session: PosState['session'];
+  onRestoredTenderOutcomeUncertain?: (reconciliation: RestoredCartReconciliation) => void;
 }
 
-export default function RestaurantTemplate({ state, dispatch, t, language, session }: RestaurantTemplateProps) {
+export default function RestaurantTemplate({ state, dispatch, t, language, session, onRestoredTenderOutcomeUncertain }: RestaurantTemplateProps) {
   const [tables, setTables] = useState<TableState[]>([]);
   const [activeTableId, setActiveTableId] = useState<string | null>(null);
   const [activeCourse, setActiveCourse] = useState(1);
@@ -52,9 +54,19 @@ export default function RestaurantTemplate({ state, dispatch, t, language, sessi
     const value = t(key);
     return value !== key ? value : fallback;
   }, [t]);
-  const shiftPaymentOpen = session.isOpen;
+  const protectedCartBlocked = Boolean(
+    state.checkoutDraft.holdRecallPending
+    || (state.checkoutDraft.restoredInterruption
+      && (state.checkoutDraft.restoredInterruption.persistenceError
+        || state.checkoutDraft.restoredInterruption.tenderState !== 'READY')),
+  );
+  const shiftPaymentOpen = session.isOpen && !protectedCartBlocked;
   const shiftBlockedMessage = !session.isOpen
     ? tOr('pos.shift.openRequired', 'Open a shift to accept payments')
+    : state.checkoutDraft.holdRecallPending
+      ? 'Held cart recall is still being saved. Wait before paying.'
+      : protectedCartBlocked
+        ? 'This protected cart requires payment reconciliation. Do not charge again.'
     : undefined;
 
   // Load tables from SQLite
@@ -314,6 +326,11 @@ export default function RestaurantTemplate({ state, dispatch, t, language, sessi
           cart={cart}
           dispatch={dispatch}
           onClose={handleClosePayment}
+          onTenderOutcomeUncertain={(_message, reconciliation) => {
+            if (!reconciliation) return;
+            handleClosePayment();
+            onRestoredTenderOutcomeUncertain?.(reconciliation);
+          }}
           onComplete={handlePaymentComplete}
           t={t}
           shiftId={session.shiftId}

@@ -1,6 +1,7 @@
 export type RefundType = 'FULL' | 'PARTIAL';
 
 export interface RefundIpcLine {
+  billiardLineKey?: string;
   variantId?: string;
   sku?: string;
   name?: string;
@@ -33,6 +34,8 @@ export interface RefundBackendPayloadContext {
 }
 
 export interface LocalRefundLine {
+  billiardLineKey?: string;
+  lineKey?: string;
   orderItemId?: string;
   variantId?: string;
   name?: string;
@@ -76,10 +79,36 @@ export function mergeRefundLines(
   existingRefundLinesJson: string | null | undefined,
   deltaRefundLines: LocalRefundLine[],
 ): LocalRefundLine[] {
-  return [
-    ...parseLocalRefundLines(existingRefundLinesJson),
-    ...deltaRefundLines,
-  ];
+  const merged: LocalRefundLine[] = [];
+  const seenBilliardRequests = new Set<string>();
+  for (const line of [...parseLocalRefundLines(existingRefundLinesJson), ...deltaRefundLines]) {
+    const requestId = String(line?.refundRequestId || '').trim();
+    const lineKey = String(line?.billiardLineKey || line?.lineKey || '').trim();
+    if (requestId && lineKey) {
+      const identity = `${requestId}\u0000${lineKey}`;
+      if (seenBilliardRequests.has(identity)) continue;
+      seenBilliardRequests.add(identity);
+    }
+    merged.push(line);
+  }
+  return merged;
+}
+
+export function getRefundLinesForRequest(
+  existingRefundLinesJson: string | null | undefined,
+  refundRequestId: string,
+): LocalRefundLine[] {
+  const requestId = String(refundRequestId || '').trim();
+  if (!requestId) return [];
+  return parseLocalRefundLines(existingRefundLinesJson)
+    .filter((line) => String(line?.refundRequestId || '').trim() === requestId);
+}
+
+export function shouldApplyRefundRequestLocally(
+  existingRefundLinesJson: string | null | undefined,
+  refundRequestId: string,
+): boolean {
+  return getRefundLinesForRequest(existingRefundLinesJson, refundRequestId).length === 0;
 }
 
 export interface RefundBackendSummary {
@@ -359,6 +388,10 @@ export function toRefundBackendPayload(
     refundAmount: l.refundAmount / 100,
     restock: l.restock,
   }));
+  const hasBilliardLines = (data.lines ?? []).some((line) => Boolean(line.billiardLineKey));
+  if (hasBilliardLines && (data.lines ?? []).some((line) => !line.billiardLineKey)) {
+    throw new Error('Billiard refund lines must all use stable billiardLineKey identity.');
+  }
 
   const backendPayload: Record<string, any> = {
     type: data.type,
@@ -373,7 +406,14 @@ export function toRefundBackendPayload(
     backendPayload.shiftId = context.shiftId;
   }
 
-  if (lines.length > 0) {
+  if (hasBilliardLines) {
+    backendPayload.items = (data.lines ?? []).map((line) => ({
+      billiardLineKey: line.billiardLineKey,
+      quantity: line.quantity,
+      restock: false,
+      ...(line.unit ? { unit: line.unit, saleUnit: line.unit } : {}),
+    }));
+  } else if (lines.length > 0) {
     backendPayload.lines = lines;
   }
 

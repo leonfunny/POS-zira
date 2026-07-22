@@ -65,14 +65,14 @@ describe('deep-link plumbing', () => {
     expect(RETAIL).toContain('handleEditCartProduct');
     expect(CART).toContain('onEditProduct?: (item: CartItem) => void');
     expect(CART).toContain('onEditProduct={onEditProduct}');
-    expect(CART_ITEM).toContain('onEditProduct && item.variantId');
+    expect(CART_ITEM).toContain('!item.locked && onEditProduct && item.variantId');
   });
 
   it('keeps the cart pencil icon-only so the quantity stepper is not clipped', () => {
     // Print + Remove already carry text. A third label pushes the button row past
     // the 296px cart column; the right group is shrink-0, so the stepper (which is
     // overflow-hidden) loses its -/+ buttons instead.
-    const editBlock = CART_ITEM.slice(CART_ITEM.indexOf('{onEditProduct && item.variantId'));
+    const editBlock = CART_ITEM.slice(CART_ITEM.indexOf('{!item.locked && onEditProduct && item.variantId'));
     const markup = editBlock.slice(0, editBlock.indexOf('</button>'));
     expect(markup.length).toBeGreaterThan(0);
     expect(markup).toContain('h-11 w-11');

@@ -9,6 +9,10 @@ import { resolveName } from '../../../../../shared/catalog-names';
 import { classifyProductSale, type ProductSaleClassification } from '../../../../../shared/product-sale-classifier';
 import { normalizeSellBy } from '../../../../../shared/pos-sale';
 import { findLinePriceAnomaly, formatPriceAnomalyMessage } from '../../../../../shared/pos-price-guard';
+import type {
+  BilliardPaymentIntent,
+  RestoredCartReconciliation,
+} from '../../../../../shared/billiard-pos-handoff';
 import { formatRetailSaleError, resolveRetailCartItem } from '../../retail-sale-flow';
 import SearchBar from '../../SearchBar';
 import ProductGrid from '../../ProductGrid';
@@ -20,6 +24,10 @@ import AutoCameraSearch, {
 } from '../../AutoCameraSearch';
 import PaymentModal from '../../PaymentModal';
 import OrderHistoryModal from '../../OrderHistoryModal';
+import {
+  containsProtectedCheckoutLine,
+  shouldPersistLegacyActiveCart,
+} from '../../active-cart-persistence';
 import QuickActions from './QuickActions';
 import {
   RETAIL_UNIT_FILTERS,
@@ -212,10 +220,12 @@ interface RetailTemplateProps {
   onManualWeightRequired?: (product: Product, saleClass: ProductSaleClassification, error: string) => void;
   onAddProductFeedback?: (displayName: string) => void;
   onEditProduct?: (variantId: string) => void;
+  onBilliardIntentPrepared?: (intent: BilliardPaymentIntent) => void;
+  onRestoredTenderOutcomeUncertain?: (reconciliation: RestoredCartReconciliation) => void;
   homeResetKey?: number;
 }
 
-export default function RetailTemplate({ state, dispatch, t, language, session, onUnknownBarcodeScanned, onQuickAddCamera, onCreateProduct, onLastLabelVariantChange, onPrintLastCartLabelCommand, onManualWeightRequired, onAddProductFeedback, onEditProduct, homeResetKey }: RetailTemplateProps) {
+export default function RetailTemplate({ state, dispatch, t, language, session, onUnknownBarcodeScanned, onQuickAddCamera, onCreateProduct, onLastLabelVariantChange, onPrintLastCartLabelCommand, onManualWeightRequired, onAddProductFeedback, onEditProduct, onBilliardIntentPrepared, onRestoredTenderOutcomeUncertain, homeResetKey }: RetailTemplateProps) {
   const [showHistory, setShowHistory] = useState(false);
   const { config } = useConfig();
   const allowOversell = config?.allowOversell === true;
@@ -242,15 +252,19 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
   const lastLabelVariantIdRef = useRef<string | null>(null);
   const [heldCarts, setHeldCarts] = useState<Array<{
     id: string;
-    items: CartItem[];
+    title: string;
+    items: number;
     total: number;
     createdAt: string;
+    protected?: boolean;
+    holdReason?: 'MANUAL' | 'BILLIARD_INTERRUPTION';
   }>>([]);
 
   const cart = state.cart;
   const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [restoredCart, setRestoredCart] = useState(false);
   const [cartStorageKey, setCartStorageKey] = useState<string | null>(null);
+  const legacyHoldImportStartedRef = useRef(false);
 
   // Resolve per-user localStorage key for cart persistence
   useEffect(() => {
@@ -268,22 +282,39 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
   // Restore active cart from localStorage on mount (crash recovery, per-user)
   useEffect(() => {
     if (cartStorageKey === null) return;
-    try {
-      const raw = window.localStorage.getItem(cartStorageKey);
-      if (raw) {
-        const items = JSON.parse(raw);
-        if (Array.isArray(items) && items.length > 0 && cart.items.length === 0) {
-          items.forEach((item: CartItem) => {
-            dispatch({ type: 'cart/addItem', payload: { ...item, id: crypto.randomUUID(), total: item.price * item.quantity } });
-          });
-          setRestoredCart(true);
-          setTimeout(() => setRestoredCart(false), 4000);
+    let cancelled = false;
+    void (async () => {
+      try {
+        // Durable Billiard/interrupt recovery always gets first refusal. This
+        // prevents a multi-line items-only cache from racing main and causing
+        // a false "another cart active" conflict midway through restoration.
+        await window.electronAPI.pos.billiardCheckout.recover().catch(() => null);
+        if (cancelled) return;
+        const liveState = await window.electronAPI.pos.getState();
+        const raw = window.localStorage.getItem(cartStorageKey);
+        if (raw) {
+          const items = JSON.parse(raw);
+          if (containsProtectedCheckoutLine(items)) {
+            // Billiard carts are restored only by the main-process journal. An
+            // older items-only cache has no checkout identity and would become
+            // a locked orphan that blocks the authoritative recovery.
+            window.localStorage.removeItem(cartStorageKey);
+            return;
+          }
+          if (Array.isArray(items) && items.length > 0 && liveState?.cart?.items?.length === 0) {
+            items.forEach((item: CartItem) => {
+              dispatch({ type: 'cart/addItem', payload: { ...item, id: crypto.randomUUID(), total: item.price * item.quantity } });
+            });
+            setRestoredCart(true);
+            setTimeout(() => setRestoredCart(false), 4000);
+          }
         }
+      } catch (err) {
+        rlog.warn('[RetailTemplate] Failed to restore active cart:', err);
       }
-    } catch (err) {
-      rlog.warn('[RetailTemplate] Failed to restore active cart:', err);
-    }
-  }, [cartStorageKey]);
+    })();
+    return () => { cancelled = true; };
+  }, [cartStorageKey, dispatch]);
 
   // Persist active cart to localStorage on every change (per-user, crash protection).
   // When cart becomes empty (clear or payment), remove the localStorage entry so
@@ -291,7 +322,12 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
   useEffect(() => {
     if (cartStorageKey === null) return;
     try {
-      if (cart.items.length > 0) {
+      if (shouldPersistLegacyActiveCart({
+        items: cart.items,
+        hasDurableCheckout: Boolean(
+          state.checkoutDraft.billiard || state.checkoutDraft.restoredInterruption,
+        ),
+      })) {
         window.localStorage.setItem(cartStorageKey, JSON.stringify(cart.items));
       } else {
         window.localStorage.removeItem(cartStorageKey);
@@ -299,27 +335,53 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
     } catch (err) {
       rlog.warn('[RetailTemplate] Failed to persist active cart:', err);
     }
-  }, [cart.items, cartStorageKey]);
+  }, [cart.items, cartStorageKey, state.checkoutDraft.billiard, state.checkoutDraft.restoredInterruption]);
 
-  useEffect(() => {
+  const refreshHeldCarts = useCallback(async () => {
     try {
-      const raw = window.localStorage.getItem('pos.heldCarts');
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) setHeldCarts(parsed);
-      }
+      setHeldCarts(await window.electronAPI.pos.hold.list());
     } catch (err) {
-      rlog.warn('[RetailTemplate] Failed to load held carts:', err);
+      rlog.warn('[RetailTemplate] Failed to load durable held carts:', err);
     }
   }, []);
 
+  useEffect(() => { void refreshHeldCarts(); }, [refreshHeldCarts, cart.items.length]);
+
+  // One-time rollout migration from the former renderer-only Hold list. Keep
+  // localStorage intact unless main confirms every row crossed the SQLite disk
+  // barrier; deterministic import ids make retries harmless after a crash.
   useEffect(() => {
+    if (legacyHoldImportStartedRef.current) return;
+    const raw = window.localStorage.getItem('pos.heldCarts');
+    if (!raw) return;
+    let rows: unknown;
     try {
-      window.localStorage.setItem('pos.heldCarts', JSON.stringify(heldCarts));
-    } catch (err) {
-      rlog.warn('[RetailTemplate] Failed to save held carts:', err);
+      rows = JSON.parse(raw);
+    } catch (error) {
+      rlog.warn('[RetailTemplate] Legacy held carts are malformed; preserving recovery data:', error);
+      return;
     }
-  }, [heldCarts]);
+    if (!Array.isArray(rows)) {
+      rlog.warn('[RetailTemplate] Legacy held carts are not an array; preserving recovery data');
+      return;
+    }
+    legacyHoldImportStartedRef.current = true;
+    void window.electronAPI.pos.hold.importLegacy(rows).then((result: {
+      success: boolean;
+      error?: string;
+    }) => {
+      if (!result?.success) {
+        rlog.warn('[RetailTemplate] Legacy held cart migration deferred:', result?.error);
+        legacyHoldImportStartedRef.current = false;
+        return;
+      }
+      window.localStorage.removeItem('pos.heldCarts');
+      void refreshHeldCarts();
+    }).catch((error: unknown) => {
+      legacyHoldImportStartedRef.current = false;
+      rlog.warn('[RetailTemplate] Legacy held cart migration failed:', error);
+    });
+  }, [refreshHeldCarts]);
 
   // Load categories + products on mount. If initial load returns empty
   // (sync not finished yet after login), retry once after a short delay.
@@ -525,10 +587,22 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
   // button is for "I just edited a price on web and want it now" UX.
   // pos:products-synced from main triggers the existing reload effect, so
   // success path doesn't need to re-fetch here.
-  const shiftPaymentOpen = session.isOpen;
+  const restoredPaymentBlock = state.checkoutDraft.restoredInterruption;
+  const restoredPaymentBlocked = Boolean(
+    restoredPaymentBlock
+    && (restoredPaymentBlock.persistenceError || restoredPaymentBlock.tenderState !== 'READY'),
+  );
+  const holdRecallBlocked = Boolean(state.checkoutDraft.holdRecallPending);
+  const shiftPaymentOpen = session.isOpen && !restoredPaymentBlocked && !holdRecallBlocked;
   const shiftBlockedMessage = !session.isOpen
     ? tOr('pos.shift.openRequired', 'Open a shift to accept payments')
-    : undefined;
+    : restoredPaymentBlock?.persistenceError
+      ? `Protected cart is frozen because its disk update failed: ${restoredPaymentBlock.persistenceError}`
+      : holdRecallBlocked
+        ? 'Held cart recall is still being saved. Wait before editing or paying.'
+      : restoredPaymentBlocked
+        ? 'This protected cart crossed the tender boundary. Do not charge again; reconciliation is required.'
+        : undefined;
 
   const handleManualSync = useCallback(async () => {
     if (isSyncing) return;
@@ -911,42 +985,40 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
     setAutoCameraResult(tOr('pos.autoCamera.noLocalMatch', 'No local match'));
   }, [handleAddProduct, lang, tOr]);
 
-  const handleHoldCart = useCallback(() => {
+  const handleHoldCart = useCallback(async () => {
     if (cart.items.length === 0) return;
     // A loaded kitchen pickup order is locked to this station and must settle
     // on payment; parking it would lose the pickupOrderId and strand the claim.
     // Block Hold while a pickup order is active (the button is also disabled).
     if (state.checkoutDraft?.kitchenSelfOrder?.pickupOrderId) return;
-    const held = {
-      id: crypto.randomUUID(),
-      items: cart.items,
-      total: cart.total,
-      createdAt: new Date().toISOString(),
-    };
-    setHeldCarts((prev) => [held, ...prev].slice(0, 6));
-    dispatch({ type: 'cart/clear' });
-    dispatch({ type: 'display/setMode', payload: { mode: 'idle' } });
-  }, [cart.items, cart.total, dispatch, state.checkoutDraft]);
+    const result = await window.electronAPI.pos.hold.createCurrent(
+      crypto.randomUUID(),
+      `Held cart · ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+    );
+    if (!result?.success) {
+      showToolbarError(result?.error || 'Could not safely hold this cart');
+      return;
+    }
+    await refreshHeldCarts();
+  }, [cart.items.length, refreshHeldCarts, showToolbarError, state.checkoutDraft]);
 
-  const handleRecallCart = useCallback((heldId: string) => {
-    const held = heldCarts.find((c) => c.id === heldId);
-    if (!held) return;
-    dispatch({ type: 'cart/clear' });
-    held.items.forEach((item) => {
-      dispatch({
-        type: 'cart/addItem',
-        payload: {
-          ...item,
-          id: crypto.randomUUID(),
-        },
-      });
-    });
-    setHeldCarts((prev) => prev.filter((c) => c.id !== heldId));
-  }, [dispatch, heldCarts]);
+  const handleRecallCart = useCallback(async (heldId: string) => {
+    const result = await window.electronAPI.pos.hold.recall(heldId);
+    if (!result?.success) {
+      showToolbarError(result?.error || 'Could not recall this held cart');
+      return;
+    }
+    await refreshHeldCarts();
+  }, [refreshHeldCarts, showToolbarError]);
 
-  const handleDiscardHeld = useCallback((heldId: string) => {
-    setHeldCarts((prev) => prev.filter((c) => c.id !== heldId));
-  }, []);
+  const handleDiscardHeld = useCallback(async (heldId: string) => {
+    const result = await window.electronAPI.pos.hold.remove(heldId);
+    if (!result?.success) {
+      showToolbarError(result?.error || 'Could not remove this held cart');
+      return;
+    }
+    await refreshHeldCarts();
+  }, [refreshHeldCarts, showToolbarError]);
 
   // Track customer display open state
   const [isCustomerDisplayOpen, setIsCustomerDisplayOpen] = useState(false);
@@ -1410,7 +1482,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
               t={t}
               heldCarts={heldCarts}
               onHold={handleHoldCart}
-              holdDisabled={!!state.checkoutDraft?.kitchenSelfOrder?.pickupOrderId}
+              holdDisabled={!!state.checkoutDraft?.kitchenSelfOrder?.pickupOrderId || !!state.checkoutDraft?.billiard}
               onRecall={handleRecallCart}
               onDiscardHeld={handleDiscardHeld}
               onHistory={() => setShowHistory(true)}
@@ -1432,6 +1504,12 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
             <div className="bg-amber-50 border-b border-amber-200 px-3 py-2 text-xs text-amber-700 flex items-center gap-1.5">
               <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20 10 10 0 000-20z" /></svg>
               Cart restored from previous session
+            </div>
+          )}
+          {restoredPaymentBlocked && (
+            <div className="flex items-start gap-2 border-b border-amber-300 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-950" role="alert">
+              <svg className="mt-0.5 h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v4m0 4h.01M10.3 3.7L2.4 17.4A2 2 0 004.1 20h15.8a2 2 0 001.7-2.6L13.7 3.7a2 2 0 00-3.4 0z" /></svg>
+              <span>{shiftBlockedMessage}</span>
             </div>
           )}
           <Cart
@@ -1456,6 +1534,11 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
           cart={cart}
           dispatch={dispatch}
           onClose={handleClosePayment}
+          onTenderOutcomeUncertain={(_message, reconciliation) => {
+            if (!reconciliation) return;
+            handleClosePayment();
+            onRestoredTenderOutcomeUncertain?.(reconciliation);
+          }}
           onComplete={() => {
             handleClosePayment();
             setSearchQuery('');
@@ -1485,6 +1568,12 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
         <OrderHistoryModal
           onClose={() => setShowHistory(false)}
           t={t}
+          shiftOpen={session.isOpen}
+          shiftId={session.shiftId}
+          onBilliardReplacementReady={onBilliardIntentPrepared ? (intent) => {
+            setShowHistory(false);
+            onBilliardIntentPrepared(intent);
+          } : undefined}
         />
       )}
     </>

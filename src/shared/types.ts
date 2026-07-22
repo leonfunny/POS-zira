@@ -727,7 +727,10 @@ export interface ReceiptItem {
   name: string;
   quantity: number;
   unitPrice: number; // In grosze
+  /** Gross line amount before any line-level discount, in grosze. */
   totalPrice: number;
+  /** Absolute discount assigned to this exact line, in grosze. */
+  allocatedDiscount?: number;
   vatRate: number; // 23, 8, 5, 0
   sku?: string;
   unit?: string; // szt., kg, paczka, usługa

@@ -396,6 +396,7 @@ class Database {
       'pos_staff',
       'pos_schedule_cache',
       'pos_hold_orders',
+      'pos_billiard_handoffs',
       'pos_quickkey_assignments',  // FK to layouts, clear before layouts
       'pos_quickkey_layouts',
       'pos_recommended_items',

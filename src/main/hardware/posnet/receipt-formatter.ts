@@ -16,6 +16,19 @@ const VAT_MAPPING: Map<number, string> = new Map([
   [-1, 'E'], // Exempt
 ]);
 
+export const POSNET_SUPPORTED_VAT_RATES = Object.freeze(Array.from(VAT_MAPPING.keys()));
+
+export function assertPosnetVatRateSupported(rate: number): string {
+  const mappedRate = VAT_MAPPING.get(rate);
+  if (mappedRate === undefined) {
+    throw new Error(
+      `POSNET_FISCAL_VAT_UNSUPPORTED: VAT rate ${String(rate)} is not mapped to a POSNET fiscal VAT code. `
+      + `Supported rates: ${POSNET_SUPPORTED_VAT_RATES.join(', ')}.`,
+    );
+  }
+  return mappedRate;
+}
+
 /**
  * Payment method mapping
  * 0 = Gotówka (cash)
@@ -34,7 +47,7 @@ const PAYMENT_MAPPING: Record<string, number> = {
 /**
  * Formatted receipt data for Posnet
  */
-interface PosnetReceiptData {
+export interface PosnetReceiptData {
   items: PosnetLineItem[];
   payment: {
     type: number;
@@ -47,11 +60,12 @@ interface PosnetReceiptData {
   };
 }
 
-interface PosnetLineItem {
+export interface PosnetLineItem {
   name: string;      // Max 40 chars
   quantity: number;  // Decimal (3 places)
   price: number;     // In grosze (1/100 PLN)
   total: number;     // In grosze (1/100 PLN)
+  allocatedDiscount: number; // Absolute fixed discount in grosze
   vat: string;       // A, B, C, D, E
 }
 
@@ -89,6 +103,7 @@ export class ReceiptFormatter {
       quantity: item.quantity,
       price: item.unitPrice, // Already in grosze
       total: item.totalPrice, // Already in grosze
+      allocatedDiscount: item.allocatedDiscount ?? 0,
       vat: this.mapVatRate(item.vatRate),
     };
   }
@@ -118,7 +133,7 @@ export class ReceiptFormatter {
    * Map VAT rate percentage to Posnet code
    */
   private mapVatRate(rate: number): string {
-    return VAT_MAPPING.get(rate) || 'A'; // Default to standard rate
+    return assertPosnetVatRateSupported(rate);
   }
 
   /**

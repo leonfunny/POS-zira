@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('electron', () => ({
+  app: { getPath: () => '/tmp/zira-elzab-test', isPackaged: false },
+  BrowserWindow: { getAllWindows: () => [] },
+}));
+
 // Keep the COM-port re-resolution (P1) deterministic and offline: stub the
 // PnP-backed serial scanners so the driver never shells out to PowerShell or
 // depends on whatever serial hardware the test machine happens to have.
@@ -109,6 +114,45 @@ function createJournal(seed: FiscalAttemptRow[] = []): { journal: FiscalAttemptJ
 }
 
 describe('ElzabDriver fail-closed behavior', () => {
+  it('rejects allocated Billiard discounts before creating an attempt or calling the sidecar', async () => {
+    const previous = process.env.ALLOW_REAL_FISCAL_PRINT;
+    process.env.ALLOW_REAL_FISCAL_PRINT = 'true';
+    const printReceipt = vi.fn(async () => ({ ok: true }));
+    const { journal, attempts } = createJournal();
+    const bridge: ElzabBridge = {
+      checkAvailability: async () => ({ ok: true }),
+      connect: async () => ({ ok: true }),
+      getStatus: async () => ({ ok: true }),
+      printTest: async () => ({ ok: true }),
+      printReceipt,
+    };
+    const driver = new ElzabDriver({ port: 'COM4', bridge, fiscalJournal: journal });
+
+    try {
+      await expect(driver.connect()).resolves.toBe(true);
+      await expect(driver.printReceipt({
+        ...receipt,
+        items: [{
+          name: 'Czas gry',
+          quantity: 1,
+          unitPrice: 1000,
+          totalPrice: 1000,
+          allocatedDiscount: 100,
+          vatRate: 23,
+        }],
+        payment: { method: 'CASH', amount: 900 },
+        subtotal: 1000,
+        discount: 100,
+        total: 900,
+      })).rejects.toThrow('ELZAB_LINE_DISCOUNT_UNSUPPORTED');
+      expect(printReceipt).not.toHaveBeenCalled();
+      expect(attempts).toHaveLength(0);
+    } finally {
+      if (previous === undefined) delete process.env.ALLOW_REAL_FISCAL_PRINT;
+      else process.env.ALLOW_REAL_FISCAL_PRINT = previous;
+    }
+  });
+
   it('returns explicit missing-sidecar errors instead of false success', async () => {
     const driver = new ElzabDriver({
       port: 'COM8',

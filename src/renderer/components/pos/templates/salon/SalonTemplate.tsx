@@ -13,6 +13,7 @@ import type {
 import PaymentModal from '../../PaymentModal';
 import SearchBar from '../../SearchBar';
 import { resolveName } from '../../../../../shared/catalog-names';
+import type { RestoredCartReconciliation } from '../../../../../shared/billiard-pos-handoff';
 
 interface StaffMember {
   id: string;
@@ -27,6 +28,7 @@ interface SalonTemplateProps {
   t: (key: string) => string;
   language?: string;
   session: PosState['session'];
+  onRestoredTenderOutcomeUncertain?: (reconciliation: RestoredCartReconciliation) => void;
 }
 
 const PLACEHOLDER_COLORS = [
@@ -121,7 +123,7 @@ function bookingsForStaff(schedule: PosScheduleDayResponse | null, staffId: stri
   return (schedule?.bookings || []).filter((booking) => booking.staff_profile_id === staffId);
 }
 
-export default function SalonTemplate({ state, dispatch, t, language, session }: SalonTemplateProps) {
+export default function SalonTemplate({ state, dispatch, t, language, session, onRestoredTenderOutcomeUncertain }: SalonTemplateProps) {
   const [staffList, setStaffList] = useState<StaffMember[]>([]);
   const [nailTurnBoard, setNailTurnBoard] = useState<NailTurnBoardResponse | null>(null);
   const [nailTurnUnavailable, setNailTurnUnavailable] = useState(false);
@@ -151,9 +153,19 @@ export default function SalonTemplate({ state, dispatch, t, language, session }:
     const value = t(key);
     return value !== key ? value : fallback;
   }, [t]);
-  const shiftPaymentOpen = session.isOpen;
+  const protectedCartBlocked = Boolean(
+    state.checkoutDraft.holdRecallPending
+    || (state.checkoutDraft.restoredInterruption
+      && (state.checkoutDraft.restoredInterruption.persistenceError
+        || state.checkoutDraft.restoredInterruption.tenderState !== 'READY')),
+  );
+  const shiftPaymentOpen = session.isOpen && !protectedCartBlocked;
   const shiftBlockedMessage = !session.isOpen
     ? tOr('pos.shift.openRequired', 'Open a shift to accept payments')
+    : state.checkoutDraft.holdRecallPending
+      ? 'Held cart recall is still being saved. Wait before paying.'
+      : protectedCartBlocked
+        ? 'This protected cart requires payment reconciliation. Do not charge again.'
     : undefined;
 
   const loadNailTurnBoard = useCallback(async () => {
@@ -1015,6 +1027,11 @@ export default function SalonTemplate({ state, dispatch, t, language, session }:
           cart={cart}
           dispatch={dispatch}
           onClose={() => setShowPayment(false)}
+          onTenderOutcomeUncertain={(_message, reconciliation) => {
+            if (!reconciliation) return;
+            setShowPayment(false);
+            onRestoredTenderOutcomeUncertain?.(reconciliation);
+          }}
           onComplete={() => {
             setShowPayment(false);
             loadNailTurnBoard();

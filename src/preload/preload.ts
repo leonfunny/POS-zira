@@ -644,6 +644,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on(IPC_CHANNELS.POS_STATE_CHANGED, listener);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.POS_STATE_CHANGED, listener);
     },
+    billiardCheckout: {
+      prepare: (input: any) => ipcRenderer.invoke('pos:billiard:prepare-handoff', input),
+      recover: () => ipcRenderer.invoke('pos:billiard:recover-handoff'),
+      markPaymentOpened: (checkoutId: string) => ipcRenderer.invoke('pos:billiard:mark-payment-opened', checkoutId),
+      beginTender: (checkoutId: string) => ipcRenderer.invoke('pos:billiard:begin-tender', checkoutId),
+      beginRestoredTender: (holdId: string) => ipcRenderer.invoke('pos:restored-cart:begin-tender', holdId),
+      resolveUncertainTender: (input: any) => ipcRenderer.invoke('pos:billiard:resolve-uncertain-tender', input),
+      complete: (checkoutId: string, orderId: string) => ipcRenderer.invoke('pos:billiard:complete-handoff', checkoutId, orderId),
+    },
     onFiscalUnknown: (callback: (info: { orderId?: string; orderNumber?: string; code: string; detail?: string }) => void) => {
       const listener = (_e: any, info: any) => callback(info);
       ipcRenderer.on('pos:fiscal-unknown', listener);
@@ -734,6 +743,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       mutate: (orderId: string, data: any) => ipcRenderer.invoke('pos:orders:mutate', orderId, data),
       refund: (orderId: string, data: any) =>
         ipcRenderer.invoke('pos:orders:refund', orderId, data),
+      correctBilliard: (orderId: string, data: { correctionRequestId: string; reason: string }) =>
+        ipcRenderer.invoke('pos:orders:billiard-correction', orderId, data),
       downloadPdf: (orderId: string, kind: 'receipt' | 'invoice', invoiceType?: 'VAT' | 'PROFORMA') =>
         ipcRenderer.invoke('pos:orders:downloadPdf', orderId, kind, invoiceType),
       addInvoice: (orderId: string, data: { customerNip: string; invoiceType?: 'VAT' | 'PROFORMA' }) =>
@@ -896,8 +907,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     hold: {
       create: (id: string, title: string, payload: any) => ipcRenderer.invoke(IPC_CHANNELS.POS_HOLD_CREATE, id, title, payload),
+      createCurrent: (id: string, title: string) => ipcRenderer.invoke('pos:hold:create-current', id, title),
+      importLegacy: (rows: unknown[]) => ipcRenderer.invoke('pos:hold:import-legacy', rows),
       list: () => ipcRenderer.invoke(IPC_CHANNELS.POS_HOLD_LIST),
       get: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.POS_HOLD_GET, id),
+      recall: (id: string) => ipcRenderer.invoke('pos:hold:recall', id),
       remove: (id: string) => ipcRenderer.invoke(IPC_CHANNELS.POS_HOLD_REMOVE, id),
     },
     quickKeys: {

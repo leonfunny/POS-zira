@@ -181,21 +181,48 @@ export class PaymentController {
     return items.reduce((sum, item) => sum + (Number(item.totalPrice) || 0), 0);
   }
 
+  private sumReceiptPayable(items: ReceiptData['items']): number {
+    return items.reduce(
+      (sum, item) => sum + Number(item.totalPrice) - Number(item.allocatedDiscount ?? 0),
+      0,
+    );
+  }
+
   private buildReceiptItems(
     order: { id?: string; order_number?: string | null; total: number; discount: number },
     orderItems: Array<any>,
     itemsLookNetPriced: boolean,
   ): ReceiptData['items'] {
     const expectedLineTotal = (Number(order.total) || 0) + (Number(order.discount) || 0);
-    const buildFromOrderItems = (): ReceiptData['items'] => orderItems.map((i) => {
+    const isBilliardOrder = orderItems.some((item) => Boolean(String(item?.billiard_json || '').trim()));
+    if (isBilliardOrder && orderItems.some((item) => !String(item?.billiard_json || '').trim())) {
+      throw new Error('FISCAL_BILLIARD_LINE_METADATA_MISSING: Refusing a mixed frozen/non-frozen receipt.');
+    }
+
+    const buildFromOrderItems = (): ReceiptData['items'] => orderItems.map((i, index) => {
       const product = i.variant_id ? productRepo.getById(i.variant_id) : null;
       const unitPrice = itemsLookNetPriced ? this.grossFromNet(i.price, i.vat_rate) : i.price;
       const totalPrice = itemsLookNetPriced ? this.grossFromNet(i.total, i.vat_rate) : i.total;
+      const allocatedDiscount = isBilliardOrder ? Number(i.allocated_discount) : undefined;
+      if (
+        isBilliardOrder
+        && (!Number.isSafeInteger(allocatedDiscount) || allocatedDiscount! < 0 || allocatedDiscount! > totalPrice)
+      ) {
+        throw new Error(`FISCAL_BILLIARD_DISCOUNT_INVALID: Invalid frozen discount on line ${index + 1}.`);
+      }
+      if (
+        isBilliardOrder
+        && (!Number.isSafeInteger(Number(i.payable_total))
+          || Number(i.payable_total) !== totalPrice - allocatedDiscount!)
+      ) {
+        throw new Error(`FISCAL_BILLIARD_PAYABLE_INVALID: Invalid frozen payable amount on line ${index + 1}.`);
+      }
       return {
         name: this.getReceiptItemName(i),
         quantity: i.quantity,
         unitPrice,
         totalPrice,
+        ...(isBilliardOrder ? { allocatedDiscount } : {}),
         vatRate: i.vat_rate,
         sku: i.sku || undefined,
         unit: i.sale_unit || product?.sale_unit || undefined,
@@ -204,6 +231,16 @@ export class PaymentController {
 
     const receiptItems = buildFromOrderItems();
     const lineSum = this.sumReceiptItems(receiptItems);
+    if (isBilliardOrder) {
+      const payableSum = this.sumReceiptPayable(receiptItems);
+      if (lineSum !== expectedLineTotal || payableSum !== Number(order.total)) {
+        throw new Error(
+          `FISCAL_BILLIARD_TOTAL_MISMATCH order=${order.order_number || order.id || 'unknown'} ` +
+          `gross=${lineSum} discount=${lineSum - payableSum} payable=${payableSum} expectedGross=${expectedLineTotal} expectedPayable=${order.total}.`,
+        );
+      }
+      return receiptItems;
+    }
     if (expectedLineTotal <= 0 || this.receiptTotalsMatch(lineSum, expectedLineTotal)) {
       return receiptItems;
     }

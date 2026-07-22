@@ -82,6 +82,124 @@ function isSerialWriteTimeout(text?: string): boolean {
   return /semaphore timeout period has expired|operation has timed out|write timed out/i.test(text || '');
 }
 
+function exactNonNegativeMinor(value: unknown, field: string): number {
+  const amount = Number(value);
+  if (!Number.isSafeInteger(amount) || amount < 0) {
+    throw new Error(`POSNET_FISCAL_AMOUNT_INVALID: ${field} must be a non-negative integer grosz amount.`);
+  }
+  return amount;
+}
+
+function exactPositiveMinor(value: unknown, field: string): number {
+  const amount = exactNonNegativeMinor(value, field);
+  if (amount <= 0) {
+    throw new Error(`POSNET_FISCAL_PRICE_INVALID: ${field} must be a positive integer grosz amount.`);
+  }
+  return amount;
+}
+
+/**
+ * Build the complete fiscal transaction before any byte is written. Billiard
+ * discounts stay attached to their frozen VAT line via POSNET's fixed line
+ * discount fields (`rd1` + `rw`); gross prices are never rewritten to make a
+ * discounted total divide evenly by quantity.
+ */
+export function buildPosnetFiscalFrames(data: ReceiptData): { frames: string[][]; payableTotal: number } {
+  const formattedData = new ReceiptFormatter().formatOrder(data);
+  const frames: string[][] = [['trinit', 'bm0']];
+  let payableTotal = 0;
+  const declaredTotal = exactNonNegativeMinor(data.total, 'receipt.total');
+  const explicitDiscountFlags = data.items.map((item) => Object.prototype.hasOwnProperty.call(item, 'allocatedDiscount'));
+  if (explicitDiscountFlags.some(Boolean) && !explicitDiscountFlags.every(Boolean)) {
+    throw new Error('POSNET_FISCAL_DISCOUNT_INVALID: receipt mixes explicit and implicit line discount allocation.');
+  }
+
+  let lineDiscounts = formattedData.items.map((item, index) => (
+    exactNonNegativeMinor(item.allocatedDiscount, `items[${index}].allocatedDiscount`)
+  ));
+  if (!explicitDiscountFlags.some(Boolean)) {
+    const ordinaryDiscount = exactNonNegativeMinor(data.discount ?? 0, 'receipt.discount');
+    const grossLines = formattedData.items.map((item, index) => (
+      exactNonNegativeMinor(item.total, `items[${index}].totalPrice`)
+    ));
+    const grossTotal = grossLines.reduce((sum, gross) => sum + gross, 0);
+    if (grossTotal - ordinaryDiscount !== declaredTotal) {
+      throw new Error(
+        `POSNET_FISCAL_PAYABLE_MISMATCH: ordinary gross ${grossTotal} minus discount ${ordinaryDiscount} does not equal receipt total ${declaredTotal}.`,
+      );
+    }
+    if (ordinaryDiscount > 0) {
+      const ranked = grossLines.map((gross, index) => {
+        const numerator = ordinaryDiscount * gross;
+        return {
+          index,
+          base: grossTotal > 0 ? Math.floor(numerator / grossTotal) : 0,
+          remainder: grossTotal > 0 ? numerator % grossTotal : 0,
+        };
+      });
+      lineDiscounts = ranked.map((entry) => entry.base);
+      let centsLeft = ordinaryDiscount - lineDiscounts.reduce((sum, amount) => sum + amount, 0);
+      ranked
+        .sort((a, b) => b.remainder - a.remainder || a.index - b.index)
+        .forEach((entry) => {
+          if (centsLeft > 0 && lineDiscounts[entry.index] < grossLines[entry.index]) {
+            lineDiscounts[entry.index] += 1;
+            centsLeft -= 1;
+          }
+        });
+      if (centsLeft !== 0) {
+        throw new Error('POSNET_FISCAL_DISCOUNT_INVALID: ordinary discount could not be allocated exactly.');
+      }
+    }
+  }
+
+  for (const [index, item] of formattedData.items.entries()) {
+    const price = exactPositiveMinor(item.price, `items[${index}].unitPrice`);
+    const gross = exactNonNegativeMinor(item.total, `items[${index}].totalPrice`);
+    const discount = lineDiscounts[index];
+    if (discount > gross) {
+      throw new Error(
+        `POSNET_FISCAL_DISCOUNT_INVALID: items[${index}] discount ${discount} exceeds gross ${gross}.`,
+      );
+    }
+    if (!Number.isFinite(item.quantity) || item.quantity <= 0) {
+      throw new Error(`POSNET_FISCAL_QUANTITY_INVALID: items[${index}].quantity must be positive.`);
+    }
+
+    const qty = item.quantity.toFixed(3);
+    const vatIndex = { A: 0, B: 1, C: 2, D: 3, E: 4 }[item.vat];
+    if (vatIndex === undefined) {
+      throw new Error(
+        `POSNET_FISCAL_VAT_UNSUPPORTED: items[${index}] uses unmapped POSNET VAT code ${item.vat}.`,
+      );
+    }
+    const lineFrame = [
+      'trline',
+      `na${item.name}`,
+      `vt${vatIndex}`,
+      `pr${price}`,
+      `il${qty}`,
+      `wa${gross}`,
+    ];
+    if (discount > 0) {
+      lineFrame.push('rd1', `rw${discount}`, 'rnRabat');
+    }
+    frames.push(lineFrame);
+    payableTotal += gross - discount;
+  }
+
+  if (payableTotal !== declaredTotal) {
+    throw new Error(
+      `POSNET_FISCAL_PAYABLE_MISMATCH: discounted line total ${payableTotal} does not equal receipt total ${declaredTotal}.`,
+    );
+  }
+
+  const paymentType = formattedData.payment?.type === 2 ? 2 : 0;
+  frames.push(['trpayment', `ty${paymentType}`, `wa${payableTotal}`]);
+  frames.push(['trend', `to${payableTotal}`]);
+  return { frames, payableTotal };
+}
+
 // ─── POSNET frame constants ─────────────────────────────────────────────────
 
 const STX = 0x02;
@@ -120,7 +238,6 @@ export interface PosnetDriverOptions {
 
 export class PosnetDriver {
   private connectionState: PosnetConnectionState = 'disconnected';
-  private formatter: ReceiptFormatter;
   private modelName?: string;
   private firmwareVersion?: string;
   private lastDiagnostic?: PosnetDiagnosticCode;
@@ -135,7 +252,6 @@ export class PosnetDriver {
     private protocol: 'THERMAL' | 'POSNET' = 'POSNET',
     options: PosnetDriverOptions = {},
   ) {
-    this.formatter = new ReceiptFormatter();
     this.fiscalJournal = options.fiscalJournal || fiscalAttemptRepo;
     this.onFiscalUnknown = options.onFiscalUnknown;
     logger.info(`[PosnetDriver] Driver initialized for ${portName} @ ${baudRate}`);
@@ -455,30 +571,14 @@ export class PosnetDriver {
     if (!this.isConnected()) throw new Error('Printer not connected');
     logger.info('[PosnetDriver] Printing receipt...');
 
+    // Preflight the complete arithmetic and frames before creating a SENT
+    // journal state or allowing any serial write.
+    const { frames } = buildPosnetFiscalFrames(data);
+
     // THERMAL protocol mode drives plain ESC/POS-style printing — no fiscal
     // transaction, no journal.
     const isFiscalProtocol = this.protocol === 'POSNET';
     const attempt = isFiscalProtocol ? this.createReceiptAttempt(data) : null;
-
-    const formattedData = this.formatter.formatOrder(data);
-
-    const frames: string[][] = [];
-    frames.push(['trinit', 'bm0']);
-
-    let total = 0;
-    for (const item of formattedData.items) {
-      const price = Math.max(1, item.price); // price in grosze, min 1
-      const lineTotal = Math.max(0, Math.round(item.total || 0));
-      const qty = item.quantity > 0 ? item.quantity.toFixed(3) : '1.000';
-      // Map VAT letter to index: A=0, B=1, C=2, D=3, E=4
-      const vatIndex = { A: 0, B: 1, C: 2, D: 3, E: 4 }[item.vat] ?? 0;
-      frames.push(['trline', `na${item.name}`, `vt${vatIndex}`, `pr${price}`, `il${qty}`]);
-      total += lineTotal;
-    }
-
-    const paymentType = formattedData.payment?.type === 2 ? 2 : 0; // 0=cash, 2=card
-    frames.push(['trpayment', `ty${paymentType}`, `wa${total}`]);
-    frames.push(['trend', `to${total}`]);
 
     if (attempt) this.fiscalJournal.markSent(attempt.id);
 

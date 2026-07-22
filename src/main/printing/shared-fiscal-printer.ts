@@ -3,6 +3,7 @@ import {
   CreatePrintJobResponse,
   PrintJobFailureClass,
   PrintJobType,
+  PrinterProtocol,
   PrinterType,
   ReceiptData,
   SalonPrinterMapping,
@@ -48,7 +49,18 @@ export interface SharedFiscalPrinterStatus {
   configured: boolean;
   connected: boolean;
   printerId?: string;
+  protocol?: PrinterProtocol | null;
   error?: string;
+}
+
+function normalizeSharedFiscalPrinterProtocol(protocol: unknown): PrinterProtocol | null {
+  const normalized = String(protocol || '').trim().toUpperCase().replace(/[-\s]+/g, '_');
+  if (normalized === 'POSNET') return 'POSNET';
+  if (normalized === 'ELZAB' || normalized === 'STX' || normalized === 'ELZAB_STX') return 'ELZAB_STX';
+  if (normalized === 'ZEBRA') return 'ZEBRA';
+  if (normalized === 'WINDOWS' || normalized === 'CUPS') return 'WINDOWS';
+  if (normalized === 'THERMAL' || normalized === 'ESC_POS' || normalized === 'SERIAL' || normalized === 'USB') return 'THERMAL';
+  return null;
 }
 
 function isBackendContractUnavailable(err: unknown): boolean {
@@ -275,12 +287,13 @@ async function resolveSharedFiscalPrinter(
       logger.warn(`[SharedFiscalPrinter] ${error}`);
       return { configured: false, connected: false, printerId, error };
     }
+    const protocol = normalizeSharedFiscalPrinterProtocol(printer.protocol);
     if (!isReadyFiscalPrinter(printer)) {
       const error = `${SHARED_FISCAL_ROLE} printer ${printerId} is not a ready FISCAL printer`;
       logger.warn(`[SharedFiscalPrinter] ${error}`);
-      return { configured: false, connected: false, printerId, error };
+      return { configured: false, connected: false, printerId, protocol, error };
     }
-    return { configured: true, connected: true, printerId };
+    return { configured: true, connected: true, printerId, protocol };
   } catch (err: any) {
     if (isBackendContractUnavailable(err)) {
       fiscalEndpointUnavailableUntil = Date.now() + ASSIGNMENT_ENDPOINT_NEGATIVE_TTL_MS;

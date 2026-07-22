@@ -49,6 +49,8 @@ export interface OrderRow {
   /** Input-only hint for number generation (NOT a column): which daily
    *  series this order belongs to. Default FISCAL. */
   number_series?: 'FISCAL' | 'ORDER' | null;
+  client_attempt_id?: string | null;
+  billiard_origin_json?: string | null;
 }
 
 export interface OrderItemRow {
@@ -69,6 +71,11 @@ export interface OrderItemRow {
   staff_name: string | null;
   notes: string | null;
   course: number | null;
+  billiard_json?: string | null;
+  inventory_policy?: string | null;
+  refund_policy?: string | null;
+  allocated_discount?: number | null;
+  payable_total?: number | null;
 }
 
 export interface OrderMutationItemInput {
@@ -405,7 +412,11 @@ function incrementReason(result: ServerMirroredGrossItemRepairResult, reason: st
 }
 
 export const orderRepo = {
-  create(order: OrderRow, items: OrderItemRow[]): string {
+  create(
+    order: OrderRow,
+    items: OrderItemRow[],
+    options?: { afterInsertInTransaction?: () => void },
+  ): string {
     // Generate order number INSIDE transaction for atomicity (prevents race condition)
     let finalOrderNumber: string = '';
 
@@ -421,8 +432,8 @@ export const orderRepo = {
 
       const finalOrder = { ...order, order_number: finalOrderNumber };
       database.run(
-        `INSERT INTO orders (id, order_number, status, subtotal, discount, tax, total, payment_method, payment_amount, change_amount, staff_id, staff_name, customer_id, customer_name, customer_nip, shift_id, source, table_id, covers, order_type, tip, mode, payment_tenders, kitchen_number)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO orders (id, order_number, status, subtotal, discount, tax, total, payment_method, payment_amount, change_amount, staff_id, staff_name, customer_id, customer_name, customer_nip, shift_id, source, table_id, covers, order_type, tip, mode, payment_tenders, kitchen_number, client_attempt_id, billiard_origin_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           finalOrder.id, finalOrder.order_number, finalOrder.status, finalOrder.subtotal ?? 0,
           finalOrder.discount ?? 0, finalOrder.tax ?? 0, finalOrder.total ?? 0,
@@ -434,21 +445,30 @@ export const orderRepo = {
           finalOrder.table_id ?? null, finalOrder.covers ?? null,
           finalOrder.order_type ?? 'standard', finalOrder.tip ?? 0, finalOrder.mode ?? 'retail',
           finalOrder.payment_tenders ?? null, finalOrder.kitchen_number ?? null,
+          finalOrder.client_attempt_id ?? null, finalOrder.billiard_origin_json ?? null,
         ],
       );
 
       for (const item of items) {
         database.run(
-          `INSERT INTO order_items (id, order_id, variant_id, name, sku, price, quantity, sale_quantity, sale_unit, sell_by, total, vat_rate, staff_id, staff_name, notes, course)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO order_items (id, order_id, variant_id, name, sku, price, quantity, sale_quantity, sale_unit, sell_by, total, vat_rate, staff_id, staff_name, notes, course, billiard_json, inventory_policy, refund_policy, allocated_discount, payable_total)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             item.id, item.order_id, item.variant_id ?? null, item.name, item.sku ?? null,
             item.price, item.quantity, getLineSaleQuantity(item), getLineSaleUnit(item), getLineSellBy(item),
             item.total, item.vat_rate ?? 23,
             item.staff_id ?? null, item.staff_name ?? null, item.notes ?? null, item.course ?? 1,
+            item.billiard_json ?? null, item.inventory_policy ?? null,
+            item.refund_policy ?? null, item.allocated_discount ?? 0,
+            item.payable_total ?? item.total,
           ],
         );
       }
+
+      // Safety-ledger hooks (currently Billiard checkout handoff) must cross
+      // the same SQL transaction boundary as the paid order. Keep this
+      // synchronous: no I/O or renderer work is allowed inside the hook.
+      options?.afterInsertInTransaction?.();
 
     }); // End transaction
 
@@ -499,6 +519,9 @@ export const orderRepo = {
   deleteLocalUnsynced(id: string): { deleted: boolean; restocked: number } {
     const order = orderRepo.getById(id);
     if (!order) return { deleted: false, restocked: 0 };
+    if (order.billiard_origin_json) {
+      throw new Error('Billiard POS orders cannot be deleted. Use the owner correction flow.');
+    }
     if (order.backend_id || order.synced === 1) {
       throw new Error('Synced orders cannot be deleted locally. Cancel or refund the order instead.');
     }
@@ -511,7 +534,7 @@ export const orderRepo = {
 
     database.transaction(() => {
       for (const item of items) {
-        if (item.variant_id && item.quantity > 0) {
+        if (item.variant_id && item.quantity > 0 && item.inventory_policy !== 'ALREADY_CONSUMED') {
           database.run(
             `UPDATE product_variants SET in_stock = in_stock + ?, available_qty = available_qty + ? WHERE id = ? ${STOCK_TRACKED_GUARD_SQL}`,
             [item.quantity, item.quantity, item.variant_id],
@@ -544,6 +567,9 @@ export const orderRepo = {
   updateLocalUnsynced(id: string, input: OrderMutationInput): { updated: boolean; stockChanged: boolean } {
     const order = orderRepo.getById(id);
     if (!order) return { updated: false, stockChanged: false };
+    if (order.billiard_origin_json) {
+      throw new Error('Frozen Billiard POS orders cannot be edited.');
+    }
     if (order.backend_id || order.synced === 1) {
       throw new Error('Synced orders must be changed on the server.');
     }
@@ -722,6 +748,7 @@ export const orderRepo = {
    * Mark an order as refunded (full or partial).
    */
   markRefunded(id: string, amount: number, reason: string, type: 'FULL' | 'PARTIAL', refundLines?: Array<{
+    billiardLineKey?: string;
     orderItemId?: string;
     variantId?: string;
     name?: string;
@@ -976,6 +1003,53 @@ export const orderRepo = {
   upsertFromServer(adaptedOrder: any, items: OrderItemRow[]): { inserted: boolean; localOrderId: string } {
     const existing = orderRepo.getById(adaptedOrder.id);
     if (existing) {
+      if (
+        existing.billiard_origin_json
+        && adaptedOrder.billiard_origin_json
+        && existing.billiard_origin_json !== adaptedOrder.billiard_origin_json
+      ) {
+        throw new Error('Server Billiard order origin conflicts with the local paid order journal.');
+      }
+      database.transaction(() => {
+        database.run(
+          `UPDATE orders
+           SET client_attempt_id = COALESCE(client_attempt_id, ?),
+               billiard_origin_json = COALESCE(billiard_origin_json, ?)
+           WHERE id = ?`,
+          [adaptedOrder.client_attempt_id ?? null, adaptedOrder.billiard_origin_json ?? null, existing.id],
+        );
+        const localItems = orderRepo.getItemsByOrderId(existing.id);
+        for (const incoming of items) {
+          if (!incoming.billiard_json) continue;
+          let incomingLineKey = '';
+          try { incomingLineKey = String(JSON.parse(incoming.billiard_json).lineKey || ''); } catch { /* fail below */ }
+          if (!incomingLineKey) throw new Error('Server Billiard item is missing its stable line key.');
+          const local = localItems.find((candidate) => {
+            try { return String(JSON.parse(candidate.billiard_json || '').lineKey || '') === incomingLineKey; }
+            catch { return false; }
+          });
+          if (!local) continue;
+          database.run(
+            `UPDATE order_items
+             SET billiard_json = COALESCE(billiard_json, ?),
+                 inventory_policy = COALESCE(inventory_policy, ?),
+                 refund_policy = COALESCE(refund_policy, ?),
+                 allocated_discount = COALESCE(allocated_discount, ?),
+                 payable_total = COALESCE(payable_total, ?)
+             WHERE id = ? AND order_id = ?`,
+            [
+              incoming.billiard_json,
+              incoming.inventory_policy ?? null,
+              incoming.refund_policy ?? null,
+              incoming.allocated_discount ?? null,
+              incoming.payable_total ?? null,
+              local.id,
+              existing.id,
+            ],
+          );
+        }
+      });
+      database.markDirty();
       return { inserted: false, localOrderId: existing.id };
     }
 
@@ -992,8 +1066,8 @@ export const orderRepo = {
 
     database.transaction(() => {
       database.run(
-        `INSERT INTO orders (id, order_number, status, subtotal, discount, tax, total, payment_method, payment_amount, change_amount, staff_id, staff_name, customer_id, customer_name, customer_nip, shift_id, source, table_id, covers, order_type, tip, mode, payment_tenders, synced, backend_id, synced_at, refund_amount, refund_reason, refunded_at, refund_lines, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?)`,
+        `INSERT INTO orders (id, order_number, status, subtotal, discount, tax, total, payment_method, payment_amount, change_amount, staff_id, staff_name, customer_id, customer_name, customer_nip, shift_id, source, table_id, covers, order_type, tip, mode, payment_tenders, client_attempt_id, billiard_origin_json, synced, backend_id, synced_at, refund_amount, refund_reason, refunded_at, refund_lines, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?)`,
         [
           dbRow.id,
           dbRow.order_number ?? null,
@@ -1018,6 +1092,8 @@ export const orderRepo = {
           dbRow.tip ?? 0,
           dbRow.mode ?? 'retail',
           dbRow.payment_tenders ?? null,
+          dbRow.client_attempt_id ?? null,
+          dbRow.billiard_origin_json ?? null,
           1, // synced
           dbRow.id, // backend_id = server order id
           dbRow.refund_amount ?? 0,
@@ -1032,13 +1108,16 @@ export const orderRepo = {
 
       for (const item of items) {
         database.run(
-          `INSERT INTO order_items (id, order_id, variant_id, name, sku, price, quantity, sale_quantity, sale_unit, sell_by, total, vat_rate, staff_id, staff_name, notes, course)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO order_items (id, order_id, variant_id, name, sku, price, quantity, sale_quantity, sale_unit, sell_by, total, vat_rate, staff_id, staff_name, notes, course, billiard_json, inventory_policy, refund_policy, allocated_discount, payable_total)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             item.id, item.order_id, item.variant_id ?? null, item.name, item.sku ?? null,
             item.price, item.quantity, getLineSaleQuantity(item), getLineSaleUnit(item), getLineSellBy(item),
             item.total, item.vat_rate ?? 23,
             item.staff_id ?? null, item.staff_name ?? null, item.notes ?? null, item.course ?? 1,
+            item.billiard_json ?? null, item.inventory_policy ?? null,
+            item.refund_policy ?? null, item.allocated_discount ?? 0,
+            item.payable_total ?? item.total,
           ],
         );
       }

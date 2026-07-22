@@ -100,6 +100,7 @@ export function toVatRate(value: unknown, fallback: number): number {
 export function normalizeRefundLinesJson(refundedLines: unknown): string | null {
   if (!Array.isArray(refundedLines) || refundedLines.length === 0) return null;
   const out = refundedLines.map((l: any) => ({
+    billiardLineKey: l.billiardLineKey ?? l.billiard_line_key ?? undefined,
     orderItemId: l.orderItemId ?? l.order_item_id ?? undefined,
     variantId: l.variantId ?? l.variant_id ?? undefined,
     name: l.name ?? l.productName ?? l.product_name ?? '',
@@ -146,6 +147,7 @@ function sameRefundLine(left: any, right: any): boolean {
   if (!sameQuantity || !sameAmount) return false;
 
   const identityPairs = [
+    [left?.billiardLineKey, right?.billiardLineKey],
     [left?.orderItemId, right?.orderItemId],
     [left?.variantId, right?.variantId],
     [left?.sku, right?.sku],
@@ -161,6 +163,7 @@ function mergeRefundLineMetadata(localLine: any, serverLine: any): any {
     ...localLine,
     ...serverLine,
     orderItemId: serverLine.orderItemId || localLine.orderItemId,
+    billiardLineKey: serverLine.billiardLineKey || localLine.billiardLineKey,
     variantId: serverLine.variantId || localLine.variantId,
     sku: serverLine.sku || localLine.sku,
     name: serverLine.name || localLine.name || '',
@@ -263,6 +266,8 @@ export function adaptServerOrder(s: any): any {
     changeAmount,
     cashReceived,
   });
+  const externalMeta = s.externalMetadata?.meta ?? s.external_metadata?.meta ?? null;
+  const billiardOrigin = s.billiardOrigin ?? s.billiard_origin ?? externalMeta?.billiardOrigin ?? null;
 
   return {
     id: s.id,
@@ -303,6 +308,8 @@ export function adaptServerOrder(s: any): any {
     customer_name: s.customerName ?? null,
     requires_invoice: Boolean(s.requiresInvoice),
     payment_tenders: normalizePaymentTendersJson(s.tenders),
+    client_attempt_id: s.clientAttemptId ?? s.client_attempt_id ?? externalMeta?.clientAttemptId ?? s.posIdempotencyKey ?? null,
+    billiard_origin_json: billiardOrigin ? JSON.stringify(billiardOrigin) : null,
     sync_error: null,
     sync_attempts: 0,
     _origin: 'server' as const,
@@ -346,11 +353,47 @@ export function adaptServerOrderItem(item: any, orderId: string, serverOrder?: a
       : toGrosze(item.totalPrice);
     total = netPricedServerOrder ? grossFromNet(rawTotal, vatRate) : rawTotal;
   }
+  const billiardLineKey = item.billiardLineKey ?? item.billiard_line_key ?? item.billiard?.lineKey ?? null;
+  const billiardKind = item.billiardLineKind ?? item.billiard_line_kind ?? item.billiard?.kind ?? null;
+  const inventoryPolicy = item.inventoryPolicy ?? item.inventory_policy ?? item.billiard?.inventoryPolicy ?? null;
+  const refundPolicy = item.refundPolicy ?? item.refund_policy ?? item.billiard?.refundPolicy ?? null;
+  const allocatedDiscount = item.allocatedDiscountGrosze != null
+    ? Math.round(Number(item.allocatedDiscountGrosze) || 0)
+    : toGrosze(item.billiardDiscountAmount ?? item.allocatedDiscount ?? item.allocated_discount ?? 0);
+  const payableTotal = item.payableGrosze != null
+    ? Math.round(Number(item.payableGrosze) || 0)
+    : toGrosze(item.billiardPayableAmount ?? item.payable ?? item.payableTotal ?? item.payable_total ?? 0);
+  const grossTotal = item.grossTotalGrosze != null
+    ? Math.round(Number(item.grossTotalGrosze) || 0)
+    : (item.billiardGrossAmount != null ? toGrosze(item.billiardGrossAmount) : total);
+  const displayName = item.billiardDisplayName ?? item.displayName ?? item.display_name ?? item.productName ?? item.product_name ?? item.product?.name ?? '';
+  const billiardMetadata = billiardLineKey && billiardKind && inventoryPolicy && refundPolicy
+    ? {
+        kind: billiardKind,
+        ...(item.billiardSessionItemId ?? item.sessionItemId ?? item.session_item_id ?? item.billiard?.sessionItemId
+          ? { sessionItemId: item.billiardSessionItemId ?? item.sessionItemId ?? item.session_item_id ?? item.billiard?.sessionItemId }
+          : {}),
+        lineKey: billiardLineKey,
+        ...((item.billiardDurationMinutes ?? item.durationMinutes ?? item.duration_minutes ?? item.billiard?.durationMinutes) != null
+          ? { durationMinutes: Number(item.billiardDurationMinutes ?? item.durationMinutes ?? item.duration_minutes ?? item.billiard?.durationMinutes) }
+          : {}),
+        displayName,
+        inventoryPolicy,
+        refundPolicy,
+        sellBy,
+        saleUnit,
+        grossTotalGrosze: grossTotal,
+        allocatedDiscountGrosze: allocatedDiscount,
+        payableGrosze: payableTotal || Math.max(0, grossTotal - allocatedDiscount),
+      }
+    : null;
   return {
     id: item.id ?? `${orderId}-${item.variantId ?? item.variant_id ?? item.productId ?? String(Math.random()).slice(2, 10)}`,
     order_id: orderId,
     variant_id: item.variantId ?? item.variant_id ?? item.productId ?? item.product?.id ?? null,
-    name: item.productName ?? item.product_name ?? item.product?.name ?? '',
+    name: billiardMetadata
+      ? displayName
+      : (item.productName ?? item.product_name ?? item.product?.name ?? ''),
     sku: item.variantSku ?? item.variant_sku ?? item.productSku ?? item.product_sku ?? item.product?.sku ?? null,
     price,
     quantity,
@@ -359,5 +402,10 @@ export function adaptServerOrderItem(item: any, orderId: string, serverOrder?: a
     sell_by: sellBy,
     total,
     vat_rate: vatRate,
+    billiard_json: billiardMetadata ? JSON.stringify(billiardMetadata) : null,
+    inventory_policy: inventoryPolicy,
+    refund_policy: refundPolicy,
+    allocated_discount: allocatedDiscount,
+    payable_total: billiardMetadata?.payableGrosze ?? total,
   };
 }

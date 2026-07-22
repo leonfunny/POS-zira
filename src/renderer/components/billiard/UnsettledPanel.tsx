@@ -2,7 +2,10 @@ import { useState } from 'react';
 import { WifiOff, X } from 'lucide-react';
 import { useTranslation } from '../../i18n/useTranslation';
 import { Language } from '../../i18n/translations';
-import { resolveBilliardOutstandingBalance } from '../../../shared/billiard-contract';
+import {
+  isBilliardPosCheckoutFrozen,
+  resolveBilliardOutstandingBalance,
+} from '../../../shared/billiard-contract';
 import { formatCurrency, sortUnsettledNewestFirst, summarizeUnsettled } from './utils';
 
 /** "21.07 · 3d" — when the session ended and how long it has been waiting. */
@@ -52,8 +55,14 @@ export function UnsettledPanel({
   const rows = sortUnsettledNewestFirst(sessions ?? []);
   const summary = summarizeUnsettled(sessions);
   const canVoid = Boolean(onVoid) && online && !voidPending;
+  const selectedVoidableIds = [...selected].filter((id) => {
+    const session = rows.find((row: any) => row.id === id);
+    return session && !isBilliardPosCheckoutFrozen(session);
+  });
 
   const toggleSelected = (id: string) => {
+    const session = rows.find((row: any) => row.id === id);
+    if (!session || isBilliardPosCheckoutFrozen(session)) return;
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -64,7 +73,15 @@ export function UnsettledPanel({
 
   const confirmVoid = async () => {
     if (!onVoid || !voidTarget || !reason.trim()) return;
-    const ids = voidTarget;
+    const ids = voidTarget.filter((id) => {
+      const session = rows.find((row: any) => row.id === id);
+      return session && !isBilliardPosCheckoutFrozen(session);
+    });
+    if (ids.length === 0) {
+      setVoidTarget(null);
+      setReason('');
+      return;
+    }
     setVoidTarget(null);
     setReason('');
     await onVoid(ids, reason.trim());
@@ -120,13 +137,16 @@ export function UnsettledPanel({
             </p>
           ) : (
             <ul className="divide-y divide-slate-100">
-              {rows.map((session: any) => (
+              {rows.map((session: any) => {
+                const checkoutFrozen = isBilliardPosCheckoutFrozen(session);
+                return (
                 <li key={session.id} className="flex items-center gap-3 px-4 py-2.5">
                   {onVoid && (
                     <input
                       type="checkbox"
                       className="h-4 w-4 shrink-0 accent-brand-600"
                       checked={selected.has(session.id)}
+                      disabled={checkoutFrozen}
                       onChange={() => toggleSelected(session.id)}
                       aria-label={session.resource?.name || session.id}
                     />
@@ -142,6 +162,14 @@ export function UnsettledPanel({
                           {t('billiard.partiallyPaid') || 'PARTIAL'}
                         </span>
                       )}
+                      {checkoutFrozen && (
+                        <span
+                          className="ml-2 rounded bg-blue-100 px-1.5 py-0.5 font-medium text-blue-800"
+                          title="Frozen POS checkout: settle or use owner correction after payment"
+                        >
+                          POS
+                        </span>
+                      )}
                     </div>
                   </div>
                   <div className="shrink-0 text-sm font-semibold tabular-nums text-slate-900">
@@ -150,7 +178,8 @@ export function UnsettledPanel({
                   {onVoid && (
                     <button
                       type="button"
-                      disabled={!canVoid}
+                      disabled={!canVoid || checkoutFrozen}
+                      title={checkoutFrozen ? 'Frozen POS checkout cannot be voided' : undefined}
                       onClick={() => { setReason(''); setVoidTarget([session.id]); }}
                       className="h-8 shrink-0 rounded-lg border border-slate-300 px-2.5 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
                     >
@@ -166,20 +195,21 @@ export function UnsettledPanel({
                     {t('billiard.settle') || 'Settle'}
                   </button>
                 </li>
-              ))}
+                );
+              })}
             </ul>
           )}
         </div>
 
-        {onVoid && selected.size > 0 && (
+        {onVoid && selectedVoidableIds.length > 0 && (
           <div className="flex items-center justify-end border-t border-slate-200 bg-slate-50 px-4 py-2.5">
             <button
               type="button"
               disabled={!canVoid}
-              onClick={() => { setReason(''); setVoidTarget([...selected]); }}
+              onClick={() => { setReason(''); setVoidTarget(selectedVoidableIds); }}
               className="h-8 rounded-lg border border-red-300 bg-white px-3 text-xs font-medium text-red-700 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {(t('billiard.voidSelected') || 'Void selected')} ({selected.size})
+              {(t('billiard.voidSelected') || 'Void selected')} ({selectedVoidableIds.length})
             </button>
           </div>
         )}
