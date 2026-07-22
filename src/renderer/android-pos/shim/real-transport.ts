@@ -611,8 +611,10 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         clearSessionIdentity();
         // Stop the billiard poll timer + drop its listeners — the session is
         // dead, the renderer is dropping to login, so the 10s background refresh
-        // must not keep firing 401s against a dead token. Recoverable: a later
-        // billiard read restarts the timer.
+        // must not keep firing 401s against a dead token. Recoverable: after
+        // re-login the remounted floor plan resubscribes via onDataUpdated,
+        // which re-arms the timer (polling is listener-gated since 917cb6a — a
+        // bare read alone no longer restarts it).
         billiard.dispose();
         for (const cb of [...expiredListeners]) {
           try { cb(); } catch { /* a listener throwing must not break others */ }

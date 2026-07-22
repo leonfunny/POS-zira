@@ -111,10 +111,21 @@ export default function AndroidBootApp() {
     }
     const api = (window as any).electronAPI;
     let cancelled = false;
-    api.entitlements
-      .get()
-      .then((e: any) => { if (!cancelled) setBilliardEnabled(!!e?.features?.billiard?.enabled); })
-      .catch(() => { if (!cancelled) setBilliardEnabled(false); });
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    // One transient failure at boot must not pin billiardEnabled=false for the
+    // whole session (with stored mode='billiard' the cashier would be stuck in
+    // POSApp with no tab nav until re-login) — retry once after 3s.
+    const resolveEntitlement = (attempt: number) => {
+      api.entitlements
+        .get()
+        .then((e: any) => { if (!cancelled) setBilliardEnabled(!!e?.features?.billiard?.enabled); })
+        .catch(() => {
+          if (cancelled) return;
+          setBilliardEnabled(false);
+          if (attempt < 1) retryTimer = setTimeout(() => resolveEntitlement(attempt + 1), 3000);
+        });
+    };
+    resolveEntitlement(0);
     api.getConfig()
       .then((c: any) => {
         if (!cancelled && c?.language) setLanguage((c.language as Language) || 'en');
@@ -122,7 +133,10 @@ export default function AndroidBootApp() {
       .catch(() => { /* default 'en' is fine */ });
     // Cancelled on unmount OR on state flip — a delayed response from a
     // previous session must not win after re-login (stale entitlement race).
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+    };
   }, [state]);
 
   const switchMode = (next: PosMode) => {

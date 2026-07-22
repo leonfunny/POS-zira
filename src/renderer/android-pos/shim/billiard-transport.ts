@@ -97,23 +97,23 @@ function assertAllowedRequest(method: string, path: string): string {
   if (!ALLOWED_HTTP_METHODS.includes(m)) {
     throw new Error(`Invalid HTTP method: ${method}`);
   }
-  const decoded = fullyDecodePath(path);
-  for (const candidate of [path, decoded]) {
-    if (
-      candidate.includes('..')
-      || candidate.includes('//')
-      || candidate.includes('\\')
-      || /^[a-z][a-z0-9+.-]*:/i.test(candidate) // absolute URL / scheme smuggling
-    ) {
+  // Scheme smuggling is checked on the RAW input (a scheme can only sit at the
+  // start, before any '?').
+  if (/^[a-z][a-z0-9+.-]*:/i.test(path)) {
+    throw new Error('Invalid API path');
+  }
+  // All routing-relevant checks run on the PATHNAME only. Query values are
+  // data, not routing — user-typed text there ("50%", "a..b", a URL) must not
+  // be rejected, and conversely '?x=/billiard/' must not rescue a bad path.
+  const rawPathname = path.split('?')[0];
+  const decodedPathname = fullyDecodePath(rawPathname);
+  for (const candidate of [rawPathname, decodedPathname]) {
+    if (candidate.includes('..') || candidate.includes('//') || candidate.includes('\\')) {
       throw new Error('Invalid API path');
     }
-    // Prefix check runs on the path WITHOUT its query string — '?x=/billiard/'
-    // must not rescue a disallowed path, and '/resources?limit=9' is still the
-    // bare collection.
-    const pathnameOnly = candidate.split('?')[0];
     if (
-      !API_ALLOWED_EXACT.includes(pathnameOnly)
-      && !API_ALLOWED_PREFIXES.some((p) => pathnameOnly.startsWith(p))
+      !API_ALLOWED_EXACT.includes(candidate)
+      && !API_ALLOWED_PREFIXES.some((p) => candidate.startsWith(p))
     ) {
       throw new Error(`API path not allowed: ${path}`);
     }
@@ -140,7 +140,7 @@ function assertAllowedRequest(method: string, path: string): string {
  * Top-level keys mirror getLocalFloorOverview() (billiard-sync.ts:633) EXACTLY:
  * tables, floorPlans, layouts, sessions, pendingPayments, _fromCache.
  */
-function assembleOverview(dashboard: any, floorPlansResp: any): {
+function assembleOverview(dashboard: any, floorPlansResp: any, pendingResp: any): {
   tables: any[];
   floorPlans: any[];
   layouts: any[];
@@ -149,7 +149,29 @@ function assembleOverview(dashboard: any, floorPlansResp: any): {
   _fromCache: boolean;
 } {
   const tables: any[] = Array.isArray(dashboard) ? dashboard : [];
-  const floorPlans: any[] = Array.isArray(floorPlansResp) ? floorPlansResp : [];
+  let floorPlans: any[] = Array.isArray(floorPlansResp) ? floorPlansResp : [];
+
+  // Blank-floor trap: with an empty plans list (fresh login + floor-plans blip,
+  // so no cached fallback either) the UI derives legacy floors from
+  // floorNumber, but every dashboard layout carries a REAL floorPlanId UUID —
+  // the floor filter then matches nothing and all tables vanish silently.
+  // The dashboard layouts embed their own floorPlan {name, floorNumber, …}, so
+  // reconstruct a minimal plans list from them instead of rendering a blank
+  // floor until the next poll.
+  if (floorPlans.length === 0) {
+    const reconstructed = new Map<string, any>();
+    for (const t of tables) {
+      const l = t?.layout;
+      if (!l?.floorPlanId) continue;
+      let fp = reconstructed.get(l.floorPlanId);
+      if (!fp) {
+        fp = { ...(l.floorPlan ?? {}), id: l.floorPlanId, layouts: [] };
+        reconstructed.set(l.floorPlanId, fp);
+      }
+      fp.layouts.push(l);
+    }
+    floorPlans = [...reconstructed.values()];
+  }
 
   const layouts: any[] = [];
   for (const fp of floorPlans) {
@@ -158,17 +180,19 @@ function assembleOverview(dashboard: any, floorPlansResp: any): {
   }
 
   const sessions: any[] = [];
-  const pendingPayments: any[] = [];
   for (const t of tables) {
     const s = t?.session;
-    if (s) {
-      sessions.push(s);
-      // A session not yet settled (PAID) is a pending payment — mirrors the
-      // billiardSessionRepo.getPendingPayments() row set the Windows overview
-      // surfaces in the Unsettled panel.
-      if (s.paymentStatus !== 'PAID') pendingPayments.push(s);
-    }
+    if (s) sessions.push(s);
   }
+
+  // pendingPayments comes from GET /billiard/sessions/pending-payments — the
+  // SAME server source Windows syncs (billiard-sync.ts:841): sessions with
+  // status COMPLETED and paymentStatus UNPAID/PARTIAL, each embedding its
+  // resource/items. Deriving it from the dashboard's embedded sessions is
+  // WRONG twice over: those are the ACTIVE sessions (a table mid-game showed
+  // up as "Nierozliczone"), and ended-unsettled sessions are absent from the
+  // dashboard entirely (the real unsettled rows would be missed).
+  const pendingPayments: any[] = Array.isArray(pendingResp) ? pendingResp : [];
 
   return { tables, floorPlans, layouts, sessions, pendingPayments, _fromCache: false };
 }
@@ -213,19 +237,30 @@ export function createBilliardTransport({ request, pollMs = 10_000 }: BilliardTr
   async function refreshOverview(): Promise<any> {
     const myEpoch = epoch;
     const mySeq = ++refreshSeq;
-    const [dash, plans] = await Promise.all([
+    const [dash, plans, pending] = await Promise.all([
       request('GET', '/billiard/dashboard'),
-      // A transient floor-plans failure must NOT wipe the visible plans/layouts
-      // while the dashboard read succeeded — fall back to the previously cached
-      // floorPlans instead of an empty list (null = "keep previous").
+      // A transient floor-plans / pending-payments failure must NOT wipe the
+      // visible plans or the Unsettled panel while the dashboard read
+      // succeeded — fall back to the previously cached value (null = "keep
+      // previous"). Windows tolerates a missing pending-payments endpoint the
+      // same way (billiard-sync.ts pendingPaymentsEndpointMissingWarned).
       request('GET', '/billiard/floor-plans').catch(() => null),
+      request('GET', '/billiard/sessions/pending-payments').catch(() => null),
     ]);
     const plansResp = plans === null ? (cache.overview?.floorPlans ?? []) : plans;
-    const overview = assembleOverview(dash, plansResp);
-    // Drop the write when a dispose() happened mid-flight (tenant boundary) or
-    // a newer refresh already applied (ordering) — still return the data so the
-    // direct caller renders it, but the shared cache never goes stale/backward.
-    if (myEpoch !== epoch || mySeq <= appliedSeq) return overview;
+    const pendingResp = pending === null ? (cache.overview?.pendingPayments ?? []) : pending;
+    const overview = assembleOverview(dash, plansResp, pendingResp);
+    // Drop the write when a dispose() happened mid-flight (tenant boundary) —
+    // the dying tenant's caller still gets its own data back, the cache stays
+    // wiped for the next tenant.
+    if (myEpoch !== epoch) return overview;
+    // Ordering: a refresh that lost the race must not be RETURNED either — the
+    // caller would setData(stale) last and re-render pre-payment money state
+    // (the exact bug the cache guard kills, relocated to the return path).
+    // Serve the newer applied cache instead.
+    if (mySeq <= appliedSeq) {
+      return cache.overview ? { ...cache.overview, _fromCache: true } : overview;
+    }
     appliedSeq = mySeq;
     cache = { overview, fetchedAt: Date.now() };
     lastSync = new Date().toISOString();

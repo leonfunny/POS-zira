@@ -193,9 +193,12 @@ describe('billiard online-only transport', () => {
     const dashOld = [{ resource: { id: 'r1' }, status: 'occupied', layout: null, session: { id: 's1', paymentStatus: 'PENDING' } }];
     const dashNew = [{ resource: { id: 'r1' }, status: 'free', layout: null, session: null }];
     let call = 0;
-    let resolveFirst!: (v: any) => void;
+    let failAll = false; // flag-keyed (NOT call-order-keyed) so reordering
+    let resolveFirst!: (v: any) => void; // Promise.all args can't misdirect it
     const request = vi.fn(async (method: string, path: string) => {
+      if (failAll) throw new Error('blip');
       if (`${method} ${path}` === 'GET /billiard/floor-plans') return [];
+      if (`${method} ${path}` === 'GET /billiard/sessions/pending-payments') return [];
       if (`${method} ${path}` === 'GET /billiard/dashboard') {
         call += 1;
         if (call === 1) return new Promise((res) => { resolveFirst = res; }); // slow pre-payment read
@@ -207,9 +210,13 @@ describe('billiard online-only transport', () => {
     const slow = t.billiardGetOverview(); // seq 1 — hangs
     await t.billiardGetOverview(); // seq 2 — applies dashNew (paid/free)
     resolveFirst(dashOld); // stale pre-payment response lands LAST
-    await slow;
+    // The RETURN path must also refuse the stale snapshot — the slow caller
+    // gets the newer applied cache, not the pre-payment state.
+    const slowResult = await slow;
+    expect(slowResult._fromCache).toBe(true);
+    expect(slowResult.tables).toEqual(dashNew);
     // A failing read now serves the cache — it must be the NEWER (paid) state.
-    (request as any).mockImplementationOnce(async () => { throw new Error('blip'); });
+    failAll = true;
     const served = await t.billiardGetOverview();
     expect(served._fromCache).toBe(true);
     expect(served.tables).toEqual(dashNew);
@@ -248,6 +255,47 @@ describe('billiard online-only transport', () => {
     t.dispose();
   });
 
+  it('pendingPayments comes from the pending-payments endpoint, not from active sessions (Windows semantics: COMPLETED + unpaid)', async () => {
+    const activeSession = { id: 's-active', status: 'ACTIVE', paymentStatus: 'PENDING' };
+    const dashWithActive = [{ resource: { id: 'r1' }, status: 'occupied', layout: null, session: activeSession }];
+    const endedUnpaid = [{ id: 's-ended', status: 'COMPLETED', paymentStatus: 'UNPAID', resource: { id: 'r2', name: 'Bàn #2' } }];
+    const request = makeRequest({
+      'GET /billiard/dashboard': dashWithActive,
+      'GET /billiard/floor-plans': [],
+      'GET /billiard/sessions/pending-payments': endedUnpaid,
+    });
+    const t = createBilliardTransport({ request });
+    const overview = await t.billiardGetOverview();
+    // The mid-game table must NOT appear in the Unsettled panel...
+    expect(overview.pendingPayments).toEqual(endedUnpaid);
+    expect(overview.pendingPayments.some((s: any) => s.id === 's-active')).toBe(false);
+    // ...but its session is still in the active-sessions list.
+    expect(overview.sessions.some((s: any) => s.id === 's-active')).toBe(true);
+    t.dispose();
+  });
+
+  it('a transient pending-payments failure keeps the previous Unsettled rows instead of wiping them', async () => {
+    const endedUnpaid = [{ id: 's-ended', status: 'COMPLETED', paymentStatus: 'UNPAID' }];
+    const map: Record<string, any> = {
+      'GET /billiard/dashboard': dashboard,
+      'GET /billiard/floor-plans': floorPlans,
+      'GET /billiard/sessions/pending-payments': endedUnpaid,
+    };
+    const request = vi.fn(async (method: string, path: string) => {
+      const hit = map[`${method} ${path}`];
+      if (hit instanceof Error) throw hit;
+      if (hit === undefined) throw new Error(`unexpected ${method} ${path}`);
+      return hit;
+    });
+    const t = createBilliardTransport({ request });
+    const first = await t.billiardGetOverview();
+    expect(first.pendingPayments).toEqual(endedUnpaid);
+    map['GET /billiard/sessions/pending-payments'] = new Error('HTTP 500');
+    const second = await t.billiardGetOverview();
+    expect(second.pendingPayments).toEqual(endedUnpaid); // kept, not []
+    t.dispose();
+  });
+
   it('allowlist rejects encoded traversal, sibling prefixes, backslashes and absolute URLs; allows the bare collections', async () => {
     const request = makeRequest({ 'GET /resources': [], 'GET /resources?limit=1': [] });
     const t = createBilliardTransport({ request });
@@ -265,6 +313,40 @@ describe('billiard online-only transport', () => {
     // The legitimate bare collection (and with a query) still works.
     await expect(t.apiCall('GET', '/resources')).resolves.toEqual([]);
     await expect(t.apiCall('GET', '/resources?limit=1')).resolves.toEqual([]);
+    t.dispose();
+  });
+
+  it('allowlist treats query values as data — user text with dots/percent in the query is not rejected', async () => {
+    const request = makeRequest({
+      'GET /billiard/guests?q=a..b': [],
+      'GET /billiard/bookings?note=50%25': [],
+    });
+    const t = createBilliardTransport({ request });
+    await expect(t.apiCall('GET', '/billiard/guests?q=a..b')).resolves.toEqual([]);
+    await expect(t.apiCall('GET', '/billiard/bookings?note=50%25')).resolves.toEqual([]);
+    t.dispose();
+  });
+
+  it('reconstructs floorPlans from dashboard-embedded layouts when the plans list is empty (blank-floor trap)', async () => {
+    const layout = {
+      id: 'l1', resourceId: 'r1', floorPlanId: 'fp-uuid-1',
+      positionX: '10', positionY: '10',
+      floorPlan: { name: 'Floor 1', floorNumber: 1, roomWidthM: '16.00', roomHeightM: '10.00' },
+    };
+    const dash = [{ resource: { id: 'r1', name: 'Bàn #1' }, status: 'free', layout, session: null }];
+    const request = makeRequest({
+      'GET /billiard/dashboard': dash,
+      'GET /billiard/floor-plans': new Error('HTTP 500'), // fresh login + blip: no cached fallback
+      'GET /billiard/sessions/pending-payments': [],
+    });
+    const t = createBilliardTransport({ request });
+    const overview = await t.billiardGetOverview();
+    // Without reconstruction the UI derives legacy floors and the UUID
+    // floorPlanId filter hides every table — the floor must not go blank.
+    expect(overview.floorPlans).toHaveLength(1);
+    expect(overview.floorPlans[0]).toMatchObject({ id: 'fp-uuid-1', name: 'Floor 1', floorNumber: 1 });
+    expect(overview.layouts).toHaveLength(1);
+    expect(overview.layouts[0].floorPlanId).toBe('fp-uuid-1');
     t.dispose();
   });
 });
