@@ -228,7 +228,8 @@ export function resolveBilliardOutstandingBalance(session: any): number {
 export function shouldSkipBilliardPosPayment(session: any): boolean {
   const status = canonicalBilliardSessionStatus(session?.status);
   const paymentStatus = String(session?.paymentStatus ?? session?.payment_status ?? '').toUpperCase();
-  const isFinal = status === 'COMPLETED' || status === 'CANCELLED' || paymentStatus === 'PAID';
+  if (paymentStatus === 'PAID' || paymentStatus === 'VOID') return true;
+  const isFinal = status === 'COMPLETED' || status === 'CANCELLED';
   return isFinal && resolveBilliardOutstandingBalance(session) <= 0;
 }
 

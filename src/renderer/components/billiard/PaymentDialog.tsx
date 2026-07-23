@@ -25,7 +25,7 @@ interface PaymentDialogProps {
   onPayInPos?: (input: { posCheckout: any; tableName?: string | null }) => Promise<void>;
 }
 
-type PaymentStep = 'select' | 'review' | 'processing' | 'done';
+type PaymentStep = 'ready' | 'processing' | 'done';
 
 function formatCurrency(value: number): string {
   return new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' }).format(value);
@@ -59,29 +59,36 @@ export function PaymentDialog({ session, open, onOpenChange, language, onRefetch
   const { t } = useTranslation(language);
   const toast = useToast();
   const endSession = useEndSession(onRefetch);
-  const [step, setStep] = useState<PaymentStep>('select');
+  const [step, setStep] = useState<PaymentStep>('ready');
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [endedSnapshot, setEndedSnapshot] = useState<any | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const handoffInFlightRef = useRef(false);
   const onOpenChangeRef = useRef(onOpenChange);
   onOpenChangeRef.current = onOpenChange;
 
   // Reset state when dialog opens/closes
   useEffect(() => {
-    if (open) {
-      const status = String(session?.status || '').toUpperCase();
-      const alreadyEnded = status !== 'ACTIVE' && status !== 'PAUSED';
-      if (shouldSkipBilliardPosPayment(session)) {
-        setStep('done');
-        setPaymentError(null);
-        setEndedSnapshot(session);
-        onOpenChangeRef.current(false);
-        return;
-      }
-      setStep(alreadyEnded ? 'review' : 'select');
-      setPaymentError(null);
-      setEndedSnapshot(alreadyEnded ? session : null);
+    if (!open) {
+      handoffInFlightRef.current = false;
+      return;
     }
+    // A successful end mutation can refresh the parent session while the POS
+    // handoff is still running. Do not re-enable the action in that window.
+    if (handoffInFlightRef.current) return;
+
+    const status = String(session?.status || '').toUpperCase();
+    const alreadyEnded = status !== 'ACTIVE' && status !== 'PAUSED';
+    if (shouldSkipBilliardPosPayment(session)) {
+      setStep('done');
+      setPaymentError(null);
+      setEndedSnapshot(session);
+      onOpenChangeRef.current(false);
+      return;
+    }
+    setStep('ready');
+    setPaymentError(null);
+    setEndedSnapshot(alreadyEnded ? session : null);
   }, [open, session?.id, session?.status, session?.paymentStatus, session?.paidAmount, session?.outstandingAmount, session?.total]);
 
   const isProcessing = step === 'processing';
@@ -134,28 +141,25 @@ export function PaymentDialog({ session, open, onOpenChange, language, onRefetch
   };
 
   const handlePrimaryAction = async () => {
+    if (handoffInFlightRef.current) return;
+    handoffInFlightRef.current = true;
     setPaymentError(null);
+    setStep('processing');
     try {
-      if (step === 'select') {
-        const snapshot = await ensureEnded();
-        if (shouldSkipBilliardPosPayment(snapshot)) {
-          setStep('done');
-          toast.success(t('billiard.paid') || 'Session completed with no balance due.');
-          onOpenChange(false);
-          return;
-        }
-        setStep('review');
-        return;
+      if (!onPayInPos) {
+        throw new Error('Pay in POS is available in the Windows counter app. This session remains unpaid.');
       }
 
       const snapshot = endedSnapshot ?? await ensureEnded();
-      if (!onPayInPos) {
-        throw new Error('Pay in POS is available in the Windows counter app. This session remains unpaid.');
+      if (shouldSkipBilliardPosPayment(snapshot)) {
+        setStep('done');
+        toast.success(t('billiard.paid') || 'Session completed with no balance due.');
+        onOpenChange(false);
+        return;
       }
       if (!snapshot?.posCheckout) {
         throw new Error('The server did not return a frozen POS checkout. Refresh and try again.');
       }
-      setStep('processing');
       await onPayInPos({
         posCheckout: snapshot.posCheckout,
         tableName: snapshot?.resource?.name ?? snapshot?.tableName ?? session?.resource?.name ?? null,
@@ -165,7 +169,9 @@ export function PaymentDialog({ session, open, onOpenChange, language, onRefetch
       const message = err?.message || t('billiard.paymentFailed') || 'Payment failed';
       setPaymentError(message);
       toast.error(message);
-      setStep(endedSnapshot ? 'review' : 'select');
+      setStep('ready');
+    } finally {
+      handoffInFlightRef.current = false;
     }
   };
 
@@ -203,7 +209,7 @@ export function PaymentDialog({ session, open, onOpenChange, language, onRefetch
           <div className="text-center py-4 bg-slate-50 rounded-lg">
             <p className="text-3xl font-bold tabular-nums">{formatCurrency(outstanding)}</p>
             <p className="text-sm text-slate-500 mt-1">
-              {step === 'select'
+              {!endedSnapshot
                 ? `${t('billiard.remaining') || 'Remaining'} · ${t('billiard.running') || 'Running'}`
                 : (t('billiard.remaining') || 'Remaining')}
             </p>
@@ -222,11 +228,22 @@ export function PaymentDialog({ session, open, onOpenChange, language, onRefetch
             </div>
           )}
 
-          {(step === 'select' || step === 'review') && (
+          {step === 'ready' && (
             <div className="flex items-center justify-center gap-2 p-3 rounded-lg border-2 border-blue-600 bg-blue-50 text-blue-700">
               <ShoppingCart className="w-5 h-5" />
               <span className="text-sm font-medium">
-                {step === 'select' ? (t('billiard.reviewFinalTotal') || 'Review final total') : 'Pay in POS'}
+                {t('billiard.payment') || 'Payment'} → POS
+              </span>
+            </div>
+          )}
+          {step === 'processing' && (
+            <div
+              className="flex items-center justify-center gap-2 p-3 rounded-lg border border-blue-200 bg-blue-50 text-blue-700"
+              role="status"
+            >
+              <Loader2 className="w-5 h-5 animate-spin" />
+              <span className="text-sm font-medium">
+                {t('billiard.payment') || 'Payment'} → POS
               </span>
             </div>
           )}
@@ -239,16 +256,17 @@ export function PaymentDialog({ session, open, onOpenChange, language, onRefetch
           >
             {t('common.cancel') || 'Cancel'}
           </button>
-          {(step === 'select' || step === 'review') && (
+          {step === 'ready' && (
             <button
+              data-testid="billiard-pos-handoff"
               className="px-3 py-1.5 text-sm font-medium rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 flex items-center"
               onClick={handlePrimaryAction}
-              disabled={endSession.isPending || (step === 'review' && !onPayInPos)}
+              disabled={endSession.isPending || !onPayInPos}
             >
               {endSession.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-              {step === 'select'
-                ? `${t('billiard.endSession') || 'End session'} · ${t('billiard.total') || 'Total'}`
-                : 'Pay in POS'}
+              {!endedSnapshot
+                ? `${t('billiard.endSession') || 'End session'} → POS`
+                : `${t('billiard.payment') || 'Payment'} → POS`}
             </button>
           )}
         </div>

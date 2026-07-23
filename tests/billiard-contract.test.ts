@@ -150,6 +150,12 @@ describe('billiard desktop/backend contract', () => {
       totalCharge: 0,
       paidAmount: 0,
     })).toBe(false);
+    expect(shouldSkipBilliardPosPayment({
+      status: 'COMPLETED',
+      paymentStatus: 'VOID',
+      totalCharge: 100,
+      paidAmount: 0,
+    })).toBe(true);
   });
 
   it('renders and bills a local ProductVariantRow with the same price and stock', () => {
@@ -360,7 +366,8 @@ describe('billiard desktop/backend contract', () => {
     expect(contract).toContain('variant.retail_price');
     expect(contract).toContain('priceNumber / 100');
     expect(addItem).toContain('combo.combo_price');
-    expect(payment).toContain("setStep('review')");
+    expect(payment).not.toContain("setStep('review')");
+    expect(payment).toContain("setStep('processing')");
     expect(payment).toContain('const snapshot = endedSnapshot ?? await ensureEnded()');
     expect(payment).toContain('snapshot?.posCheckout');
     expect(payment).toContain('await onPayInPos({');
