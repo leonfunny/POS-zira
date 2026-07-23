@@ -13,15 +13,46 @@ export const SIZE_STEP_M = 0.2;   // meters per click
 
 export const ROTATION_STEPS = [0, 90, 180, 270] as const;
 
-// P3 "Light & clean": the room is a light operational surface and every table
-// looks like a real pool table; status is carried ONLY by a ring around the
-// table plus a pill above it. This is the single status palette for every
-// render path (CSS table and asset image alike) — do not add per-file colors.
-export const ROOM_BG = '#f4f2ed';
+export type FloorSurfaceTheme = 'dark' | 'light';
+
+export const DEFAULT_FLOOR_SURFACE_THEME: FloorSurfaceTheme = 'dark';
+export const FLOOR_SURFACE_THEME_STORAGE_KEY = 'billiard-floor-surface-theme-v1';
+
+// Only the billiard canvas changes appearance. The surrounding POS chrome
+// remains light and operational in both modes.
+export const FLOOR_SURFACE_THEME_STYLES: Record<FloorSurfaceTheme, {
+  backgroundColor: string;
+  backgroundImage: string;
+  backgroundSize: string;
+  ringOffsetColor: string;
+}> = {
+  dark: {
+    backgroundColor: '#152622',
+    backgroundImage: [
+      'radial-gradient(circle, rgba(180,220,200,0.08) 1px, transparent 1px)',
+      'radial-gradient(ellipse at 50% 40%, rgba(140,200,175,0.07), transparent 55%)',
+      'radial-gradient(circle at 22% 28%, rgba(255,210,140,0.025), transparent 32%)',
+      'radial-gradient(circle at 78% 72%, rgba(255,210,140,0.025), transparent 32%)',
+      'linear-gradient(155deg, #1c3330 0%, #152622 45%, #1a302c 100%)',
+    ].join(', '),
+    backgroundSize: '28px 28px, 100% 100%, 100% 100%, 100% 100%, 100% 100%',
+    ringOffsetColor: '#152622',
+  },
+  light: {
+    backgroundColor: '#f4f2ed',
+    backgroundImage: 'radial-gradient(circle, rgba(0,0,0,0.05) 1px, transparent 1px)',
+    backgroundSize: '28px 28px',
+    ringOffsetColor: '#f4f2ed',
+  },
+};
+
+export function resolveFloorSurfaceTheme(value: unknown): FloorSurfaceTheme {
+  return value === 'light' ? 'light' : DEFAULT_FLOOR_SURFACE_THEME;
+}
 
 export const STATUS_THEME: Record<TableStatus, { ring: string; pill: string }> = {
   // A free table stays calm: bare felt, no ring, no pill.
   free:     { ring: '', pill: '' },
-  occupied: { ring: 'ring-2 ring-red-500 ring-offset-2 ring-offset-[#f4f2ed]', pill: 'bg-red-600 text-white' },
-  paused:   { ring: 'ring-2 ring-amber-400 ring-offset-2 ring-offset-[#f4f2ed]', pill: 'bg-amber-500 text-white' },
+  occupied: { ring: 'ring-2 ring-red-500 ring-offset-2 ring-offset-[var(--floor-surface-ring)]', pill: 'bg-red-600 text-white' },
+  paused:   { ring: 'ring-2 ring-amber-400 ring-offset-2 ring-offset-[var(--floor-surface-ring)]', pill: 'bg-amber-500 text-white' },
 };

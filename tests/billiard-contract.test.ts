@@ -472,9 +472,10 @@ describe('billiard desktop/backend contract', () => {
     expect(floorPlan).toContain('h-[clamp(440px,62vh,720px)]');
     expect(floorPlan).toContain('new ResizeObserver(updateSize)');
     expect(floorPlan).toContain('...fittedCanvasSize');
-    expect(floorPlan).toContain('wheel={{ step: 0.08 }}');
-    expect(floorPlan).toContain('disabled: editMode');
-    expect(floorPlan).not.toContain('disabled={editMode}');
+    expect(floorPlan).toContain('wheel={{ step: 0.08, disabled: editMode || viewLocked }}');
+    expect(floorPlan).toContain('pinch={{ step: 5, disabled: editMode || viewLocked }}');
+    expect(floorPlan).toContain('disabled: editMode || viewLocked');
+    expect(floorPlan).not.toContain('disabled={editMode || viewLocked}');
     expect(floorPlan).not.toContain("addEventListener('wheel'");
     expect(floorPlan).not.toContain('<SessionDetailModal');
     expect(floorPlan).toContain('onOpenChange={closeSelectedTable}');

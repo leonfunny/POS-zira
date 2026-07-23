@@ -4,11 +4,17 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import type { CSSProperties } from 'react';
 import {
   Target, Plus, Loader2, Move, MousePointer, ZoomIn, ZoomOut, Maximize, Copy,
-  CalendarClock,
+  CalendarClock, Lock, Unlock,
 } from 'lucide-react';
-import { TransformWrapper, TransformComponent, useControls } from 'react-zoom-pan-pinch';
+import {
+  TransformWrapper,
+  TransformComponent,
+  useControls,
+  type ReactZoomPanPinchRef,
+} from 'react-zoom-pan-pinch';
 import { Language } from '../../i18n/translations';
 import { useTranslation } from '../../i18n/useTranslation';
 import { useBilliardApi } from '../../hooks/useBilliardApi';
@@ -27,7 +33,10 @@ import {
   useSyncStatus,
 } from '../../hooks/useBilliardData';
 import type { TableOverview, FloorPosition, BilliardFloorPlan as FloorPlanType, Measurement } from './types';
-import { DEFAULT_FLOOR, ROOM_BG } from './constants';
+import {
+  DEFAULT_FLOOR,
+  FLOOR_SURFACE_THEME_STYLES,
+} from './constants';
 import { estimateCharge, formatCurrency, calculateDistanceM, calculateItemsTotal, summarizeUnsettled } from './utils';
 import { DraggableTable } from './DraggableTable';
 import { AddTableDialog } from './AddTableDialog';
@@ -36,8 +45,15 @@ import { EditContextMenu } from './EditContextMenu';
 import { FloorTabs } from './FloorTabs';
 import { MeasurementOverlay } from './MeasurementOverlay';
 import { useFloorState } from './hooks/useFloorState';
+import { useFloorSurfaceTheme } from './hooks/useFloorSurfaceTheme';
 import { FLOOR_PLAN_ASSET_MAP } from './floor-plan-assets';
 import { AssetPickerGrid } from './AssetPickerGrid';
+import { FloorSurfaceThemeToggle } from './FloorSurfaceThemeToggle';
+import {
+  buildFloorViewStorageKey,
+  deserializeLockedFloorView,
+  type LockedFloorView,
+} from './floor-view-preferences';
 import { AddItemToTabModal } from './AddItemToTabModal';
 import { TransferTableDialog } from './TransferTableDialog';
 import { PaymentDialog } from './PaymentDialog';
@@ -52,33 +68,70 @@ import { isBilliardPosCheckoutFrozen } from '../../../shared/billiard-contract';
 
 // ─── Zoom Controls (inside TransformWrapper context) ─────────────────
 
-function ZoomControls() {
+function ZoomControls({
+  locked,
+  onToggleLock,
+  zoomInLabel,
+  zoomOutLabel,
+  resetLabel,
+  lockLabel,
+  unlockLabel,
+}: {
+  locked: boolean;
+  onToggleLock: () => void;
+  zoomInLabel: string;
+  zoomOutLabel: string;
+  resetLabel: string;
+  lockLabel: string;
+  unlockLabel: string;
+}) {
   const { zoomIn, zoomOut, resetTransform } = useControls();
   return (
     <div className="absolute right-3 top-3 z-30 flex overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+      {!locked && (
+        <>
+          <button
+            type="button"
+            onClick={() => zoomIn(0.3)}
+            className="flex h-11 w-11 items-center justify-center text-slate-700 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-400"
+            aria-label={zoomInLabel}
+            title={zoomInLabel}
+          >
+            <ZoomIn className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => zoomOut(0.3)}
+            className="flex h-11 w-11 items-center justify-center border-l border-slate-200 text-slate-700 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-400"
+            aria-label={zoomOutLabel}
+            title={zoomOutLabel}
+          >
+            <ZoomOut className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => resetTransform()}
+            className="flex h-11 w-11 items-center justify-center border-l border-slate-200 text-slate-700 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-400"
+            aria-label={resetLabel}
+            title={resetLabel}
+          >
+            <Maximize className="w-4 h-4" />
+          </button>
+        </>
+      )}
       <button
         type="button"
-        onClick={() => zoomIn(0.3)}
-        className="flex h-10 w-10 items-center justify-center text-slate-700 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-400"
-        aria-label="Zoom in"
+        onClick={onToggleLock}
+        aria-label={locked ? unlockLabel : lockLabel}
+        aria-pressed={locked}
+        title={locked ? unlockLabel : lockLabel}
+        className={`flex h-11 w-11 items-center justify-center border-l border-slate-200 transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-400 ${
+          locked
+            ? 'bg-red-600 text-white hover:bg-red-700'
+            : 'text-slate-700 hover:bg-slate-100'
+        }`}
       >
-        <ZoomIn className="w-4 h-4" />
-      </button>
-      <button
-        type="button"
-        onClick={() => zoomOut(0.3)}
-        className="flex h-10 w-10 items-center justify-center border-l border-slate-200 text-slate-700 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-400"
-        aria-label="Zoom out"
-      >
-        <ZoomOut className="w-4 h-4" />
-      </button>
-      <button
-        type="button"
-        onClick={() => resetTransform()}
-        className="flex h-10 w-10 items-center justify-center border-l border-slate-200 text-slate-700 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-400"
-        aria-label="Reset zoom"
-      >
-        <Maximize className="w-4 h-4" />
+        {locked ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
       </button>
     </div>
   );
@@ -211,8 +264,12 @@ function FloorPlanInner({ language, onPayInPos }: BilliardFloorPlanProps) {
 
   // UI state
   const [editMode, setEditMode] = useState(false);
+  const [viewLocked, setViewLocked] = useState(false);
+  const { floorSurfaceTheme, setFloorSurfaceTheme } = useFloorSurfaceTheme();
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
+  const transformRef = useRef<ReactZoomPanPinchRef | null>(null);
+  const savedViewRef = useRef<LockedFloorView | null>(null);
 
   // Edit context menu state
   const [editMenu, setEditMenu] = useState<{ id: string; x: number; y: number } | null>(null);
@@ -757,14 +814,97 @@ function FloorPlanInner({ language, onPayInPos }: BilliardFloorPlanProps) {
 
   const gridOpacity = editMode ? '0.12' : '0.05';
 
-  // Operate-mode room background — light operational surface (DESIGN.md)
-  const operateRoomBg = useMemo(() => ({
-    backgroundColor: ROOM_BG,
-  }), []);
+  // Operate-mode room background. Dark is the default; only this canvas
+  // changes theme, leaving the rest of the POS interface light.
+  const operateRoomBg = useMemo(() => {
+    const surface = FLOOR_SURFACE_THEME_STYLES[floorSurfaceTheme];
+    return {
+      backgroundColor: surface.backgroundColor,
+      backgroundImage: surface.backgroundImage,
+      backgroundSize: surface.backgroundSize,
+      '--floor-surface-ring': surface.ringOffsetColor,
+    } as CSSProperties;
+  }, [floorSurfaceTheme]);
+
+  const floorSurfaceVariables = useMemo(() => ({
+    '--floor-surface-ring': FLOOR_SURFACE_THEME_STYLES[floorSurfaceTheme].ringOffsetColor,
+  }) as CSSProperties, [floorSurfaceTheme]);
 
   // Zoom/pan reset key
   const [zoomKey, setZoomKey] = useState(0);
   useEffect(() => { setZoomKey((k) => k + 1); }, [editMode]);
+
+  // Persist a locked operating view per salon + floor. If the authenticated
+  // salon ID is unavailable, the floor identity still keeps views separate.
+  const viewStorageKey = useMemo(() => buildFloorViewStorageKey({
+    salonId: user?.salonId || activeFloor?.salonId || null,
+    floorId: activeFloor?.id || null,
+    floorNumber: activeFloor?.floorNumber ?? null,
+  }), [user?.salonId, activeFloor?.salonId, activeFloor?.id, activeFloor?.floorNumber]);
+
+  useEffect(() => {
+    let savedView: LockedFloorView | null = null;
+    try {
+      savedView = deserializeLockedFloorView(localStorage.getItem(viewStorageKey));
+    } catch {
+      savedView = null;
+    }
+
+    savedViewRef.current = savedView;
+    setViewLocked(Boolean(savedView));
+    setZoomKey((key) => key + 1);
+  }, [viewStorageKey]);
+
+  // The wrapper is remounted when a floor or mode changes. Restore only an
+  // explicitly locked view after its new canvas dimensions are available.
+  const restoreAttemptRef = useRef(0);
+  useEffect(() => {
+    const savedView = savedViewRef.current;
+    if (!savedView || editMode) return;
+
+    restoreAttemptRef.current += 1;
+    const attempt = restoreAttemptRef.current;
+    const timer = window.setTimeout(() => {
+      if (attempt !== restoreAttemptRef.current || !transformRef.current) return;
+      transformRef.current.setTransform(
+        savedView.positionX,
+        savedView.positionY,
+        savedView.scale,
+        0,
+      );
+    }, 120);
+
+    return () => window.clearTimeout(timer);
+  }, [zoomKey, editMode, viewStorageKey]);
+
+  const handleToggleViewLock = useCallback(() => {
+    if (viewLocked) {
+      try {
+        localStorage.removeItem(viewStorageKey);
+      } catch {
+        // Unlocking still takes effect in memory when storage is unavailable.
+      }
+      savedViewRef.current = null;
+      setViewLocked(false);
+      return;
+    }
+
+    const transformState = transformRef.current?.instance.transformState;
+    const savedView: LockedFloorView = {
+      scale: Number(transformState?.scale ?? 1),
+      positionX: Number(transformState?.positionX ?? 0),
+      positionY: Number(transformState?.positionY ?? 0),
+      locked: true,
+    };
+
+    try {
+      localStorage.setItem(viewStorageKey, JSON.stringify(savedView));
+    } catch {
+      // The current view can still be locked for this renderer session.
+    }
+    savedViewRef.current = savedView;
+    setViewLocked(true);
+  }, [viewLocked, viewStorageKey]);
 
   // Keep the live floor and any open dialogs mounted during background polls.
   // useQuery toggles loading for refetches; replacing the entire tree here
@@ -801,6 +941,14 @@ function FloorPlanInner({ language, onPayInPos }: BilliardFloorPlanProps) {
               <CalendarClock className="w-4 h-4 mr-1" />
               {t('billiard.reservations')}
             </button>
+          )}
+          {!editMode && !floorBackgroundUrl && (
+            <FloorSurfaceThemeToggle
+              value={floorSurfaceTheme}
+              onChange={setFloorSurfaceTheme}
+              darkLabel={t('billiard.darkFloor')}
+              lightLabel={t('billiard.lightFloor')}
+            />
           )}
           {canEditLayout && (
             <button
@@ -969,21 +1117,32 @@ function FloorPlanInner({ language, onPayInPos }: BilliardFloorPlanProps) {
         className="relative h-[clamp(440px,62vh,720px)] min-h-[440px] overflow-hidden rounded-xl border border-slate-300 bg-slate-200"
       >
         <TransformWrapper
+          ref={transformRef}
           key={zoomKey}
           initialScale={1}
           minScale={0.5}
           maxScale={3}
-          centerOnInit
+          centerOnInit={!savedViewRef.current}
           limitToBounds
           doubleClick={{ disabled: true }}
-          wheel={{ step: 0.08 }}
-          pinch={{ step: 5 }}
+          wheel={{ step: 0.08, disabled: editMode || viewLocked }}
+          pinch={{ step: 5, disabled: editMode || viewLocked }}
           panning={{
-            disabled: editMode,
+            disabled: editMode || viewLocked,
             velocityDisabled: true,
           }}
         >
-          <ZoomControls />
+          {!editMode && (
+            <ZoomControls
+              locked={viewLocked}
+              onToggleLock={handleToggleViewLock}
+              zoomInLabel={t('billiard.zoomIn')}
+              zoomOutLabel={t('billiard.zoomOut')}
+              resetLabel={t('billiard.resetView')}
+              lockLabel={t('billiard.lockView')}
+              unlockLabel={t('billiard.unlockView')}
+            />
+          )}
           <TransformComponent
             wrapperClass="!w-full !h-full !rounded-xl !overflow-hidden"
             contentClass="!w-full !h-full !flex !items-center !justify-center"
@@ -996,7 +1155,9 @@ function FloorPlanInner({ language, onPayInPos }: BilliardFloorPlanProps) {
                   ? 'border-2 border-blue-400/40 shadow-[0_0_0_2px_rgba(59,130,246,0.15)]'
                   : floorBackgroundUrl
                     ? ''
-                    : 'border border-slate-300 shadow-[inset_0_1px_6px_rgba(15,23,42,0.06)]'
+                    : floorSurfaceTheme === 'dark'
+                      ? 'border-2 border-[#2a4a40]/60 shadow-[inset_0_0_60px_rgba(0,0,0,0.3),inset_0_0_120px_rgba(0,0,0,0.12)]'
+                      : 'border border-[#e2dccd] shadow-[inset_0_0_40px_rgba(0,0,0,0.04)]'
                 }
               `}
               style={
@@ -1004,6 +1165,7 @@ function FloorPlanInner({ language, onPayInPos }: BilliardFloorPlanProps) {
                   ? {
                       ...fittedCanvasSize,
                       backgroundImage: `repeating-linear-gradient(0deg, transparent, transparent 39px, rgba(100,116,139,${gridOpacity}) 39px, rgba(100,116,139,${gridOpacity}) 40px), repeating-linear-gradient(90deg, transparent, transparent 39px, rgba(100,116,139,${gridOpacity}) 39px, rgba(100,116,139,${gridOpacity}) 40px)`,
+                      ...floorSurfaceVariables,
                     }
                   : floorBackgroundUrl
                     ? {
@@ -1011,6 +1173,7 @@ function FloorPlanInner({ language, onPayInPos }: BilliardFloorPlanProps) {
                         backgroundImage: `url(${floorBackgroundUrl})`,
                         backgroundSize: 'cover',
                         backgroundPosition: 'center',
+                        ...floorSurfaceVariables,
                       }
                     : { ...fittedCanvasSize, ...operateRoomBg }
               }
@@ -1027,14 +1190,18 @@ function FloorPlanInner({ language, onPayInPos }: BilliardFloorPlanProps) {
                         corner === 'top-right' ? 'top-2.5 right-2.5 border-t-2 border-r-2' :
                         corner === 'bottom-left' ? 'bottom-2.5 left-2.5 border-b-2 border-l-2' :
                         'bottom-2.5 right-2.5 border-b-2 border-r-2'
-                      } border-slate-400/50 rounded-sm`}
+                      } ${floorSurfaceTheme === 'dark' ? 'border-emerald-400/25' : 'border-black/10'} rounded-sm`}
                     />
                   ))}
-                  <span className="absolute bottom-2 right-3 text-[10px] font-mono tabular-nums text-slate-400/80 pointer-events-none z-[2] tracking-wider">
+                  <span className={`absolute bottom-2 right-3 text-[10px] font-mono tabular-nums pointer-events-none z-[2] tracking-wider ${
+                    floorSurfaceTheme === 'dark' ? 'text-emerald-400/30' : 'text-black/25'
+                  }`}>
                     {roomWidth}m × {roomHeight}m
                   </span>
                   {activeFloor && (
-                    <span className="absolute top-2.5 left-8 text-[10px] font-medium text-slate-400/70 pointer-events-none z-[2] uppercase tracking-widest">
+                    <span className={`absolute top-2.5 left-8 text-[10px] font-medium pointer-events-none z-[2] uppercase tracking-widest ${
+                      floorSurfaceTheme === 'dark' ? 'text-emerald-400/25' : 'text-black/20'
+                    }`}>
                       {activeFloor.name}
                     </span>
                   )}
@@ -1043,20 +1210,38 @@ function FloorPlanInner({ language, onPayInPos }: BilliardFloorPlanProps) {
 
               {filteredTables.length === 0 && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-                  <Target className="w-16 h-16 mb-4 text-slate-300" />
-                  <h3 className="text-lg font-medium text-slate-500">
+                  <Target className={`w-16 h-16 mb-4 ${
+                    editMode
+                      ? 'text-slate-300'
+                      : floorSurfaceTheme === 'dark'
+                        ? 'text-emerald-400/15'
+                        : 'text-[#2e7d54]/25'
+                  }`} />
+                  <h3 className={`text-lg font-medium ${
+                    editMode
+                      ? 'text-slate-500'
+                      : floorSurfaceTheme === 'dark'
+                        ? 'text-emerald-300/40'
+                        : 'text-[#315c49]/65'
+                  }`}>
                     {hasMultipleFloors
                       ? (t('billiard.noTablesOnFloor') || 'No tables on this floor')
                       : (t('billiard.noTables') || 'No tables yet')}
                   </h3>
-                  <p className="text-sm mt-1 mb-4 text-slate-400">
+                  <p className={`text-sm mt-1 mb-4 ${
+                    editMode
+                      ? 'text-slate-400'
+                      : floorSurfaceTheme === 'dark'
+                        ? 'text-emerald-400/25'
+                        : 'text-[#315c49]/50'
+                  }`}>
                     {editMode
                       ? (t('billiard.addTableHint') || 'Click "Add Table" to place one here')
                       : (t('billiard.switchToEditHint') || 'Switch to Edit Layout mode and add your first table')}
                   </p>
                   {!editMode && canEditLayout && (
                     <button
-                      className="h-8 px-3 text-sm font-medium bg-brand-600 text-white rounded-md hover:bg-brand-700 transition-colors flex items-center"
+                      className="flex h-11 items-center rounded-lg bg-brand-600 px-3 text-sm font-medium text-white transition-colors hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-400"
                       onClick={() => { setEditMode(true); setAddDialogOpen(true); }}
                     >
                       <Plus className="w-4 h-4 mr-1" /> {t('billiard.addFirstTable') || 'Add First Table'}

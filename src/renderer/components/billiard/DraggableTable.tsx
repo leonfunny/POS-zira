@@ -188,7 +188,7 @@ export const DraggableTable = memo(function DraggableTable({
           ${isMeasureHighlighted ? 'ring-2 ring-red-500 ring-offset-2' : ''}
           ${isMeasureTarget && !isMeasureHighlighted ? 'ring-2 ring-red-400/60 ring-offset-1 animate-pulse' : ''}
           ${isDragging ? 'shadow-2xl ring-2 ring-blue-400/50' : ''}
-          ${!editMode ? 'focus:outline-none focus:ring-2 focus:ring-brand-300 focus:ring-offset-2 focus:ring-offset-[#f4f2ed]' : ''}
+          ${!editMode ? 'focus:outline-none focus:ring-2 focus:ring-brand-300 focus:ring-offset-2 focus:ring-offset-[var(--floor-surface-ring)]' : ''}
         `}
         style={{
           transform: rotation ? `rotate(${rotation}deg)` : undefined,
