@@ -417,9 +417,11 @@ export const productRepo = {
     );
   },
 
-  search(query: string): ProductVariantRow[] {
+  search(query: string, categoryId?: string): ProductVariantRow[] {
     const trimmed = query.trim();
     if (!trimmed || normalizeSearch(trimmed).length < 2) return [];
+    const normalizedCategoryId =
+      typeof categoryId === 'string' ? categoryId.trim() : '';
 
     // One full scan — sku/barcode/name filtering happens in JS on the same
     // dataset. The previous version ran two SELECT * queries per keystroke
@@ -428,7 +430,12 @@ export const productRepo = {
     const normalizedQuery = normalizeSearch(trimmed);
     const tokens = searchTokens(trimmed);
     const allActive = database.all<ProductVariantRow>(
-      `SELECT * FROM product_variants WHERE is_active = 1 ${HIDE_TEMPLATES_WITH_VARIANTS} ORDER BY name`,
+      `SELECT * FROM product_variants
+       WHERE is_active = 1
+       ${normalizedCategoryId ? 'AND category_id = ?' : ''}
+       ${HIDE_TEMPLATES_WITH_VARIANTS}
+       ORDER BY name`,
+      normalizedCategoryId ? [normalizedCategoryId] : undefined,
     );
     return allActive
       .map((product) => ({ product, score: scoreSearchMatch(product, trimmed, normalizedQuery, tokens) }))

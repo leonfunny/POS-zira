@@ -244,7 +244,7 @@ export class SyncModule extends BaseModule {
     // F&B products/categories — read from local ProductSync cache (offline-safe)
     ipcMain.handle('billiard:get:fnb-products', async (_event, search?: string, categoryId?: string) => {
       try {
-        if (search) return productRepo.search(search);
+        if (search) return productRepo.search(search, categoryId);
         if (categoryId) return productRepo.getByCategory(categoryId);
         return productRepo.getAll();
       } catch (e: any) {

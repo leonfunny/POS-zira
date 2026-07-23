@@ -24,55 +24,101 @@ function useQuery<T>(
   const [data, setData] = useState<T | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const lastFetchRef = useRef(0);
+  const dataRef = useRef<T | undefined>(undefined);
+  const lastFetchRef = useRef<number | null>(null);
+  const requestIdRef = useRef(0);
   const mountedRef = useRef(true);
   const retriedRef = useRef(false);
+  const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const fetchData = useCallback(async () => {
-    if (options?.staleTime && Date.now() - lastFetchRef.current < options.staleTime) return;
+  const fetchData = useCallback(async (force = false) => {
+    if (
+      !force
+      && options?.staleTime
+      && lastFetchRef.current !== null
+      && Date.now() - lastFetchRef.current < options.staleTime
+    ) {
+      return;
+    }
+    const requestId = ++requestIdRef.current;
+    if (retryTimeoutRef.current) {
+      clearTimeout(retryTimeoutRef.current);
+      retryTimeoutRef.current = null;
+    }
     try {
-      setLoading((prev) => !data ? true : prev);
+      setLoading((prev) => dataRef.current === undefined ? true : prev);
       const result = await fetcher();
-      if (mountedRef.current) {
+      if (mountedRef.current && requestId === requestIdRef.current) {
+        dataRef.current = result;
         setData(result);
         setError(null);
         lastFetchRef.current = Date.now();
         retriedRef.current = false;
       }
     } catch (err: any) {
-      if (mountedRef.current) {
+      if (mountedRef.current && requestId === requestIdRef.current) {
         setError(err.message || 'Fetch error');
         // Auto-retry once after 3s on initial load failure
-        if (!retriedRef.current && !data) {
+        if (!retriedRef.current && dataRef.current === undefined) {
           retriedRef.current = true;
-          setTimeout(() => {
-            if (mountedRef.current) fetchData();
+          retryTimeoutRef.current = setTimeout(() => {
+            retryTimeoutRef.current = null;
+            if (
+              mountedRef.current
+              && requestId === requestIdRef.current
+            ) {
+              void fetchData(true);
+            }
           }, 3000);
         }
       }
     } finally {
-      if (mountedRef.current) setLoading(false);
+      if (mountedRef.current && requestId === requestIdRef.current) {
+        setLoading(false);
+      }
     }
-  }, deps);
+  }, [...deps, options?.staleTime]);
+
+  const refetch = useCallback(() => fetchData(true), [fetchData]);
 
   useEffect(() => {
     mountedRef.current = true;
     if (options?.enabled === false) {
+      requestIdRef.current += 1;
       setLoading(false);
-      return;
+      return () => {
+        mountedRef.current = false;
+        if (retryTimeoutRef.current) {
+          clearTimeout(retryTimeoutRef.current);
+          retryTimeoutRef.current = null;
+        }
+      };
     }
-    fetchData();
-    return () => { mountedRef.current = false; };
+    // A new dependency tuple is a new query. Its first request must never be
+    // suppressed by the previous query's stale window.
+    lastFetchRef.current = null;
+    retriedRef.current = false;
+    setError(null);
+    setLoading(true);
+    void fetchData();
+    return () => {
+      mountedRef.current = false;
+      requestIdRef.current += 1;
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = null;
+      }
+    };
   }, [fetchData, options?.enabled]);
 
   // Polling
   useEffect(() => {
     if (!options?.pollInterval || options?.enabled === false) return;
-    const id = setInterval(fetchData, options.pollInterval);
+    const id = setInterval(() => { void fetchData(); }, options.pollInterval);
     return () => clearInterval(id);
   }, [fetchData, options?.pollInterval, options?.enabled]);
 
-  return { data, loading, error, refetch: fetchData };
+  return { data, loading, error, refetch };
 }
 
 // ─── Mutation hook ──────────────────────────────────
@@ -137,13 +183,16 @@ export function useSession(id: string | null) {
   );
 }
 
-export function useFnbProducts(params?: { search?: string; categoryId?: string }) {
-  const search = params?.search || '';
-  const categoryId = params?.categoryId || '';
+export function useFnbProducts(
+  params?: { search?: string; categoryId?: string },
+  options?: { enabled?: boolean },
+) {
+  const search = params?.search?.trim() || '';
+  const categoryId = params?.categoryId?.trim() || '';
   return useQuery(
     () => window.electronAPI.billiard.getFnbProducts(search || undefined, categoryId || undefined),
     [search, categoryId],
-    { staleTime: 60000 },
+    { staleTime: 60000, enabled: options?.enabled },
   );
 }
 
