@@ -21,6 +21,8 @@
  */
 
 import { NO_PRINTER_RESULT } from './stubs';
+import { ApiReachabilityTracker } from '../../../shared/api-reachability';
+import { isBilliardNetworkError } from '../../../shared/billiard-contract';
 
 /** Authenticated JSON request seam — bound to PosApiClient.request by the real
  *  transport. `path` is an /api/v1-relative path beginning with '/' (e.g.
@@ -43,7 +45,12 @@ export interface BilliardTransportMethods {
   billiardGetResourceType: (code: string) => Promise<any>;
   billiardGetRestaurantCombos: () => Promise<any[]>;
   billiardMutate: (op: string, method: string, path: string, body?: any) => Promise<any>;
-  billiardSyncStatus: () => Promise<{ pending: number; lastSync: string | null; online: boolean }>;
+  billiardSyncStatus: () => Promise<{
+    pending: number;
+    lastSync: string | null;
+    online: boolean;
+    apiReachable?: boolean | null;
+  }>;
   billiardOnDataUpdated: (cb: (d: { type: string }) => void) => () => void;
   billiardPrintReceipt: (sessionId: string, payment: { method: string; amount: number }) => Promise<{ success: boolean; receiptPrinted: boolean }>;
   apiCall: (method: string, path: string, body?: any) => Promise<any>;
@@ -201,6 +208,7 @@ export function createBilliardTransport({ request, pollMs = 10_000 }: BilliardTr
   let cache: { overview: any | null; fetchedAt: number } = { overview: null, fetchedAt: 0 };
   let lastSync: string | null = null;
   let online = false;
+  let apiReachability = new ApiReachabilityTracker();
   const listeners = new Set<(d: { type: string }) => void>();
   let timer: ReturnType<typeof setInterval> | null = null;
   // Tenant/lifecycle epoch: dispose() bumps it and wipes the cache, so an
@@ -217,6 +225,39 @@ export function createBilliardTransport({ request, pollMs = 10_000 }: BilliardTr
   // add-item product modal therefore shows an empty list until a real F&B route
   // ships (P2 follow-up). Log once so a developer sees why, then stay silent.
   let fnbMissingLogged = false;
+
+  interface ApiProbe {
+    tracker: ApiReachabilityTracker;
+    id: number;
+    epoch: number;
+  }
+
+  const beginApiProbe = (): ApiProbe => ({
+    tracker: apiReachability,
+    id: apiReachability.beginProbe(),
+    epoch,
+  });
+
+  const setApiReachable = (probe: ApiProbe, reachable: boolean) => {
+    // The transport object survives logout/re-login. Never let a response from
+    // the previous salon update the next salon's REST-health signal.
+    if (probe.epoch !== epoch || probe.tracker !== apiReachability) return;
+    probe.tracker.apply(probe.id, reachable);
+  };
+
+  const trackedRequest = async <T>(run: () => Promise<T>): Promise<T> => {
+    const probe = beginApiProbe();
+    try {
+      const result = await run();
+      setApiReachable(probe, true);
+      return result;
+    } catch (error) {
+      // HTTP 4xx/5xx proves that HTTPS reached the backend. Only transport
+      // failures should close online-only cashier actions.
+      setApiReachable(probe, !isBilliardNetworkError(error));
+      throw error;
+    }
+  };
 
   const logFnbMissingOnce = () => {
     if (fnbMissingLogged) return;
@@ -237,7 +278,7 @@ export function createBilliardTransport({ request, pollMs = 10_000 }: BilliardTr
   async function refreshOverview(): Promise<any> {
     const myEpoch = epoch;
     const mySeq = ++refreshSeq;
-    const [dash, plans, pending] = await Promise.all([
+    const [dash, plans, pending] = await trackedRequest(() => Promise.all([
       request('GET', '/billiard/dashboard'),
       // A transient floor-plans / pending-payments failure must NOT wipe the
       // visible plans or the Unsettled panel while the dashboard read
@@ -246,7 +287,7 @@ export function createBilliardTransport({ request, pollMs = 10_000 }: BilliardTr
       // same way (billiard-sync.ts pendingPaymentsEndpointMissingWarned).
       request('GET', '/billiard/floor-plans').catch(() => null),
       request('GET', '/billiard/sessions/pending-payments').catch(() => null),
-    ]);
+    ]));
     const plansResp = plans === null ? (cache.overview?.floorPlans ?? []) : plans;
     const pendingResp = pending === null ? (cache.overview?.pendingPayments ?? []) : pending;
     const overview = assembleOverview(dash, plansResp, pendingResp);
@@ -305,13 +346,15 @@ export function createBilliardTransport({ request, pollMs = 10_000 }: BilliardTr
         throw e;
       }
     },
-    billiardGetSession: (id: string) => request('GET', `/billiard/sessions/${encodeURIComponent(id)}`),
+    billiardGetSession: (id: string) => trackedRequest(
+      () => request('GET', `/billiard/sessions/${encodeURIComponent(id)}`),
+    ),
     billiardGetCombos: async (activeOnly?: boolean) => {
-      const combos = await request('GET', '/billiard/combos');
+      const combos = await trackedRequest(() => request('GET', '/billiard/combos'));
       const list = Array.isArray(combos) ? combos : combos?.data ?? [];
       return activeOnly ? list.filter((c: any) => c.isActive !== false) : list;
     },
-    billiardGetFloorPlans: () => request('GET', '/billiard/floor-plans'),
+    billiardGetFloorPlans: () => trackedRequest(() => request('GET', '/billiard/floor-plans')),
     // /billiard/fnb/* is not deployed (Task 2) — empty list + one-time warn.
     billiardGetFnbProducts: () => { logFnbMissingOnce(); return Promise.resolve([]); },
     billiardGetFnbCategories: () => { logFnbMissingOnce(); return Promise.resolve([]); },
@@ -338,7 +381,9 @@ export function createBilliardTransport({ request, pollMs = 10_000 }: BilliardTr
       }
       return null;
     },
-    billiardGetRestaurantCombos: () => request('GET', '/restaurant/combos').catch(() => []),
+    billiardGetRestaurantCombos: () => trackedRequest(
+      () => request('GET', '/restaurant/combos'),
+    ).catch(() => []),
     billiardMutate: async (_op: string, method: string, path: string, body?: any) => {
       // `op` is the Windows queue key (e.g. 'update_floor_plan'); the online-only
       // transport performs the HTTP call directly and does not branch on it.
@@ -351,7 +396,7 @@ export function createBilliardTransport({ request, pollMs = 10_000 }: BilliardTr
       // catch fakes success. A post-mutation cache refresh is best-effort so a
       // refresh blip never swallows a write error or hides a charge.
       try {
-        const result = await request(m, path, body);
+        const result = await trackedRequest(() => request(m, path, body));
         refreshOverview().then(() => emit('dashboard')).catch(() => { /* best-effort refresh */ });
         return result;
       } catch (err) {
@@ -363,7 +408,12 @@ export function createBilliardTransport({ request, pollMs = 10_000 }: BilliardTr
         throw err;
       }
     },
-    billiardSyncStatus: async () => ({ pending: 0, lastSync, online }),
+    billiardSyncStatus: async () => ({
+      pending: 0,
+      lastSync,
+      online,
+      apiReachable: apiReachability.get(),
+    }),
     billiardOnDataUpdated: (cb: (d: { type: string }) => void) => {
       listeners.add(cb);
       startPolling();
@@ -380,7 +430,7 @@ export function createBilliardTransport({ request, pollMs = 10_000 }: BilliardTr
     billiardPrintReceipt: async (_sessionId: string, _payment: { method: string; amount: number }) => NO_PRINTER_RESULT,
     apiCall: async (method: string, path: string, body?: any) => {
       const m = assertAllowedRequest(method, path); // throws → rejection (see above)
-      return request(m, path, body);
+      return trackedRequest(() => request(m, path, body));
     },
     dispose: () => {
       if (timer) clearInterval(timer);
@@ -395,6 +445,7 @@ export function createBilliardTransport({ request, pollMs = 10_000 }: BilliardTr
       cache = { overview: null, fetchedAt: 0 };
       lastSync = null;
       online = false;
+      apiReachability = new ApiReachabilityTracker();
     },
   };
 }

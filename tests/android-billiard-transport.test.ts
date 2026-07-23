@@ -81,7 +81,111 @@ describe('billiard online-only transport', () => {
     const request = makeRequest({ 'GET /billiard/dashboard': dashboard, 'GET /billiard/floor-plans': floorPlans });
     const t = createBilliardTransport({ request });
     await t.billiardGetOverview();
-    await expect(t.billiardSyncStatus()).resolves.toMatchObject({ pending: 0, online: true });
+    await expect(t.billiardSyncStatus()).resolves.toMatchObject({
+      pending: 0,
+      online: true,
+      apiReachable: true,
+    });
+    t.dispose();
+  });
+
+  it('tracks direct REST reads independently from dashboard online state', async () => {
+    const request = makeRequest({
+      'GET /billiard/sessions/s1': { id: 's1', status: 'ACTIVE' },
+    });
+    const t = createBilliardTransport({ request });
+
+    await expect(t.billiardSyncStatus()).resolves.toMatchObject({
+      online: false,
+      apiReachable: null,
+    });
+    await expect(t.billiardGetSession('s1')).resolves.toMatchObject({ id: 's1' });
+    await expect(t.billiardSyncStatus()).resolves.toMatchObject({
+      // `online` remains the dashboard/cache signal; the REST signal is what
+      // gates cashier actions.
+      online: false,
+      apiReachable: true,
+    });
+    t.dispose();
+  });
+
+  it('keeps REST reachable on an authoritative HTTP error', async () => {
+    const conflict = Object.assign(new Error('Session is already completed'), { status: 409 });
+    const request = makeRequest({ 'POST /billiard/sessions/s1/end': conflict });
+    const t = createBilliardTransport({ request });
+
+    await expect(
+      t.apiCall('POST', '/billiard/sessions/s1/end'),
+    ).rejects.toThrow('already completed');
+    await expect(t.billiardSyncStatus()).resolves.toMatchObject({
+      online: false,
+      apiReachable: true,
+    });
+    t.dispose();
+  });
+
+  it('marks REST unreachable when a direct request loses the network', async () => {
+    const request = makeRequest({
+      'GET /billiard/sessions/s1': new Error('fetch failed'),
+    });
+    const t = createBilliardTransport({ request });
+
+    await expect(t.billiardGetSession('s1')).rejects.toThrow('fetch failed');
+    await expect(t.billiardSyncStatus()).resolves.toMatchObject({
+      online: false,
+      apiReachable: false,
+    });
+    t.dispose();
+  });
+
+  it('a successful direct mutation restores REST reachability before its background refresh', async () => {
+    const request = vi.fn(async (method: string, path: string) => {
+      if (`${method} ${path}` === 'GET /billiard/sessions/s1') {
+        throw new Error('network timeout');
+      }
+      if (`${method} ${path}` === 'PATCH /billiard/sessions/s1/pause') {
+        return { id: 's1', status: 'PAUSED' };
+      }
+      // Keep the best-effort post-mutation refresh in flight so this assertion
+      // observes the mutation probe itself.
+      if (`${method} ${path}` === 'GET /billiard/dashboard') {
+        return new Promise(() => {});
+      }
+      if (`${method} ${path}` === 'GET /billiard/floor-plans') return [];
+      if (`${method} ${path}` === 'GET /billiard/sessions/pending-payments') return [];
+      throw new Error(`unexpected ${method} ${path}`);
+    });
+    const t = createBilliardTransport({ request });
+
+    await expect(t.billiardGetSession('s1')).rejects.toThrow('network timeout');
+    await expect(t.billiardSyncStatus()).resolves.toMatchObject({ apiReachable: false });
+    await expect(
+      t.billiardMutate('pause_session', 'PATCH', '/billiard/sessions/s1/pause'),
+    ).resolves.toMatchObject({ status: 'PAUSED' });
+    await expect(t.billiardSyncStatus()).resolves.toMatchObject({ apiReachable: true });
+    t.dispose();
+  });
+
+  it('ignores a late network failure from an older direct request', async () => {
+    let rejectOld!: (error: Error) => void;
+    const request = vi.fn(async (method: string, path: string) => {
+      if (`${method} ${path}` === 'GET /billiard/sessions/slow') {
+        return new Promise((_resolve, reject) => { rejectOld = reject; });
+      }
+      if (`${method} ${path}` === 'GET /billiard/combos') return [];
+      throw new Error(`unexpected ${method} ${path}`);
+    });
+    const t = createBilliardTransport({ request });
+
+    const oldRead = t.billiardGetSession('slow');
+    await expect(t.billiardGetCombos()).resolves.toEqual([]);
+    rejectOld(new Error('socket hang up'));
+    await expect(oldRead).rejects.toThrow('socket hang up');
+
+    await expect(t.billiardSyncStatus()).resolves.toMatchObject({
+      online: false,
+      apiReachable: true,
+    });
     t.dispose();
   });
 

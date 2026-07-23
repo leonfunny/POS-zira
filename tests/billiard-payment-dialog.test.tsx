@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const hookMocks = vi.hoisted(() => ({
   endSession: vi.fn(),
+  reconcileSession: vi.fn(),
 }));
 
 vi.mock('../src/renderer/hooks/useBilliardData', () => ({
@@ -45,6 +46,16 @@ describe('PaymentDialog one-action POS handoff', () => {
     document.body.appendChild(container);
     (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
     hookMocks.endSession.mockReset();
+    hookMocks.reconcileSession.mockReset();
+    hookMocks.reconcileSession.mockResolvedValue({
+      ...frozenSession,
+      posCheckout: undefined,
+    });
+    (window as any).electronAPI = {
+      billiard: {
+        mutate: hookMocks.reconcileSession,
+      },
+    };
   });
 
   afterEach(() => {
@@ -52,6 +63,7 @@ describe('PaymentDialog one-action POS handoff', () => {
       act(() => root?.unmount());
       root = undefined;
     }
+    delete (window as any).electronAPI;
     container.remove();
   });
 
@@ -121,6 +133,58 @@ describe('PaymentDialog one-action POS handoff', () => {
     });
   });
 
+  it('recovers when the end committed but its response was lost', async () => {
+    hookMocks.endSession.mockRejectedValue(new Error('Network connection was lost'));
+    hookMocks.reconcileSession.mockResolvedValue(frozenSession);
+    const { onPayInPos } = await renderDialog(activeSession);
+
+    await act(async () => {
+      primaryButton().click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(hookMocks.endSession).toHaveBeenCalledOnce();
+    expect(hookMocks.reconcileSession).toHaveBeenCalledOnce();
+    expect(onPayInPos).toHaveBeenCalledWith({
+      posCheckout: frozenSession.posCheckout,
+      tableName: 'Table 1',
+    });
+  });
+
+  it('retries ending when reconciliation confirms the session is still active', async () => {
+    hookMocks.endSession
+      .mockRejectedValueOnce(new Error('Network connection was lost'))
+      .mockResolvedValueOnce(frozenSession);
+    hookMocks.reconcileSession.mockResolvedValue(activeSession);
+    const { onPayInPos } = await renderDialog(activeSession);
+
+    await act(async () => {
+      primaryButton().click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(hookMocks.endSession).toHaveBeenCalledOnce();
+    expect(onPayInPos).not.toHaveBeenCalled();
+    expect(primaryButton().disabled).toBe(false);
+
+    await act(async () => {
+      primaryButton().click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(hookMocks.endSession).toHaveBeenCalledTimes(2);
+    expect(onPayInPos).toHaveBeenCalledWith({
+      posCheckout: frozenSession.posCheckout,
+      tableName: 'Table 1',
+    });
+  });
+
   it('rejects a non-frozen end response and never opens POS payment', async () => {
     hookMocks.endSession.mockResolvedValue({
       ...frozenSession,
@@ -137,8 +201,46 @@ describe('PaymentDialog one-action POS handoff', () => {
     expect(hookMocks.endSession).toHaveBeenCalledOnce();
     expect(onPayInPos).not.toHaveBeenCalled();
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
-    expect(container.textContent).toContain('frozen POS checkout');
+    expect(hookMocks.reconcileSession).toHaveBeenCalledWith(
+      'online_api',
+      'GET',
+      '/billiard/sessions/session-active',
+    );
+    expect(container.textContent).toContain('final POS checkout is not ready');
     expect(primaryButton().disabled).toBe(false);
+  });
+
+  it('reconciles a delayed frozen checkout on retry without ending twice', async () => {
+    hookMocks.endSession.mockResolvedValue({
+      ...frozenSession,
+      posCheckout: undefined,
+    });
+    hookMocks.reconcileSession
+      .mockResolvedValueOnce({ ...frozenSession, posCheckout: undefined })
+      .mockResolvedValueOnce(frozenSession);
+    const { onPayInPos } = await renderDialog(activeSession);
+
+    await act(async () => {
+      primaryButton().click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(onPayInPos).not.toHaveBeenCalled();
+
+    await act(async () => {
+      primaryButton().click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(hookMocks.endSession).toHaveBeenCalledOnce();
+    expect(hookMocks.reconcileSession).toHaveBeenCalledTimes(2);
+    expect(onPayInPos).toHaveBeenCalledWith({
+      posCheckout: frozenSession.posCheckout,
+      tableName: 'Table 1',
+    });
   });
 
   it('rejects a queued end response and never opens POS payment', async () => {
@@ -232,5 +334,13 @@ describe('PaymentDialog one-action POS handoff', () => {
     expect(onPayInPos).not.toHaveBeenCalled();
     expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(container.querySelector('[data-testid="billiard-pos-handoff"]')).toBeNull();
+  });
+
+  it('uses touch-sized payment actions', async () => {
+    await renderDialog(frozenSession);
+    const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>('.border-t button'));
+
+    expect(buttons).toHaveLength(2);
+    expect(buttons.every((button) => button.className.includes('h-11'))).toBe(true);
   });
 });

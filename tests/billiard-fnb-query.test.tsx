@@ -95,4 +95,37 @@ describe('useFnbProducts query identity', () => {
     expect(getFnbProducts).toHaveBeenCalledTimes(2);
     expect(getFnbProducts).toHaveBeenLastCalledWith('tra sua', 'cat-m2');
   });
+
+  it('never exposes the previous query data while the next category is pending', async () => {
+    let resolveAll!: (value: string[]) => void;
+    let resolveTea!: (value: string[]) => void;
+    getFnbProducts.mockImplementation((search?: string, categoryId?: string) => {
+      if (categoryId === 'cat-tea') {
+        return new Promise((resolve) => { resolveTea = resolve; });
+      }
+      return new Promise((resolve) => { resolveAll = resolve; });
+    });
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<ProductQueryProbe />);
+    });
+    await act(async () => {
+      resolveAll(['all-products']);
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain('all-products');
+
+    await act(async () => {
+      root.render(<ProductQueryProbe categoryId="cat-tea" />);
+    });
+    expect(container.querySelector('output')?.textContent).toBe('null');
+    expect(container.textContent).not.toContain('all-products');
+
+    await act(async () => {
+      resolveTea(['tea-only']);
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain('tea-only');
+  });
 });

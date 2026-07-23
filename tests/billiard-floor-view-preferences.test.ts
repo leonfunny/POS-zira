@@ -60,4 +60,12 @@ describe('billiard locked floor view preferences', () => {
     expect(floor).toContain('localStorage.removeItem(viewStorageKey)');
     expect(floor).toContain('setTransform(');
   });
+
+  it('attaches floor measurement after the initially loading canvas mounts', () => {
+    const floor = readSource('../src/renderer/components/billiard/BilliardFloorPlan.tsx');
+
+    expect(floor).toContain('const floorCanvasMounted = !isLoading || Boolean(overview)');
+    expect(floor).toContain('if (!floorCanvasMounted) return;');
+    expect(floor).toContain('}, [floorCanvasMounted]);');
+  });
 });

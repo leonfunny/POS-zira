@@ -311,6 +311,10 @@ describe('billiard desktop/backend contract', () => {
   it('never classifies an HTTP response as an offline transport failure', () => {
     expect(isBilliardNetworkError({ status: 409, message: 'network conflict' })).toBe(false);
     expect(isBilliardNetworkError(new Error('fetch failed'))).toBe(true);
+    expect(isBilliardNetworkError({
+      name: 'AuthRefreshNetworkError',
+      message: 'token refresh transiently failed',
+    })).toBe(true);
     expect(isBilliardNetworkError(new Error('Session is already active'))).toBe(false);
   });
 
@@ -350,7 +354,7 @@ describe('billiard desktop/backend contract', () => {
     expect(panel).not.toContain('billiardGuest');
     expect(floorPlan).toContain('<ReservationPanel');
     expect(floorPlan).toContain('key="billiard-reservations-panel"');
-    expect(floorPlan).toContain('if (isLoading && !overview)');
+    expect(floorPlan).toContain('if (!floorCanvasMounted)');
     expect(floorPlan).toContain('setReservationsOpen(true)');
     expect(translations).toContain("'billiard.reservations': 'Đặt bàn'");
     expect(translations).toContain("'billiard.reservations': 'Rezerwacje'");
@@ -368,8 +372,9 @@ describe('billiard desktop/backend contract', () => {
     expect(addItem).toContain('combo.combo_price');
     expect(payment).not.toContain("setStep('review')");
     expect(payment).toContain("setStep('processing')");
-    expect(payment).toContain('const snapshot = endedSnapshot ?? await ensureEnded()');
+    expect(payment).toContain('let snapshot = endedSnapshot ?? await ensureEnded()');
     expect(payment).toContain('snapshot?.posCheckout');
+    expect(payment).toContain('`/billiard/sessions/${session.id}`');
     expect(payment).toContain('await onPayInPos({');
     expect(payment).toContain('formatCurrency(paidAmount)');
     expect(payment).toContain('shouldSkipBilliardPosPayment');

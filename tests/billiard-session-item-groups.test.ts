@@ -77,27 +77,25 @@ describe('billiard session item grouping', () => {
     ]);
   });
 
-  it('decrements the newest positive raw line within the exact display group', () => {
+  it('selects a deterministic positive raw line within the exact display group', () => {
     const [group] = groupSessionItems([
       {
-        id: 'old',
+        id: 'line-a',
         variantId: 'tea',
         name: 'Tea',
         quantity: 2,
         unitPrice: 5,
-        addedAt: '2026-07-23T10:00:00.000Z',
       },
       {
-        id: 'new',
+        id: 'line-b',
         variantId: 'tea',
         name: 'Tea',
         quantity: 1,
         unitPrice: 5,
-        addedAt: '2026-07-23T11:00:00.000Z',
       },
     ]);
 
-    expect(pickSessionItemForDecrement(group)?.id).toBe('new');
+    expect(pickSessionItemForDecrement(group)?.id).toBe('line-b');
     expect(formatSessionItemQuantity(1.25)).toBe('1.25');
   });
 });

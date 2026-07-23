@@ -1,4 +1,4 @@
-import { useState, useEffect, memo } from 'react';
+import { useState, useEffect, useMemo, memo } from 'react';
 import { Clock, Users, UtensilsCrossed, User, Timer } from 'lucide-react';
 import type { Language } from '../../i18n/translations';
 import { useTranslation } from '../../i18n/useTranslation';
@@ -7,6 +7,10 @@ import { STATUS_THEME, DEFAULT_TABLE_WIDTH_PCT, DEFAULT_TABLE_HEIGHT_PCT } from 
 import { formatElapsed, estimateCharge, formatCurrency, formatRemaining } from './utils';
 import { useFreeformDrag } from './hooks/useFreeformDrag';
 import { FLOOR_PLAN_ASSET_MAP } from './floor-plan-assets';
+import {
+  getTotalSessionItemQuantity,
+  groupSessionItems,
+} from './session-item-groups';
 
 export const DraggableTable = memo(function DraggableTable({
   table,
@@ -112,7 +116,10 @@ export const DraggableTable = memo(function DraggableTable({
   const session = table.session;
   const elapsed = session ? formatElapsed(session.startedAt, session.totalPausedSeconds || 0, table.status === 'paused', session.pausedAt) : null;
   const charge = session ? estimateCharge(session) : 0;
-  const itemsCount = session?.items?.length || 0;
+  const itemsCount = useMemo(
+    () => getTotalSessionItemQuantity(groupSessionItems(session?.items)),
+    [session?.items],
+  );
   const hourlyRate = table.resource.pricingRules?.basePrice;
   const isPackageLowTime = session?.billingMode === 'PACKAGE_COUNTDOWN' && session?.autoEndAt
     ? formatRemaining(session.autoEndAt).totalMinutes < 15

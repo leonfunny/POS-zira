@@ -7,7 +7,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import type { CSSProperties } from 'react';
 import {
   Target, Plus, Loader2, Move, MousePointer, ZoomIn, ZoomOut, Maximize, Copy,
-  CalendarClock, Lock, Unlock,
+  CalendarClock, Lock, Unlock, WifiOff,
 } from 'lucide-react';
 import {
   TransformWrapper,
@@ -252,6 +252,11 @@ function FloorPlanInner({ language, onPayInPos }: BilliardFloorPlanProps) {
   const { data: typeData, refetch: refetchType } = useResourceType('POOL_TABLE', canEditLayout) as any;
   const { data: floorPlansData, refetch: refetchFloorPlans } = useFloorPlans() as any;
   const { data: syncStatus } = useSyncStatus() as any;
+  // WebSocket status only describes realtime updates. Hard-disable cashier
+  // mutations solely after an HTTPS probe has confirmed the API is unreachable.
+  const sessionActionsOffline = syncStatus?.apiReachable === false;
+  const offlineActionNotice = t('billiard.offlineActionNotice')
+    || 'Connection required to manage table sessions';
 
   const startSession = useStartSession(refetchOverview);
   const pauseSession = usePauseSession(refetchOverview);
@@ -298,6 +303,17 @@ function FloorPlanInner({ language, onPayInPos }: BilliardFloorPlanProps) {
   const [reservationsOpen, setReservationsOpen] = useState(false);
   const [changeImageId, setChangeImageId] = useState<string | null>(null);
   const [changeImageKey, setChangeImageKey] = useState<string | null>(null);
+
+  // If HTTPS drops after a child dialog has already opened, return to the
+  // readable table drawer where the offline explanation and disabled actions
+  // are visible. This avoids leaving stale online-only forms interactive.
+  useEffect(() => {
+    if (!sessionActionsOffline) return;
+    setReservationsOpen(false);
+    setAddItemSessionId(null);
+    setTransferSessionId(null);
+    setPaymentSession(null);
+  }, [sessionActionsOffline]);
 
   // Create mutation state
   const [createPending, setCreatePending] = useState(false);
@@ -478,8 +494,10 @@ function FloorPlanInner({ language, onPayInPos }: BilliardFloorPlanProps) {
       : 16 / 10
   ), [roomWidth, roomHeight]);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
+  const floorCanvasMounted = !isLoading || Boolean(overview);
 
   useEffect(() => {
+    if (!floorCanvasMounted) return;
     const viewport = viewportRef.current;
     if (!viewport) return;
     const updateSize = () => {
@@ -492,7 +510,7 @@ function FloorPlanInner({ language, onPayInPos }: BilliardFloorPlanProps) {
     const observer = new ResizeObserver(updateSize);
     observer.observe(viewport);
     return () => observer.disconnect();
-  }, []);
+  }, [floorCanvasMounted]);
 
   const fittedCanvasSize = useMemo(() => {
     const { width, height } = viewportSize;
@@ -909,7 +927,7 @@ function FloorPlanInner({ language, onPayInPos }: BilliardFloorPlanProps) {
   // Keep the live floor and any open dialogs mounted during background polls.
   // useQuery toggles loading for refetches; replacing the entire tree here
   // would reset reservation/session forms every ten seconds.
-  if (isLoading && !overview) {
+  if (!floorCanvasMounted) {
     return (
       <div className="flex items-center justify-center h-[60vh]">
         <Loader2 className="w-8 h-8 animate-spin text-slate-400" />
@@ -935,8 +953,10 @@ function FloorPlanInner({ language, onPayInPos }: BilliardFloorPlanProps) {
           {!editMode && (
             <button
               type="button"
-              className="flex h-10 items-center rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+              className="flex h-11 items-center rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
               onClick={() => setReservationsOpen(true)}
+              disabled={sessionActionsOffline}
+              title={sessionActionsOffline ? offlineActionNotice : undefined}
             >
               <CalendarClock className="w-4 h-4 mr-1" />
               {t('billiard.reservations')}
@@ -1075,21 +1095,26 @@ function FloorPlanInner({ language, onPayInPos }: BilliardFloorPlanProps) {
         </button>
       )}
 
-      {/* Sync Status Indicator */}
-      {syncStatus && (!syncStatus.online || syncStatus.pending > 0) && (
+      {/* Billiard sessions are server-authoritative; explain the guard instead
+          of allowing a cashier to discover it after a failed mutation. */}
+      {sessionActionsOffline && (
+        <div
+          role="status"
+          className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-amber-950"
+        >
+          <WifiOff className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" />
+          <div>
+            <p className="text-sm font-semibold">{t('pos.offline') || 'Offline'}</p>
+            <p className="mt-0.5 text-sm">{offlineActionNotice}</p>
+          </div>
+        </div>
+      )}
+      {syncStatus?.pending > 0 && (
         <div className="flex items-center gap-2 text-xs">
-          {!syncStatus.online && (
-            <span className="flex items-center gap-1 px-2 py-1 rounded-full bg-red-50 text-red-600 border border-red-200">
-              <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-              Offline
-            </span>
-          )}
-          {syncStatus.pending > 0 && (
-            <span className="flex items-center gap-1 px-2 py-1 rounded-full bg-amber-50 text-amber-600 border border-amber-200">
-              <Loader2 className="w-3 h-3 animate-spin" />
-              {syncStatus.pending} pending
-            </span>
-          )}
+          <span className="flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-amber-700">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            {syncStatus.pending} pending
+          </span>
         </div>
       )}
 
@@ -1372,6 +1397,8 @@ function FloorPlanInner({ language, onPayInPos }: BilliardFloorPlanProps) {
             }
           }}
           isPending={isPending}
+          actionsDisabled={sessionActionsOffline}
+          actionsDisabledReason={offlineActionNotice}
           language={language}
         />
       )}
@@ -1431,6 +1458,7 @@ function FloorPlanInner({ language, onPayInPos }: BilliardFloorPlanProps) {
           sessionId={addItemSessionId}
           open={true}
           onOpenChange={(v) => { if (!v) setAddItemSessionId(null); }}
+          onRefetch={refetchOverview}
           language={language}
         />
       )}
@@ -1480,7 +1508,7 @@ function FloorPlanInner({ language, onPayInPos }: BilliardFloorPlanProps) {
         open={unsettledOpen}
         onOpenChange={setUnsettledOpen}
         sessions={pendingPayments}
-        online={Boolean(syncStatus?.online ?? true)}
+        online={syncStatus?.apiReachable !== false}
         language={language}
         onSettle={(session) => setPaymentSession(session)}
         voidPending={voidSession.isPending || voidSessions.isPending}

@@ -21,10 +21,15 @@ function useQuery<T>(
   deps: any[] = [],
   options?: { pollInterval?: number; enabled?: boolean; staleTime?: number },
 ): QueryResult<T> {
+  // Every caller in this module supplies primitive query-key parts. Keep the
+  // resolved value tied to that exact tuple so a category/search change cannot
+  // render the previous query's products during the effect transition.
+  const queryKey = JSON.stringify(deps);
   const [data, setData] = useState<T | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const dataRef = useRef<T | undefined>(undefined);
+  const dataKeyRef = useRef<string | null>(null);
+  const errorKeyRef = useRef<string | null>(null);
   const lastFetchRef = useRef<number | null>(null);
   const requestIdRef = useRef(0);
   const mountedRef = useRef(true);
@@ -46,10 +51,12 @@ function useQuery<T>(
       retryTimeoutRef.current = null;
     }
     try {
-      setLoading((prev) => dataRef.current === undefined ? true : prev);
+      const hasCurrentData = dataKeyRef.current === queryKey;
+      setLoading((prev) => !hasCurrentData ? true : prev);
       const result = await fetcher();
       if (mountedRef.current && requestId === requestIdRef.current) {
-        dataRef.current = result;
+        dataKeyRef.current = queryKey;
+        errorKeyRef.current = null;
         setData(result);
         setError(null);
         lastFetchRef.current = Date.now();
@@ -57,9 +64,10 @@ function useQuery<T>(
       }
     } catch (err: any) {
       if (mountedRef.current && requestId === requestIdRef.current) {
+        errorKeyRef.current = queryKey;
         setError(err.message || 'Fetch error');
         // Auto-retry once after 3s on initial load failure
-        if (!retriedRef.current && dataRef.current === undefined) {
+        if (!retriedRef.current && dataKeyRef.current !== queryKey) {
           retriedRef.current = true;
           retryTimeoutRef.current = setTimeout(() => {
             retryTimeoutRef.current = null;
@@ -77,7 +85,7 @@ function useQuery<T>(
         setLoading(false);
       }
     }
-  }, [...deps, options?.staleTime]);
+  }, [...deps, options?.staleTime, queryKey]);
 
   const refetch = useCallback(() => fetchData(true), [fetchData]);
 
@@ -98,6 +106,7 @@ function useQuery<T>(
     // suppressed by the previous query's stale window.
     lastFetchRef.current = null;
     retriedRef.current = false;
+    errorKeyRef.current = null;
     setError(null);
     setLoading(true);
     void fetchData();
@@ -118,7 +127,14 @@ function useQuery<T>(
     return () => clearInterval(id);
   }, [fetchData, options?.pollInterval, options?.enabled]);
 
-  return { data, loading, error, refetch };
+  const hasCurrentData = dataKeyRef.current === queryKey;
+  const enabled = options?.enabled !== false;
+  return {
+    data: enabled && hasCurrentData ? data : undefined,
+    loading: enabled ? (!hasCurrentData || loading) : false,
+    error: enabled && errorKeyRef.current === queryKey ? error : null,
+    refetch,
+  };
 }
 
 // ─── Mutation hook ──────────────────────────────────

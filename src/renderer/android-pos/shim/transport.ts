@@ -373,7 +373,12 @@ export interface ShimTransport {
    *  when no transport is present (money path: never fake success). */
   billiardMutate?(op: string, method: string, path: string, body?: any): Promise<any>;
   /** Sync/cache status. */
-  billiardSyncStatus?(): Promise<{ pending: number; lastSync: string | null; online: boolean }>;
+  billiardSyncStatus?(): Promise<{
+    pending: number;
+    lastSync: string | null;
+    online: boolean;
+    apiReachable?: boolean | null;
+  }>;
   /** Event: cached data refreshed (poll / post-mutation). Returns unsubscribe. */
   billiardOnDataUpdated?(cb: (d: { type: string }) => void): () => void;
   /** Receipt print for a billiard session payment. Mirrors the Windows

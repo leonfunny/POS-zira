@@ -296,10 +296,22 @@ export class SyncModule extends BaseModule {
 
     ipcMain.handle('billiard:sync:status', async () => {
       try {
-        if (!this.billiardSync) return { pending: 0, lastSync: null, online: false };
+        if (!this.billiardSync) {
+          return {
+            pending: 0,
+            lastSync: null,
+            online: false,
+            apiReachable: null,
+          };
+        }
         return this.billiardSync.getSyncStatus();
       } catch {
-        return { pending: 0, lastSync: null, online: false };
+        return {
+          pending: 0,
+          lastSync: null,
+          online: false,
+          apiReachable: null,
+        };
       }
     });
 

@@ -72,18 +72,6 @@ function getItemId(item: SessionItemLike): string | null {
   return normalized || null;
 }
 
-function addedAtTimestamp(item: SessionItemLike): number {
-  if (
-    typeof item.addedAt !== 'string'
-    && typeof item.addedAt !== 'number'
-    && !(item.addedAt instanceof Date)
-  ) {
-    return 0;
-  }
-  const timestamp = new Date(item.addedAt).getTime();
-  return Number.isFinite(timestamp) ? timestamp : 0;
-}
-
 /**
  * Group only canonical catalogue lines with the same variant and unit price.
  * Raw/custom lines have no variant, so their persisted item id remains their
@@ -168,8 +156,10 @@ export function findVariantPriceSessionItemGroup<
 }
 
 /**
- * Decrement the newest positive raw line in a grouped display row. This keeps
- * older source ids intact and respects the server's line-level audit model.
+ * Select one positive source line deterministically. Catalogue rows grouped by
+ * variant + unit price are billing-equivalent, while the local cache does not
+ * retain a reliable creation timestamp for choosing a chronological "newest"
+ * row. Stable id ordering keeps repeated taps and tests predictable.
  */
 export function pickSessionItemForDecrement<
   TItem extends SessionItemLike,
@@ -180,14 +170,10 @@ export function pickSessionItemForDecrement<
 
   return group.rawItems
     .filter((item) => normalizeQuantity(item.quantity, 0) > 0)
-    .sort((left, right) => {
-      const timestampDifference =
-        addedAtTimestamp(right) - addedAtTimestamp(left);
-      if (timestampDifference !== 0) return timestampDifference;
-      return String(getItemId(right) || '').localeCompare(
+    .sort((left, right) =>
+      String(getItemId(right) || '').localeCompare(
         String(getItemId(left) || ''),
-      );
-    })[0];
+      ))[0];
 }
 
 export function formatSessionItemQuantity(quantity: unknown): string {

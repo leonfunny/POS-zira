@@ -8,6 +8,7 @@ import { billiardMutationRepo } from '../database/repos/billiard-mutation-repo';
 import { database } from '../database/database';
 import { getSecureAuthToken } from '../config/store';
 import logger from '../logger';
+import { ApiReachabilityTracker } from './api-reachability';
 import {
   canonicalBilliardBillingMode,
   canonicalBilliardSessionStatus,
@@ -43,6 +44,9 @@ function parseJsonObject(value: string | null | undefined): Record<string, any> 
 export class BilliardSync {
   private dashboardTimer: ReturnType<typeof setInterval> | null = null;
   private isOnline = false;
+  // REST/HTTPS health is independent from the realtime socket. The tracker is
+  // tri-state and rejects late results from older overlapping probes.
+  private readonly apiReachability = new ApiReachabilityTracker();
   private restaurantCombosCache: any[] = [];
   private pendingPaymentsSignature: string | null = null;
   private dashboardRefreshCount = 0;
@@ -73,9 +77,11 @@ export class BilliardSync {
       logger.warn(`[BilliardSync] Floor plans sync failed: ${err}`);
     }
 
+    const dashboardProbe = this.beginApiProbe();
     try {
       // 2. Dashboard data (resource parents + sessions + layouts)
       const dashboard = await apiClient.request('GET', '/billiard/dashboard', token);
+      this.setApiReachable(true, dashboardProbe);
       const normalized = normalizeBilliardDashboard(dashboard);
       database.transaction(() => {
         billiardResourceRepo.replaceAll(normalized.resources);
@@ -87,6 +93,7 @@ export class BilliardSync {
       resources = normalized.resources.length;
       dashboardSynced = true;
     } catch (err) {
+      this.setApiReachable(!isBilliardNetworkError(err), dashboardProbe);
       logger.warn(`[BilliardSync] Dashboard sync failed: ${err}`);
     }
 
@@ -155,8 +162,10 @@ export class BilliardSync {
     let restReachable = false;
     const requestId = ++this.dashboardRequestId;
     const requestEpoch = this.stateEpoch;
+    const dashboardProbe = this.beginApiProbe();
     try {
       const dashboard = await apiClient.request('GET', '/billiard/dashboard', token);
+      this.setApiReachable(true, dashboardProbe);
       if (!dashboard) return;
       restReachable = true;
       if (requestId !== this.dashboardRequestId || requestEpoch !== this.stateEpoch) {
@@ -175,6 +184,7 @@ export class BilliardSync {
         this.notifyRenderer('dashboard');
       }
     } catch (err) {
+      this.setApiReachable(!isBilliardNetworkError(err), dashboardProbe);
       logger.debug(`[BilliardSync] Dashboard refresh failed: ${err}`);
     }
 
@@ -229,8 +239,10 @@ export class BilliardSync {
     const token = getSecureAuthToken();
     if (!token) throw new Error('Not authenticated');
 
+    const mutationProbe = this.beginApiProbe();
     try {
       const result = await apiClient.request(method, path, token, body);
+      this.setApiReachable(true, mutationProbe);
       if (normalizedMethod !== 'GET') this.stateEpoch++;
 
         if (op === 'end_session' && result?.id) {
@@ -305,8 +317,10 @@ export class BilliardSync {
       // Only transport failures may enter the offline queue. HTTP 4xx/5xx
       // responses are authoritative and must be surfaced to the cashier.
       if (!isBilliardNetworkError(err)) {
+        this.setApiReachable(true, mutationProbe);
         throw err;
       }
+      this.setApiReachable(false, mutationProbe);
       if (onlineOnly) {
         throw new Error('Network connection was lost. Reconnect before trying this billiard operation again.');
       }
@@ -804,11 +818,30 @@ export class BilliardSync {
     return this.isOnline;
   }
 
+  private beginApiProbe(): number {
+    return this.apiReachability.beginProbe();
+  }
+
+  private setApiReachable(reachable: boolean, probeId: number): void {
+    // Requests overlap (dashboard polling, reconciliation and cashier
+    // mutations). A late failure from an older request must never override a
+    // newer successful probe and close an active cashier dialog.
+    const previous = this.apiReachability.get();
+    if (!this.apiReachability.apply(probeId, reachable)) return;
+    if (previous === reachable) return;
+    logger.info(`[BilliardSync] REST API reachable: ${reachable}`);
+  }
+
   getRestaurantCombos(): any[] {
     return this.restaurantCombosCache;
   }
 
-  getSyncStatus(): { pending: number; lastSync: string | null; online: boolean } {
+  getSyncStatus(): {
+    pending: number;
+    lastSync: string | null;
+    online: boolean;
+    apiReachable: boolean | null;
+  } {
     const pending = billiardMutationRepo.countPending();
     const row = database.get<{ value: string }>(
       "SELECT value FROM sync_metadata WHERE key = 'billiard_last_sync'",
@@ -817,6 +850,7 @@ export class BilliardSync {
       pending,
       lastSync: row?.value ?? null,
       online: this.isOnline,
+      apiReachable: this.apiReachability.get(),
     };
   }
 

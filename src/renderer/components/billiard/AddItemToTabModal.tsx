@@ -215,6 +215,9 @@ export function AddItemToTabModal({
 
   useEffect(() => {
     if (open && mode === 'catalog') {
+      // Do not summon the on-screen keyboard as soon as a cashier opens the
+      // menu on a touch terminal; it can consume most of the product viewport.
+      if (!window.matchMedia?.('(pointer: fine)').matches) return;
       const timeoutId = window.setTimeout(
         () => searchRef.current?.focus(),
         100,
@@ -506,7 +509,7 @@ export function AddItemToTabModal({
         </div>
 
         {mode === 'catalog' ? (
-          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-4 pt-3">
+          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-4 pt-3">
             {facilityGrouping.hasTags && (
               <div
                 role="group"
@@ -600,7 +603,7 @@ export function AddItemToTabModal({
               </div>
             )}
 
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-4">
+            <div className="shrink-0 pb-4">
               {productsLoading ? (
                 <div className="flex items-center justify-center py-12">
                   <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
@@ -627,7 +630,7 @@ export function AddItemToTabModal({
                   {tOr('billiard.noProducts', 'No products found')}
                 </div>
               ) : (
-                <div className="grid grid-cols-2 items-stretch gap-2 sm:grid-cols-3">
+                <div className="grid grid-cols-1 items-stretch gap-2 min-[400px]:grid-cols-2 sm:grid-cols-3">
                   {visibleProducts.map((product: any) => {
                     const catalogItem =
                       normalizeBilliardCatalogProduct(product);

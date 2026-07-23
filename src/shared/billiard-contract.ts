@@ -433,6 +433,10 @@ export function normalizeBilliardCatalogProduct(
 }
 
 export function isBilliardNetworkError(error: any): boolean {
+  // The API client wraps a network failure during token refresh so callers do
+  // not mistake it for an authentication rejection. Preserve that transport
+  // meaning for billiard queue/availability decisions.
+  if (error?.name === 'AuthRefreshNetworkError') return true;
   if (Number.isInteger(error?.status)) return false;
   const message = String(error?.message ?? error ?? '').toLowerCase();
   return message.includes('fetch')

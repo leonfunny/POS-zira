@@ -33,7 +33,12 @@ describe('billiard shim stub defaults (contract S1 §2.N)', () => {
   });
   it('getSyncStatus reports offline with no transport', async () => {
     const b = buildBilliardNamespace(deps);
-    await expect(b.getSyncStatus()).resolves.toEqual({ pending: 0, lastSync: null, online: false });
+    await expect(b.getSyncStatus()).resolves.toEqual({
+      pending: 0,
+      lastSync: null,
+      online: false,
+      apiReachable: false,
+    });
   });
   it('mutate without transport rejects (money path must not fake success)', async () => {
     const b = buildBilliardNamespace(deps);

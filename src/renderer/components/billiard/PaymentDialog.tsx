@@ -89,7 +89,18 @@ export function PaymentDialog({ session, open, onOpenChange, language, onRefetch
     setStep('ready');
     setPaymentError(null);
     setEndedSnapshot(alreadyEnded ? session : null);
-  }, [open, session?.id, session?.status, session?.paymentStatus, session?.paidAmount, session?.outstandingAmount, session?.total]);
+  }, [
+    open,
+    session?.id,
+    session?.status,
+    session?.paymentStatus,
+    session?.paidAmount,
+    session?.outstandingAmount,
+    session?.total,
+    session?.totalCharge,
+    session?.posCheckout,
+    session?.posCheckoutId,
+  ]);
 
   const isProcessing = step === 'processing';
   const handleCancel = useCallback(() => {
@@ -124,6 +135,23 @@ export function PaymentDialog({ session, open, onOpenChange, language, onRefetch
   const paidAmount = Math.max(0, Number(displayedSession?.paidAmount ?? 0));
   const outstanding = resolveBilliardOutstandingBalance(displayedSession);
 
+  const reconcileSession = async () => {
+    const reconciled = await window.electronAPI.billiard.mutate(
+      'online_api',
+      'GET',
+      `/billiard/sessions/${session.id}`,
+    );
+    const reconciledStatus = String(reconciled?.status || '').toUpperCase();
+    if (
+      reconciled?.id
+      && reconciledStatus !== 'ACTIVE'
+      && reconciledStatus !== 'PAUSED'
+    ) {
+      setEndedSnapshot(reconciled);
+    }
+    return reconciled;
+  };
+
   const ensureEnded = async () => {
     if (endedSnapshot) return endedSnapshot;
     const status = String(session.status || '').toUpperCase();
@@ -132,7 +160,27 @@ export function PaymentDialog({ session, open, onOpenChange, language, onRefetch
       return session;
     }
 
-    const result = await endSession.mutate(session.id);
+    let result: any;
+    try {
+      result = await endSession.mutate(session.id);
+    } catch (endError) {
+      // The server may have committed the end while the response was lost.
+      // Reconcile before allowing a second PATCH /end on retry.
+      try {
+        const reconciled = await reconcileSession();
+        const reconciledStatus = String(reconciled?.status || '').toUpperCase();
+        if (
+          reconciled?.id
+          && reconciledStatus !== 'ACTIVE'
+          && reconciledStatus !== 'PAUSED'
+        ) {
+          return reconciled;
+        }
+      } catch {
+        // Preserve the original end failure when reconciliation also fails.
+      }
+      throw endError;
+    }
     if (!result || result.queued) {
       throw new Error('Could not freeze the final billiard total on the server.');
     }
@@ -150,7 +198,23 @@ export function PaymentDialog({ session, open, onOpenChange, language, onRefetch
         throw new Error('Pay in POS is available in the Windows counter app. This session remains unpaid.');
       }
 
-      const snapshot = endedSnapshot ?? await ensureEnded();
+      let snapshot = endedSnapshot ?? await ensureEnded();
+      if (shouldSkipBilliardPosPayment(snapshot)) {
+        setStep('done');
+        toast.success(t('billiard.paid') || 'Session completed with no balance due.');
+        onOpenChange(false);
+        return;
+      }
+
+      // A successful end response should already contain the frozen checkout,
+      // but recover from a delayed/older response by reconciling the completed
+      // session before asking the cashier to retry.
+      if (!snapshot?.posCheckout) {
+        const reconciled = await reconcileSession();
+        if (reconciled?.id) {
+          snapshot = reconciled;
+        }
+      }
       if (shouldSkipBilliardPosPayment(snapshot)) {
         setStep('done');
         toast.success(t('billiard.paid') || 'Session completed with no balance due.');
@@ -158,7 +222,7 @@ export function PaymentDialog({ session, open, onOpenChange, language, onRefetch
         return;
       }
       if (!snapshot?.posCheckout) {
-        throw new Error('The server did not return a frozen POS checkout. Refresh and try again.');
+        throw new Error('The final POS checkout is not ready yet. Try again.');
       }
       await onPayInPos({
         posCheckout: snapshot.posCheckout,
@@ -250,7 +314,7 @@ export function PaymentDialog({ session, open, onOpenChange, language, onRefetch
         </div>
         <div className="px-4 py-3 border-t flex justify-end gap-2">
           <button
-            className="px-3 py-1.5 text-sm font-medium rounded-lg border border-slate-300 hover:bg-slate-50 disabled:opacity-50"
+            className="flex h-11 items-center rounded-lg border border-slate-300 px-4 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
             onClick={handleCancel}
             disabled={isProcessing}
           >
@@ -259,7 +323,7 @@ export function PaymentDialog({ session, open, onOpenChange, language, onRefetch
           {step === 'ready' && (
             <button
               data-testid="billiard-pos-handoff"
-              className="px-3 py-1.5 text-sm font-medium rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 flex items-center"
+              className="flex h-11 items-center rounded-lg bg-brand-600 px-4 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
               onClick={handlePrimaryAction}
               disabled={endSession.isPending || !onPayInPos}
             >

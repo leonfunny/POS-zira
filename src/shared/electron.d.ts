@@ -664,7 +664,12 @@ interface ElectronAPI {
     getResourceType: (code: string) => Promise<any>;
     getRestaurantCombos: () => Promise<any[]>;
     mutate: (op: string, method: string, path: string, body?: any) => Promise<any>;
-    getSyncStatus: () => Promise<{ pending: number; lastSync: string | null; online: boolean }>;
+    getSyncStatus: () => Promise<{
+      pending: number;
+      lastSync: string | null;
+      online: boolean;
+      apiReachable?: boolean | null;
+    }>;
     onDataUpdated: (callback: (data: { type: string }) => void) => () => void;
     printReceipt: (sessionId: string, payment: { method: string; amount: number }) => Promise<{ success: boolean; receiptPrinted: boolean }>;
     openCashDrawer: () => Promise<{ success: boolean }>;

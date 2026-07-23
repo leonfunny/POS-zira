@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Play, Pause, Users, Clock, Timer, Minus, Plus,
-  CreditCard, ArrowRightLeft, ShoppingBag, UtensilsCrossed, X, Trash2,
+  CreditCard, ArrowRightLeft, ShoppingBag, UtensilsCrossed, WifiOff, X, Trash2,
 } from 'lucide-react';
 import { useTranslation } from '../../i18n/useTranslation';
 import { Language } from '../../i18n/translations';
@@ -47,6 +47,8 @@ export function TableActionPopover({
   onRemoveItem,
   onUpdateItemQty,
   isPending,
+  actionsDisabled = false,
+  actionsDisabledReason,
   language,
 }: {
   table: TableOverview;
@@ -63,6 +65,8 @@ export function TableActionPopover({
   onRemoveItem?: (itemId: string) => void;
   onUpdateItemQty?: (itemId: string, quantity: number) => void;
   isPending: boolean;
+  actionsDisabled?: boolean;
+  actionsDisabledReason?: string;
   language: Language;
 }) {
   const { t } = useTranslation(language);
@@ -160,6 +164,10 @@ export function TableActionPopover({
       ? 'border-amber-200 bg-amber-50 text-amber-700'
       : 'border-red-200 bg-red-50 text-red-700';
   const inertProps = suspended ? { inert: '' } : {};
+  const actionBlocked = isPending || actionsDisabled;
+  const disabledReason = actionsDisabledReason
+    || t('billiard.offlineSettleNotice')
+    || 'Connection required to manage this session';
 
   return (
     <div
@@ -205,6 +213,16 @@ export function TableActionPopover({
         </header>
 
         <div className="flex-1 space-y-5 overflow-y-auto p-5">
+          {actionsDisabled && (
+            <div
+              role="status"
+              className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-amber-950"
+            >
+              <WifiOff className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" />
+              <p className="text-sm font-medium">{disabledReason}</p>
+            </div>
+          )}
+
           {table.status === 'free' && (
             <>
               <section className="rounded-xl border border-slate-200 bg-slate-50 p-5 text-center">
@@ -224,7 +242,7 @@ export function TableActionPopover({
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-50"
+                      className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-50"
                       onClick={() => setStartGuests((count) => Math.max(1, count - 1))}
                       disabled={startGuests <= 1}
                       aria-label={t('billiard.decreaseGuests') || 'Decrease guests'}
@@ -234,7 +252,7 @@ export function TableActionPopover({
                     <span className="w-8 text-center text-lg font-semibold tabular-nums">{startGuests}</span>
                     <button
                       type="button"
-                      className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-300 bg-white hover:bg-slate-100"
+                      className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-300 bg-white hover:bg-slate-100"
                       onClick={() => setStartGuests((count) => count + 1)}
                       aria-label={t('billiard.increaseGuests') || 'Increase guests'}
                     >
@@ -305,9 +323,10 @@ export function TableActionPopover({
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-50"
+                      className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-50"
                       onClick={() => onUpdateGuestCount?.(Math.max(1, (session.guestCount || 1) - 1))}
-                      disabled={!onUpdateGuestCount || isPending || (session.guestCount || 1) <= 1}
+                      disabled={!onUpdateGuestCount || actionBlocked || (session.guestCount || 1) <= 1}
+                      title={actionsDisabled ? disabledReason : undefined}
                       aria-label={t('billiard.decreaseGuests') || 'Decrease guests'}
                     >
                       <Minus className="h-4 w-4" />
@@ -315,9 +334,10 @@ export function TableActionPopover({
                     <span className="w-8 text-center text-lg font-semibold tabular-nums">{session.guestCount || 1}</span>
                     <button
                       type="button"
-                      className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-50"
+                      className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-50"
                       onClick={() => onUpdateGuestCount?.((session.guestCount || 1) + 1)}
-                      disabled={!onUpdateGuestCount || isPending}
+                      disabled={!onUpdateGuestCount || actionBlocked}
+                      title={actionsDisabled ? disabledReason : undefined}
                       aria-label={t('billiard.increaseGuests') || 'Increase guests'}
                     >
                       <Plus className="h-4 w-4" />
@@ -348,13 +368,14 @@ export function TableActionPopover({
                           <div className="flex shrink-0 items-center gap-1">
                             <button
                               type="button"
-                              disabled={isPending}
+                              disabled={actionBlocked}
+                              title={actionsDisabled ? disabledReason : undefined}
                               onClick={() => {
                                 const next = (item.quantity || 1) - 1;
                                 if (next <= 0) onRemoveItem?.(item.id);
                                 else onUpdateItemQty(item.id, next);
                               }}
-                              className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                              className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 disabled:opacity-50"
                               aria-label={`${item.name} −`}
                             >
                               <Minus className="h-4 w-4" />
@@ -364,9 +385,10 @@ export function TableActionPopover({
                             </span>
                             <button
                               type="button"
-                              disabled={isPending}
+                              disabled={actionBlocked}
+                              title={actionsDisabled ? disabledReason : undefined}
                               onClick={() => onUpdateItemQty(item.id, (item.quantity || 1) + 1)}
-                              className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                              className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 disabled:opacity-50"
                               aria-label={`${item.name} +`}
                             >
                               <Plus className="h-4 w-4" />
@@ -380,8 +402,9 @@ export function TableActionPopover({
                           <button
                             type="button"
                             onClick={() => onRemoveItem(item.id)}
-                            disabled={isPending}
-                            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-red-600 hover:bg-red-50 disabled:opacity-50"
+                            disabled={actionBlocked}
+                            title={actionsDisabled ? disabledReason : undefined}
+                            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-red-600 hover:bg-red-50 disabled:opacity-50"
                             aria-label={t('common.remove') || 'Remove'}
                           >
                             <Trash2 className="h-4 w-4" />
@@ -402,7 +425,8 @@ export function TableActionPopover({
               type="button"
               className="flex h-12 w-full items-center justify-center rounded-lg bg-brand-600 px-4 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
               onClick={() => onStartSession(startGuests)}
-              disabled={isPending}
+              disabled={actionBlocked}
+              title={actionsDisabled ? disabledReason : undefined}
             >
               <Play className="mr-2 h-4 w-4" />
               {t('billiard.startSession') || 'Start Session'}
@@ -414,7 +438,8 @@ export function TableActionPopover({
                   type="button"
                   className="flex h-11 items-center justify-center rounded-lg border border-slate-300 bg-white px-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
                   onClick={table.status === 'paused' ? onResume : onPause}
-                  disabled={isPending}
+                  disabled={actionBlocked}
+                  title={actionsDisabled ? disabledReason : undefined}
                 >
                   {table.status === 'paused' ? <Play className="mr-1.5 h-4 w-4" /> : <Pause className="mr-1.5 h-4 w-4" />}
                   {table.status === 'paused'
@@ -423,16 +448,20 @@ export function TableActionPopover({
                 </button>
                 <button
                   type="button"
-                  className="flex h-11 items-center justify-center rounded-lg border border-slate-300 bg-white px-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+                  className="flex h-11 items-center justify-center rounded-lg border border-slate-300 bg-white px-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
                   onClick={onAddItem}
+                  disabled={actionBlocked}
+                  title={actionsDisabled ? disabledReason : undefined}
                 >
                   <ShoppingBag className="mr-1.5 h-4 w-4" />
                   {t('billiard.addItem') || 'Add Item'}
                 </button>
                 <button
                   type="button"
-                  className="flex h-11 items-center justify-center rounded-lg border border-slate-300 bg-white px-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+                  className="flex h-11 items-center justify-center rounded-lg border border-slate-300 bg-white px-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
                   onClick={onTransfer}
+                  disabled={actionBlocked}
+                  title={actionsDisabled ? disabledReason : undefined}
                 >
                   <ArrowRightLeft className="mr-1.5 h-4 w-4" />
                   {t('billiard.transfer') || 'Transfer'}
@@ -442,7 +471,8 @@ export function TableActionPopover({
                 type="button"
                 className="flex h-12 w-full items-center justify-center rounded-lg bg-brand-600 px-4 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
                 onClick={onPayment}
-                disabled={isPending}
+                disabled={actionBlocked}
+                title={actionsDisabled ? disabledReason : undefined}
               >
                 <CreditCard className="mr-2 h-4 w-4" />
                 {t('billiard.payment') || 'Payment'} · {formatCurrency(runningTotal)}

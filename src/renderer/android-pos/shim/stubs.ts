@@ -706,7 +706,12 @@ export function buildBilliardNamespace({ transport }: StubDeps) {
       if (!transport.billiardMutate) return Promise.reject(new Error('Billiard requires a network connection.'));
       return transport.billiardMutate(op, method, path, body);
     },
-    getSyncStatus: () => withTransport(transport.billiardSyncStatus, [], () => ({ pending: 0, lastSync: null, online: false })),
+    getSyncStatus: () => withTransport(transport.billiardSyncStatus, [], () => ({
+      pending: 0,
+      lastSync: null,
+      online: false,
+      apiReachable: false,
+    })),
     onDataUpdated: (cb: (d: { type: string }) => void) =>
       transport.billiardOnDataUpdated ? transport.billiardOnDataUpdated(cb) : noopUnsubscribe(),
     printReceipt: (sessionId: string, payment: { method: string; amount: number }) =>
