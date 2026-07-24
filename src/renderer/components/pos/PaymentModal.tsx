@@ -8,7 +8,11 @@ import {
 } from './receipt-outcome';
 import { formatInitialCashAmount } from './format-cash-amount';
 import { useConfig } from '../../hooks/useConfig';
-import { resolveFiscalAction, type FiscalAction } from './payment-fiscal-prompt-mode';
+import {
+  resolveFiscalAction,
+  shouldPrintNonFiscalOrderCopy,
+  type FiscalAction,
+} from './payment-fiscal-prompt-mode';
 import type { RestoredCartReconciliation } from '../../../shared/billiard-pos-handoff';
 import { buildImmediateRestoredCartReconciliation } from './restored-cart-reconciliation';
 import {
@@ -110,6 +114,7 @@ export default function PaymentModal({
   extraOrderFields,
 }: PaymentModalProps) {
   const { config } = useConfig();
+  const protectedTender = Boolean(checkoutDraft?.billiard || checkoutDraft?.restoredInterruption);
   const [method, setMethod] = useState<PaymentMethod>(initialMethod ?? 'CASH');
   const [cashAmount, setCashAmount] = useState(() => formatInitialCashAmount(initialCashAmountGrosze));
   // Per-denomination bill counts (grosze → count). The cashier taps a
@@ -126,6 +131,9 @@ export default function PaymentModal({
   const [splitAmount, setSplitAmount] = useState('');
   const [splitMethod, setSplitMethod] = useState<PaymentMethod>('CASH');
   const [hasFiscalPrinter, setHasFiscalPrinter] = useState(false);
+  const [paymentPreflightStatus, setPaymentPreflightStatus] = useState<'checking' | 'ready' | 'blocked'>(
+    protectedTender ? 'ready' : 'checking',
+  );
   const [fiscalPrompt, setFiscalPrompt] = useState<{ orderId: string } | null>(null);
   const [fiscalBusy, setFiscalBusy] = useState(false);
   const [receiptRecovery, setReceiptRecovery] = useState<ReceiptRecovery | null>(null);
@@ -155,7 +163,6 @@ export default function PaymentModal({
   const completedOrderIdRef = useRef<string | null>(null);
   const tenderBoundaryCrossedRef = useRef(false);
   const [tenderPrepared, setTenderPrepared] = useState(false);
-  const protectedTender = Boolean(checkoutDraft?.billiard || checkoutDraft?.restoredInterruption);
   const tOr = (key: string, fallback: string) => {
     const value = t(key);
     return value !== key ? value : fallback;
@@ -233,6 +240,32 @@ export default function PaymentModal({
       });
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    if (protectedTender) {
+      setPaymentPreflightStatus('ready');
+      return;
+    }
+    let cancelled = false;
+    setPaymentPreflightStatus('checking');
+    window.electronAPI.pos.payment.preflight()
+      .then((result: { success?: boolean; error?: string }) => {
+        if (cancelled) return;
+        if (result?.success) {
+          setPaymentPreflightStatus('ready');
+          return;
+        }
+        setPaymentPreflightStatus('blocked');
+        setError(result?.error || 'POS payment preflight failed.');
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        const message = err instanceof Error ? err.message : String(err || 'POS payment preflight failed.');
+        setPaymentPreflightStatus('blocked');
+        setError(message);
+      });
+    return () => { cancelled = true; };
+  }, [protectedTender]);
 
   const tip = extraOrderFields?.tip ?? 0;
   const liveGrandTotal = cart.total + tip;
@@ -614,13 +647,20 @@ export default function PaymentModal({
     // ─── Payment-method-aware print routing ──────────────────────────
     // CASH (or split with any cash tender): print the order copy on the
     //   thermal RECEIPT printer + open drawer, then follow the terminal's
-    //   CASH/BLIK fiscal mode.
+    //   CASH/BLIK fiscal mode. In `always` mode the fiscal paragon replaces
+    //   the non-fiscal copy and the drawer opens only after fiscal success.
     // BLIK: print the order copy with the BLIK phone instruction, no drawer,
     //   then follow the terminal's CASH/BLIK fiscal mode.
     // CARD/TRANSFER: skip the order copy, fire the fiscal receipt directly.
     // INVOICE: skip both prints (debt already increased above).
-    const printOrderCopy = hasCash || hasBlik;
+    const printOrderCopy = shouldPrintNonFiscalOrderCopy({
+      hasCash,
+      hasBlik,
+      hasFiscalPrinter,
+      mode: fiscalOnCashSale,
+    });
     const printOrderCopyWithDrawer = hasCash;
+    const openDrawerAfterFiscal = hasCash && !printOrderCopy;
     const autoPrintFiscal = !printOrderCopy && paymentMethod !== 'INVOICE';
     const fiscalAction = resolveFiscalAction({
       printOrderCopy,
@@ -657,6 +697,12 @@ export default function PaymentModal({
         setSavingLabel(tOr('pos.payment.fiscalPrinting', 'Printing fiscal receipt...'));
         fiscalWarning = await printFiscalReceiptForOrder(orderId);
       }
+    }
+    if (!fiscalWarning && openDrawerAfterFiscal) {
+      await window.electronAPI.pos.payment.openCashDrawer().catch((err: unknown) => {
+        rlog.warn('[PaymentModal] Fiscal sale completed but cash drawer did not open:', err);
+        return { success: false, drawerOpened: false };
+      });
     }
     setSavingLabel('');
 
@@ -800,7 +846,8 @@ export default function PaymentModal({
       completedOrderIdRef.current ||
       receiptRecovery ||
       fiscalPrompt ||
-      receiptRetrying
+      receiptRetrying ||
+      (!protectedTender && paymentPreflightStatus !== 'ready')
     ) return;
     paymentCompleteInFlightRef.current = true;
     setSaving(true);
@@ -902,7 +949,7 @@ export default function PaymentModal({
       setSaving(false);
       paymentCompleteInFlightRef.current = false;
     }
-  }, [cashAmountGrosze, checkoutDraft, customerNipForOrder, customerNipValid, fiscalPrompt, grandTotal, method, onTenderOutcomeUncertain, protectedTender, receiptRecovery, receiptRetrying, saving, shiftId, splitMode, staffId, staffName, t, tOr, tenders]);
+  }, [cashAmountGrosze, checkoutDraft, customerNipForOrder, customerNipValid, fiscalPrompt, grandTotal, method, onTenderOutcomeUncertain, paymentPreflightStatus, protectedTender, receiptRecovery, receiptRetrying, saving, shiftId, splitMode, staffId, staffName, t, tOr, tenders]);
 
   const handleComplete = useCallback(() => {
     void completePayment();
@@ -916,6 +963,7 @@ export default function PaymentModal({
     && !completedOrderIdRef.current
     && !saving
     && customerNipValid
+    && (protectedTender || paymentPreflightStatus === 'ready')
     && selectedTenderIsComplete;
 
   const currency = t('pos.currency') || 'zl';
@@ -1900,10 +1948,20 @@ export default function PaymentModal({
 
                   <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
                     <p className="text-sm font-semibold text-blue-900">
-                      {tOr(
-                        'pos.payment.cardManualHint',
-                        'Enter this amount on the card terminal. After approval, press the button below.',
-                      )}
+                      {paymentPreflightStatus === 'ready'
+                        ? tOr(
+                            'pos.payment.cardManualHint',
+                            'Enter this amount on the card terminal. After approval, press the button below.',
+                          )
+                        : paymentPreflightStatus === 'checking'
+                          ? tOr(
+                              'pos.payment.preflightChecking',
+                              'Checking the POS register and shift. Do not use the card terminal yet.',
+                            )
+                          : tOr(
+                              'pos.payment.preflightBlocked',
+                              'Payment is unavailable. Do not use the card terminal.',
+                          )}
                     </p>
                   </div>
                 </>
@@ -1945,6 +2003,14 @@ export default function PaymentModal({
         </div>
 
         <div className="shrink-0 space-y-2 border-t border-slate-200 bg-white px-4 py-3">
+          {!protectedTender && paymentPreflightStatus === 'checking' && (
+            <div aria-live="polite" className="rounded-md border border-blue-200 bg-blue-50 px-3 py-3 text-sm font-semibold text-blue-900">
+              {tOr(
+                'pos.payment.preflightChecking',
+                'Checking the POS register and shift. Do not collect payment yet.',
+              )}
+            </div>
+          )}
           {error && (
             <div aria-live="assertive" className="flex items-center gap-3 rounded-md border border-red-200 bg-red-50 px-3 py-3">
               <svg className="h-5 w-5 shrink-0 text-red-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">

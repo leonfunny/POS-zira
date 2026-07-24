@@ -42,7 +42,7 @@ import {
 } from '../pos/refund-backend-payload';
 import { sanitizeBilliardRefundRequest } from '../pos/billiard-refund-policy';
 import { assertPosPaymentAccounting, assertProtectedPosPaymentMethods } from '../pos/payment-accounting';
-import { canReconcileActiveShift, ShiftController } from '../pos/shift-controller';
+import { ShiftController } from '../pos/shift-controller';
 import { toQuickAddVariantRow } from '../pos/quick-add-product';
 import {
   captureProductAdminSessionContext,
@@ -645,8 +645,20 @@ export class PosModule extends BaseModule {
   }
 
   private async awaitServerShiftConsistencyForPayment(): Promise<void> {
-    const inFlight = this.shiftVerificationInFlight;
-    if (inFlight) await inFlight;
+    // Auth/login/shift events can supersede a verification while it is in
+    // flight. Loop until the generation remains unchanged across the await;
+    // one stale promise is never enough to release a payment boundary.
+    for (;;) {
+      const generation = this.shiftVerificationGeneration;
+      const inFlight = this.shiftVerificationInFlight;
+      if (inFlight) await inFlight;
+      if (
+        generation === this.shiftVerificationGeneration
+        && (!this.shiftVerificationInFlight || this.shiftVerificationInFlight === inFlight)
+      ) {
+        break;
+      }
+    }
     this.assertServerShiftConsistentForPayment();
   }
 
@@ -4936,6 +4948,9 @@ export class PosModule extends BaseModule {
           throw new Error('A held cart recall is still being saved. Do not collect payment yet.');
         }
         const normalizedOrder = { ...(order || {}) };
+        const normalizedSource = String(normalizedOrder.source || 'POS').trim().toUpperCase() || 'POS';
+        normalizedOrder.source = normalizedSource;
+        const requiresRegisterShift = normalizedSource === 'POS' || normalizedSource === 'KITCHEN_SELF_ORDER';
         const normalizedItems = (items || []).map((item: any) => {
           const product = item.variant_id ? productRepo.getById(item.variant_id) : null;
           const sell_by = getLineSellBy({
@@ -4973,9 +4988,12 @@ export class PosModule extends BaseModule {
         if (
           !billiardRecord
           && !restoredContext
-          && String(normalizedOrder.source || 'POS').toUpperCase() === 'POS'
+          && requiresRegisterShift
         ) {
           await this.preflightOrdinaryPosPayment();
+          if (!orderAuthContext || !this.isPosAuthContextCurrent(orderAuthContext)) {
+            throw new Error('POS user changed while payment safety was being verified. No order was created.');
+          }
         }
         if (billiardRecord || restoredContext) {
           assertProtectedPosPaymentMethods(normalizedOrder);
@@ -5084,8 +5102,7 @@ export class PosModule extends BaseModule {
           this.resolveBilliardOrderRequest(normalizedOrder, normalizedItems, true);
           tenderedBilliardCart = { checkoutId: billiardRecord.checkoutId, orderId: billiardRecord.orderId };
         }
-        const isPosOrder = (normalizedOrder.source ?? 'POS') === 'POS';
-        if (isPosOrder) {
+        if (requiresRegisterShift) {
           const activeShift = database.get<{ id: string; staff_id: string | null; staff_name: string | null }>(
             'SELECT id, staff_id, staff_name FROM shifts WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 1',
           );
@@ -6171,19 +6188,13 @@ export class PosModule extends BaseModule {
         if (!backendShiftId) {
           try {
             const configuredMachineId = String(getConfigValue('machineId') ?? '').trim();
-            const serverShift = await apiClient.getActiveShift(
-              token,
-              configuredMachineId || undefined,
-            );
+            const serverShift = configuredMachineId
+              ? await apiClient.getActiveShift(token, configuredMachineId)
+              : null;
             if (!this.isPosAuthContextCurrent(refundAuthContext)) {
               return { success: false, requiresRefresh: true, error: 'POS user changed before the refund was submitted.' };
             }
-            if (serverShift?.id && canReconcileActiveShift(
-              activeShift.id,
-              activeShift.staff_id,
-              serverShift,
-              configuredMachineId,
-            )) {
+            if (serverShift?.id === activeShift.id) {
               backendShiftId = serverShift.id;
               database.run(
                 'UPDATE shifts SET backend_id = ?, synced = 1, sync_error = NULL WHERE id = ? AND backend_id IS NULL',
@@ -6505,7 +6516,9 @@ export class PosModule extends BaseModule {
         let backendShiftId = activeShift.backend_id;
         if (!backendShiftId) {
           const configuredMachineId = String(config.machineId || '').trim();
-          const serverShift = await apiClient.getActiveShift(token, configuredMachineId || undefined);
+          const serverShift = configuredMachineId
+            ? await apiClient.getActiveShift(token, configuredMachineId)
+            : null;
           if (!this.isPosAuthContextCurrent(correctionAuthContext)) {
             return {
               success: false,
@@ -6513,12 +6526,7 @@ export class PosModule extends BaseModule {
               error: 'POS user changed while the active shift was being verified. No correction was submitted.',
             };
           }
-          if (serverShift?.id && canReconcileActiveShift(
-            activeShift.id,
-            activeShift.staff_id,
-            serverShift,
-            configuredMachineId,
-          )) {
+          if (serverShift?.id === activeShift.id) {
             backendShiftId = serverShift.id;
             database.run(
               'UPDATE shifts SET backend_id = ?, synced = 1, sync_error = NULL WHERE id = ? AND backend_id IS NULL',

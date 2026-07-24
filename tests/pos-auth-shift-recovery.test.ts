@@ -183,6 +183,8 @@ describe('POS auth-boundary shift recovery', () => {
     expect(source.match(/await this\.refreshServerShiftConsistencyForPayment\(openShift\.id\)/g)?.length)
       .toBeGreaterThanOrEqual(5);
     expect(source).toContain('Ignoring stale server shift verification result');
+    expect(source).toContain('for (;;) {');
+    expect(source).toContain('generation === this.shiftVerificationGeneration');
   });
 
   it('fails closed without machineId and never auto-merges different shift ids', () => {
@@ -200,5 +202,6 @@ describe('POS auth-boundary shift recovery', () => {
     expect(verifier).toContain('getActiveShift(token, configuredMachineId)');
     expect(verifier).not.toContain('canReconcileActiveShift(');
     expect(verifier).not.toContain('UPDATE shifts SET backend_id');
+    expect(source).not.toContain('canReconcileActiveShift(');
   });
 });

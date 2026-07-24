@@ -141,8 +141,22 @@ describe('POS embedded numpad → PaymentModal wiring', () => {
 
   it('freshly verifies the register shift for ordinary POS payments', () => {
     expect(PAYMENT_MODAL).toContain('window.electronAPI.pos.payment.preflight()');
+    expect(PAYMENT_MODAL).toContain("useState<'checking' | 'ready' | 'blocked'>");
+    expect(PAYMENT_MODAL).toContain("paymentPreflightStatus === 'ready'");
+    expect(PAYMENT_MODAL).toContain('Do not collect payment yet.');
     expect(POS_MODULE).toContain("ipcMain.handle('pos:payment:preflight'");
     expect(POS_MODULE).toContain('await this.preflightOrdinaryPosPayment()');
+  });
+
+  it('normalizes all cashier checkout sources and aborts auth changes before inserting', () => {
+    expect(POS_MODULE).toContain("String(normalizedOrder.source || 'POS').trim().toUpperCase()");
+    expect(POS_MODULE).toContain("normalizedSource === 'POS' || normalizedSource === 'KITCHEN_SELF_ORDER'");
+    const preflightIndex = POS_MODULE.indexOf('await this.preflightOrdinaryPosPayment()', POS_MODULE.indexOf("ipcMain.handle('pos:orders:create'"));
+    const authIndex = POS_MODULE.indexOf('!this.isPosAuthContextCurrent(orderAuthContext)', preflightIndex);
+    const createIndex = POS_MODULE.indexOf('orderRepo.create(normalizedOrder', preflightIndex);
+    expect(preflightIndex).toBeGreaterThan(-1);
+    expect(authIndex).toBeGreaterThan(preflightIndex);
+    expect(createIndex).toBeGreaterThan(authIndex);
   });
 
   it('lets a cashier close a server ghost shift before reopening cleanly', () => {

@@ -240,4 +240,10 @@ describe('PaymentModal wires the helpers (regression guard, not behaviour)', () 
     expect(fiscalBranch).toContain('printFiscalReceiptForOrder(orderId)');
     expect(source).toContain('window.electronAPI.pos.payment.printFiscalReceipt(orderId)');
   });
+
+  it('uses one fiscal print and a drawer-only command for CASH in always mode', () => {
+    expect(source).toContain('shouldPrintNonFiscalOrderCopy({');
+    expect(source).toContain('const openDrawerAfterFiscal = hasCash && !printOrderCopy;');
+    expect(source).toContain('window.electronAPI.pos.payment.openCashDrawer()');
+  });
 });
