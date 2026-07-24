@@ -6,6 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const hookMocks = vi.hoisted(() => ({
   endSession: vi.fn(),
   reconcileSession: vi.fn(),
+  getConfig: vi.fn(),
+  getPosState: vi.fn(),
+  hasFiscalPrinter: vi.fn(),
 }));
 
 vi.mock('../src/renderer/hooks/useBilliardData', () => ({
@@ -51,9 +54,38 @@ describe('PaymentDialog one-action POS handoff', () => {
       ...frozenSession,
       posCheckout: undefined,
     });
+    hookMocks.getConfig.mockReset();
+    hookMocks.getConfig.mockResolvedValue({
+      salonId: 'salon-1',
+      machineId: 'register-1',
+      authUser: { id: 'owner-1', salonId: 'salon-1' },
+      allowRealFiscalPrint: false,
+    });
+    hookMocks.getPosState.mockReset();
+    hookMocks.getPosState.mockResolvedValue({
+      session: {
+        isOpen: true,
+        shiftId: 'shift-1',
+        staffId: 'owner-1',
+        staffName: 'Owner',
+      },
+    });
+    hookMocks.hasFiscalPrinter.mockReset();
+    hookMocks.hasFiscalPrinter.mockResolvedValue({
+      success: true,
+      configured: true,
+      connected: true,
+    });
     (window as any).electronAPI = {
+      getConfig: hookMocks.getConfig,
       billiard: {
         mutate: hookMocks.reconcileSession,
+      },
+      pos: {
+        getState: hookMocks.getPosState,
+        payment: {
+          hasFiscalPrinter: hookMocks.hasFiscalPrinter,
+        },
       },
     };
   });
@@ -107,6 +139,10 @@ describe('PaymentDialog one-action POS handoff', () => {
 
     expect(hookMocks.endSession).toHaveBeenCalledOnce();
     expect(hookMocks.endSession).toHaveBeenCalledWith('session-active');
+    expect(hookMocks.getConfig.mock.invocationCallOrder[0])
+      .toBeLessThan(hookMocks.endSession.mock.invocationCallOrder[0]);
+    expect(hookMocks.getPosState.mock.invocationCallOrder[0])
+      .toBeLessThan(hookMocks.endSession.mock.invocationCallOrder[0]);
     expect(onPayInPos).toHaveBeenCalledOnce();
     expect(onPayInPos).toHaveBeenCalledWith({
       posCheckout: frozenSession.posCheckout,
@@ -115,6 +151,77 @@ describe('PaymentDialog one-action POS handoff', () => {
     expect(hookMocks.endSession.mock.invocationCallOrder[0])
       .toBeLessThan(onPayInPos.mock.invocationCallOrder[0]);
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it('keeps the table running when no POS shift is open', async () => {
+    hookMocks.getPosState.mockResolvedValue({
+      session: {
+        isOpen: false,
+        shiftId: null,
+        staffId: null,
+        staffName: null,
+      },
+    });
+    const { onPayInPos } = await renderDialog(activeSession);
+
+    await act(async () => {
+      primaryButton().click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(hookMocks.endSession).not.toHaveBeenCalled();
+    expect(onPayInPos).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('Open a POS shift');
+  });
+
+  it('keeps the table running when the POS register identity is incomplete', async () => {
+    hookMocks.getConfig.mockResolvedValue({
+      salonId: 'salon-1',
+      machineId: '',
+      agentId: '',
+      registerCode: '',
+      authUser: { id: 'owner-1', salonId: 'salon-1' },
+      allowRealFiscalPrint: false,
+    });
+    const { onPayInPos } = await renderDialog(activeSession);
+
+    await act(async () => {
+      primaryButton().click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(hookMocks.endSession).not.toHaveBeenCalled();
+    expect(onPayInPos).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('POS register is not ready');
+  });
+
+  it('keeps the table running when real fiscal mode is enabled but the printer is offline', async () => {
+    hookMocks.getConfig.mockResolvedValue({
+      salonId: 'salon-1',
+      machineId: 'register-1',
+      authUser: { id: 'owner-1', salonId: 'salon-1' },
+      allowRealFiscalPrint: true,
+    });
+    hookMocks.hasFiscalPrinter.mockResolvedValue({
+      success: true,
+      configured: true,
+      connected: false,
+    });
+    const { onPayInPos } = await renderDialog(activeSession);
+
+    await act(async () => {
+      primaryButton().click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(hookMocks.hasFiscalPrinter).toHaveBeenCalledOnce();
+    expect(hookMocks.endSession).not.toHaveBeenCalled();
+    expect(onPayInPos).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('fiscal printer is not ready');
   });
 
   it('hands an already-ended unsettled session to POS without ending it again', async () => {

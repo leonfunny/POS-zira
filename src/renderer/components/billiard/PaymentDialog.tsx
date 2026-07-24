@@ -188,6 +188,31 @@ export function PaymentDialog({ session, open, onOpenChange, language, onRefetch
     return result;
   };
 
+  const assertPosCheckoutReady = async () => {
+    const [config, posState] = await Promise.all([
+      window.electronAPI.getConfig(),
+      window.electronAPI.pos.getState(),
+    ]);
+    const salonId = String(config?.salonId || config?.authUser?.salonId || '').trim();
+    const userId = String(config?.authUser?.id || '').trim();
+    const registerId = String(config?.registerCode || config?.machineId || config?.agentId || '').trim();
+    if (!salonId || !userId || !registerId) {
+      throw new Error('POS register is not ready. Sign in and pair this register before ending the Billiard session.');
+    }
+
+    const posSession = posState?.session;
+    if (!posSession?.isOpen || !posSession?.shiftId || !posSession?.staffId) {
+      throw new Error('Open a POS shift before ending this Billiard session. The table is still running.');
+    }
+
+    if (config?.allowRealFiscalPrint === true) {
+      const fiscal = await window.electronAPI.pos.payment.hasFiscalPrinter();
+      if (!fiscal?.success || !fiscal.configured || !fiscal.connected) {
+        throw new Error('The fiscal printer is not ready. Connect it before ending this Billiard session.');
+      }
+    }
+  };
+
   const handlePrimaryAction = async () => {
     if (handoffInFlightRef.current) return;
     handoffInFlightRef.current = true;
@@ -198,6 +223,7 @@ export function PaymentDialog({ session, open, onOpenChange, language, onRefetch
         throw new Error('Pay in POS is available in the Windows counter app. This session remains unpaid.');
       }
 
+      await assertPosCheckoutReady();
       let snapshot = endedSnapshot ?? await ensureEnded();
       if (shouldSkipBilliardPosPayment(snapshot)) {
         setStep('done');
