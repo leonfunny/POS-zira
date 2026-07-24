@@ -240,6 +240,7 @@ import {
   type RestoredCartReconciliation,
   type TenderNoPaymentResolutionAudit,
 } from '../../shared/billiard-pos-handoff';
+import { recoverOpenShiftFromLocal } from '../pos/open-shift-recovery';
 
 type BilliardHandoffRecord = NonNullable<ReturnType<typeof billiardPosHandoffRepo.get>>;
 
@@ -843,15 +844,9 @@ export class PosModule extends BaseModule {
       logger.error(`[PosModule] Orphan booking repair failed: ${err?.message ?? err}`);
     }
 
-    // Recover open shift from local DB (app restart during active shift)
-    const openShift = database.get<{ id: string; staff_id: string | null; staff_name: string | null; opened_at: string }>(
-      'SELECT id, staff_id, staff_name, opened_at FROM shifts WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 1',
-    );
+    // Recover open shift from local DB (app restart during active shift).
+    const openShift = recoverOpenShiftFromLocal(database, this.posStore);
     if (openShift) {
-      this.posStore.dispatch({
-        type: 'session/open',
-        payload: { shiftId: openShift.id, staffId: openShift.staff_id, staffName: openShift.staff_name, openedAt: openShift.opened_at },
-      });
       logger.info(`[PosModule] Recovered open shift ${openShift.id} (${openShift.staff_name})`);
     }
 
@@ -7669,6 +7664,11 @@ export class PosModule extends BaseModule {
     });
     bus.on('user:logged-in', () => {
       this.posAuthEpoch.advance();
+      const openShift = recoverOpenShiftFromLocal(database, this.posStore);
+      if (openShift) {
+        logger.info(`[PosModule] Restored open shift ${openShift.id} after login (${openShift.staff_name})`);
+      }
+      void this.verifyShiftWithServer(openShift?.id ?? null);
       this.replayProductAdminMutations('login');
     });
   }
