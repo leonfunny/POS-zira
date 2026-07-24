@@ -219,7 +219,7 @@ const TAB = 0x09;
 export type PosnetConnectionState = 'disconnected' | 'physical_present' | 'protocol_ready';
 
 export interface PosnetDiagnosticCode {
-  code: 'PORT_NOT_FOUND' | 'PORT_BUSY' | 'DEVICE_DETECTED_NO_PROTOCOL_RESPONSE' | 'WRONG_BAUD_OR_MODE' | 'COMMAND_REJECTED' | 'PRINT_OK' | 'ACCESS_DENIED' | 'REAL_FISCAL_PRINT_DISABLED' | 'FISCAL_ATTEMPT_RETRY_BLOCKED';
+  code: 'PORT_NOT_FOUND' | 'PORT_BUSY' | 'DEVICE_DETECTED_NO_PROTOCOL_RESPONSE' | 'WRONG_BAUD_OR_MODE' | 'COMMAND_REJECTED' | 'PRINT_OK' | 'ACCESS_DENIED' | 'REAL_FISCAL_PRINT_DISABLED' | 'FISCAL_ATTEMPT_RETRY_BLOCKED' | 'POSNET_THERMAL_PROTOCOL_UNSUPPORTED';
   detail?: string;
 }
 
@@ -268,6 +268,13 @@ export class PosnetDriver {
   getLastDiagnostic(): PosnetDiagnosticCode | undefined { return this.lastDiagnostic; }
   getDetectedPid(): number | undefined { return this.detectedPid; }
   getBaudRate(): number { return this.baudRate; }
+
+  private assertPrintProtocolSupported(operation: string): void {
+    if (this.protocol === 'POSNET') return;
+    const detail = `PosnetDriver cannot ${operation} through the THERMAL profile because this driver emits POSNET v2 frames, not ESC/POS bytes. Select a real thermal driver or the verified POSNET protocol.`;
+    this.lastDiagnostic = { code: 'POSNET_THERMAL_PROTOCOL_UNSUPPORTED', detail };
+    throw new Error(`POSNET_THERMAL_PROTOCOL_UNSUPPORTED: ${detail}`);
+  }
   requiresManualProtocolAction(): boolean {
     return this.connectionState === 'physical_present'
       && (this.lastDiagnostic?.code === 'DEVICE_DETECTED_NO_PROTOCOL_RESPONSE'
@@ -515,6 +522,7 @@ export class PosnetDriver {
    */
   async printTest(): Promise<void> {
     if (!this.isConnected()) throw new Error('Printer not connected');
+    this.assertPrintProtocolSupported('print');
     logger.info(`[PosnetDriver] Printing test page on ${this.portName}...`);
 
     if (!this.modelName) {
@@ -530,30 +538,9 @@ export class PosnetDriver {
       'Zira AI Print Agent',
     ];
 
-    // Primary: trinit / trline / trend. Despite the historical "test" label,
-    // this opens a fiscal transaction on a POSNET device, so never send it
-    // while the production kill switch is off. The prninit fallback below is
-    // a genuinely non-fiscal diagnostic print.
-    if (this.protocol !== 'POSNET' || this.realFiscalPrintEnabled()) try {
-      const pricePerLine = 1;
-      const total = lines.length * pricePerLine;
-
-      const frames: string[][] = [['trinit', 'bm0']];
-      for (const text of lines) {
-        frames.push(['trline', `na${text}`, 'vt0', `pr${pricePerLine}`, 'il1.000']);
-      }
-      frames.push(['trend', `to${total}`]);
-
-      await this.sendPosnetSequence(frames);
-      logger.info('[PosnetDriver] Test page printed (trinit path)');
-      return;
-    } catch (primaryErr) {
-      logger.warn(`[PosnetDriver] trinit path failed, attempting prninit fallback: ${(primaryErr as Error).message}`);
-    } else {
-      logger.info('[PosnetDriver] Real fiscal test transaction disabled; using non-fiscal prninit test page');
-    }
-
-    // Fallback: prninit / prnline / prnend (legacy non-fiscal printout for older models)
+    // A Test button must never create turnover. Use only POSNET's non-fiscal
+    // printout commands; if the model rejects them, fail explicitly and let a
+    // controlled real sale verify fiscal printing after go-live.
     try {
       const frames: string[][] = [['prninit']];
       for (const text of lines) {
@@ -562,10 +549,10 @@ export class PosnetDriver {
       frames.push(['prnend']);
 
       await this.sendPosnetSequence(frames);
-      logger.info('[PosnetDriver] Test page printed (prninit fallback)');
-    } catch (fallbackErr) {
-      logger.error(`[PosnetDriver] Both trinit and prninit paths failed`);
-      throw fallbackErr;
+      logger.info('[PosnetDriver] Non-fiscal test page printed (prninit path)');
+    } catch (error) {
+      logger.error('[PosnetDriver] Non-fiscal prninit test page failed');
+      throw error;
     }
   }
 
@@ -579,48 +566,43 @@ export class PosnetDriver {
    */
   async printReceipt(data: ReceiptData): Promise<void> {
     if (!this.isConnected()) throw new Error('Printer not connected');
+    this.assertPrintProtocolSupported('print receipts');
     logger.info('[PosnetDriver] Printing receipt...');
 
     // Preflight the complete arithmetic and frames before creating a SENT
     // journal state or allowing any serial write.
     const { frames } = buildPosnetFiscalFrames(data);
 
-    // THERMAL protocol mode drives plain ESC/POS-style printing — no fiscal
-    // transaction, no journal.
-    const isFiscalProtocol = this.protocol === 'POSNET';
-    const attempt = isFiscalProtocol ? this.createReceiptAttempt(data) : null;
+    const attempt = this.createReceiptAttempt(data);
 
-    if (attempt && !this.realFiscalPrintEnabled()) {
+    if (!this.realFiscalPrintEnabled()) {
       const detail = 'Real POSNET fiscal receipt is disabled. Enable allowRealFiscalPrint only during controlled production go-live.';
       this.lastDiagnostic = { code: 'REAL_FISCAL_PRINT_DISABLED', detail };
       this.fiscalJournal.markBlocked(attempt.id, 'REAL_FISCAL_PRINT_DISABLED', { detail });
       throw new Error(`REAL_FISCAL_PRINT_DISABLED: ${detail}`);
     }
 
-    if (attempt) this.fiscalJournal.markSent(attempt.id);
+    this.fiscalJournal.markSent(attempt.id);
 
     try {
       await this.sendPosnetSequence(frames);
     } catch (error: any) {
       const detail = error?.message || String(error);
-      if (attempt) {
-        if (this.failedBeforeAnyByteSent()) {
-          // Port lock / invalid port — nothing reached the printer, a clean
-          // retry is safe.
-          this.fiscalJournal.markFailed(attempt.id, this.lastDiagnostic?.code || 'POSNET_SEND_FAILED', { detail });
-          throw error;
-        }
-        // Bytes may have reached the device: the paragon could have printed
-        // even though we lost the confirmation. Block silent retries and
-        // route staff to the reconciliation flow.
-        this.fiscalJournal.markUnknown(attempt.id, 'POSNET_THROWN_AFTER_SENT', { detail });
-        this.notifyUnknownSafe(data, 'POSNET_THROWN_AFTER_SENT', detail);
-        throw new Error(`FISCAL_RESULT_UNKNOWN: POSNET receipt result is unknown after send error: ${detail}`);
+      if (this.failedBeforeAnyByteSent()) {
+        // Port lock / invalid port — nothing reached the printer, a clean
+        // retry is safe.
+        this.fiscalJournal.markFailed(attempt.id, this.lastDiagnostic?.code || 'POSNET_SEND_FAILED', { detail });
+        throw error;
       }
-      throw error;
+      // Bytes may have reached the device: the paragon could have printed
+      // even though we lost the confirmation. Block silent retries and
+      // route staff to the reconciliation flow.
+      this.fiscalJournal.markUnknown(attempt.id, 'POSNET_THROWN_AFTER_SENT', { detail });
+      this.notifyUnknownSafe(data, 'POSNET_THROWN_AFTER_SENT', detail);
+      throw new Error(`FISCAL_RESULT_UNKNOWN: POSNET receipt result is unknown after send error: ${detail}`);
     }
 
-    if (attempt) this.fiscalJournal.markSuccess(attempt.id, { responses: 'ok' });
+    this.fiscalJournal.markSuccess(attempt.id, { responses: 'ok' });
     logger.info('[PosnetDriver] Receipt printed');
   }
 
@@ -672,7 +654,8 @@ export class PosnetDriver {
 
   async printZReport(data: DailyReportData): Promise<void> {
     if (!this.isConnected()) throw new Error('Printer not connected');
-    if (this.protocol === 'POSNET' && !this.realFiscalPrintEnabled()) {
+    this.assertPrintProtocolSupported('print reports');
+    if (!this.realFiscalPrintEnabled()) {
       const detail = 'Real POSNET fiscal report transaction is disabled. Enable allowRealFiscalPrint only during controlled production go-live.';
       this.lastDiagnostic = { code: 'REAL_FISCAL_PRINT_DISABLED', detail };
       throw new Error(`REAL_FISCAL_PRINT_DISABLED: ${detail}`);

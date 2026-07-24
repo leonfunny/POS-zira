@@ -31,9 +31,10 @@ describe('posnet fiscal journal parity with ELZAB', () => {
     expect(driverSource).toContain('FISCAL_RESULT_UNKNOWN: POSNET');
   });
 
-  it('only journals in POSNET protocol mode, never for thermal-mode prints', () => {
-    expect(driverSource).toContain("const isFiscalProtocol = this.protocol === 'POSNET'");
-    expect(driverSource).toContain('isFiscalProtocol ? this.createReceiptAttempt(data) : null');
+  it('refuses the misleading thermal profile instead of bypassing the fiscal journal', () => {
+    expect(driverSource).toContain("this.assertPrintProtocolSupported('print receipts')");
+    expect(driverSource).toContain('const attempt = this.createReceiptAttempt(data)');
+    expect(driverSource).toContain('POSNET_THERMAL_PROTOCOL_UNSUPPORTED');
   });
 
   it('surfaces ambiguous outcomes to the POS like ELZAB does', () => {

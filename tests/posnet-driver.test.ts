@@ -229,7 +229,7 @@ describe('PosnetDriver port mutex integration', () => {
     expect(sendSpy).not.toHaveBeenCalled();
   });
 
-  it('uses only the non-fiscal prninit test path while real POSNET printing is disabled', async () => {
+  it('uses only the non-fiscal prninit test path regardless of the real-print gate', async () => {
     const driver = new PosnetDriver('COM6', 9600, 'POSNET', {
       isRealFiscalPrintEnabled: () => false,
     });
@@ -263,7 +263,7 @@ describe('PosnetDriver port mutex integration', () => {
     expect(sendSpy).not.toHaveBeenCalled();
   });
 
-  it('does not apply the real-fiscal gate to THERMAL protocol receipts', async () => {
+  it('refuses the misleading THERMAL profile before it can send POSNET fiscal frames', async () => {
     const driver = new PosnetDriver('COM6', 9600, 'THERMAL', {
       isRealFiscalPrintEnabled: () => false,
     });
@@ -276,8 +276,8 @@ describe('PosnetDriver port mutex integration', () => {
       payment: { method: 'CASH', amount: 1000 },
       subtotal: 1000,
       total: 1000,
-    })).resolves.toBeUndefined();
-    expect(sendSpy).toHaveBeenCalledTimes(1);
+    })).rejects.toThrow('POSNET_THERMAL_PROTOCOL_UNSUPPORTED');
+    expect(sendSpy).not.toHaveBeenCalled();
   });
 
   it('keeps exact frozen discounts on mixed-VAT, weighted, multi-quantity, and fully-discounted lines', () => {
