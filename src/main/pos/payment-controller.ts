@@ -136,13 +136,40 @@ export class PaymentController {
    * product, and fall back to the stored order/refund name for legacy or removed
    * products.
    */
-  private getReceiptItemName(item: { name: string; variant_id?: string | null; sku?: string | null }): string {
+  private getReceiptItemName(item: {
+    name: string;
+    variant_id?: string | null;
+    sku?: string | null;
+    billiard_json?: string | null;
+  }): string {
+    // Billiard names are part of the server-authoritative frozen checkout.
+    // In particular, TIME lines carry the table name and duration. Replacing
+    // them with the hidden catalog variant would make the receipt ambiguous.
+    if (String(item.billiard_json || '').trim()) return item.name;
+
     const product = item.variant_id
       ? productRepo.getById(item.variant_id)
       : item.sku
         ? productRepo.getBySku(item.sku)
         : null;
     return resolveName(product, RECEIPT_NAME_LOCALE) || item.name;
+  }
+
+  private getReceiptItemUnit(
+    item: { sale_unit?: string | null; billiard_json?: string | null },
+    product?: { sale_unit?: string | null } | null,
+  ): string | undefined {
+    const frozenMetadata = String(item.billiard_json || '').trim();
+    if (frozenMetadata) {
+      let kind = '';
+      try {
+        kind = String(JSON.parse(frozenMetadata)?.kind || '').toUpperCase();
+      } catch {
+        throw new Error('FISCAL_BILLIARD_LINE_METADATA_INVALID: Invalid frozen receipt metadata.');
+      }
+      if (kind === 'TIME') return 'usł.';
+    }
+    return item.sale_unit || product?.sale_unit || undefined;
   }
 
   private describePrintFailure(err: unknown, fallback: string): string {
@@ -225,7 +252,7 @@ export class PaymentController {
         ...(isBilliardOrder ? { allocatedDiscount } : {}),
         vatRate: i.vat_rate,
         sku: i.sku || undefined,
-        unit: i.sale_unit || product?.sale_unit || undefined,
+        unit: this.getReceiptItemUnit(i, product),
       };
     });
 

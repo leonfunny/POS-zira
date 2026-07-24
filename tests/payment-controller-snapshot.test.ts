@@ -177,6 +177,59 @@ describe('PaymentController receipt snapshot fallback', () => {
     }));
   });
 
+  it('keeps the frozen Billiard table and duration on the receipt as one service', async () => {
+    const printer = fakePrinter();
+    productRepoGetById.mockReturnValue({
+      id: 'billiard-time-variant',
+      name: 'Billiard playing time',
+      sale_unit: 'szt',
+    });
+    orderRepoGetById.mockReturnValue({
+      id: 'billiard-order-time',
+      order_number: 'POS-B-TIME',
+      subtotal: 6000,
+      discount: 0,
+      tax: 1122,
+      total: 6000,
+      payment_method: 'CASH',
+      payment_amount: 6000,
+      payment_tenders: null,
+      staff_name: 'Owner',
+    });
+    orderRepoGetItemsByOrderId.mockReturnValue([{
+      id: 'time',
+      variant_id: 'billiard-time-variant',
+      name: 'Bàn #10 — 60 min',
+      price: 6000,
+      quantity: 1,
+      sale_unit: 'szt',
+      total: 6000,
+      vat_rate: 23,
+      billiard_json: JSON.stringify({
+        lineKey: 'time-1',
+        kind: 'TIME',
+        durationMinutes: 60,
+        displayName: 'Bàn #10 — 60 min',
+      }),
+      allocated_discount: 0,
+      payable_total: 6000,
+    }]);
+
+    await expect(controller(printer).printReceipt('billiard-order-time')).resolves.toBe(true);
+
+    expect(printer.printReceipt).toHaveBeenCalledWith(expect.objectContaining({
+      items: [
+        expect.objectContaining({
+          name: 'Bàn #10 — 60 min',
+          quantity: 1,
+          unit: 'usł.',
+          unitPrice: 6000,
+          totalPrice: 6000,
+        }),
+      ],
+    }));
+  });
+
   it('fails closed when a frozen Billiard payable field differs from gross minus discount', async () => {
     const printer = fakePrinter();
     orderRepoGetById.mockReturnValue({
