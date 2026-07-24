@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, memo } from 'react';
+import { useState, useEffect, useMemo, useRef, memo } from 'react';
 import { Clock, Users, UtensilsCrossed, User, Timer } from 'lucide-react';
 import type { Language } from '../../i18n/translations';
 import { useTranslation } from '../../i18n/useTranslation';
@@ -90,12 +90,32 @@ export const DraggableTable = memo(function DraggableTable({
     top: `${position.y}%`,
     width: `${outerWPct}%`,
     height: `${outerHPct}%`,
+    // A layout row with a bad/tiny size percentage must still render as a
+    // legible, tappable tile instead of a clipped sliver.
+    minWidth: '3.5rem',
+    minHeight: '2.5rem',
     transform: 'translate(-50%, -50%)',
     zIndex: isDragging ? 50 : 1,
     // Disable transition while dragging so table tracks pointer without lag
     transition: isDragging ? 'none' : 'left 0.15s ease, top 0.15s ease, box-shadow 0.2s',
     touchAction: 'none',
   };
+
+  // Tiles below this footprint drop secondary text lines; the full details
+  // stay available in the table drawer on tap.
+  const outerRef = useRef<HTMLDivElement>(null);
+  const [compact, setCompact] = useState(false);
+  useEffect(() => {
+    const el = outerRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect;
+      if (!rect) return;
+      setCompact(rect.width < 76 || rect.height < 52);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   const theme = STATUS_THEME[table.status] || STATUS_THEME.free;
   // Ink adapts to the surface: dark on asset photos (white glow behind),
@@ -157,6 +177,7 @@ export const DraggableTable = memo(function DraggableTable({
 
   return (
     <div
+      ref={outerRef}
       style={style}
       className={`select-none ${isDragging ? 'opacity-70' : ''}`}
       {...(editMode && !isMeasureTarget && !isMeasureHighlighted ? dragHandlers : {})}
@@ -269,15 +290,21 @@ export const DraggableTable = memo(function DraggableTable({
             />
           ) : (
             <span
-              className={`text-sm font-bold truncate max-w-full ${ink.name}`}
+              className={`${compact ? 'text-[10px] leading-tight' : 'text-sm'} font-bold truncate max-w-full ${ink.name}`}
               onDoubleClick={() => editMode && setEditing(true)}
             >
               {table.resource.name}
             </span>
           )}
 
-          {/* Session info (occupied or paused) — compact layout */}
-          {session && !editMode && (() => {
+          {/* Session info (occupied or paused) — tiny tiles keep only the
+              running charge; everything else lives in the table drawer */}
+          {session && !editMode && compact && (
+            <div className={`text-[9px] font-semibold tabular-nums ${ink.money}`}>
+              {formatCurrency(charge)}
+            </div>
+          )}
+          {session && !editMode && !compact && (() => {
             const isPackage = session.billingMode === 'PACKAGE_COUNTDOWN' && session.autoEndAt;
             const remaining = isPackage ? formatRemaining(session.autoEndAt) : null;
             const lowTime = remaining && remaining.totalMinutes < 15;
@@ -325,7 +352,7 @@ export const DraggableTable = memo(function DraggableTable({
           })()}
 
           {/* Free indicator + hourly rate */}
-          {!session && !editMode && (
+          {!session && !editMode && !compact && (
             <div className={`text-xs tabular-nums ${ink.body}`}>
               {hourlyRate != null && hourlyRate > 0
                 ? `${hourlyRate} PLN/h`

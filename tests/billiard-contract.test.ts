@@ -474,7 +474,7 @@ describe('billiard desktop/backend contract', () => {
     const transfer = readSource('../src/renderer/components/billiard/TransferTableDialog.tsx');
 
     expect(floorPlan).toContain('data-billiard-canvas-viewport');
-    expect(floorPlan).toContain('h-[clamp(440px,67vh,780px)]');
+    expect(floorPlan).toContain('flex min-h-[440px] flex-1 items-center justify-center');
     expect(floorPlan).toContain('new ResizeObserver(updateSize)');
     expect(floorPlan).toContain('...fittedCanvasSize');
     expect(floorPlan).toContain('wheel={{ step: 0.08, disabled: editMode || viewLocked }}');

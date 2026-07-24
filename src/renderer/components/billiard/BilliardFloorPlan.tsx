@@ -937,7 +937,7 @@ function FloorPlanInner({ language, onPreflightPos, onPayInPos }: BilliardFloorP
   }
 
   return (
-    <div className="p-4 sm:p-6 space-y-4">
+    <div className="flex h-full min-h-0 flex-col gap-4 p-4 sm:p-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div>
@@ -1136,12 +1136,18 @@ function FloorPlanInner({ language, onPreflightPos, onPayInPos }: BilliardFloorP
         />
       )}
 
-      {/* Wheel/pan are intentionally scoped to this fixed interaction viewport. */}
+      {/* Wheel/pan are intentionally scoped to this fixed interaction viewport.
+          The outer box measures whatever height is left in the tab; the inner
+          viewport hugs the aspect-fitted canvas so no letterbox strips remain. */}
       <div
         ref={viewportRef}
-        data-billiard-canvas-viewport
-        className="relative h-[clamp(440px,67vh,780px)] min-h-[440px] overflow-hidden rounded-xl border border-slate-300 bg-slate-200"
+        className="relative flex min-h-[440px] flex-1 items-center justify-center"
       >
+        <div
+          data-billiard-canvas-viewport
+          className="relative max-h-full max-w-full overflow-hidden rounded-xl"
+          style={fittedCanvasSize}
+        >
         <TransformWrapper
           ref={transformRef}
           key={zoomKey}
@@ -1313,6 +1319,7 @@ function FloorPlanInner({ language, onPreflightPos, onPayInPos }: BilliardFloorP
             </div>
           </TransformComponent>
         </TransformWrapper>
+        </div>
       </div>
 
       {/* Edit context menu (edit mode — right-click) */}
