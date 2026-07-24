@@ -1,6 +1,21 @@
 export type FiscalOnCashSaleMode = 'always' | 'never' | 'ask';
 export type FiscalAction = 'prompt' | 'autoPrint' | 'skip';
 
+export function shouldPrintNonFiscalOrderCopy(input: {
+  hasCash: boolean;
+  hasBlik: boolean;
+  hasFiscalPrinter: boolean;
+  mode: FiscalOnCashSaleMode | undefined;
+}): boolean {
+  const needsCashSideDocument = input.hasCash || input.hasBlik;
+  if (!needsCashSideDocument) return false;
+
+  // In `always` mode the fiscal paragon is the customer document. Printing
+  // an additional order copy wastes paper and, on legacy POSNET-only
+  // installs, previously risked routing that "copy" into the fiscal driver.
+  return !(input.hasFiscalPrinter && input.mode === 'always');
+}
+
 export function resolveFiscalAction(input: {
   printOrderCopy: boolean;
   hasFiscalPrinter: boolean;

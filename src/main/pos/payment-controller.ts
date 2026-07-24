@@ -738,9 +738,14 @@ export class PaymentController {
    * Open cash drawer
    */
   async openCashDrawer(): Promise<boolean> {
-    const printer = await this.ensurePrinterReady(this.getPrinter(PrinterType.RECEIPT), PrinterType.RECEIPT);
+    let printer = await this.ensurePrinterReady(this.getPrinter(PrinterType.RECEIPT), PrinterType.RECEIPT);
     if (!printer || !printer.isConnected()) {
-      logger.warn('[Payment] No receipt printer connected, cannot open drawer');
+      // Drawer-only fallback is safe for POSNET and does not create fiscal
+      // turnover. Receipt printing itself remains strictly role-isolated.
+      printer = await this.ensurePrinterReady(this.getPrinter(PrinterType.FISCAL), PrinterType.FISCAL);
+    }
+    if (!printer || !printer.isConnected()) {
+      logger.warn('[Payment] No receipt or fiscal drawer route connected, cannot open drawer');
       return false;
     }
 

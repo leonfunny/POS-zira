@@ -1,5 +1,40 @@
 import { describe, expect, it } from 'vitest';
-import { resolveFiscalAction } from '../src/renderer/components/pos/payment-fiscal-prompt-mode';
+import {
+  resolveFiscalAction,
+  shouldPrintNonFiscalOrderCopy,
+} from '../src/renderer/components/pos/payment-fiscal-prompt-mode';
+
+describe('shouldPrintNonFiscalOrderCopy', () => {
+  it('uses exactly the fiscal paragon for CASH/BLIK when fiscal mode is always', () => {
+    expect(shouldPrintNonFiscalOrderCopy({
+      hasCash: true,
+      hasBlik: false,
+      hasFiscalPrinter: true,
+      mode: 'always',
+    })).toBe(false);
+    expect(shouldPrintNonFiscalOrderCopy({
+      hasCash: false,
+      hasBlik: true,
+      hasFiscalPrinter: true,
+      mode: 'always',
+    })).toBe(false);
+  });
+
+  it('keeps the thermal order-copy path for ask/never or no fiscal route', () => {
+    expect(shouldPrintNonFiscalOrderCopy({
+      hasCash: true,
+      hasBlik: false,
+      hasFiscalPrinter: true,
+      mode: 'ask',
+    })).toBe(true);
+    expect(shouldPrintNonFiscalOrderCopy({
+      hasCash: true,
+      hasBlik: false,
+      hasFiscalPrinter: false,
+      mode: 'always',
+    })).toBe(true);
+  });
+});
 
 describe('resolveFiscalAction', () => {
   it('skips all fiscal prompt/print work when no fiscal printer is configured', () => {

@@ -315,6 +315,40 @@ describe('ELZAB fiscal protocol routing', () => {
     expect(driver).toBe(mock.elzabInstances[0]);
   });
 
+  it('never exposes fiscal protocol drivers through the non-fiscal RECEIPT role', async () => {
+    const { HardwareModule } = await import('../src/main/modules/hardware.module');
+    const { PosnetDriver } = await import('../src/main/hardware/posnet/posnet-driver');
+    const { ThermalDriver } = await import('../src/main/hardware/thermal/thermal-driver');
+    const makeModule = () => new HardwareModule({ set: vi.fn(), getOptional: vi.fn() } as any);
+
+    const fiscalSlot = makeModule();
+    const fiscalPosnet = new PosnetDriver();
+    (fiscalSlot as any).printers = { [PrinterType.FISCAL]: fiscalPosnet };
+    expect(fiscalSlot.getPrinterForType(PrinterType.RECEIPT)).toBeNull();
+    expect(fiscalSlot.getPrinterForType(PrinterType.FISCAL)).toBe(fiscalPosnet);
+
+    const legacyReceiptSlot = makeModule();
+    const legacyPosnet = new PosnetDriver();
+    (legacyReceiptSlot as any).printers = { [PrinterType.RECEIPT]: legacyPosnet };
+    expect(legacyReceiptSlot.getPrinterForType(PrinterType.RECEIPT)).toBeNull();
+    expect(legacyReceiptSlot.getPrinterForType(PrinterType.FISCAL)).toBe(legacyPosnet);
+
+    const legacyDriver = makeModule();
+    const legacyRootPosnet = new PosnetDriver();
+    (legacyDriver as any).printerDriver = legacyRootPosnet;
+    expect(legacyDriver.getPrinterForType(PrinterType.RECEIPT)).toBeNull();
+    expect(legacyDriver.getPrinterForType(PrinterType.FISCAL)).toBe(legacyRootPosnet);
+
+    const splitRoles = makeModule();
+    const thermalReceipt = new ThermalDriver();
+    (splitRoles as any).printers = {
+      [PrinterType.RECEIPT]: thermalReceipt,
+      [PrinterType.FISCAL]: fiscalPosnet,
+    };
+    expect(splitRoles.getPrinterForType(PrinterType.RECEIPT)).toBe(thermalReceipt);
+    expect(splitRoles.getPrinterForType(PrinterType.FISCAL)).toBe(fiscalPosnet);
+  });
+
   it('treats an accepted ELZAB daily report with stale number confirmation as printed', async () => {
     const row = {
       id: 'elzab-1',

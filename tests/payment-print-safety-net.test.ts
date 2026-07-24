@@ -211,6 +211,32 @@ describe('PaymentController — sale completes despite print/drawer failure (G2)
     expect(sharedReceiptPrinter).not.toHaveBeenCalled();
   });
 
+  it('never uses the fiscal printer for a non-fiscal order copy', async () => {
+    const fiscalPrinter = makeFakePrinter({});
+    const getPrinter = vi.fn((type: string) => (
+      type === PrinterType.FISCAL ? fiscalPrinter as any : null
+    ));
+    const ctl = new PaymentController(getPrinter, () => true);
+
+    const result = await ctl.printReceiptAndOpenDrawer('order-1');
+
+    expect(result.receiptPrinted).toBe(false);
+    expect(fiscalPrinter.printReceipt).not.toHaveBeenCalled();
+  });
+
+  it('can open a POSNET-side drawer without sending a fiscal receipt', async () => {
+    const fiscalPrinter = makeFakePrinter({});
+    const getPrinter = vi.fn((type: string) => (
+      type === PrinterType.FISCAL ? fiscalPrinter as any : null
+    ));
+    const ctl = new PaymentController(getPrinter, () => true);
+
+    await expect(ctl.openCashDrawer()).resolves.toBe(true);
+
+    expect(fiscalPrinter.openDrawer).toHaveBeenCalledTimes(1);
+    expect(fiscalPrinter.printReceipt).not.toHaveBeenCalled();
+  });
+
   it('completeCardPayment returns success=true with receiptPrinted=false when print rejects', async () => {
     const printer = makeFakePrinter({ printRejects: true });
     const ctl = buildController(printer);

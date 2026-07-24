@@ -767,7 +767,18 @@ export class HardwareModule extends BaseModule {
   }
 
   getPrinterForType(printerType: PrinterType): PrinterDriver | null {
-    if (this.printers[printerType]) return this.printers[printerType]!;
+    const direct = this.printers[printerType] || null;
+    if (direct) {
+      // A POSNET/ELZAB printReceipt call is a real fiscal operation. Never
+      // expose either driver through a non-fiscal role, even when an old
+      // install stored POSNET in the RECEIPT slot.
+      if (printerType === PrinterType.FISCAL || (!(direct instanceof PosnetDriver) && !isElzabDriver(direct))) {
+        return direct;
+      }
+      logger.warn(
+        `[HardwareModule] Refusing fiscal protocol driver assigned to non-fiscal ${printerType} route`,
+      );
+    }
 
     // FISCAL fallback: only if RECEIPT slot holds a PosnetDriver (pre-migration compat)
     if (printerType === PrinterType.FISCAL && this.printers[PrinterType.RECEIPT]) {
@@ -775,19 +786,13 @@ export class HardwareModule extends BaseModule {
       if (receiptDriver instanceof PosnetDriver) return receiptDriver;
     }
 
-    // RECEIPT fallback: preserve old POSNET-only installs, but do not send
-    // generic receipts to ELZAB. ELZAB is a fiscal protocol path, not a
-    // replacement for a thermal receipt printer.
-    if (printerType === PrinterType.RECEIPT && this.printers[PrinterType.FISCAL]) {
-      const fiscalDriver = this.printers[PrinterType.FISCAL]!;
-      if (fiscalDriver instanceof PosnetDriver) return fiscalDriver;
-    }
-
     if (printerType === PrinterType.LABEL && this.labelPrinter) return this.labelPrinter;
     if ((printerType === PrinterType.RECEIPT || printerType === PrinterType.TICKET || printerType === PrinterType.KITCHEN) && this.receiptPrinter) {
-      return this.receiptPrinter;
+      if (!(this.receiptPrinter instanceof PosnetDriver) && !isElzabDriver(this.receiptPrinter)) {
+        return this.receiptPrinter;
+      }
     }
-    if (isElzabDriver(this.printerDriver)) {
+    if (this.printerDriver instanceof PosnetDriver || isElzabDriver(this.printerDriver)) {
       return printerType === PrinterType.FISCAL ? this.printerDriver : null;
     }
     return this.printerDriver;
