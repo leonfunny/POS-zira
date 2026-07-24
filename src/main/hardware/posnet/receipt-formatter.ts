@@ -1,4 +1,5 @@
 import { ReceiptData, ReceiptItem } from '../../../shared/types';
+import { toFiscalSafeText } from '../../../shared/fiscal-text';
 
 /**
  * VAT rate mapping for Posnet
@@ -115,8 +116,12 @@ export class ReceiptFormatter {
    * - Remove special characters that might cause issues
    */
   private sanitizeName(name: string, maxLength: number): string {
-    // Remove problematic characters
-    let sanitized = name
+    // POSNET frames are currently emitted as ASCII bytes. Fold every dynamic
+    // name before framing so Vietnamese/Polish text and typographic dashes
+    // cannot turn into control bytes or corrupt the command payload.
+    let sanitized = toFiscalSafeText(
+      name.replace(/[\u2013\u2014]/g, '-'),
+    )
       .replace(/[\x00-\x1F\x7F]/g, '') // Control characters
       .replace(/[\\\"]/g, '') // Escape chars
       .trim();
