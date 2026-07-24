@@ -645,6 +645,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       return () => ipcRenderer.removeListener(IPC_CHANNELS.POS_STATE_CHANGED, listener);
     },
     billiardCheckout: {
+      preflight: () => ipcRenderer.invoke('pos:billiard:preflight-handoff'),
       prepare: (input: any) => ipcRenderer.invoke('pos:billiard:prepare-handoff', input),
       recover: () => ipcRenderer.invoke('pos:billiard:recover-handoff'),
       markPaymentOpened: (checkoutId: string) => ipcRenderer.invoke('pos:billiard:mark-payment-opened', checkoutId),

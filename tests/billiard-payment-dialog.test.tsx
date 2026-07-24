@@ -8,7 +8,6 @@ const hookMocks = vi.hoisted(() => ({
   reconcileSession: vi.fn(),
   getConfig: vi.fn(),
   getPosState: vi.fn(),
-  hasFiscalPrinter: vi.fn(),
 }));
 
 vi.mock('../src/renderer/hooks/useBilliardData', () => ({
@@ -70,12 +69,6 @@ describe('PaymentDialog one-action POS handoff', () => {
         staffName: 'Owner',
       },
     });
-    hookMocks.hasFiscalPrinter.mockReset();
-    hookMocks.hasFiscalPrinter.mockResolvedValue({
-      success: true,
-      configured: true,
-      connected: true,
-    });
     (window as any).electronAPI = {
       getConfig: hookMocks.getConfig,
       billiard: {
@@ -83,9 +76,6 @@ describe('PaymentDialog one-action POS handoff', () => {
       },
       pos: {
         getState: hookMocks.getPosState,
-        payment: {
-          hasFiscalPrinter: hookMocks.hasFiscalPrinter,
-        },
       },
     };
   });
@@ -103,6 +93,7 @@ describe('PaymentDialog one-action POS handoff', () => {
     session: any,
     onPayInPos = vi.fn(async () => undefined),
     onOpenChange = vi.fn(),
+    onPreflightPos = vi.fn(async () => undefined),
   ) {
     await act(async () => {
       root = createRoot(container);
@@ -112,11 +103,12 @@ describe('PaymentDialog one-action POS handoff', () => {
           open
           onOpenChange={onOpenChange}
           language="vi"
+          onPreflightPos={onPreflightPos}
           onPayInPos={onPayInPos}
         />,
       );
     });
-    return { onPayInPos, onOpenChange };
+    return { onPayInPos, onOpenChange, onPreflightPos };
   }
 
   function primaryButton(): HTMLButtonElement {
@@ -129,7 +121,7 @@ describe('PaymentDialog one-action POS handoff', () => {
 
   it('ends an active session and hands its frozen checkout to POS from one click', async () => {
     hookMocks.endSession.mockResolvedValue(frozenSession);
-    const { onPayInPos, onOpenChange } = await renderDialog(activeSession);
+    const { onPayInPos, onOpenChange, onPreflightPos } = await renderDialog(activeSession);
 
     await act(async () => {
       primaryButton().click();
@@ -142,6 +134,8 @@ describe('PaymentDialog one-action POS handoff', () => {
     expect(hookMocks.getConfig.mock.invocationCallOrder[0])
       .toBeLessThan(hookMocks.endSession.mock.invocationCallOrder[0]);
     expect(hookMocks.getPosState.mock.invocationCallOrder[0])
+      .toBeLessThan(hookMocks.endSession.mock.invocationCallOrder[0]);
+    expect(onPreflightPos.mock.invocationCallOrder[0])
       .toBeLessThan(hookMocks.endSession.mock.invocationCallOrder[0]);
     expect(onPayInPos).toHaveBeenCalledOnce();
     expect(onPayInPos).toHaveBeenCalledWith({
@@ -197,19 +191,12 @@ describe('PaymentDialog one-action POS handoff', () => {
     expect(container.textContent).toContain('POS register is not ready');
   });
 
-  it('keeps the table running when real fiscal mode is enabled but the printer is offline', async () => {
-    hookMocks.getConfig.mockResolvedValue({
-      salonId: 'salon-1',
-      machineId: 'register-1',
-      authUser: { id: 'owner-1', salonId: 'salon-1' },
-      allowRealFiscalPrint: true,
+  it('keeps the table running when main-process payment safety preflight fails', async () => {
+    const onPreflightPos = vi.fn(async () => {
+      throw new Error('The fiscal printer is not ready. Connect it before ending this Billiard session.');
     });
-    hookMocks.hasFiscalPrinter.mockResolvedValue({
-      success: true,
-      configured: true,
-      connected: false,
-    });
-    const { onPayInPos } = await renderDialog(activeSession);
+    const onPayInPos = vi.fn(async () => undefined);
+    await renderDialog(activeSession, onPayInPos, vi.fn(), onPreflightPos);
 
     await act(async () => {
       primaryButton().click();
@@ -218,7 +205,7 @@ describe('PaymentDialog one-action POS handoff', () => {
       await Promise.resolve();
     });
 
-    expect(hookMocks.hasFiscalPrinter).toHaveBeenCalledOnce();
+    expect(onPreflightPos).toHaveBeenCalledOnce();
     expect(hookMocks.endSession).not.toHaveBeenCalled();
     expect(onPayInPos).not.toHaveBeenCalled();
     expect(container.textContent).toContain('fiscal printer is not ready');
@@ -375,7 +362,8 @@ describe('PaymentDialog one-action POS handoff', () => {
       resolveHandoff = resolve;
     }));
     const onOpenChange = vi.fn();
-    await renderDialog(activeSession, onPayInPos, onOpenChange);
+    const onPreflightPos = vi.fn(async () => undefined);
+    await renderDialog(activeSession, onPayInPos, onOpenChange, onPreflightPos);
     const button = primaryButton();
 
     await act(async () => {
@@ -400,6 +388,7 @@ describe('PaymentDialog one-action POS handoff', () => {
           open
           onOpenChange={onOpenChange}
           language="vi"
+          onPreflightPos={onPreflightPos}
           onPayInPos={onPayInPos}
         />,
       );

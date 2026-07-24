@@ -235,10 +235,11 @@ function normalizeFloorPlanList(rawFloorPlans: any, rawOverview: any): FloorPlan
 
 interface BilliardFloorPlanProps {
   language: Language;
+  onPreflightPos?: () => Promise<void>;
   onPayInPos?: (input: { posCheckout: any; tableName?: string | null }) => Promise<void>;
 }
 
-function FloorPlanInner({ language, onPayInPos }: BilliardFloorPlanProps) {
+function FloorPlanInner({ language, onPreflightPos, onPayInPos }: BilliardFloorPlanProps) {
   const { t } = useTranslation(language);
   const toast = useToast();
   const { user } = useAuth();
@@ -1544,6 +1545,7 @@ function FloorPlanInner({ language, onPayInPos }: BilliardFloorPlanProps) {
           onOpenChange={(v) => { if (!v) setPaymentSession(null); }}
           language={language}
           onRefetch={refetchOverview}
+          onPreflightPos={onPreflightPos}
           onPayInPos={onPayInPos}
         />
       )}
@@ -1585,10 +1587,14 @@ function FloorPlanInner({ language, onPayInPos }: BilliardFloorPlanProps) {
 
 // ─── Exported component with ToastProvider wrapper ────────────────────
 
-export default function BilliardFloorPlan({ language, onPayInPos }: BilliardFloorPlanProps) {
+export default function BilliardFloorPlan({ language, onPreflightPos, onPayInPos }: BilliardFloorPlanProps) {
   return (
     <ToastProvider>
-      <FloorPlanInner language={language} onPayInPos={onPayInPos} />
+      <FloorPlanInner
+        language={language}
+        onPreflightPos={onPreflightPos}
+        onPayInPos={onPayInPos}
+      />
     </ToastProvider>
   );
 }

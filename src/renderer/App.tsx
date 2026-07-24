@@ -170,6 +170,16 @@ export default function App() {
     setActiveTab('pos');
   }, [visibleTabs]);
 
+  const handlePreflightBilliardInPos = useCallback(async () => {
+    if (!visibleTabs.includes('pos')) {
+      throw new Error('Enable the POS module on this register before ending the Billiard session.');
+    }
+    const result = await window.electronAPI.pos.billiardCheckout.preflight();
+    if (!result?.success) {
+      throw new Error(result?.error || 'POS cannot safely accept this Billiard payment yet.');
+    }
+  }, [visibleTabs]);
+
   // Crash/login recovery is scoped by the authenticated user and configured
   // register. Main will only return an intent after it has activated the exact
   // frozen cart (or verified that its local order is already committed).
@@ -624,6 +634,7 @@ export default function App() {
               {activeTab === 'billiard' && isTabAvailable('billiard') && (
                 <BilliardFloorPlan
                   language={(config?.language as Language) || 'en'}
+                  onPreflightPos={handlePreflightBilliardInPos}
                   onPayInPos={handlePayBilliardInPos}
                 />
               )}

@@ -53,6 +53,29 @@ function state(): PosState {
 }
 
 describe('Billiard interrupted-cart crash ownership', () => {
+  it('registers a durable main-process handoff preflight before the server end path', () => {
+    const mainSource = readFileSync(
+      new URL('../src/main/modules/pos.module.ts', import.meta.url),
+      'utf8',
+    );
+    const preloadSource = readFileSync(
+      new URL('../src/preload/preload.ts', import.meta.url),
+      'utf8',
+    );
+    const paymentSource = readFileSync(
+      new URL('../src/renderer/components/billiard/PaymentDialog.tsx', import.meta.url),
+      'utf8',
+    );
+
+    expect(mainSource).toContain("ipcMain.handle('pos:billiard:preflight-handoff'");
+    expect(mainSource).toContain('assertLocalOpenShiftMatchesSession(database, this.posStore)');
+    expect(mainSource).toContain('this.assertNewBilliardHandoffReadiness(scope)');
+    expect(mainSource).toContain('const flush = await database.saveCoalesced()');
+    expect(preloadSource).toContain("preflight: () => ipcRenderer.invoke('pos:billiard:preflight-handoff')");
+    expect(paymentSource.indexOf('await onPreflightPos()'))
+      .toBeLessThan(paymentSource.indexOf('endedSnapshot ?? await ensureEnded()'));
+  });
+
   it('never classifies a persisted tender boundary as a resumable payment', () => {
     expect(requiresBilliardTenderReconciliation('POS_TENDER_COMMITTING')).toBe(true);
     expect(requiresBilliardTenderReconciliation('POS_TENDER_UNCERTAIN')).toBe(true);

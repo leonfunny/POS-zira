@@ -15,6 +15,18 @@ export interface TenderFiscalCompatibilityOptions {
   checkoutDiscountGrosze?: number;
 }
 
+export function requiresBilliardFiscalPrinterReadiness(input: {
+  allowRealFiscalPrint?: boolean;
+  fiscalOnCashSale?: string;
+  localFiscalEnabled?: boolean;
+  detectedFiscalConfigured?: boolean;
+}): boolean {
+  return input.allowRealFiscalPrint === true
+    || input.fiscalOnCashSale === 'always'
+    || input.localFiscalEnabled === true
+    || input.detectedFiscalConfigured === true;
+}
+
 function allocatedBilliardDiscount(line: TenderFiscalLine): number {
   let jsonDiscount = 0;
   if (line.billiard_json) {

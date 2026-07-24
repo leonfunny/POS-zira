@@ -22,6 +22,7 @@ interface PaymentDialogProps {
   onOpenChange: (open: boolean) => void;
   language: Language;
   onRefetch?: () => Promise<void>;
+  onPreflightPos?: () => Promise<void>;
   onPayInPos?: (input: { posCheckout: any; tableName?: string | null }) => Promise<void>;
 }
 
@@ -55,7 +56,15 @@ function trapDialogFocus(event: KeyboardEvent, dialog: HTMLElement | null) {
   }
 }
 
-export function PaymentDialog({ session, open, onOpenChange, language, onRefetch, onPayInPos }: PaymentDialogProps) {
+export function PaymentDialog({
+  session,
+  open,
+  onOpenChange,
+  language,
+  onRefetch,
+  onPreflightPos,
+  onPayInPos,
+}: PaymentDialogProps) {
   const { t } = useTranslation(language);
   const toast = useToast();
   const endSession = useEndSession(onRefetch);
@@ -201,16 +210,14 @@ export function PaymentDialog({ session, open, onOpenChange, language, onRefetch
     }
 
     const posSession = posState?.session;
-    if (!posSession?.isOpen || !posSession?.shiftId || !posSession?.staffId) {
+    if (!posSession?.isOpen || !posSession?.shiftId || !posSession?.staffId || !posSession?.staffName) {
       throw new Error('Open a POS shift before ending this Billiard session. The table is still running.');
     }
 
-    if (config?.allowRealFiscalPrint === true) {
-      const fiscal = await window.electronAPI.pos.payment.hasFiscalPrinter();
-      if (!fiscal?.success || !fiscal.configured || !fiscal.connected) {
-        throw new Error('The fiscal printer is not ready. Connect it before ending this Billiard session.');
-      }
+    if (!onPreflightPos) {
+      throw new Error('POS payment safety preflight is unavailable. The table is still running.');
     }
+    await onPreflightPos();
   };
 
   const handlePrimaryAction = async () => {

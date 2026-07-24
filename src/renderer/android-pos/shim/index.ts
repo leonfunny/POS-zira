@@ -101,6 +101,7 @@ export function installShim(options: InstallShimOptions = {}): InstalledShim {
     },
     onStateChanged: (cb: (state: PosState) => void): (() => void) => posStore.onStateChanged(cb),
     billiardCheckout: {
+      preflight: async () => ({ success: false, error: 'Billiard checkout handoff requires the desktop POS.' }),
       prepare: async () => ({ success: false, error: 'Billiard checkout handoff requires the desktop POS.' }),
       recover: async () => ({ success: true, intent: null }),
       markPaymentOpened: async () => ({ success: false, error: 'desktop-only' }),

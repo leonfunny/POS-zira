@@ -20,6 +20,7 @@ import { PaymentController, FiscalReceiptJournalInput, ReceiptPrintJournalInput 
 import {
   assertTenderFiscalCompatibilityForProtocol,
   hasTenderFiscalDiscount,
+  requiresBilliardFiscalPrinterReadiness,
   type TenderFiscalLine,
 } from '../pos/fiscal-tender-preflight';
 import { buildBackendOrderItem, getLineSaleQuantity, getLineSaleUnit, getLineSellBy, getLineTotalGrosze, shouldDecrementStockAtCheckout } from '../pos/order-line-contract';
@@ -1733,6 +1734,86 @@ export class PosModule extends BaseModule {
     return { restored: true, restoredHoldId: record.interruptedHoldId };
   }
 
+  private assertNewBilliardHandoffReadiness(scope: PosSnapshotScope) {
+    if (!this.posStore) throw new Error('POS is not ready.');
+    if (this.holdRecallInFlight) {
+      throw new Error('A held cart recall is still being saved. Wait before ending the Billiard session.');
+    }
+
+    const unresolved = billiardPosHandoffRepo.getRecoverable(scope);
+    const registerUncertain = billiardPosHandoffRepo.getUncertainForOwner(scope);
+    if (unresolved || registerUncertain) {
+      throw new Error('Another Billiard checkout is still unresolved on this register.');
+    }
+
+    const current = this.posStore.getState();
+    if (current.checkoutDraft.kitchenSelfOrder?.pickupOrderId) {
+      throw new Error('Finish or release the active kitchen pickup order before paying a Billiard session.');
+    }
+    if (current.checkoutDraft.billiard) {
+      throw new Error('Another frozen Billiard checkout is already active.');
+    }
+
+    const previousRestored = current.checkoutDraft.restoredInterruption;
+    const previousProtectedHold = previousRestored
+      ? holdOrderRepo.get(previousRestored.holdId)
+      : null;
+    if (previousRestored && (
+      !previousProtectedHold
+      || previousProtectedHold.payload?.protected !== true
+      || previousProtectedHold.payload?.restoreState !== 'ACTIVE_CART_BACKUP'
+      || !isValidRestoredCartCheckoutJournal(previousProtectedHold.payload?.restoredCheckout)
+      || !sameRestoredCartCheckoutIdentity(previousRestored, previousProtectedHold.payload.restoredCheckout)
+      || previousProtectedHold.payload.restoredCheckout.state !== 'READY'
+      || this.frozenRestoredCartHolds.has(previousRestored.holdId)
+    )) {
+      throw new Error('The current restored cart is not in a safe durable state for another Billiard handoff.');
+    }
+
+    if (current.cart.items.length > 0) {
+      withoutRestoredInterruptionMarker(capturePosCheckoutSnapshot(
+        current,
+        scope,
+        String(getConfig().posMode || 'retail'),
+      ));
+    }
+    return { current, previousRestored, previousProtectedHold };
+  }
+
+  private async preflightBilliardHandoff(): Promise<void> {
+    const config = getConfig();
+    const scope = currentPosSnapshotScope(config);
+    const authContext = this.capturePosAuthContext(scope);
+
+    assertLocalOpenShiftMatchesSession(database, this.posStore);
+    this.assertNewBilliardHandoffReadiness(scope);
+
+    const fiscal = await (this.paymentController?.hasFiscalPrinter?.()
+      ?? Promise.resolve({ configured: false, connected: false }));
+    const localFiscalEnabled = config.printers?.FISCAL?.enabled === true;
+    const fiscalRequired = requiresBilliardFiscalPrinterReadiness({
+      allowRealFiscalPrint: config.allowRealFiscalPrint,
+      fiscalOnCashSale: config.fiscalOnCashSale,
+      localFiscalEnabled,
+      detectedFiscalConfigured: fiscal.configured,
+    });
+    if (fiscalRequired && (!fiscal.configured || !fiscal.connected)) {
+      throw new Error('The fiscal printer is not ready. Connect it before ending this Billiard session.');
+    }
+
+    // Force a no-op durability barrier while the table is still running.
+    // If sql.js cannot atomically persist the current cart/shift state, the
+    // server session must not be ended.
+    database.markDirty();
+    const flush = await database.saveCoalesced();
+    if (!flush.success) {
+      throw new Error(`POS safety journal is not durable: ${flush.error || 'database flush failed'}`);
+    }
+    if (!this.isPosAuthContextCurrent(authContext)) {
+      throw new Error('POS user changed while Billiard payment readiness was being checked.');
+    }
+  }
+
   private async prepareBilliardHandoff(input: any): Promise<any> {
     const bundle = normalizeBilliardPosCheckout(input?.posCheckout);
     const existingFlight = this.billiardHandoffInFlight.get(bundle.checkoutId);
@@ -1817,37 +1898,12 @@ export class PosModule extends BaseModule {
         return { success: true, intent: this.billiardIntent(existing, true) };
       }
 
-      const unresolved = billiardPosHandoffRepo.getRecoverable(scope);
-      // Ambiguous money ownership is register-wide. An OWNER must not be able
-      // to hide a STAFF/MANAGER uncertain tender by opening a newer checkout;
-      // pre-tender carts remain user-private through getRecoverable(scope).
-      const registerUncertain = billiardPosHandoffRepo.getUncertainForOwner(scope);
-      if (unresolved || registerUncertain) {
-        throw new Error('Another Billiard checkout is still unresolved on this register.');
-      }
-
-      const current = this.posStore.getState();
-      if (current.checkoutDraft.kitchenSelfOrder?.pickupOrderId) {
-        throw new Error('Finish or release the active kitchen pickup order before paying a Billiard session.');
-      }
-      if (current.checkoutDraft.billiard) {
-        throw new Error('Another frozen Billiard checkout is already active.');
-      }
-      const previousRestored = current.checkoutDraft.restoredInterruption;
-      const previousProtectedHold = previousRestored
-        ? holdOrderRepo.get(previousRestored.holdId)
-        : null;
-      if (previousRestored && (
-        !previousProtectedHold
-        || previousProtectedHold.payload?.protected !== true
-        || previousProtectedHold.payload?.restoreState !== 'ACTIVE_CART_BACKUP'
-        || !isValidRestoredCartCheckoutJournal(previousProtectedHold.payload?.restoredCheckout)
-        || !sameRestoredCartCheckoutIdentity(previousRestored, previousProtectedHold.payload.restoredCheckout)
-        || previousProtectedHold.payload.restoredCheckout.state !== 'READY'
-        || this.frozenRestoredCartHolds.has(previousRestored.holdId)
-      )) {
-        throw new Error('The current restored cart is not in a safe durable state for another Billiard handoff.');
-      }
+      assertLocalOpenShiftMatchesSession(database, this.posStore);
+      const {
+        current,
+        previousRestored,
+        previousProtectedHold,
+      } = this.assertNewBilliardHandoffReadiness(scope);
 
       const orderId = randomUUID();
       const interruptedHoldId = current.cart.items.length > 0
@@ -2066,6 +2122,14 @@ export class PosModule extends BaseModule {
       const queued = this.restoredCartDispatchQueue.then(execute, execute);
       this.restoredCartDispatchQueue = queued.then(() => undefined, () => undefined);
       return queued;
+    });
+    ipcMain.handle('pos:billiard:preflight-handoff', async () => {
+      try {
+        await this.preflightBilliardHandoff();
+        return { success: true };
+      } catch (error: any) {
+        return { success: false, error: error?.message || String(error) };
+      }
     });
     ipcMain.handle('pos:billiard:prepare-handoff', async (_e, input: any) => {
       try { return await this.prepareBilliardHandoff(input); }

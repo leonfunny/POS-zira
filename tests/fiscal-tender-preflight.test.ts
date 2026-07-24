@@ -3,9 +3,34 @@ import { describe, expect, it } from 'vitest';
 import {
   assertTenderFiscalCompatibilityForProtocol,
   hasTenderFiscalDiscount,
+  requiresBilliardFiscalPrinterReadiness,
 } from '../src/main/pos/fiscal-tender-preflight';
 
 describe('protected tender fiscal preflight', () => {
+  it('requires readiness for an enabled or detected POSNET route even when the ELZAB kill switch is off', () => {
+    expect(requiresBilliardFiscalPrinterReadiness({
+      allowRealFiscalPrint: false,
+      fiscalOnCashSale: 'ask',
+      localFiscalEnabled: true,
+      detectedFiscalConfigured: false,
+    })).toBe(true);
+    expect(requiresBilliardFiscalPrinterReadiness({
+      allowRealFiscalPrint: false,
+      fiscalOnCashSale: 'ask',
+      localFiscalEnabled: false,
+      detectedFiscalConfigured: true,
+    })).toBe(true);
+  });
+
+  it('allows non-fiscal test checkout only when no fiscal route is expected', () => {
+    expect(requiresBilliardFiscalPrinterReadiness({
+      allowRealFiscalPrint: false,
+      fiscalOnCashSale: 'ask',
+      localFiscalEnabled: false,
+      detectedFiscalConfigured: false,
+    })).toBe(false);
+  });
+
   it('uses the checkout-level discount for restored carts on ELZAB', () => {
     const lines = [{ vatRate: 23 }];
     expect(hasTenderFiscalDiscount(lines, { checkoutDiscountGrosze: 100 })).toBe(true);
