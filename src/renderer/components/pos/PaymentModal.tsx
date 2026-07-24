@@ -134,6 +134,7 @@ export default function PaymentModal({
   const [paymentPreflightStatus, setPaymentPreflightStatus] = useState<'checking' | 'ready' | 'blocked'>(
     protectedTender ? 'ready' : 'checking',
   );
+  const [paymentPreflightToken, setPaymentPreflightToken] = useState<string | null>(null);
   const [fiscalPrompt, setFiscalPrompt] = useState<{ orderId: string } | null>(null);
   const [fiscalBusy, setFiscalBusy] = useState(false);
   const [receiptRecovery, setReceiptRecovery] = useState<ReceiptRecovery | null>(null);
@@ -248,10 +249,11 @@ export default function PaymentModal({
     }
     let cancelled = false;
     setPaymentPreflightStatus('checking');
-    window.electronAPI.pos.payment.preflight()
-      .then((result: { success?: boolean; error?: string }) => {
+    window.electronAPI.pos.payment.preflight(orderAttemptIdRef.current)
+      .then((result: { success?: boolean; token?: string; error?: string }) => {
         if (cancelled) return;
         if (result?.success) {
+          setPaymentPreflightToken(result.token || null);
           setPaymentPreflightStatus('ready');
           return;
         }
@@ -569,6 +571,7 @@ export default function PaymentModal({
       billiard_origin_json: checkoutDraft?.billiard
         ? JSON.stringify(checkoutDraft.billiard.origin)
         : null,
+      ...(paymentPreflightToken ? { payment_preflight_token: paymentPreflightToken } : {}),
     };
 
     const items = cart.items.map((item) => ({
@@ -877,13 +880,6 @@ export default function PaymentModal({
         return;
       }
 
-      if (!protectedTender) {
-        const preflight = await window.electronAPI.pos.payment.preflight();
-        if (!preflight?.success) {
-          throw new Error(preflight?.error || 'POS payment preflight failed.');
-        }
-      }
-
       if (protectedTender && !tenderBoundaryCrossedRef.current) {
         const boundary = checkoutDraft?.billiard
           ? await window.electronAPI.pos.billiardCheckout.beginTender(checkoutDraft.billiard.handoffId)
@@ -949,7 +945,7 @@ export default function PaymentModal({
       setSaving(false);
       paymentCompleteInFlightRef.current = false;
     }
-  }, [cashAmountGrosze, checkoutDraft, customerNipForOrder, customerNipValid, fiscalPrompt, grandTotal, method, onTenderOutcomeUncertain, paymentPreflightStatus, protectedTender, receiptRecovery, receiptRetrying, saving, shiftId, splitMode, staffId, staffName, t, tOr, tenders]);
+  }, [cashAmountGrosze, checkoutDraft, customerNipForOrder, customerNipValid, fiscalPrompt, grandTotal, method, onTenderOutcomeUncertain, paymentPreflightStatus, paymentPreflightToken, protectedTender, receiptRecovery, receiptRetrying, saving, shiftId, splitMode, staffId, staffName, t, tOr, tenders]);
 
   const handleComplete = useCallback(() => {
     void completePayment();

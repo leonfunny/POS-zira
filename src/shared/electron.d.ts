@@ -794,7 +794,7 @@ interface ElectronAPI {
     seedDemo: () => Promise<{ success: boolean }>;
     onStateChanged: (callback: (state: any) => void) => () => void;
     billiardCheckout: {
-      preflight: () => Promise<{ success: boolean; error?: string }>;
+      preflight: (orderId: string) => Promise<{ success: boolean; token?: string; expiresAt?: number; error?: string }>;
       prepare: (input: { posCheckout: any; tableName?: string | null }) => Promise<{ success: boolean; intent?: any; paymentCommitted?: boolean; durabilityError?: string; error?: string }>;
       recover: () => Promise<{ success: boolean; intent?: any; restoredCartReconciliation?: any; paymentCommitted?: boolean; durabilityError?: string; error?: string }>;
       markPaymentOpened: (checkoutId: string) => Promise<{ success: boolean; error?: string }>;

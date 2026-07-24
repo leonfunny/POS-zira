@@ -442,6 +442,7 @@ function moneyGroszeToPln(grosze: number): number {
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const POS_PAYMENT_PREFLIGHT_TTL_MS = 15 * 60 * 1000;
 
 function positiveGrosze(value: unknown): number {
   const amount = Math.round(Number(value) || 0);
@@ -620,6 +621,12 @@ export class PosModule extends BaseModule {
   private serverShiftMismatchError: string | null = null;
   private shiftVerificationGeneration = 0;
   private shiftVerificationInFlight: Promise<void> | null = null;
+  private ordinaryPaymentPreflights = new Map<string, {
+    orderId: string;
+    shiftId: string;
+    authContext: PosAuthContext;
+    expiresAt: number;
+  }>();
 
   constructor(private container: ServiceContainer) {
     super();
@@ -681,19 +688,86 @@ export class PosModule extends BaseModule {
     await this.awaitServerShiftConsistencyForPayment();
   }
 
-  private async preflightOrdinaryPosPayment(): Promise<void> {
+  private pruneOrdinaryPaymentPreflights(now = Date.now()): void {
+    for (const [token, entry] of this.ordinaryPaymentPreflights) {
+      if (entry.expiresAt <= now) this.ordinaryPaymentPreflights.delete(token);
+    }
+    while (this.ordinaryPaymentPreflights.size > 50) {
+      const oldest = this.ordinaryPaymentPreflights.keys().next().value;
+      if (!oldest) break;
+      this.ordinaryPaymentPreflights.delete(oldest);
+    }
+  }
+
+  private async prepareOrdinaryPosPayment(orderId: string): Promise<{ token: string; expiresAt: number }> {
+    const normalizedOrderId = String(orderId || '').trim();
+    if (!UUID_RE.test(normalizedOrderId)) {
+      throw new Error('A stable POS order ID is required before payment preflight.');
+    }
+    const authContext = this.capturePosAuthContext();
     const openShift = assertLocalOpenShiftMatchesSession(database, this.posStore);
     await this.refreshServerShiftConsistencyForPayment(openShift.id);
+    if (!this.isPosAuthContextCurrent(authContext)) {
+      throw new Error('POS user changed while payment safety was being verified.');
+    }
+    const verifiedShift = assertLocalOpenShiftMatchesSession(database, this.posStore);
+    if (verifiedShift.id !== openShift.id) {
+      throw new Error('The POS shift changed while payment safety was being verified.');
+    }
+
+    const token = randomUUID();
+    const expiresAt = Date.now() + POS_PAYMENT_PREFLIGHT_TTL_MS;
+    this.pruneOrdinaryPaymentPreflights();
+    this.ordinaryPaymentPreflights.set(token, {
+      orderId: normalizedOrderId,
+      shiftId: verifiedShift.id,
+      authContext,
+      expiresAt,
+    });
+    return { token, expiresAt };
+  }
+
+  private assertOrdinaryPosPaymentPreflight(
+    token: string,
+    orderId: string,
+    authContext: PosAuthContext,
+  ): void {
+    this.pruneOrdinaryPaymentPreflights();
+    const entry = this.ordinaryPaymentPreflights.get(String(token || '').trim());
+    if (!entry) {
+      throw new Error('POS payment preflight is missing or expired. Reopen payment before collecting money.');
+    }
+    if (entry.orderId !== String(orderId || '').trim()) {
+      throw new Error('POS payment preflight belongs to a different order.');
+    }
+    if (
+      entry.authContext.epoch !== authContext.epoch
+      || entry.authContext.scope.salonId !== authContext.scope.salonId
+      || entry.authContext.scope.userId !== authContext.scope.userId
+      || entry.authContext.scope.registerId !== authContext.scope.registerId
+      || !this.isPosAuthContextCurrent(entry.authContext)
+    ) {
+      throw new Error('POS user changed after payment preflight. Reopen payment.');
+    }
+    const openShift = assertLocalOpenShiftMatchesSession(database, this.posStore);
+    if (openShift.id !== entry.shiftId) {
+      throw new Error('The POS shift changed after payment preflight. Reopen payment.');
+    }
+    this.assertServerShiftConsistentForPayment();
   }
 
   private invalidateShiftVerification(): void {
     this.shiftVerificationGeneration += 1;
     this.shiftVerificationInFlight = null;
+    this.ordinaryPaymentPreflights.clear();
   }
 
   private setServerShiftMismatch(error: string | null): void {
     this.serverShiftMismatchError = error;
-    if (error) logger.error(`[PosModule] Payment blocked by verified shift mismatch: ${error}`);
+    if (error) {
+      this.ordinaryPaymentPreflights.clear();
+      logger.error(`[PosModule] Payment blocked by verified shift mismatch: ${error}`);
+    }
   }
 
   /** Must match PaymentController's local-first fiscal route selection. */
@@ -4951,6 +5025,8 @@ export class PosModule extends BaseModule {
         const normalizedSource = String(normalizedOrder.source || 'POS').trim().toUpperCase() || 'POS';
         normalizedOrder.source = normalizedSource;
         const requiresRegisterShift = normalizedSource === 'POS' || normalizedSource === 'KITCHEN_SELF_ORDER';
+        const ordinaryPaymentPreflightToken = String(normalizedOrder.payment_preflight_token || '').trim();
+        delete normalizedOrder.payment_preflight_token;
         const normalizedItems = (items || []).map((item: any) => {
           const product = item.variant_id ? productRepo.getById(item.variant_id) : null;
           const sell_by = getLineSellBy({
@@ -4990,10 +5066,11 @@ export class PosModule extends BaseModule {
           && !restoredContext
           && requiresRegisterShift
         ) {
-          await this.preflightOrdinaryPosPayment();
-          if (!orderAuthContext || !this.isPosAuthContextCurrent(orderAuthContext)) {
-            throw new Error('POS user changed while payment safety was being verified. No order was created.');
-          }
+          this.assertOrdinaryPosPaymentPreflight(
+            ordinaryPaymentPreflightToken,
+            String(normalizedOrder.id || ''),
+            orderAuthContext,
+          );
         }
         if (billiardRecord || restoredContext) {
           assertProtectedPosPaymentMethods(normalizedOrder);
@@ -6055,10 +6132,10 @@ export class PosModule extends BaseModule {
       return { success: true, ...status };
     });
 
-    ipcMain.handle('pos:payment:preflight', async () => {
+    ipcMain.handle('pos:payment:preflight', async (_e, orderId: string) => {
       try {
-        await this.preflightOrdinaryPosPayment();
-        return { success: true };
+        const prepared = await this.prepareOrdinaryPosPayment(orderId);
+        return { success: true, ...prepared };
       } catch (e: any) {
         return { success: false, error: e?.message ?? String(e) };
       }
