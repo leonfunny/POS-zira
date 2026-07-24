@@ -219,7 +219,7 @@ const TAB = 0x09;
 export type PosnetConnectionState = 'disconnected' | 'physical_present' | 'protocol_ready';
 
 export interface PosnetDiagnosticCode {
-  code: 'PORT_NOT_FOUND' | 'PORT_BUSY' | 'DEVICE_DETECTED_NO_PROTOCOL_RESPONSE' | 'WRONG_BAUD_OR_MODE' | 'COMMAND_REJECTED' | 'PRINT_OK' | 'ACCESS_DENIED' | 'REAL_FISCAL_PRINT_DISABLED' | 'FISCAL_ATTEMPT_RETRY_BLOCKED' | 'POSNET_THERMAL_PROTOCOL_UNSUPPORTED';
+  code: 'PORT_NOT_FOUND' | 'PORT_BUSY' | 'DEVICE_DETECTED_NO_PROTOCOL_RESPONSE' | 'WRONG_BAUD_OR_MODE' | 'COMMAND_REJECTED' | 'PRINT_OK' | 'ACCESS_DENIED' | 'REAL_FISCAL_PRINT_DISABLED' | 'FISCAL_ATTEMPT_RETRY_BLOCKED' | 'FISCAL_JOURNAL_UNAVAILABLE' | 'POSNET_THERMAL_PROTOCOL_UNSUPPORTED';
   detail?: string;
 }
 
@@ -574,6 +574,11 @@ export class PosnetDriver {
     const { frames } = buildPosnetFiscalFrames(data);
 
     const attempt = this.createReceiptAttempt(data);
+    if (!attempt?.id) {
+      const detail = 'POSNET fiscal attempt journal could not create a durable pending record. No printer command was sent.';
+      this.lastDiagnostic = { code: 'FISCAL_JOURNAL_UNAVAILABLE', detail };
+      throw new Error(`FISCAL_JOURNAL_UNAVAILABLE: ${detail}`);
+    }
 
     if (!this.realFiscalPrintEnabled()) {
       const detail = 'Real POSNET fiscal receipt is disabled. Enable allowRealFiscalPrint only during controlled production go-live.';

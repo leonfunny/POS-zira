@@ -159,7 +159,20 @@ describe('PosnetDriver port mutex integration', () => {
   });
 
   it('printReceipt() uses stored line total for decimal weighted lines', async () => {
+    const fiscalJournal = {
+      findBlockingAttempt: vi.fn(() => null),
+      findReconcilableAttempt: vi.fn(),
+      resolveReconcilable: vi.fn(),
+      getNextAttemptNo: vi.fn(() => 1),
+      createPending: vi.fn(() => ({ id: 'attempt-weighted-1' })),
+      markSent: vi.fn(),
+      markSuccess: vi.fn(),
+      markFailed: vi.fn(),
+      markUnknown: vi.fn(),
+      markBlocked: vi.fn(),
+    };
     const driver = new PosnetDriver('COM6', 9600, 'POSNET', {
+      fiscalJournal: fiscalJournal as any,
       isRealFiscalPrintEnabled: () => true,
     });
     (driver as any).connectionState = 'protocol_ready';
@@ -187,6 +200,8 @@ describe('PosnetDriver port mutex integration', () => {
     expect(frames).toContainEqual(['trline', 'naRieng cu', 'vt2', 'pr8000', 'il0.238', 'wa1904']);
     expect(frames).toContainEqual(['trpayment', 'ty2', 'wa1904']);
     expect(frames).toContainEqual(['trend', 'to1904']);
+    expect(fiscalJournal.markSent).toHaveBeenCalledWith('attempt-weighted-1');
+    expect(fiscalJournal.markSuccess).toHaveBeenCalledWith('attempt-weighted-1', { responses: 'ok' });
   });
 
   it('blocks a real POSNET receipt before SENT or serial I/O when the production gate is off', async () => {
