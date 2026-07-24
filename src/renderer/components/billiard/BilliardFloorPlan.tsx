@@ -1139,7 +1139,7 @@ function FloorPlanInner({ language, onPayInPos }: BilliardFloorPlanProps) {
       <div
         ref={viewportRef}
         data-billiard-canvas-viewport
-        className="relative h-[clamp(440px,62vh,720px)] min-h-[440px] overflow-hidden rounded-xl border border-slate-300 bg-slate-200"
+        className="relative h-[clamp(440px,67vh,780px)] min-h-[440px] overflow-hidden rounded-xl border border-slate-300 bg-slate-200"
       >
         <TransformWrapper
           ref={transformRef}

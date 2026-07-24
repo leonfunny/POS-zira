@@ -180,6 +180,8 @@ describe('Billiard interrupted-cart crash ownership', () => {
     );
     const appSource = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');
     expect(layoutSource).toContain('onRestoredCartTenderOutcomeUncertain');
+    expect(layoutSource).toContain('Billiard total locked · ready for payment');
+    expect(layoutSource).not.toContain('Frozen checkout ready');
     expect(appSource).toContain('setRestoredCartReconciliation(reconciliation)');
 
     const mainSource = readFileSync(

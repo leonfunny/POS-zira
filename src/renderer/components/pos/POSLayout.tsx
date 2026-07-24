@@ -1574,7 +1574,7 @@ export default function POSLayout({
                   {activeBilliardIntent.tenderOutcomeUncertain
                     ? 'Payment outcome uncertain · reconciliation required'
                     : state.checkoutDraft.billiard
-                    ? (state.checkoutDraft.billiard.orderCommitted ? 'Payment recorded · recovery pending' : 'Frozen checkout ready')
+                    ? (state.checkoutDraft.billiard.orderCommitted ? 'Payment recorded · recovery pending' : 'Billiard total locked · ready for payment')
                     : 'Payment recorded · sync pending'}
                 </span>
               </div>
