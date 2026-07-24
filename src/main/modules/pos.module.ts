@@ -240,7 +240,10 @@ import {
   type RestoredCartReconciliation,
   type TenderNoPaymentResolutionAudit,
 } from '../../shared/billiard-pos-handoff';
-import { recoverOpenShiftFromLocal } from '../pos/open-shift-recovery';
+import {
+  assertLocalOpenShiftMatchesSession,
+  recoverOpenShiftFromLocal,
+} from '../pos/open-shift-recovery';
 
 type BilliardHandoffRecord = NonNullable<ReturnType<typeof billiardPosHandoffRepo.get>>;
 
@@ -845,13 +848,20 @@ export class PosModule extends BaseModule {
     }
 
     // Recover open shift from local DB (app restart during active shift).
-    const openShift = recoverOpenShiftFromLocal(database, this.posStore);
-    if (openShift) {
-      logger.info(`[PosModule] Recovered open shift ${openShift.id} (${openShift.staff_name})`);
+    let openShift: ReturnType<typeof recoverOpenShiftFromLocal> = null;
+    let localShiftRecoverySafe = true;
+    try {
+      openShift = recoverOpenShiftFromLocal(database, this.posStore);
+      if (openShift) {
+        logger.info(`[PosModule] Recovered open shift ${openShift.id} (${openShift.staff_name})`);
+      }
+    } catch (error: any) {
+      localShiftRecoverySafe = false;
+      logger.error(`[PosModule] Local shift recovery blocked: ${error?.message || String(error)}`);
     }
 
     // Cross-verify with server (async, non-blocking)
-    this.verifyShiftWithServer(openShift?.id ?? null);
+    if (localShiftRecoverySafe) this.verifyShiftWithServer(openShift?.id ?? null);
 
     this.setState(ModuleState.READY);
     logger.info('[PosModule] Initialized');
@@ -864,8 +874,13 @@ export class PosModule extends BaseModule {
       const serverShift = await apiClient.getActiveShift(token);
       if (serverShift && !localShiftId) {
         logger.warn(`[PosModule] Server has active shift ${serverShift.id} but local DB has none — restoring`);
-        const existingShift = database.get<{ id: string; closed_at: string | null }>(
-          'SELECT id, closed_at FROM shifts WHERE id = ?',
+        const existingShift = database.get<{
+          id: string;
+          staff_id: string | null;
+          staff_name: string | null;
+          closed_at: string | null;
+        }>(
+          'SELECT id, staff_id, staff_name, closed_at FROM shifts WHERE id = ?',
           [serverShift.id],
         );
         if (!existingShift) {
@@ -885,6 +900,13 @@ export class PosModule extends BaseModule {
           logger.info(`[PosModule] Materialized server shift ${serverShift.id} in local DB`);
         } else if (existingShift.closed_at) {
           logger.warn(`[PosModule] Server shift ${serverShift.id} is active but local row is closed — payments will stay blocked until shift is closed/reopened`);
+          return;
+        } else if (
+          !String(existingShift.staff_id || '').trim()
+          || !String(existingShift.staff_name || '').trim()
+        ) {
+          logger.warn(`[PosModule] Server shift ${serverShift.id} is active but local cashier identity is incomplete — payments will stay blocked`);
+          return;
         }
         this.posStore?.dispatch({
           type: 'session/open',
@@ -2199,10 +2221,9 @@ export class PosModule extends BaseModule {
         if (!record || record.salonId !== scope.salonId || record.userId !== scope.userId || record.registerId !== scope.registerId) {
           return { success: false, error: 'Billiard checkout not found on this register.' };
         }
-        if (!this.posStore?.getState().session.isOpen) {
-          return { success: false, error: 'Open a POS shift before starting this Billiard payment.' };
-        }
-        if (!isActiveBilliardCheckoutSnapshot(this.posStore.getState(), record.checkoutSnapshot)) {
+        const posStore = this.posStore;
+        assertLocalOpenShiftMatchesSession(database, posStore);
+        if (!posStore || !isActiveBilliardCheckoutSnapshot(posStore.getState(), record.checkoutSnapshot)) {
           return { success: false, error: 'The active POS cart does not match this frozen Billiard checkout.' };
         }
         await this.assertTenderFiscalCompatibility(record.bundle.lines, record.bundle.discountGrosze);
@@ -2243,10 +2264,9 @@ export class PosModule extends BaseModule {
         if (orderRepo.getById(record.orderId)) {
           return { success: false, paymentCommitted: true, orderId: record.orderId, error: 'Payment is already recorded locally. Do not charge again.' };
         }
-        if (!this.posStore?.getState().session.isOpen) {
-          return { success: false, error: 'Open a POS shift before starting this Billiard tender.' };
-        }
-        if (!isActiveBilliardCheckoutSnapshot(this.posStore.getState(), record.checkoutSnapshot)) {
+        const posStore = this.posStore;
+        assertLocalOpenShiftMatchesSession(database, posStore);
+        if (!posStore || !isActiveBilliardCheckoutSnapshot(posStore.getState(), record.checkoutSnapshot)) {
           return { success: false, error: 'The active POS cart does not match this frozen Billiard checkout.' };
         }
         await this.assertTenderFiscalCompatibility(record.bundle.lines, record.bundle.discountGrosze);
@@ -7664,11 +7684,18 @@ export class PosModule extends BaseModule {
     });
     bus.on('user:logged-in', () => {
       this.posAuthEpoch.advance();
-      const openShift = recoverOpenShiftFromLocal(database, this.posStore);
-      if (openShift) {
-        logger.info(`[PosModule] Restored open shift ${openShift.id} after login (${openShift.staff_name})`);
+      let openShift: ReturnType<typeof recoverOpenShiftFromLocal> = null;
+      let localShiftRecoverySafe = true;
+      try {
+        openShift = recoverOpenShiftFromLocal(database, this.posStore);
+        if (openShift) {
+          logger.info(`[PosModule] Restored open shift ${openShift.id} after login (${openShift.staff_name})`);
+        }
+      } catch (error: any) {
+        localShiftRecoverySafe = false;
+        logger.error(`[PosModule] Local shift recovery after login blocked: ${error?.message || String(error)}`);
       }
-      void this.verifyShiftWithServer(openShift?.id ?? null);
+      if (localShiftRecoverySafe) void this.verifyShiftWithServer(openShift?.id ?? null);
       this.replayProductAdminMutations('login');
     });
   }
