@@ -650,7 +650,7 @@ export class PosModule extends BaseModule {
     this.assertServerShiftConsistentForPayment();
   }
 
-  private scheduleShiftVerification(localShiftId: string | null): void {
+  private scheduleShiftVerification(localShiftId: string | null): Promise<void> {
     const generation = ++this.shiftVerificationGeneration;
     const work = this.verifyShiftWithServer(localShiftId, generation)
       .finally(() => {
@@ -659,6 +659,14 @@ export class PosModule extends BaseModule {
         }
       });
     this.shiftVerificationInFlight = work;
+    return work;
+  }
+
+  private async refreshServerShiftConsistencyForPayment(localShiftId: string): Promise<void> {
+    await this.scheduleShiftVerification(localShiftId);
+    // A concurrent, newer auth/shift verification supersedes the request
+    // above. Await that latest result too before releasing a payment boundary.
+    await this.awaitServerShiftConsistencyForPayment();
   }
 
   private invalidateShiftVerification(): void {
@@ -1894,8 +1902,8 @@ export class PosModule extends BaseModule {
     const scope = currentPosSnapshotScope(config);
     const authContext = this.capturePosAuthContext(scope);
 
-    assertLocalOpenShiftMatchesSession(database, this.posStore);
-    await this.awaitServerShiftConsistencyForPayment();
+    const openShift = assertLocalOpenShiftMatchesSession(database, this.posStore);
+    await this.refreshServerShiftConsistencyForPayment(openShift.id);
     this.assertNewBilliardHandoffReadiness(scope);
 
     const fiscal = await (this.paymentController?.hasFiscalPrinter?.()
@@ -1992,8 +2000,8 @@ export class PosModule extends BaseModule {
             intent: this.billiardIntent(existing, true),
           };
         }
-        assertLocalOpenShiftMatchesSession(database, this.posStore);
-        await this.awaitServerShiftConsistencyForPayment();
+        const openShift = assertLocalOpenShiftMatchesSession(database, this.posStore);
+        await this.refreshServerShiftConsistencyForPayment(openShift.id);
         const liveCheckout = this.posStore.getState().checkoutDraft.billiard?.origin.checkoutId;
         const liveItems = this.posStore.getState().cart.items.length;
         if (liveItems > 0 && liveCheckout !== existing.checkoutId) {
@@ -2012,8 +2020,8 @@ export class PosModule extends BaseModule {
         return { success: true, intent: this.billiardIntent(existing, true) };
       }
 
-      assertLocalOpenShiftMatchesSession(database, this.posStore);
-      await this.awaitServerShiftConsistencyForPayment();
+      const openShift = assertLocalOpenShiftMatchesSession(database, this.posStore);
+      await this.refreshServerShiftConsistencyForPayment(openShift.id);
       const {
         current,
         previousRestored,
@@ -2401,8 +2409,8 @@ export class PosModule extends BaseModule {
           return { success: false, error: 'Billiard checkout not found on this register.' };
         }
         const posStore = this.posStore;
-        assertLocalOpenShiftMatchesSession(database, posStore);
-        await this.awaitServerShiftConsistencyForPayment();
+        const openShift = assertLocalOpenShiftMatchesSession(database, posStore);
+        await this.refreshServerShiftConsistencyForPayment(openShift.id);
         if (!posStore || !isActiveBilliardCheckoutSnapshot(posStore.getState(), record.checkoutSnapshot)) {
           return { success: false, error: 'The active POS cart does not match this frozen Billiard checkout.' };
         }
@@ -2445,8 +2453,8 @@ export class PosModule extends BaseModule {
           return { success: false, paymentCommitted: true, orderId: record.orderId, error: 'Payment is already recorded locally. Do not charge again.' };
         }
         const posStore = this.posStore;
-        assertLocalOpenShiftMatchesSession(database, posStore);
-        await this.awaitServerShiftConsistencyForPayment();
+        const openShift = assertLocalOpenShiftMatchesSession(database, posStore);
+        await this.refreshServerShiftConsistencyForPayment(openShift.id);
         if (!posStore || !isActiveBilliardCheckoutSnapshot(posStore.getState(), record.checkoutSnapshot)) {
           return { success: false, error: 'The active POS cart does not match this frozen Billiard checkout.' };
         }
@@ -2554,8 +2562,8 @@ export class PosModule extends BaseModule {
           if (!state.session.isOpen) {
             return { success: false, error: 'Open a POS shift before starting this payment.' };
           }
-          assertLocalOpenShiftMatchesSession(database, this.posStore);
-          await this.awaitServerShiftConsistencyForPayment();
+          const openShift = assertLocalOpenShiftMatchesSession(database, this.posStore);
+          await this.refreshServerShiftConsistencyForPayment(openShift.id);
           if (!isActiveRestoredCartSnapshot(state, payload.snapshot)) {
             return { success: false, error: 'The active cart does not exactly match its durable protected snapshot.' };
           }

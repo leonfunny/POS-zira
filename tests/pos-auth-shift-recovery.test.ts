@@ -179,8 +179,8 @@ describe('POS auth-boundary shift recovery', () => {
       new URL('../src/main/modules/pos.module.ts', import.meta.url),
       'utf8',
     );
-    expect(source).toContain('await this.awaitServerShiftConsistencyForPayment()');
-    expect(source.match(/await this\.awaitServerShiftConsistencyForPayment\(\)/g)?.length)
+    expect(source).toContain('await this.refreshServerShiftConsistencyForPayment(openShift.id)');
+    expect(source.match(/await this\.refreshServerShiftConsistencyForPayment\(openShift\.id\)/g)?.length)
       .toBeGreaterThanOrEqual(5);
     expect(source).toContain('Ignoring stale server shift verification result');
   });
