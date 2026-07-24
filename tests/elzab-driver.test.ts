@@ -154,6 +154,46 @@ describe('ElzabDriver fail-closed behavior', () => {
     }
   });
 
+  it('rejects zero-price items before creating an attempt or calling the sidecar', async () => {
+    // The sidecar only rejects a non-positive unit price after ReceiptBegin,
+    // which strands the attempt in UNKNOWN_NEEDS_RECONCILIATION (2026-07-20
+    // 'Koperek' incident). The driver must fail definite and early instead.
+    const previous = process.env.ALLOW_REAL_FISCAL_PRINT;
+    process.env.ALLOW_REAL_FISCAL_PRINT = 'true';
+    const printReceipt = vi.fn(async () => ({ ok: true }));
+    const { journal, attempts } = createJournal();
+    const bridge: ElzabBridge = {
+      checkAvailability: async () => ({ ok: true }),
+      connect: async () => ({ ok: true }),
+      getStatus: async () => ({ ok: true }),
+      printTest: async () => ({ ok: true }),
+      printReceipt,
+    };
+    const driver = new ElzabDriver({ port: 'COM4', bridge, fiscalJournal: journal });
+
+    try {
+      await expect(driver.connect()).resolves.toBe(true);
+      await expect(driver.printReceipt({
+        ...receipt,
+        items: [{
+          name: 'Koperek',
+          quantity: 1,
+          unitPrice: 0,
+          totalPrice: 0,
+          vatRate: 8,
+        }],
+        payment: { method: 'CASH', amount: 0 },
+        subtotal: 0,
+        total: 0,
+      })).rejects.toThrow('ELZAB_UNSUPPORTED_OPERATION');
+      expect(printReceipt).not.toHaveBeenCalled();
+      expect(attempts).toHaveLength(0);
+    } finally {
+      if (previous === undefined) delete process.env.ALLOW_REAL_FISCAL_PRINT;
+      else process.env.ALLOW_REAL_FISCAL_PRINT = previous;
+    }
+  });
+
   it('returns explicit missing-sidecar errors instead of false success', async () => {
     const driver = new ElzabDriver({
       port: 'COM8',

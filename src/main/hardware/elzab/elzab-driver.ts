@@ -207,6 +207,18 @@ export class ElzabDriver {
       this.lastDiagnostic = { code: 'ELZAB_LINE_DISCOUNT_UNSUPPORTED', detail };
       throw new Error(`ELZAB_LINE_DISCOUNT_UNSUPPORTED: ${detail}`);
     }
+    // The sidecar rejects non-positive unit prices only after ReceiptBegin,
+    // which strands the attempt in UNKNOWN_NEEDS_RECONCILIATION (2026-07-20
+    // 'Koperek' incident). Refuse here, before any attempt or sidecar I/O,
+    // so the failure is definite and the order copy can still print.
+    const zeroPriced = fiscalData.items.find((item) => !(Number(item.unitPrice) > 0));
+    if (zeroPriced) {
+      const detail =
+        `Receipt item '${zeroPriced.name}' has a non-positive unit price and cannot be fiscalized. ` +
+        'No fiscal command was sent. Print the non-fiscal order copy instead or fix the item price.';
+      this.lastDiagnostic = { code: 'ELZAB_UNSUPPORTED_OPERATION', detail };
+      throw new Error(`ELZAB_UNSUPPORTED_OPERATION: ${detail}`);
+    }
     const context = this.createReceiptAttempt(fiscalData);
 
     try {

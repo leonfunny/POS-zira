@@ -72,6 +72,19 @@ describe('protected tender fiscal preflight', () => {
     )).toThrow('ELZAB_LINE_DISCOUNT_UNSUPPORTED');
   });
 
+  it('lets an ordinary discounted checkout tender on ELZAB while per-line allocations stay blocked', () => {
+    // Ordinary retail commits pass no checkout-level discount — the sidecar
+    // prints it whole-receipt via ReceiptEndEx (chesaigon POS1 regression,
+    // 2026-07-23: 100%-discount ingredient sales could not be tendered).
+    const ordinaryLines = [{ vatRate: 23 }, { vatRate: 8 }];
+    expect(hasTenderFiscalDiscount(ordinaryLines)).toBe(false);
+    expect(() => assertTenderFiscalCompatibilityForProtocol('ELZAB_STX', ordinaryLines)).not.toThrow();
+    expect(() => assertTenderFiscalCompatibilityForProtocol(
+      'ELZAB_STX',
+      [{ vatRate: 23, allocatedDiscountGrosze: 100 }],
+    )).toThrow('ELZAB_LINE_DISCOUNT_UNSUPPORTED');
+  });
+
   it('keeps the exact POSNET VAT allowlist fail-closed', () => {
     for (const vatRate of [23, 8, 5, 0, -1]) {
       expect(() => assertTenderFiscalCompatibilityForProtocol('POSNET', [{ vatRate }])).not.toThrow();
@@ -87,5 +100,10 @@ describe('protected tender fiscal preflight', () => {
     expect(source).toContain('SHARED_FISCAL_PROTOCOL_UNKNOWN_FOR_DISCOUNT');
     expect(source).toContain('await this.assertTenderFiscalCompatibility(record.bundle.lines, record.bundle.discountGrosze)');
     expect(source).toContain('await this.assertTenderFiscalCompatibility(state.cart.items, state.cart.discount)');
+    // Ordinary commits must not feed the retail checkout discount into the
+    // protected-tender gate — that regressed every discounted sale on ELZAB
+    // registers (chesaigon POS1, 2026-07-23).
+    expect(source).toContain('this.assertLocalTenderFiscalCompatibility(normalizedItems);');
+    expect(source).not.toContain('this.assertLocalTenderFiscalCompatibility(normalizedItems, Number(normalizedOrder.discount)');
   });
 });

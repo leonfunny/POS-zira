@@ -5063,10 +5063,15 @@ export class PosModule extends BaseModule {
         });
         assertPosPaymentAccounting(normalizedOrder);
         // Protected tenders already performed the async route-aware check
-        // before cashier collection. This post-tender commit guard must not
-        // introduce a fresh network dependency; re-check the local-first
-        // route only, matching PaymentController's actual selection.
-        this.assertLocalTenderFiscalCompatibility(normalizedItems, Number(normalizedOrder.discount) || 0);
+        // (including their frozen checkout-level discount) before cashier
+        // collection. This post-tender commit guard must not introduce a
+        // fresh network dependency; re-check the local-first route only,
+        // matching PaymentController's actual selection. The ordinary
+        // checkout discount is deliberately NOT passed here: the ELZAB
+        // sidecar prints it as a whole-receipt discount (ReceiptEndEx), so
+        // only frozen per-line Billiard allocations riding on the items can
+        // make the local fiscal route unprintable at commit time.
+        this.assertLocalTenderFiscalCompatibility(normalizedItems);
 
         const billiardRecord = this.resolveBilliardOrderRequest(normalizedOrder, normalizedItems, false);
         const restoredContext = !billiardRecord
