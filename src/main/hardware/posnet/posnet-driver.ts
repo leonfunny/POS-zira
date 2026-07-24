@@ -230,6 +230,26 @@ type PosnetVerifyResult = {
   detail?: string;
 };
 
+/**
+ * Per-invocation serial send provenance. `lastDiagnostic` is shared mutable
+ * state for the Settings UI, so it must never decide whether a fiscal retry is
+ * safe: a concurrent operation can replace it while another send is in flight.
+ */
+class PosnetSendInvocationError extends Error {
+  constructor(
+    message: string,
+    readonly beforeAnyByteSent: boolean,
+    readonly diagnostic: PosnetDiagnosticCode,
+  ) {
+    super(message);
+    this.name = 'PosnetSendInvocationError';
+  }
+}
+
+function isBeforeAnyByteSentFailure(error: unknown): boolean {
+  return error instanceof PosnetSendInvocationError && error.beforeAnyByteSent;
+}
+
 export interface PosnetDriverOptions {
   /** Called when a fiscal receipt outcome is ambiguous after bytes were sent. */
   onFiscalUnknown?: (info: { orderId?: string; orderNumber?: string; code: string; detail?: string }) => void;
@@ -603,10 +623,10 @@ export class PosnetDriver {
       await this.sendPosnetSequence(frames);
     } catch (error: any) {
       const detail = error?.message || String(error);
-      if (this.failedBeforeAnyByteSent()) {
-        // Port lock / invalid port — nothing reached the printer, a clean
-        // retry is safe.
-        this.fiscalJournal.markFailed(attempt.id, this.lastDiagnostic?.code || 'POSNET_SEND_FAILED', { detail });
+      if (isBeforeAnyByteSentFailure(error)) {
+        // Only invocation-local invalid-port / lock-acquisition failures are
+        // known to occur before printer I/O. A clean retry is safe.
+        this.fiscalJournal.markFailed(attempt.id, error.diagnostic.code, { detail });
         await this.flushFiscalJournal('safe-send-failure');
         throw error;
       }
@@ -645,12 +665,6 @@ export class PosnetDriver {
       logger.error(`[PosnetDriver] Fiscal journal flush threw at ${stage}: ${detail}`);
       return { success: false, error: detail };
     }
-  }
-
-  /** Port-lock and invalid-port failures happen before any byte is written. */
-  private failedBeforeAnyByteSent(): boolean {
-    const code = this.lastDiagnostic?.code;
-    return code === 'PORT_BUSY' || code === 'PORT_NOT_FOUND';
   }
 
   private notifyUnknownSafe(data: ReceiptData, code: string, detail?: string): void {
@@ -788,21 +802,36 @@ export class PosnetDriver {
    */
   private async sendPosnetSequence(commands: string[][]): Promise<string[]> {
     const safePort = sanitizePortName(this.portName);
-    if (!safePort) throw new Error(`Invalid port name: ${this.portName}`);
+    if (!safePort) {
+      const detail = `Invalid port name: ${this.portName}`;
+      const diagnostic: PosnetDiagnosticCode = { code: 'PORT_NOT_FOUND', detail };
+      this.lastDiagnostic = diagnostic;
+      throw new PosnetSendInvocationError(detail, true, diagnostic);
+    }
 
     try {
       const lockResult = await withPortLock(this.portName, `sendPosnetSequence(${commands[0]?.[0] || '?'})`, () => this.sendPosnetSequenceInner(commands, safePort));
       if (!lockResult.ok) {
-        this.lastDiagnostic = { code: 'PORT_BUSY', detail: lockResult.message };
-        throw new Error(lockResult.message);
+        const diagnostic: PosnetDiagnosticCode = { code: 'PORT_BUSY', detail: lockResult.message };
+        this.lastDiagnostic = diagnostic;
+        throw new PosnetSendInvocationError(lockResult.message, true, diagnostic);
       }
       this.lastDiagnostic = { code: 'PRINT_OK' };
       return lockResult.value;
     } catch (error: any) {
-      if (this.lastDiagnostic?.code !== 'PORT_BUSY') {
-        this.lastDiagnostic = PosnetDriver.classifySerialError(error, this.portName);
+      if (error instanceof PosnetSendInvocationError) {
+        throw error;
       }
-      throw error;
+      // Reaching this catch means this invocation acquired the port lock.
+      // Even an OS-level "busy" / open failure is not strong enough proof that
+      // no fiscal byte was accepted, so fail closed as a post-send ambiguity.
+      const diagnostic = PosnetDriver.classifySerialError(error, this.portName);
+      this.lastDiagnostic = diagnostic;
+      throw new PosnetSendInvocationError(
+        error?.message || String(error),
+        false,
+        diagnostic,
+      );
     }
   }
 

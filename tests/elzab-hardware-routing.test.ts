@@ -145,6 +145,8 @@ describe('ELZAB fiscal protocol routing', () => {
     expect(ALLOWED_PROTOCOLS_BY_TYPE.FISCAL).toEqual(['POSNET', 'ELZAB_STX']);
     expect(ALLOWED_PROTOCOLS_BY_TYPE.RECEIPT).not.toContain('POSNET');
     expect(ALLOWED_PROTOCOLS_BY_TYPE.RECEIPT).not.toContain('ELZAB_STX');
+    expect(ALLOWED_PROTOCOLS_BY_TYPE.TICKET).not.toContain('POSNET');
+    expect(ALLOWED_PROTOCOLS_BY_TYPE.KITCHEN).not.toContain('POSNET');
   });
 
   it('creates ElzabDriver for FISCAL ELZAB_STX config, not ThermalDriver', async () => {
@@ -333,11 +335,28 @@ describe('ELZAB fiscal protocol routing', () => {
     expect(legacyReceiptSlot.getPrinterForType(PrinterType.RECEIPT)).toBeNull();
     expect(legacyReceiptSlot.getPrinterForType(PrinterType.FISCAL)).toBe(legacyPosnet);
 
+    const legacyReceiptPrinter = makeModule();
+    const legacyReceiptPosnet = new PosnetDriver();
+    (legacyReceiptPrinter as any).receiptPrinter = legacyReceiptPosnet;
+    expect(legacyReceiptPrinter.getPrinterForType(PrinterType.RECEIPT)).toBeNull();
+    expect(legacyReceiptPrinter.getPrinterForType(PrinterType.FISCAL)).toBe(legacyReceiptPosnet);
+
     const legacyDriver = makeModule();
     const legacyRootPosnet = new PosnetDriver();
     (legacyDriver as any).printerDriver = legacyRootPosnet;
     expect(legacyDriver.getPrinterForType(PrinterType.RECEIPT)).toBeNull();
     expect(legacyDriver.getPrinterForType(PrinterType.FISCAL)).toBe(legacyRootPosnet);
+
+    const legacyThermalDriver = makeModule();
+    const legacyRootThermal = new ThermalDriver();
+    (legacyThermalDriver as any).printerDriver = legacyRootThermal;
+    expect(legacyThermalDriver.getPrinterForType(PrinterType.RECEIPT)).toBe(legacyRootThermal);
+    expect(legacyThermalDriver.getPrinterForType(PrinterType.FISCAL)).toBeNull();
+
+    const invalidFiscalSlot = makeModule();
+    const thermalInFiscalSlot = new ThermalDriver();
+    (invalidFiscalSlot as any).printers = { [PrinterType.FISCAL]: thermalInFiscalSlot };
+    expect(invalidFiscalSlot.getPrinterForType(PrinterType.FISCAL)).toBeNull();
 
     const splitRoles = makeModule();
     const thermalReceipt = new ThermalDriver();

@@ -186,7 +186,10 @@ describe('android shim S1 stub defaults', () => {
   });
 
   test('payment / receipt stubs let the CASH checkout complete without the recovery overlay', async () => {
-    expect(await api.pos.payment.preflight('order-1')).toEqual({ success: true });
+    expect(await api.pos.payment.preflight('order-1')).toMatchObject({
+      success: true,
+      token: 'android:order-1',
+    });
     expect(await api.pos.payment.hasFiscalPrinter()).toEqual({
       success: true, configured: false, connected: false,
     });

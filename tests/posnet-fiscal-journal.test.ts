@@ -11,6 +11,7 @@ function readSource(relativePath: string): string {
 // ambiguous outcomes go to the Order History reconciliation flow.
 describe('posnet fiscal journal parity with ELZAB', () => {
   const driverSource = readSource('src/main/hardware/posnet/posnet-driver.ts');
+  const posModuleSource = readSource('src/main/modules/pos.module.ts');
 
   it('journals every fiscal receipt attempt (pending -> sent -> success)', () => {
     expect(driverSource).toContain('this.fiscalJournal.createPending({');
@@ -27,10 +28,29 @@ describe('posnet fiscal journal parity with ELZAB', () => {
   });
 
   it('classifies pre-send failures as FAILED and post-send errors as UNKNOWN', () => {
-    expect(driverSource).toContain('failedBeforeAnyByteSent()');
-    expect(driverSource).toContain("code === 'PORT_BUSY' || code === 'PORT_NOT_FOUND'");
+    expect(driverSource).toContain('isBeforeAnyByteSentFailure(error)');
+    expect(driverSource).toContain('throw new PosnetSendInvocationError(detail, true, diagnostic)');
+    expect(driverSource).toContain('throw new PosnetSendInvocationError(lockResult.message, true, diagnostic)');
+    expect(driverSource).toContain('false,');
+    expect(driverSource).not.toContain('const code = this.lastDiagnostic?.code');
     expect(driverSource).toContain("markUnknown(attempt.id, 'POSNET_THROWN_AFTER_SENT'");
     expect(driverSource).toContain('FISCAL_RESULT_UNKNOWN: POSNET');
+  });
+
+  it('does not acknowledge operator reconciliation before its durability barrier', () => {
+    const handlerStart = posModuleSource.indexOf("ipcMain.handle('pos:fiscal:reconcile'");
+    const handlerEnd = posModuleSource.indexOf("ipcMain.handle('pos:print-attempts:get-by-order'", handlerStart);
+    const handler = posModuleSource.slice(handlerStart, handlerEnd);
+    const resolveIndex = handler.indexOf('fiscalAttemptRepo.resolveReconcilable');
+    const flushIndex = handler.indexOf('await fiscalAttemptRepo.flush()');
+    const successIndex = handler.indexOf('return { success: true');
+
+    expect(handlerStart).toBeGreaterThan(-1);
+    expect(handlerEnd).toBeGreaterThan(handlerStart);
+    expect(resolveIndex).toBeGreaterThan(-1);
+    expect(flushIndex).toBeGreaterThan(resolveIndex);
+    expect(successIndex).toBeGreaterThan(flushIndex);
+    expect(handler).toContain("markUnknown(resolved.id, 'RECONCILIATION_DURABILITY_FAILED'");
   });
 
   it('refuses the misleading thermal profile instead of bypassing the fiscal journal', () => {

@@ -344,6 +344,7 @@ export default function POSLayout({
   const [billiardPaymentSnapshot, setBilliardPaymentSnapshot] = useState<{
     cart: NonNullable<typeof state>['cart'];
     checkoutDraft: NonNullable<typeof state>['checkoutDraft'];
+    paymentPreflightToken: string;
   } | null>(null);
   const handledBilliardNonceRef = useRef<string | null>(null);
   const [tenderResolutionTarget, setTenderResolutionTarget] = useState<UncertainTenderResolutionTarget | null>(null);
@@ -498,7 +499,16 @@ export default function POSLayout({
     setBilliardPaymentError(null);
     // Pin immutable props because main may restore the interrupted cart as
     // soon as the local paid order crosses its disk barrier.
-    setBilliardPaymentSnapshot({ cart: state.cart, checkoutDraft: state.checkoutDraft });
+    const paymentPreflightToken = String(opened.token || '').trim();
+    if (!paymentPreflightToken) {
+      setBilliardPaymentError('POS payment safety token is missing. Reopen payment before collecting money.');
+      return;
+    }
+    setBilliardPaymentSnapshot({
+      cart: state.cart,
+      checkoutDraft: state.checkoutDraft,
+      paymentPreflightToken,
+    });
     setBilliardPaymentOpen(true);
     handledBilliardNonceRef.current = intent.nonce;
     onBilliardPaymentIntentConsumed?.(intent.nonce);
@@ -2026,6 +2036,7 @@ export default function POSLayout({
           shiftId={session.shiftId}
           staffId={session.staffId}
           staffName={session.staffName}
+          initialPaymentPreflightToken={billiardPaymentSnapshot.paymentPreflightToken}
           extraOrderFields={{ mode: posMode }}
         />
       )}

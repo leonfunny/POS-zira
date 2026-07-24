@@ -340,6 +340,125 @@ describe('PosnetDriver port mutex integration', () => {
     );
   });
 
+  it('keeps send provenance invocation-local when a concurrent receipt times out on the port lock', async () => {
+    type Attempt = { id: string; orderId: string; status: string };
+    const attemptsById = new Map<string, Attempt>();
+    const attemptsByOrder = new Map<string, Attempt>();
+    const setStatus = (id: string, status: string) => {
+      const attempt = attemptsById.get(id);
+      if (attempt) attempt.status = status;
+    };
+    const fiscalJournal = {
+      flush: vi.fn(async () => ({ success: true })),
+      findBlockingAttempt: vi.fn((orderId: string) => {
+        const attempt = attemptsByOrder.get(orderId);
+        return attempt && ['SENT', 'SUCCESS_CONFIRMED', 'UNKNOWN_NEEDS_RECONCILIATION'].includes(attempt.status)
+          ? attempt
+          : null;
+      }),
+      findReconcilableAttempt: vi.fn(),
+      resolveReconcilable: vi.fn(),
+      getNextAttemptNo: vi.fn(() => 1),
+      createPending: vi.fn(({ orderId }: { orderId: string }) => {
+        const attempt = { id: `attempt-${orderId}`, orderId, status: 'PENDING' };
+        attemptsById.set(attempt.id, attempt);
+        attemptsByOrder.set(orderId, attempt);
+        return attempt;
+      }),
+      markSent: vi.fn((id: string) => setStatus(id, 'SENT')),
+      markSuccess: vi.fn((id: string) => setStatus(id, 'SUCCESS_CONFIRMED')),
+      markFailed: vi.fn((id: string) => setStatus(id, 'FAILED_SAFE_TO_RETRY')),
+      markUnknown: vi.fn((id: string) => setStatus(id, 'UNKNOWN_NEEDS_RECONCILIATION')),
+      markBlocked: vi.fn(),
+    };
+    const onFiscalUnknown = vi.fn();
+    const driver = new PosnetDriver('COM6', 9600, 'POSNET', {
+      fiscalJournal: fiscalJournal as any,
+      isRealFiscalPrintEnabled: () => true,
+      onFiscalUnknown,
+    });
+    (driver as any).connectionState = 'protocol_ready';
+
+    let announceLockOwner!: () => void;
+    const lockOwnerStarted = new Promise<void>((resolve) => {
+      announceLockOwner = resolve;
+    });
+    let rejectOwnerSend!: (error: Error) => void;
+    const ownerSend = new Promise<string[]>((_resolve, reject) => {
+      rejectOwnerSend = reject;
+    });
+    let locked = false;
+    mockWithPortLock.mockImplementation(async (_port, _operation, fn) => {
+      if (locked) {
+        return {
+          ok: false,
+          error: 'PORT_BUSY',
+          message: 'Port COM6 is busy (another operation in progress)',
+        } as any;
+      }
+      locked = true;
+      announceLockOwner();
+      try {
+        return { ok: true, value: await fn() } as any;
+      } finally {
+        locked = false;
+      }
+    });
+    const sendInnerSpy = vi.spyOn(driver as any, 'sendPosnetSequenceInner')
+      .mockImplementation(() => ownerSend);
+
+    const receiptA = {
+      orderId: 'concurrent-a',
+      orderNumber: 'POS-A',
+      items: [{ name: 'Tea A', quantity: 1, unitPrice: 1000, totalPrice: 1000, vatRate: 23 }],
+      payment: { method: 'CASH' as const, amount: 1000 },
+      subtotal: 1000,
+      total: 1000,
+    };
+    const receiptB = {
+      orderId: 'concurrent-b',
+      orderNumber: 'POS-B',
+      items: [{ name: 'Tea B', quantity: 1, unitPrice: 1200, totalPrice: 1200, vatRate: 23 }],
+      payment: { method: 'CARD' as const, amount: 1200 },
+      subtotal: 1200,
+      total: 1200,
+    };
+
+    const printingA = driver.printReceipt(receiptA);
+    await lockOwnerStarted;
+
+    // B times out while A owns the port. Its UI diagnostic becomes PORT_BUSY,
+    // but that shared value must not make A's later failure look pre-send.
+    await expect(driver.printReceipt(receiptB)).rejects.toThrow('Port COM6 is busy');
+    expect(driver.getLastDiagnostic()?.code).toBe('PORT_BUSY');
+    expect(fiscalJournal.markFailed).toHaveBeenCalledWith(
+      'attempt-concurrent-b',
+      'PORT_BUSY',
+      expect.any(Object),
+    );
+    expect(attemptsByOrder.get('concurrent-b')?.status).toBe('FAILED_SAFE_TO_RETRY');
+    expect(sendInnerSpy).toHaveBeenCalledTimes(1);
+
+    rejectOwnerSend(new Error('serial failed after the lock was acquired'));
+    await expect(printingA).rejects.toThrow('FISCAL_RESULT_UNKNOWN');
+
+    expect(fiscalJournal.markUnknown).toHaveBeenCalledWith(
+      'attempt-concurrent-a',
+      'POSNET_THROWN_AFTER_SENT',
+      expect.any(Object),
+    );
+    expect(attemptsByOrder.get('concurrent-a')?.status).toBe('UNKNOWN_NEEDS_RECONCILIATION');
+    expect(onFiscalUnknown).toHaveBeenCalledWith(expect.objectContaining({
+      orderId: 'concurrent-a',
+      code: 'POSNET_THROWN_AFTER_SENT',
+    }));
+    expect(sendInnerSpy).toHaveBeenCalledTimes(1);
+
+    // A's ambiguous attempt is blocking, while B never entered serial I/O.
+    await expect(driver.printReceipt(receiptA)).rejects.toThrow('FISCAL_ATTEMPT_RETRY_BLOCKED');
+    expect(sendInnerSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('blocks a real POSNET receipt before SENT or serial I/O when the production gate is off', async () => {
     const pendingAttempt = { id: 'attempt-1' };
     const fiscalJournal = {

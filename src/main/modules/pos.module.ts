@@ -614,6 +614,7 @@ export class PosModule extends BaseModule {
   private productAdminMutationOutbox: ProductAdminMutationOutbox | null = null;
   private productAdminMutationReplayTimer: ReturnType<typeof setInterval> | null = null;
   private billiardHandoffInFlight = new Map<string, Promise<any>>();
+  private billiardTenderBoundaryInFlight = new Set<string>();
   private restoredCartDispatchQueue: Promise<void> = Promise.resolve();
   private frozenRestoredCartHolds = new Set<string>();
   private posAuthEpoch = new PosAuthEpochGuard();
@@ -2489,8 +2490,7 @@ export class PosModule extends BaseModule {
           return { success: false, error: 'Billiard checkout not found on this register.' };
         }
         const posStore = this.posStore;
-        const openShift = assertLocalOpenShiftMatchesSession(database, posStore);
-        await this.refreshServerShiftConsistencyForPayment(openShift.id);
+        const preflight = await this.prepareOrdinaryPosPayment(record.orderId);
         if (!posStore || !isActiveBilliardCheckoutSnapshot(posStore.getState(), record.checkoutSnapshot)) {
           return { success: false, error: 'The active POS cart does not match this frozen Billiard checkout.' };
         }
@@ -2513,19 +2513,28 @@ export class PosModule extends BaseModule {
         if (!this.isPosAuthContextCurrent(authContext)) {
           return { success: false, error: 'POS user changed while Billiard payment was opening.' };
         }
-        return { success: true };
+        return { success: true, ...preflight };
       } catch (error: any) {
         return { success: false, error: error?.message || String(error) };
       }
     });
-    ipcMain.handle('pos:billiard:begin-tender', async (_e, checkoutId: string) => {
+    ipcMain.handle('pos:billiard:begin-tender', async (_e, checkoutId: string, paymentPreflightToken: string) => {
+      const normalizedCheckoutId = String(checkoutId || '').trim();
+      if (this.billiardTenderBoundaryInFlight.has(normalizedCheckoutId)) {
+        return {
+          success: false,
+          outcomeUncertain: true,
+          error: 'This Billiard tender boundary is already being prepared. Do not collect payment twice.',
+        };
+      }
+      this.billiardTenderBoundaryInFlight.add(normalizedCheckoutId);
       try {
         if (this.holdRecallInFlight) {
           return { success: false, error: 'A held cart recall is still being saved. Wait before starting tender.' };
         }
         const scope = currentPosSnapshotScope(getConfig());
         const authContext = this.capturePosAuthContext(scope);
-        const record = billiardPosHandoffRepo.get(String(checkoutId || ''));
+        const record = billiardPosHandoffRepo.get(normalizedCheckoutId);
         if (!record || record.salonId !== scope.salonId || record.userId !== scope.userId || record.registerId !== scope.registerId) {
           return { success: false, error: 'Billiard checkout not found on this register.' };
         }
@@ -2533,8 +2542,7 @@ export class PosModule extends BaseModule {
           return { success: false, paymentCommitted: true, orderId: record.orderId, error: 'Payment is already recorded locally. Do not charge again.' };
         }
         const posStore = this.posStore;
-        const openShift = assertLocalOpenShiftMatchesSession(database, posStore);
-        await this.refreshServerShiftConsistencyForPayment(openShift.id);
+        this.assertOrdinaryPosPaymentPreflight(paymentPreflightToken, record.orderId, authContext);
         if (!posStore || !isActiveBilliardCheckoutSnapshot(posStore.getState(), record.checkoutSnapshot)) {
           return { success: false, error: 'The active POS cart does not match this frozen Billiard checkout.' };
         }
@@ -2547,10 +2555,12 @@ export class PosModule extends BaseModule {
           };
         }
         if (!billiardPosHandoffRepo.markTenderCommitting(record.checkoutId)) {
+          const latest = billiardPosHandoffRepo.get(record.checkoutId);
+          const latestState = latest?.state || record.state;
           return {
             success: false,
-            outcomeUncertain: requiresBilliardTenderReconciliation(record.state),
-            error: `Billiard tender cannot start from state ${record.state}.`,
+            outcomeUncertain: requiresBilliardTenderReconciliation(latestState),
+            error: `Billiard tender cannot start from state ${latestState}.`,
           };
         }
         database.markDirty();
@@ -2587,9 +2597,11 @@ export class PosModule extends BaseModule {
         return { success: true };
       } catch (error: any) {
         return { success: false, error: error?.message || String(error) };
+      } finally {
+        this.billiardTenderBoundaryInFlight.delete(normalizedCheckoutId);
       }
     });
-    ipcMain.handle('pos:restored-cart:begin-tender', async (_e, holdId: string) => {
+    ipcMain.handle('pos:restored-cart:begin-tender', async (_e, holdId: string, paymentPreflightToken: string) => {
       let authContext: PosAuthContext;
       try { authContext = this.capturePosAuthContext(); }
       catch { return { success: false, error: 'POS authentication context is unavailable.' }; }
@@ -2642,8 +2654,7 @@ export class PosModule extends BaseModule {
           if (!state.session.isOpen) {
             return { success: false, error: 'Open a POS shift before starting this payment.' };
           }
-          const openShift = assertLocalOpenShiftMatchesSession(database, this.posStore);
-          await this.refreshServerShiftConsistencyForPayment(openShift.id);
+          this.assertOrdinaryPosPaymentPreflight(paymentPreflightToken, journal.orderId, authContext);
           if (!isActiveRestoredCartSnapshot(state, payload.snapshot)) {
             return { success: false, error: 'The active cart does not exactly match its durable protected snapshot.' };
           }
@@ -6161,6 +6172,21 @@ export class PosModule extends BaseModule {
       try {
         const resolved = fiscalAttemptRepo.resolveReconcilable(orderId, !!didPrint);
         if (!resolved) return { success: false, error: 'No unresolved fiscal attempt for this order' };
+        const flush = await fiscalAttemptRepo.flush();
+        if (!flush.success) {
+          // Never acknowledge an operator resolution that only exists in
+          // memory. Restore the blocking UNKNOWN state so this process cannot
+          // reprint while the durable database still disagrees.
+          fiscalAttemptRepo.markUnknown(resolved.id, 'RECONCILIATION_DURABILITY_FAILED', {
+            requestedDidPrint: !!didPrint,
+            error: flush.error || 'database flush failed',
+          });
+          await fiscalAttemptRepo.flush().catch(() => ({ success: false }));
+          return {
+            success: false,
+            error: `Fiscal reconciliation was not saved: ${flush.error || 'database flush failed'}`,
+          };
+        }
         logger.info(`[PosModule] Fiscal attempt ${resolved.id} for order ${orderId} reconciled by operator: didPrint=${!!didPrint} → ${resolved.status}`);
         return { success: true, status: resolved.status };
       } catch (e: any) {

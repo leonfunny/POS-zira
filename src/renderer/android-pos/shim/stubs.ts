@@ -227,7 +227,11 @@ export function buildPaymentNamespace({ transport }: StubDeps) {
     // Android uses its own authenticated transport/shift contract. Keep the
     // renderer API shape identical; the Windows main process owns the
     // register-local server-shift verification implemented by this preflight.
-    preflight: async (_orderId: string) => ({ success: true }),
+    preflight: async (orderId: string) => ({
+      success: true,
+      token: `android:${orderId}`,
+      expiresAt: Date.now() + 15 * 60 * 1000,
+    }),
     // E-FISCAL: delegate the fiscal-printer check to the coordinator's
     // FISCAL_RECEIPT assignment lookup when the transport provides it; else the
     // Wave-1 "no fiscal printer" outcome. `configured` + `connected` both track

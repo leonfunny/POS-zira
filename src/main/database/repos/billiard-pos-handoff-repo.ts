@@ -202,7 +202,6 @@ export const billiardPosHandoffRepo = {
   markTenderCommitting(checkoutId: string): boolean {
     const current = billiardPosHandoffRepo.get(checkoutId);
     if (!current) return false;
-    if (current.state === 'POS_TENDER_COMMITTING') return true;
     if (current.state !== 'POS_PAYMENT_OPEN') return false;
     database.run(
       `UPDATE pos_billiard_handoffs

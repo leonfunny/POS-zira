@@ -142,7 +142,7 @@ describe('POS embedded numpad → PaymentModal wiring', () => {
   it('freshly verifies the register shift for ordinary POS payments', () => {
     expect(PAYMENT_MODAL).toContain('window.electronAPI.pos.payment.preflight(orderAttemptIdRef.current)');
     expect(PAYMENT_MODAL).toContain("useState<'checking' | 'ready' | 'blocked'>");
-    expect(PAYMENT_MODAL).toContain("paymentPreflightStatus === 'ready'");
+    expect(PAYMENT_MODAL).toContain("paymentSafetyStatus === 'ready'");
     expect(PAYMENT_MODAL).toContain('Do not collect payment yet.');
     expect(PAYMENT_MODAL).toContain('payment_preflight_token: paymentPreflightToken');
     expect(POS_MODULE).toContain("ipcMain.handle('pos:payment:preflight'");

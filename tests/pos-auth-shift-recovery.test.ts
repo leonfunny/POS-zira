@@ -174,14 +174,30 @@ describe('POS auth-boundary shift recovery', () => {
     expect(loginHandler).toContain('if (localShiftRecoverySafe) this.scheduleShiftVerification(openShift?.id ?? null)');
   });
 
-  it('awaits the authoritative shift check at every protected tender entry point', () => {
+  it('freshly verifies before collection and uses the order-bound token at protected tender boundaries', () => {
     const source = readFileSync(
       new URL('../src/main/modules/pos.module.ts', import.meta.url),
       'utf8',
     );
     expect(source).toContain('await this.refreshServerShiftConsistencyForPayment(openShift.id)');
     expect(source.match(/await this\.refreshServerShiftConsistencyForPayment\(openShift\.id\)/g)?.length)
-      .toBeGreaterThanOrEqual(5);
+      .toBeGreaterThanOrEqual(4);
+    const billiardBoundary = source.slice(
+      source.indexOf("ipcMain.handle('pos:billiard:begin-tender'"),
+      source.indexOf("ipcMain.handle('pos:restored-cart:begin-tender'"),
+    );
+    const restoredBoundary = source.slice(
+      source.indexOf("ipcMain.handle('pos:restored-cart:begin-tender'"),
+      source.indexOf("ipcMain.handle('pos:billiard:resolve-uncertain-tender'"),
+    );
+    expect(billiardBoundary).toContain('this.assertOrdinaryPosPaymentPreflight(paymentPreflightToken, record.orderId, authContext)');
+    expect(billiardBoundary).toContain('this.billiardTenderBoundaryInFlight.has(normalizedCheckoutId)');
+    expect(billiardBoundary).toContain('this.billiardTenderBoundaryInFlight.add(normalizedCheckoutId)');
+    expect(billiardBoundary).toContain('this.billiardTenderBoundaryInFlight.delete(normalizedCheckoutId)');
+    expect(billiardBoundary).toContain('const latest = billiardPosHandoffRepo.get(record.checkoutId)');
+    expect(restoredBoundary).toContain('this.assertOrdinaryPosPaymentPreflight(paymentPreflightToken, journal.orderId, authContext)');
+    expect(billiardBoundary).not.toContain('refreshServerShiftConsistencyForPayment');
+    expect(restoredBoundary).not.toContain('refreshServerShiftConsistencyForPayment');
     expect(source).toContain('Ignoring stale server shift verification result');
     expect(source).toContain('for (;;) {');
     expect(source).toContain('generation === this.shiftVerificationGeneration');

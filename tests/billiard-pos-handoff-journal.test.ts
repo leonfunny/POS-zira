@@ -125,7 +125,7 @@ describe('Billiard POS durable handoff journal', () => {
     sqlDb.close();
   });
 
-  it('crosses the durable tender boundary idempotently and only moves forward', () => {
+  it('grants the durable tender boundary exactly once and only moves forward', () => {
     billiardPosHandoffRepo.create(record());
 
     expect(billiardPosHandoffRepo.markPaymentOpened('checkout-1')).toBe(true);
@@ -136,7 +136,7 @@ describe('Billiard POS durable handoff journal', () => {
     });
 
     expect(billiardPosHandoffRepo.markTenderCommitting('checkout-1')).toBe(true);
-    expect(billiardPosHandoffRepo.markTenderCommitting('checkout-1')).toBe(true);
+    expect(billiardPosHandoffRepo.markTenderCommitting('checkout-1')).toBe(false);
     expect(billiardPosHandoffRepo.get('checkout-1')?.state).toBe('POS_TENDER_COMMITTING');
 
     expect(billiardPosHandoffRepo.markState('checkout-1', 'POS_PAID_SYNC_PENDING')).toBe(true);
@@ -144,6 +144,19 @@ describe('Billiard POS durable handoff journal', () => {
     expect(() => billiardPosHandoffRepo.markState('checkout-1', 'POS_READY')).toThrow(
       'Invalid Billiard handoff transition',
     );
+  });
+
+  it('allows only one concurrent caller to claim the Billiard tender boundary', async () => {
+    billiardPosHandoffRepo.create(record());
+    expect(billiardPosHandoffRepo.markPaymentOpened('checkout-1')).toBe(true);
+
+    const claims = await Promise.all([
+      Promise.resolve().then(() => billiardPosHandoffRepo.markTenderCommitting('checkout-1')),
+      Promise.resolve().then(() => billiardPosHandoffRepo.markTenderCommitting('checkout-1')),
+    ]);
+
+    expect(claims.filter(Boolean)).toHaveLength(1);
+    expect(billiardPosHandoffRepo.get('checkout-1')?.state).toBe('POS_TENDER_COMMITTING');
   });
 
   it('turns a crash before order export into an unretryable uncertain tender', () => {

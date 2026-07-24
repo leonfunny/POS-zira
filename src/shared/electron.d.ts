@@ -794,12 +794,12 @@ interface ElectronAPI {
     seedDemo: () => Promise<{ success: boolean }>;
     onStateChanged: (callback: (state: any) => void) => () => void;
     billiardCheckout: {
-      preflight: (orderId: string) => Promise<{ success: boolean; token?: string; expiresAt?: number; error?: string }>;
+      preflight: () => Promise<{ success: boolean; error?: string }>;
       prepare: (input: { posCheckout: any; tableName?: string | null }) => Promise<{ success: boolean; intent?: any; paymentCommitted?: boolean; durabilityError?: string; error?: string }>;
       recover: () => Promise<{ success: boolean; intent?: any; restoredCartReconciliation?: any; paymentCommitted?: boolean; durabilityError?: string; error?: string }>;
-      markPaymentOpened: (checkoutId: string) => Promise<{ success: boolean; error?: string }>;
-      beginTender: (checkoutId: string) => Promise<{ success: boolean; paymentCommitted?: boolean; orderId?: string; outcomeUncertain?: boolean; error?: string }>;
-      beginRestoredTender: (holdId: string) => Promise<{ success: boolean; paymentCommitted?: boolean; orderId?: string; outcomeUncertain?: boolean; error?: string }>;
+      markPaymentOpened: (checkoutId: string) => Promise<{ success: boolean; token?: string; expiresAt?: number; error?: string }>;
+      beginTender: (checkoutId: string, paymentPreflightToken: string) => Promise<{ success: boolean; paymentCommitted?: boolean; orderId?: string; outcomeUncertain?: boolean; error?: string }>;
+      beginRestoredTender: (holdId: string, paymentPreflightToken: string) => Promise<{ success: boolean; paymentCommitted?: boolean; orderId?: string; outcomeUncertain?: boolean; error?: string }>;
       resolveUncertainTender: (input: import('./billiard-pos-handoff').ResolveUncertainTenderInput) => Promise<{
         success: boolean;
         resolved?: boolean;
@@ -949,7 +949,7 @@ interface ElectronAPI {
       printReceiptAndOpenDrawer: (orderId: string) => Promise<{ success: boolean; receiptPrinted: boolean; drawerOpened: boolean; error?: string }>;
       printFiscalReceipt: (orderId: string) => Promise<{ success: boolean; fiscalPrinted: boolean; error?: string }>;
       hasFiscalPrinter: () => Promise<{ success: boolean; configured: boolean; connected: boolean }>;
-      preflight: () => Promise<{ success: boolean; error?: string }>;
+      preflight: (orderId: string) => Promise<{ success: boolean; token?: string; expiresAt?: number; error?: string }>;
       getReconcilableFiscalAttempt: (orderId: string) => Promise<{ success: boolean; attempt: { id: string; order_id: string; status: string; error_code: string | null; created_at: string | null } | null; error?: string }>;
       reconcileFiscalAttempt: (orderId: string, didPrint: boolean) => Promise<{ success: boolean; status?: string; error?: string }>;
       getPrintAttempts: (orderId: string) => Promise<{ success: boolean; attempts: Array<{ id: string; order_id: string; document_type: string; printer_type: string; printer_name: string | null; printer_target: string | null; route: string | null; status: string; error: string | null; created_at: string | null }>; error?: string }>;

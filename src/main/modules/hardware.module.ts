@@ -767,35 +767,48 @@ export class HardwareModule extends BaseModule {
   }
 
   getPrinterForType(printerType: PrinterType): PrinterDriver | null {
+    const isFiscalProtocolDriver = (driver: PrinterDriver | null | undefined): driver is PosnetDriver | ElzabDriver =>
+      !!driver && (driver instanceof PosnetDriver || isElzabDriver(driver));
     const direct = this.printers[printerType] || null;
     if (direct) {
       // A POSNET/ELZAB printReceipt call is a real fiscal operation. Never
       // expose either driver through a non-fiscal role, even when an old
       // install stored POSNET in the RECEIPT slot.
-      if (printerType === PrinterType.FISCAL || (!(direct instanceof PosnetDriver) && !isElzabDriver(direct))) {
+      if (
+        (printerType === PrinterType.FISCAL && isFiscalProtocolDriver(direct))
+        || (printerType !== PrinterType.FISCAL && !isFiscalProtocolDriver(direct))
+      ) {
         return direct;
       }
       logger.warn(
-        `[HardwareModule] Refusing fiscal protocol driver assigned to non-fiscal ${printerType} route`,
+        `[HardwareModule] Refusing ${isFiscalProtocolDriver(direct) ? 'fiscal' : 'non-fiscal'} protocol driver assigned to ${printerType} route`,
       );
     }
 
-    // FISCAL fallback: only if RECEIPT slot holds a PosnetDriver (pre-migration compat)
-    if (printerType === PrinterType.FISCAL && this.printers[PrinterType.RECEIPT]) {
-      const receiptDriver = this.printers[PrinterType.RECEIPT];
-      if (receiptDriver instanceof PosnetDriver) return receiptDriver;
+    // Pre-migration compatibility is deliberately role-aware in both
+    // directions: only POSNET/ELZAB may satisfy FISCAL, and neither may ever
+    // satisfy a non-fiscal print route.
+    if (printerType === PrinterType.FISCAL) {
+      const legacyFiscalDriver = [
+        this.printers[PrinterType.RECEIPT],
+        this.receiptPrinter,
+        this.printerDriver,
+      ].find(isFiscalProtocolDriver);
+      return legacyFiscalDriver || null;
     }
 
-    if (printerType === PrinterType.LABEL && this.labelPrinter) return this.labelPrinter;
+    if (printerType === PrinterType.LABEL && this.labelPrinter && !isFiscalProtocolDriver(this.labelPrinter)) {
+      return this.labelPrinter;
+    }
     if ((printerType === PrinterType.RECEIPT || printerType === PrinterType.TICKET || printerType === PrinterType.KITCHEN) && this.receiptPrinter) {
-      if (!(this.receiptPrinter instanceof PosnetDriver) && !isElzabDriver(this.receiptPrinter)) {
+      if (!isFiscalProtocolDriver(this.receiptPrinter)) {
         return this.receiptPrinter;
       }
     }
-    if (this.printerDriver instanceof PosnetDriver || isElzabDriver(this.printerDriver)) {
-      return printerType === PrinterType.FISCAL ? this.printerDriver : null;
+    if (this.printerDriver && !isFiscalProtocolDriver(this.printerDriver)) {
+      return this.printerDriver;
     }
-    return this.printerDriver;
+    return null;
   }
 
   async printFiscalDailyReport(data: Partial<DailyReportData> = {}): Promise<FiscalDailyReportResult> {

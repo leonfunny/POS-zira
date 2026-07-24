@@ -87,7 +87,8 @@ describe('Billiard interrupted-cart crash ownership', () => {
     );
     expect(paymentSource).toContain('billiardCheckout.beginTender(');
     expect(paymentSource).toContain('billiardCheckout.beginRestoredTender(');
-    expect(paymentSource).toContain('setTenderPrepared(true)');
+    expect(paymentSource).toContain('protectedBoundaryPreparationStartedRef.current = true');
+    expect(paymentSource).toContain("setProtectedBoundaryStatus('ready')");
     expect(paymentSource).toContain('Do not charge again. Reconcile');
 
     const mainSource = readFileSync(

@@ -43,6 +43,7 @@ interface PaymentModalProps {
     card?: string;
     cash?: string;
   };
+  initialPaymentPreflightToken?: string | null;
   extraOrderFields?: Record<string, any>;
 }
 
@@ -111,6 +112,7 @@ export default function PaymentModal({
   initialMethod,
   checkoutDraft,
   scanCommands,
+  initialPaymentPreflightToken,
   extraOrderFields,
 }: PaymentModalProps) {
   const { config } = useConfig();
@@ -132,9 +134,11 @@ export default function PaymentModal({
   const [splitMethod, setSplitMethod] = useState<PaymentMethod>('CASH');
   const [hasFiscalPrinter, setHasFiscalPrinter] = useState(false);
   const [paymentPreflightStatus, setPaymentPreflightStatus] = useState<'checking' | 'ready' | 'blocked'>(
-    protectedTender ? 'ready' : 'checking',
+    initialPaymentPreflightToken ? 'ready' : 'checking',
   );
-  const [paymentPreflightToken, setPaymentPreflightToken] = useState<string | null>(null);
+  const [paymentPreflightToken, setPaymentPreflightToken] = useState<string | null>(
+    initialPaymentPreflightToken || null,
+  );
   const [fiscalPrompt, setFiscalPrompt] = useState<{ orderId: string } | null>(null);
   const [fiscalBusy, setFiscalBusy] = useState(false);
   const [receiptRecovery, setReceiptRecovery] = useState<ReceiptRecovery | null>(null);
@@ -163,7 +167,14 @@ export default function PaymentModal({
   );
   const completedOrderIdRef = useRef<string | null>(null);
   const tenderBoundaryCrossedRef = useRef(false);
-  const [tenderPrepared, setTenderPrepared] = useState(false);
+  const protectedBoundaryPreparationStartedRef = useRef(false);
+  const [protectedBoundaryStatus, setProtectedBoundaryStatus] = useState<
+    'not-required' | 'preparing' | 'ready' | 'failed'
+  >(protectedTender ? 'preparing' : 'not-required');
+  // Freeze payment inputs only while the protected anti-duplicate boundary is
+  // being persisted. Once durable, the cashier may choose tender/count cash,
+  // but the modal itself remains locked until the order is recorded.
+  const [tenderPrepared, setTenderPrepared] = useState(protectedTender);
   const tOr = (key: string, fallback: string) => {
     const value = t(key);
     return value !== key ? value : fallback;
@@ -243,31 +254,121 @@ export default function PaymentModal({
   }, []);
 
   useEffect(() => {
-    if (protectedTender) {
+    if (initialPaymentPreflightToken) {
+      setPaymentPreflightToken(initialPaymentPreflightToken);
       setPaymentPreflightStatus('ready');
       return;
     }
     let cancelled = false;
+    setPaymentPreflightToken(null);
     setPaymentPreflightStatus('checking');
     window.electronAPI.pos.payment.preflight(orderAttemptIdRef.current)
       .then((result: { success?: boolean; token?: string; error?: string }) => {
         if (cancelled) return;
-        if (result?.success) {
-          setPaymentPreflightToken(result.token || null);
+        const token = String(result?.token || '').trim();
+        if (result?.success && token) {
+          setPaymentPreflightToken(token);
           setPaymentPreflightStatus('ready');
           return;
         }
         setPaymentPreflightStatus('blocked');
+        if (protectedTender) {
+          setProtectedBoundaryStatus('failed');
+          setTenderPrepared(false);
+        }
         setError(result?.error || 'POS payment preflight failed.');
       })
       .catch((err: unknown) => {
         if (cancelled) return;
         const message = err instanceof Error ? err.message : String(err || 'POS payment preflight failed.');
         setPaymentPreflightStatus('blocked');
+        if (protectedTender) {
+          setProtectedBoundaryStatus('failed');
+          setTenderPrepared(false);
+        }
         setError(message);
       });
     return () => { cancelled = true; };
-  }, [protectedTender]);
+  }, [initialPaymentPreflightToken, protectedTender]);
+
+  useEffect(() => {
+    if (
+      !protectedTender
+      || paymentPreflightStatus !== 'ready'
+      || !paymentPreflightToken
+      || protectedBoundaryStatus === 'ready'
+      || protectedBoundaryStatus === 'failed'
+      || !!completedOrderIdRef.current
+      || protectedBoundaryPreparationStartedRef.current
+    ) {
+      return;
+    }
+
+    protectedBoundaryPreparationStartedRef.current = true;
+    setProtectedBoundaryStatus('preparing');
+    setError(null);
+    void (async () => {
+      try {
+        const boundary = checkoutDraft?.billiard
+          ? await window.electronAPI.pos.billiardCheckout.beginTender(
+              checkoutDraft.billiard.handoffId,
+              paymentPreflightToken,
+            )
+          : await window.electronAPI.pos.billiardCheckout.beginRestoredTender(
+              checkoutDraft!.restoredInterruption!.holdId,
+              paymentPreflightToken,
+            );
+        if (!boundary?.success) {
+          if (boundary?.paymentCommitted) {
+            completedOrderIdRef.current = boundary.orderId || orderAttemptIdRef.current;
+            setProtectedBoundaryStatus('failed');
+            setTenderPrepared(false);
+            setError(boundary.error || 'Payment is already recorded locally. Do not charge again.');
+            return;
+          }
+          if (boundary?.outcomeUncertain) {
+            const message = boundary.error
+              || 'Payment outcome is uncertain. Do not charge again. Reconcile cash/card and POS Order History with the owner.';
+            completedOrderIdRef.current = orderAttemptIdRef.current;
+            tenderBoundaryCrossedRef.current = true;
+            setProtectedBoundaryStatus('failed');
+            setError(message);
+            onTenderOutcomeUncertain?.(
+              message,
+              buildImmediateRestoredCartReconciliation(checkoutDraft?.restoredInterruption, message),
+            );
+            return;
+          }
+          throw new Error(boundary?.error || 'Could not persist the tender safety boundary.');
+        }
+
+        // Only now may the UI tell the cashier to accept cash or use the card
+        // terminal. The anti-duplicate state is already durable on disk.
+        tenderBoundaryCrossedRef.current = true;
+        setProtectedBoundaryStatus('ready');
+        setTenderPrepared(false);
+        setNipPadOpen(false);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err || 'Could not prepare payment safely.');
+        setProtectedBoundaryStatus('failed');
+        setPaymentPreflightStatus('blocked');
+        setTenderPrepared(false);
+        setError(message);
+      }
+    })();
+  }, [
+    checkoutDraft,
+    onTenderOutcomeUncertain,
+    paymentPreflightStatus,
+    paymentPreflightToken,
+    protectedBoundaryStatus,
+    protectedTender,
+  ]);
+
+  const paymentSafetyStatus: 'checking' | 'ready' | 'blocked' =
+    protectedTender && protectedBoundaryStatus !== 'ready'
+      ? protectedBoundaryStatus === 'failed' ? 'blocked' : 'checking'
+      : paymentPreflightStatus;
 
   const tip = extraOrderFields?.tip ?? 0;
   const liveGrandTotal = cart.total + tip;
@@ -328,8 +429,8 @@ export default function PaymentModal({
   }, [nipForcedOpen]);
 
   useEffect(() => {
-    if (method === 'CASH' && !splitMode) inputRef.current?.focus();
-  }, [method, splitMode]);
+    if (method === 'CASH' && !splitMode && !tenderPrepared) inputRef.current?.focus();
+  }, [method, splitMode, tenderPrepared]);
 
   useEffect(() => {
     if (nipOpen && nipPadOpen) nipInputRef.current?.focus();
@@ -351,12 +452,16 @@ export default function PaymentModal({
       if (
         e.key === 'Escape'
         && !saving
-        && (!protectedTender || !tenderPrepared || !!completedOrderIdRef.current)
+        && (
+          !protectedTender
+          || protectedBoundaryStatus === 'failed'
+          || !!completedOrderIdRef.current
+        )
       ) onClose();
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [onClose, protectedTender, saving, tenderPrepared]);
+  }, [onClose, protectedBoundaryStatus, protectedTender, saving]);
 
   // ─── Denomination counters ────────────────────────────────
 
@@ -850,7 +955,8 @@ export default function PaymentModal({
       receiptRecovery ||
       fiscalPrompt ||
       receiptRetrying ||
-      (!protectedTender && paymentPreflightStatus !== 'ready')
+      paymentSafetyStatus !== 'ready' ||
+      !paymentPreflightToken
     ) return;
     paymentCompleteInFlightRef.current = true;
     setSaving(true);
@@ -878,39 +984,6 @@ export default function PaymentModal({
           : tOr('pos.payment.insufficient', 'Insufficient cash'));
         setSaving(false);
         return;
-      }
-
-      if (protectedTender && !tenderBoundaryCrossedRef.current) {
-        const boundary = checkoutDraft?.billiard
-          ? await window.electronAPI.pos.billiardCheckout.beginTender(checkoutDraft.billiard.handoffId)
-          : await window.electronAPI.pos.billiardCheckout.beginRestoredTender(
-              checkoutDraft!.restoredInterruption!.holdId,
-            );
-        if (!boundary?.success) {
-          if (boundary?.paymentCommitted) {
-            completedOrderIdRef.current = boundary.orderId || orderAttemptIdRef.current;
-            setError(boundary.error || 'Payment is already recorded locally. Do not charge again.');
-            return;
-          }
-          if (boundary?.outcomeUncertain) {
-            const message = boundary.error
-              || 'Payment outcome is uncertain. Do not charge again. Reconcile cash/card and POS Order History with the owner.';
-            completedOrderIdRef.current = orderAttemptIdRef.current;
-            setError(message);
-            onTenderOutcomeUncertain?.(
-              message,
-              buildImmediateRestoredCartReconciliation(checkoutDraft?.restoredInterruption, message),
-            );
-            return;
-          }
-          throw new Error(boundary?.error || 'Could not persist the tender safety boundary.');
-        }
-        // Main has fsynced the anti-duplicate boundary. Keep this renderer
-        // locked and continue to the existing POS order commit in the same
-        // cashier action; any post-boundary failure remains fail-closed below.
-        tenderBoundaryCrossedRef.current = true;
-        setTenderPrepared(true);
-        setNipPadOpen(false);
       }
 
       const orderId = orderAttemptIdRef.current;
@@ -945,7 +1018,7 @@ export default function PaymentModal({
       setSaving(false);
       paymentCompleteInFlightRef.current = false;
     }
-  }, [cashAmountGrosze, checkoutDraft, customerNipForOrder, customerNipValid, fiscalPrompt, grandTotal, method, onTenderOutcomeUncertain, paymentPreflightStatus, paymentPreflightToken, protectedTender, receiptRecovery, receiptRetrying, saving, shiftId, splitMode, staffId, staffName, t, tOr, tenders]);
+  }, [cashAmountGrosze, checkoutDraft, customerNipForOrder, customerNipValid, fiscalPrompt, grandTotal, method, onTenderOutcomeUncertain, paymentPreflightToken, paymentSafetyStatus, protectedTender, receiptRecovery, receiptRetrying, saving, shiftId, splitMode, staffId, staffName, t, tOr, tenders]);
 
   const handleComplete = useCallback(() => {
     void completePayment();
@@ -959,7 +1032,8 @@ export default function PaymentModal({
     && !completedOrderIdRef.current
     && !saving
     && customerNipValid
-    && (protectedTender || paymentPreflightStatus === 'ready')
+    && paymentSafetyStatus === 'ready'
+    && !!paymentPreflightToken
     && selectedTenderIsComplete;
 
   const currency = t('pos.currency') || 'zl';
@@ -1007,7 +1081,11 @@ export default function PaymentModal({
   const closeBlocked = saving
     || !!fiscalPrompt
     || !!receiptRecovery
-    || (protectedTender && tenderPrepared && !completedOrderIdRef.current);
+    || (
+      protectedTender
+      && protectedBoundaryStatus !== 'failed'
+      && !completedOrderIdRef.current
+    );
 
   const removeScannedCommandFromActiveInput = useCallback((code: string) => {
     window.setTimeout(() => {
@@ -1944,12 +2022,12 @@ export default function PaymentModal({
 
                   <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
                     <p className="text-sm font-semibold text-blue-900">
-                      {paymentPreflightStatus === 'ready'
+                      {paymentSafetyStatus === 'ready'
                         ? tOr(
                             'pos.payment.cardManualHint',
                             'Enter this amount on the card terminal. After approval, press the button below.',
                           )
-                        : paymentPreflightStatus === 'checking'
+                        : paymentSafetyStatus === 'checking'
                           ? tOr(
                               'pos.payment.preflightChecking',
                               'Checking the POS register and shift. Do not use the card terminal yet.',
@@ -1999,7 +2077,7 @@ export default function PaymentModal({
         </div>
 
         <div className="shrink-0 space-y-2 border-t border-slate-200 bg-white px-4 py-3">
-          {!protectedTender && paymentPreflightStatus === 'checking' && (
+          {paymentSafetyStatus === 'checking' && (
             <div aria-live="polite" className="rounded-md border border-blue-200 bg-blue-50 px-3 py-3 text-sm font-semibold text-blue-900">
               {tOr(
                 'pos.payment.preflightChecking',

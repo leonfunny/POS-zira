@@ -38,8 +38,8 @@ export const ALLOWED_PROTOCOLS_BY_TYPE: Record<PrinterType, PrinterProtocol[]> =
   FISCAL:  ['POSNET', 'ELZAB_STX'],
   LABEL:   ['ZEBRA', 'WINDOWS'],
   A4:      ['WINDOWS'],
-  TICKET:  ['POSNET', 'THERMAL', 'WINDOWS'],
-  KITCHEN: ['POSNET', 'THERMAL', 'WINDOWS'],
+  TICKET:  ['THERMAL', 'WINDOWS'],
+  KITCHEN: ['THERMAL', 'WINDOWS'],
 };
 
 // Print job types

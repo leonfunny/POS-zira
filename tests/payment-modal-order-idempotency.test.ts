@@ -25,6 +25,10 @@ describe('PaymentModal order creation idempotency', () => {
     'const completePayment = useCallback',
     'const handleComplete = useCallback',
   );
+  const protectedBoundaryPreparation = sliceBetween(
+    'protectedBoundaryPreparationStartedRef.current = true;',
+    "const paymentSafetyStatus: 'checking' | 'ready' | 'blocked'",
+  );
   const retryReceipt = sliceBetween(
     'const handleRetryReceipt = async',
     'const handleContinueWithoutReceipt = () =>',
@@ -42,26 +46,31 @@ describe('PaymentModal order creation idempotency', () => {
     expect(completePayment).not.toMatch(/crypto\.randomUUID\s*\(/);
   });
 
-  it('persists a protected tender before creating the order in one UI submission', () => {
+  it('persists a protected tender before collection and keeps final submit one-click', () => {
     const payableIndex = completePayment.indexOf('if (!submission.complete)');
-    const boundaryIndex = completePayment.indexOf('billiardCheckout.beginTender(');
-    const restoredBoundaryIndex = completePayment.indexOf('billiardCheckout.beginRestoredTender(');
-    const preparedIndex = completePayment.indexOf('setTenderPrepared(true)');
-    const orderIdIndex = completePayment.indexOf('const orderId = orderAttemptIdRef.current;', preparedIndex);
+    const boundaryIndex = protectedBoundaryPreparation.indexOf('billiardCheckout.beginTender(');
+    const restoredBoundaryIndex = protectedBoundaryPreparation.indexOf('billiardCheckout.beginRestoredTender(');
+    const durableIndex = protectedBoundaryPreparation.indexOf('tenderBoundaryCrossedRef.current = true;');
+    const readyIndex = protectedBoundaryPreparation.indexOf("setProtectedBoundaryStatus('ready')");
+    const orderIdIndex = completePayment.indexOf('const orderId = orderAttemptIdRef.current;');
     const createIndex = saveOrderAndFinish.indexOf('pos.orders.create(order, items)');
     expect(payableIndex).toBeGreaterThan(-1);
-    expect(boundaryIndex).toBeGreaterThan(payableIndex);
+    expect(boundaryIndex).toBeGreaterThan(-1);
     expect(restoredBoundaryIndex).toBeGreaterThan(boundaryIndex);
-    expect(preparedIndex).toBeGreaterThan(restoredBoundaryIndex);
-    expect(orderIdIndex).toBeGreaterThan(preparedIndex);
-    expect(completePayment.slice(preparedIndex, orderIdIndex)).not.toContain('return;');
+    expect(durableIndex).toBeGreaterThan(restoredBoundaryIndex);
+    expect(readyIndex).toBeGreaterThan(durableIndex);
+    expect(orderIdIndex).toBeGreaterThan(payableIndex);
     expect(createIndex).toBeGreaterThan(-1);
+    expect(completePayment).not.toContain('beginTender(');
+    expect(completePayment).not.toContain('beginRestoredTender(');
     expect(saveOrderAndFinish).not.toContain('beginTender(');
     expect(saveOrderAndFinish).not.toContain('beginRestoredTender(');
     expect(saveOrderAndFinish).not.toContain('rollbackTender');
     expect(completePayment).not.toContain('rollbackTender');
     expect(PAYMENT_MODAL).not.toContain('pos.payment.prepareSafeTender');
     expect(PAYMENT_MODAL).not.toContain('Do not collect cash or confirm the card terminal yet.');
+    expect(PAYMENT_MODAL).toContain("paymentSafetyStatus === 'ready'");
+    expect(PAYMENT_MODAL).toContain("protectedBoundaryStatus !== 'failed'");
   });
 
   it('marks the order completed immediately after local order creation succeeds', () => {
