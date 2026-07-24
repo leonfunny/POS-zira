@@ -178,7 +178,7 @@ export class PaymentController {
       return 'ELZAB is in local menu mode (TRYB MENU LOKALNEGO). Exit the menu on the fiscal printer, wait for the ready screen, then retry fiscal print from Order History.';
     }
     if (/REAL_FISCAL_PRINT_DISABLED/i.test(raw)) {
-      return 'Real ELZAB fiscal printing is disabled. Enable allowRealFiscalPrint only during controlled production go-live.';
+      return 'Real fiscal printing is disabled. Enable allowRealFiscalPrint only during controlled production go-live.';
     }
     return raw ? `${fallback}: ${raw}` : fallback;
   }

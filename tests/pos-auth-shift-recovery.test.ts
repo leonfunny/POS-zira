@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   assertLocalOpenShiftMatchesSession,
+  getVerifiedServerShiftMismatch,
   recoverOpenShiftFromLocal,
   type LocalOpenShift,
 } from '../src/main/pos/open-shift-recovery';
@@ -133,6 +134,32 @@ describe('POS auth-boundary shift recovery', () => {
     expect(() => assertLocalOpenShiftMatchesSession(db, store)).toThrow(/not open in the local payment journal/i);
   });
 
+  it('fails closed on a server-confirmed missing or different register shift', () => {
+    expect(getVerifiedServerShiftMismatch({
+      localShiftId: 'shift-a',
+      localBackendShiftId: null,
+      serverShiftId: null,
+    })).toMatch(/server confirmed.*no active shift/i);
+    expect(getVerifiedServerShiftMismatch({
+      localShiftId: 'shift-a',
+      localBackendShiftId: null,
+      serverShiftId: 'shift-b',
+    })).toMatch(/does not match server shift/i);
+  });
+
+  it('accepts the same local or reconciled backend shift identity', () => {
+    expect(getVerifiedServerShiftMismatch({
+      localShiftId: 'shift-a',
+      localBackendShiftId: null,
+      serverShiftId: 'shift-a',
+    })).toBeNull();
+    expect(getVerifiedServerShiftMismatch({
+      localShiftId: 'local-a',
+      localBackendShiftId: 'server-a',
+      serverShiftId: 'server-a',
+    })).toBeNull();
+  });
+
   it('runs the same recovery path after the user logs in', () => {
     const source = readFileSync(
       new URL('../src/main/modules/pos.module.ts', import.meta.url),
@@ -144,6 +171,17 @@ describe('POS auth-boundary shift recovery', () => {
     );
 
     expect(loginHandler).toContain('recoverOpenShiftFromLocal(database, this.posStore)');
-    expect(loginHandler).toContain('if (localShiftRecoverySafe) void this.verifyShiftWithServer(openShift?.id ?? null)');
+    expect(loginHandler).toContain('if (localShiftRecoverySafe) this.scheduleShiftVerification(openShift?.id ?? null)');
+  });
+
+  it('awaits the authoritative shift check at every protected tender entry point', () => {
+    const source = readFileSync(
+      new URL('../src/main/modules/pos.module.ts', import.meta.url),
+      'utf8',
+    );
+    expect(source).toContain('await this.awaitServerShiftConsistencyForPayment()');
+    expect(source.match(/await this\.awaitServerShiftConsistencyForPayment\(\)/g)?.length)
+      .toBeGreaterThanOrEqual(5);
+    expect(source).toContain('Ignoring stale server shift verification result');
   });
 });

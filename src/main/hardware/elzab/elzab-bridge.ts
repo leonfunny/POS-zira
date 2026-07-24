@@ -1,8 +1,11 @@
 import { execFile } from 'child_process';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync } from 'fs';
 import path from 'path';
 import { promisify } from 'util';
 import type { DailyReportData, ReceiptData } from '../../../shared/types';
+import { isRealFiscalPrintEnabled } from '../real-fiscal-print-gate';
+
+export { isRealFiscalPrintEnabled } from '../real-fiscal-print-gate';
 
 const execFileAsync = promisify(execFile);
 
@@ -335,19 +338,6 @@ export function createDefaultElzabBridge(): ElzabBridge {
     return new MissingElzabBridge();
   }
   return new ElzabSidecarBridge(executablePath);
-}
-
-export function isRealFiscalPrintEnabled(): boolean {
-  if (process.env.ALLOW_REAL_FISCAL_PRINT === 'true') return true;
-  if (process.env.ZIRA_ELZAB_IGNORE_CONFIG_ALLOW_REAL === 'true') return false;
-  try {
-    const cfgPath = resolveConfigPath();
-    if (!cfgPath || !existsSync(cfgPath)) return false;
-    const cfg = JSON.parse(readFileSync(cfgPath, 'utf8').replace(/^\uFEFF/, ''));
-    return cfg?.allowRealFiscalPrint === true;
-  } catch {
-    return false;
-  }
 }
 
 function buildSidecarEnv(): NodeJS.ProcessEnv {

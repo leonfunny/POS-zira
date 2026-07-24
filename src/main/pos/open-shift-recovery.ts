@@ -3,6 +3,7 @@ export interface LocalOpenShift {
   staff_id: string | null;
   staff_name: string | null;
   opened_at: string;
+  backend_id?: string | null;
 }
 
 type ShiftRecoveryDatabase = {
@@ -33,7 +34,7 @@ export function getSingleLocalOpenShift(
   db: ShiftRecoveryDatabase,
 ): LocalOpenShift | null {
   const openShifts = db.all<LocalOpenShift>(
-    'SELECT id, staff_id, staff_name, opened_at FROM shifts WHERE closed_at IS NULL ORDER BY opened_at DESC',
+    'SELECT id, staff_id, staff_name, opened_at, backend_id FROM shifts WHERE closed_at IS NULL ORDER BY opened_at DESC',
   );
   if (openShifts.length > 1) {
     throw new Error(
@@ -41,6 +42,29 @@ export function getSingleLocalOpenShift(
     );
   }
   return openShifts[0] ?? null;
+}
+
+export function getVerifiedServerShiftMismatch(input: {
+  localShiftId: string | null | undefined;
+  localBackendShiftId?: string | null;
+  serverShiftId: string | null | undefined;
+}): string | null {
+  const localShiftId = String(input.localShiftId || '').trim();
+  const localBackendShiftId = String(input.localBackendShiftId || '').trim();
+  const serverShiftId = String(input.serverShiftId || '').trim();
+
+  if (localShiftId && !serverShiftId) {
+    return `Local POS shift ${localShiftId} is open, but the server confirmed that this register has no active shift. Close and reopen the shift before taking payment.`;
+  }
+  if (
+    localShiftId
+    && serverShiftId
+    && serverShiftId !== localShiftId
+    && serverShiftId !== localBackendShiftId
+  ) {
+    return `Local POS shift ${localShiftId} does not match server shift ${serverShiftId}. Reconcile the shift before taking payment.`;
+  }
+  return null;
 }
 
 export function assertLocalOpenShiftMatchesSession(

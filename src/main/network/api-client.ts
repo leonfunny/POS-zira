@@ -3142,7 +3142,9 @@ export class ApiClient {
   /**
    * Get the currently active (open) shift from server.
    * GET /api/v1/pos/shifts/active
-   * Returns null if no active shift or endpoint not deployed.
+   * Returns null only when a successful response explicitly confirms that
+   * this register has no active shift. HTTP/transport failures remain errors,
+   * because they are not evidence that a local shift was closed remotely.
    */
   async getActiveShift(token: string, machineIdOverride?: string | null): Promise<{
     id: string; staffId: string; staffName: string; openingCash: number; openedAt: string; status: string;
@@ -3153,10 +3155,15 @@ export class ApiClient {
     const response = await fetchWithTimeout(url, {
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     });
-    if (response.status === 404 || response.status === 501) return null;
-    if (!response.ok) return null;
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || `HTTP ${response.status}`);
+    }
     const data = await response.json();
-    if (data.active === false || !data.id) return null;
+    if (data.active === false) return null;
+    if (!data.id) {
+      throw new Error('Active shift response is malformed: missing id');
+    }
     return data;
   }
 

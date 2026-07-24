@@ -18,6 +18,7 @@ import { repairOrphanBookings } from '../sync/booking-sync';
 import { PosStore } from '../pos/pos-store';
 import { PaymentController, FiscalReceiptJournalInput, ReceiptPrintJournalInput } from '../pos/payment-controller';
 import {
+  assertBilliardRealFiscalGate,
   assertTenderFiscalCompatibilityForProtocol,
   hasTenderFiscalDiscount,
   requiresBilliardFiscalPrinterReadiness,
@@ -243,6 +244,7 @@ import {
 } from '../../shared/billiard-pos-handoff';
 import {
   assertLocalOpenShiftMatchesSession,
+  getVerifiedServerShiftMismatch,
   recoverOpenShiftFromLocal,
 } from '../pos/open-shift-recovery';
 
@@ -615,6 +617,9 @@ export class PosModule extends BaseModule {
   private frozenRestoredCartHolds = new Set<string>();
   private posAuthEpoch = new PosAuthEpochGuard();
   private holdRecallInFlight: { holdId: string; authContext: PosAuthContext } | null = null;
+  private serverShiftMismatchError: string | null = null;
+  private shiftVerificationGeneration = 0;
+  private shiftVerificationInFlight: Promise<void> | null = null;
 
   constructor(private container: ServiceContainer) {
     super();
@@ -631,6 +636,39 @@ export class PosModule extends BaseModule {
     } catch {
       return false;
     }
+  }
+
+  private assertServerShiftConsistentForPayment(): void {
+    if (this.serverShiftMismatchError) {
+      throw new Error(this.serverShiftMismatchError);
+    }
+  }
+
+  private async awaitServerShiftConsistencyForPayment(): Promise<void> {
+    const inFlight = this.shiftVerificationInFlight;
+    if (inFlight) await inFlight;
+    this.assertServerShiftConsistentForPayment();
+  }
+
+  private scheduleShiftVerification(localShiftId: string | null): void {
+    const generation = ++this.shiftVerificationGeneration;
+    const work = this.verifyShiftWithServer(localShiftId, generation)
+      .finally(() => {
+        if (this.shiftVerificationGeneration === generation) {
+          this.shiftVerificationInFlight = null;
+        }
+      });
+    this.shiftVerificationInFlight = work;
+  }
+
+  private invalidateShiftVerification(): void {
+    this.shiftVerificationGeneration += 1;
+    this.shiftVerificationInFlight = null;
+  }
+
+  private setServerShiftMismatch(error: string | null): void {
+    this.serverShiftMismatchError = error;
+    if (error) logger.error(`[PosModule] Payment blocked by verified shift mismatch: ${error}`);
   }
 
   /** Must match PaymentController's local-first fiscal route selection. */
@@ -862,17 +900,22 @@ export class PosModule extends BaseModule {
     }
 
     // Cross-verify with server (async, non-blocking)
-    if (localShiftRecoverySafe) this.verifyShiftWithServer(openShift?.id ?? null);
+    if (localShiftRecoverySafe) this.scheduleShiftVerification(openShift?.id ?? null);
 
     this.setState(ModuleState.READY);
     logger.info('[PosModule] Initialized');
   }
 
-  private async verifyShiftWithServer(localShiftId: string | null): Promise<void> {
+  private async verifyShiftWithServer(localShiftId: string | null, generation: number): Promise<void> {
     try {
       const token = getSecureAuthToken();
       if (!token) return;
-      const serverShift = await apiClient.getActiveShift(token);
+      const configuredMachineId = String(getConfigValue('machineId') ?? '').trim();
+      const serverShift = await apiClient.getActiveShift(token, configuredMachineId || undefined);
+      if (generation !== this.shiftVerificationGeneration) {
+        logger.debug('[PosModule] Ignoring stale server shift verification result');
+        return;
+      }
       if (serverShift && !localShiftId) {
         logger.warn(`[PosModule] Server has active shift ${serverShift.id} but local DB has none — restoring`);
         const existingShift = database.get<{
@@ -900,24 +943,90 @@ export class PosModule extends BaseModule {
           database.markDirty();
           logger.info(`[PosModule] Materialized server shift ${serverShift.id} in local DB`);
         } else if (existingShift.closed_at) {
-          logger.warn(`[PosModule] Server shift ${serverShift.id} is active but local row is closed — payments will stay blocked until shift is closed/reopened`);
+          this.setServerShiftMismatch(
+            `Server shift ${serverShift.id} is active, but its local payment journal is closed. Close the server shift and reopen it before taking payment.`,
+          );
           return;
-        } else if (
-          !String(existingShift.staff_id || '').trim()
-          || !String(existingShift.staff_name || '').trim()
+        }
+        const restoredShift = database.get<{
+          id: string;
+          staff_id: string | null;
+          staff_name: string | null;
+          opened_at: string;
+        }>(
+          'SELECT id, staff_id, staff_name, opened_at FROM shifts WHERE id = ? AND closed_at IS NULL',
+          [serverShift.id],
+        );
+        if (
+          !restoredShift
+          || !String(restoredShift.staff_id || '').trim()
+          || !String(restoredShift.staff_name || '').trim()
         ) {
-          logger.warn(`[PosModule] Server shift ${serverShift.id} is active but local cashier identity is incomplete — payments will stay blocked`);
+          this.setServerShiftMismatch(
+            `Server shift ${serverShift.id} has no complete local cashier journal. Reconcile it before taking payment.`,
+          );
           return;
         }
         this.posStore?.dispatch({
           type: 'session/open',
-          payload: { shiftId: serverShift.id, staffId: serverShift.staffId, staffName: serverShift.staffName, openedAt: serverShift.openedAt },
+          payload: {
+            shiftId: restoredShift.id,
+            staffId: restoredShift.staff_id,
+            staffName: restoredShift.staff_name,
+            openedAt: restoredShift.opened_at,
+          },
         });
-      } else if (!serverShift && localShiftId) {
-        logger.warn(`[PosModule] Local shift ${localShiftId} is open but server says no active shift — local shift may have been closed elsewhere`);
+        this.setServerShiftMismatch(null);
+        return;
       }
-    } catch {
-      logger.debug('[PosModule] Server shift verification skipped (offline or error)');
+
+      const localShift = localShiftId
+        ? database.get<{
+          id: string;
+          staff_id: string | null;
+          backend_id: string | null;
+        }>(
+          'SELECT id, staff_id, backend_id FROM shifts WHERE id = ? AND closed_at IS NULL',
+          [localShiftId],
+        )
+        : null;
+      if (localShiftId && !localShift) {
+        this.setServerShiftMismatch(
+          `POS shift ${localShiftId} is no longer open in the local payment journal. Close and reopen the shift before taking payment.`,
+        );
+        return;
+      }
+
+      let localBackendShiftId = localShift?.backend_id ?? null;
+      if (
+        serverShift
+        && localShift
+        && !localBackendShiftId
+        && serverShift.id !== localShift.id
+        && canReconcileActiveShift(
+          localShift.id,
+          localShift.staff_id,
+          serverShift,
+          configuredMachineId,
+        )
+      ) {
+        localBackendShiftId = serverShift.id;
+        database.run(
+          'UPDATE shifts SET backend_id = ?, synced = 1, sync_error = NULL WHERE id = ? AND backend_id IS NULL',
+          [localBackendShiftId, localShift.id],
+        );
+        database.markDirty();
+      }
+
+      this.setServerShiftMismatch(getVerifiedServerShiftMismatch({
+        localShiftId,
+        localBackendShiftId,
+        serverShiftId: serverShift?.id ?? null,
+      }));
+    } catch (error: any) {
+      // A transport/HTTP failure is not proof of a mismatch. Keep the last
+      // verified state and preserve the existing offline-payment behavior.
+      logger.debug(`[PosModule] Server shift verification skipped (offline or error): ${error?.message || error}`);
     }
   }
 
@@ -1786,17 +1895,20 @@ export class PosModule extends BaseModule {
     const authContext = this.capturePosAuthContext(scope);
 
     assertLocalOpenShiftMatchesSession(database, this.posStore);
+    await this.awaitServerShiftConsistencyForPayment();
     this.assertNewBilliardHandoffReadiness(scope);
 
     const fiscal = await (this.paymentController?.hasFiscalPrinter?.()
       ?? Promise.resolve({ configured: false, connected: false }));
     const localFiscalEnabled = config.printers?.FISCAL?.enabled === true;
-    const fiscalRequired = requiresBilliardFiscalPrinterReadiness({
+    const fiscalPreflight = {
       allowRealFiscalPrint: config.allowRealFiscalPrint,
       fiscalOnCashSale: config.fiscalOnCashSale,
       localFiscalEnabled,
       detectedFiscalConfigured: fiscal.configured,
-    });
+    };
+    assertBilliardRealFiscalGate(fiscalPreflight);
+    const fiscalRequired = requiresBilliardFiscalPrinterReadiness(fiscalPreflight);
     if (fiscalRequired && (!fiscal.configured || !fiscal.connected)) {
       throw new Error('The fiscal printer is not ready. Connect it before ending this Billiard session.');
     }
@@ -1880,6 +1992,8 @@ export class PosModule extends BaseModule {
             intent: this.billiardIntent(existing, true),
           };
         }
+        assertLocalOpenShiftMatchesSession(database, this.posStore);
+        await this.awaitServerShiftConsistencyForPayment();
         const liveCheckout = this.posStore.getState().checkoutDraft.billiard?.origin.checkoutId;
         const liveItems = this.posStore.getState().cart.items.length;
         if (liveItems > 0 && liveCheckout !== existing.checkoutId) {
@@ -1899,6 +2013,7 @@ export class PosModule extends BaseModule {
       }
 
       assertLocalOpenShiftMatchesSession(database, this.posStore);
+      await this.awaitServerShiftConsistencyForPayment();
       const {
         current,
         previousRestored,
@@ -2287,6 +2402,7 @@ export class PosModule extends BaseModule {
         }
         const posStore = this.posStore;
         assertLocalOpenShiftMatchesSession(database, posStore);
+        await this.awaitServerShiftConsistencyForPayment();
         if (!posStore || !isActiveBilliardCheckoutSnapshot(posStore.getState(), record.checkoutSnapshot)) {
           return { success: false, error: 'The active POS cart does not match this frozen Billiard checkout.' };
         }
@@ -2330,6 +2446,7 @@ export class PosModule extends BaseModule {
         }
         const posStore = this.posStore;
         assertLocalOpenShiftMatchesSession(database, posStore);
+        await this.awaitServerShiftConsistencyForPayment();
         if (!posStore || !isActiveBilliardCheckoutSnapshot(posStore.getState(), record.checkoutSnapshot)) {
           return { success: false, error: 'The active POS cart does not match this frozen Billiard checkout.' };
         }
@@ -2437,6 +2554,8 @@ export class PosModule extends BaseModule {
           if (!state.session.isOpen) {
             return { success: false, error: 'Open a POS shift before starting this payment.' };
           }
+          assertLocalOpenShiftMatchesSession(database, this.posStore);
+          await this.awaitServerShiftConsistencyForPayment();
           if (!isActiveRestoredCartSnapshot(state, payload.snapshot)) {
             return { success: false, error: 'The active cart does not exactly match its durable protected snapshot.' };
           }
@@ -7397,6 +7516,8 @@ export class PosModule extends BaseModule {
         if (!this.shiftController) return { success: false, error: 'Shift controller not initialized' };
         const shiftId = this.shiftController.openShift(data.staffId, data.staffName, data.openingCash);
         this.posStore?.dispatch({ type: 'session/open', payload: { shiftId, staffId: data.staffId, staffName: data.staffName } });
+        this.invalidateShiftVerification();
+        this.setServerShiftMismatch(null);
         return { success: true, shiftId };
       } catch (e: any) { return { success: false, error: e.message }; }
     });
@@ -7428,6 +7549,8 @@ export class PosModule extends BaseModule {
             logger.warn(`[PosModule] Failed to close server ghost shift ${data.shiftId.substring(0, 8)}: ${err?.message ?? err}`);
           }
           this.posStore?.dispatch({ type: 'session/close' });
+          this.invalidateShiftVerification();
+          this.setServerShiftMismatch(null);
           return { success: true, report: null };
         }
 
@@ -7454,6 +7577,8 @@ export class PosModule extends BaseModule {
         }
         const report = this.shiftController.closeShift(data.shiftId, data.closingCash, Boolean(data.fiscalOnly));
         this.posStore?.dispatch({ type: 'session/close' });
+        this.invalidateShiftVerification();
+        this.setServerShiftMismatch(null);
         await this.shiftController.printZReport(report);
         return { success: true, report };
       } catch (e: any) { return { success: false, error: e.message }; }
@@ -7742,6 +7867,8 @@ export class PosModule extends BaseModule {
     bus.on('user:logged-out', () => {
       logger.info('[PosModule] User logged out — resetting POS RAM at the auth boundary');
       this.posAuthEpoch.advance();
+      this.invalidateShiftVerification();
+      this.setServerShiftMismatch(null);
       this.frozenRestoredCartHolds.clear();
       this.holdRecallInFlight = null;
       this.posStore?.resetForAuthBoundary();
@@ -7759,7 +7886,7 @@ export class PosModule extends BaseModule {
         localShiftRecoverySafe = false;
         logger.error(`[PosModule] Local shift recovery after login blocked: ${error?.message || String(error)}`);
       }
-      if (localShiftRecoverySafe) void this.verifyShiftWithServer(openShift?.id ?? null);
+      if (localShiftRecoverySafe) this.scheduleShiftVerification(openShift?.id ?? null);
       this.replayProductAdminMutations('login');
     });
   }

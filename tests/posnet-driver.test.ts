@@ -159,7 +159,9 @@ describe('PosnetDriver port mutex integration', () => {
   });
 
   it('printReceipt() uses stored line total for decimal weighted lines', async () => {
-    const driver = new PosnetDriver('COM6', 9600, 'POSNET');
+    const driver = new PosnetDriver('COM6', 9600, 'POSNET', {
+      isRealFiscalPrintEnabled: () => true,
+    });
     (driver as any).connectionState = 'protocol_ready';
     const sendSpy = vi.spyOn(driver as any, 'sendPosnetSequence').mockResolvedValue([]);
 
@@ -185,6 +187,97 @@ describe('PosnetDriver port mutex integration', () => {
     expect(frames).toContainEqual(['trline', 'naRieng cu', 'vt2', 'pr8000', 'il0.238', 'wa1904']);
     expect(frames).toContainEqual(['trpayment', 'ty2', 'wa1904']);
     expect(frames).toContainEqual(['trend', 'to1904']);
+  });
+
+  it('blocks a real POSNET receipt before SENT or serial I/O when the production gate is off', async () => {
+    const pendingAttempt = { id: 'attempt-1' };
+    const fiscalJournal = {
+      findBlockingAttempt: vi.fn(() => null),
+      findReconcilableAttempt: vi.fn(),
+      resolveReconcilable: vi.fn(),
+      getNextAttemptNo: vi.fn(() => 1),
+      createPending: vi.fn(() => pendingAttempt),
+      markSent: vi.fn(),
+      markSuccess: vi.fn(),
+      markFailed: vi.fn(),
+      markUnknown: vi.fn(),
+      markBlocked: vi.fn(),
+    };
+    const driver = new PosnetDriver('COM6', 9600, 'POSNET', {
+      fiscalJournal: fiscalJournal as any,
+      isRealFiscalPrintEnabled: () => false,
+    });
+    (driver as any).connectionState = 'protocol_ready';
+    const sendSpy = vi.spyOn(driver as any, 'sendPosnetSequence').mockResolvedValue([]);
+
+    await expect(driver.printReceipt({
+      orderId: 'order-gated-1',
+      orderNumber: 'POS-G1',
+      items: [{ name: 'Tea', quantity: 1, unitPrice: 1000, totalPrice: 1000, vatRate: 23 }],
+      payment: { method: 'CASH', amount: 1000 },
+      subtotal: 1000,
+      total: 1000,
+    })).rejects.toThrow('REAL_FISCAL_PRINT_DISABLED');
+
+    expect(fiscalJournal.createPending).toHaveBeenCalledTimes(1);
+    expect(fiscalJournal.markBlocked).toHaveBeenCalledWith(
+      'attempt-1',
+      'REAL_FISCAL_PRINT_DISABLED',
+      expect.any(Object),
+    );
+    expect(fiscalJournal.markSent).not.toHaveBeenCalled();
+    expect(sendSpy).not.toHaveBeenCalled();
+  });
+
+  it('uses only the non-fiscal prninit test path while real POSNET printing is disabled', async () => {
+    const driver = new PosnetDriver('COM6', 9600, 'POSNET', {
+      isRealFiscalPrintEnabled: () => false,
+    });
+    (driver as any).connectionState = 'protocol_ready';
+    (driver as any).modelName = 'POSNET Test';
+    const sendSpy = vi.spyOn(driver as any, 'sendPosnetSequence').mockResolvedValue([]);
+
+    await expect(driver.printTest()).resolves.toBeUndefined();
+
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(sendSpy.mock.calls[0][0][0]).toEqual(['prninit']);
+    expect(sendSpy.mock.calls[0][0]).not.toContainEqual(['trinit', 'bm0']);
+  });
+
+  it('blocks POSNET report transaction while the production gate is off', async () => {
+    const driver = new PosnetDriver('COM6', 9600, 'POSNET', {
+      isRealFiscalPrintEnabled: () => false,
+    });
+    (driver as any).connectionState = 'protocol_ready';
+    const sendSpy = vi.spyOn(driver as any, 'sendPosnetSequence').mockResolvedValue([]);
+
+    await expect(driver.printZReport({
+      date: '2026-07-24',
+      transactionCount: 1,
+      grossSales: 1000,
+      discounts: 0,
+      refunds: 0,
+      netSales: 1000,
+      paymentSummary: [],
+    })).rejects.toThrow('REAL_FISCAL_PRINT_DISABLED');
+    expect(sendSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not apply the real-fiscal gate to THERMAL protocol receipts', async () => {
+    const driver = new PosnetDriver('COM6', 9600, 'THERMAL', {
+      isRealFiscalPrintEnabled: () => false,
+    });
+    (driver as any).connectionState = 'protocol_ready';
+    const sendSpy = vi.spyOn(driver as any, 'sendPosnetSequence').mockResolvedValue([]);
+
+    await expect(driver.printReceipt({
+      orderId: 'thermal-1',
+      items: [{ name: 'Tea', quantity: 1, unitPrice: 1000, totalPrice: 1000, vatRate: 23 }],
+      payment: { method: 'CASH', amount: 1000 },
+      subtotal: 1000,
+      total: 1000,
+    })).resolves.toBeUndefined();
+    expect(sendSpy).toHaveBeenCalledTimes(1);
   });
 
   it('keeps exact frozen discounts on mixed-VAT, weighted, multi-quantity, and fully-discounted lines', () => {

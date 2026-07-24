@@ -144,4 +144,29 @@ describe('ApiClient POS shift machineId', () => {
       'Content-Type': 'application/json',
     });
   });
+
+  it('returns no active shift only from an explicit successful server response', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ active: false }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+
+    await expect(new ApiClient('https://api.test').getActiveShift('token-1')).resolves.toBeNull();
+  });
+
+  it('does not treat HTTP failure or a malformed body as proof that no shift is active', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ message: 'service unavailable' }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    await expect(new ApiClient('https://api.test').getActiveShift('token-1'))
+      .rejects.toThrow('service unavailable');
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ active: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    await expect(new ApiClient('https://api.test').getActiveShift('token-1'))
+      .rejects.toThrow(/malformed.*missing id/i);
+  });
 });

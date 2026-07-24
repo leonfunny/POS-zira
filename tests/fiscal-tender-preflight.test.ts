@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  assertBilliardRealFiscalGate,
   assertTenderFiscalCompatibilityForProtocol,
   hasTenderFiscalDiscount,
   requiresBilliardFiscalPrinterReadiness,
@@ -29,6 +30,36 @@ describe('protected tender fiscal preflight', () => {
       localFiscalEnabled: false,
       detectedFiscalConfigured: false,
     })).toBe(false);
+  });
+
+  it('blocks a configured fiscal route before Billiard end-session while the production gate is off', () => {
+    expect(() => assertBilliardRealFiscalGate({
+      allowRealFiscalPrint: false,
+      fiscalOnCashSale: 'ask',
+      localFiscalEnabled: true,
+      detectedFiscalConfigured: false,
+    })).toThrow('REAL_FISCAL_PRINT_DISABLED');
+    expect(() => assertBilliardRealFiscalGate({
+      allowRealFiscalPrint: false,
+      fiscalOnCashSale: 'always',
+      localFiscalEnabled: false,
+      detectedFiscalConfigured: false,
+    })).toThrow('REAL_FISCAL_PRINT_DISABLED');
+  });
+
+  it('allows a configured fiscal route only after the controlled go-live flag is enabled', () => {
+    expect(() => assertBilliardRealFiscalGate({
+      allowRealFiscalPrint: true,
+      fiscalOnCashSale: 'ask',
+      localFiscalEnabled: true,
+      detectedFiscalConfigured: true,
+    })).not.toThrow();
+    expect(() => assertBilliardRealFiscalGate({
+      allowRealFiscalPrint: false,
+      fiscalOnCashSale: 'ask',
+      localFiscalEnabled: false,
+      detectedFiscalConfigured: false,
+    })).not.toThrow();
   });
 
   it('uses the checkout-level discount for restored carts on ELZAB', () => {

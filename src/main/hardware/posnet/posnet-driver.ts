@@ -13,6 +13,7 @@ import {
   FiscalAttemptRow,
   fiscalAttemptRepo,
 } from '../../database/repos/fiscal-attempt-repo';
+import { isRealFiscalPrintEnabled } from '../real-fiscal-print-gate';
 
 const execFileAsync = promisify(execFile);
 
@@ -218,7 +219,7 @@ const TAB = 0x09;
 export type PosnetConnectionState = 'disconnected' | 'physical_present' | 'protocol_ready';
 
 export interface PosnetDiagnosticCode {
-  code: 'PORT_NOT_FOUND' | 'PORT_BUSY' | 'DEVICE_DETECTED_NO_PROTOCOL_RESPONSE' | 'WRONG_BAUD_OR_MODE' | 'COMMAND_REJECTED' | 'PRINT_OK' | 'ACCESS_DENIED';
+  code: 'PORT_NOT_FOUND' | 'PORT_BUSY' | 'DEVICE_DETECTED_NO_PROTOCOL_RESPONSE' | 'WRONG_BAUD_OR_MODE' | 'COMMAND_REJECTED' | 'PRINT_OK' | 'ACCESS_DENIED' | 'REAL_FISCAL_PRINT_DISABLED' | 'FISCAL_ATTEMPT_RETRY_BLOCKED';
   detail?: string;
 }
 
@@ -234,6 +235,8 @@ export interface PosnetDriverOptions {
   onFiscalUnknown?: (info: { orderId?: string; orderNumber?: string; code: string; detail?: string }) => void;
   /** Injectable for tests; defaults to the shared fiscal_attempts repo. */
   fiscalJournal?: FiscalAttemptJournal;
+  /** Injectable production kill switch; defaults to the shared fiscal gate. */
+  isRealFiscalPrintEnabled?: () => boolean;
 }
 
 export class PosnetDriver {
@@ -245,6 +248,7 @@ export class PosnetDriver {
   private lastBaudProbeFailures: string[] = [];
   private fiscalJournal: FiscalAttemptJournal;
   private onFiscalUnknown?: PosnetDriverOptions['onFiscalUnknown'];
+  private realFiscalPrintEnabled: () => boolean;
 
   constructor(
     private portName: string = 'COM3',
@@ -254,6 +258,7 @@ export class PosnetDriver {
   ) {
     this.fiscalJournal = options.fiscalJournal || fiscalAttemptRepo;
     this.onFiscalUnknown = options.onFiscalUnknown;
+    this.realFiscalPrintEnabled = options.isRealFiscalPrintEnabled || isRealFiscalPrintEnabled;
     logger.info(`[PosnetDriver] Driver initialized for ${portName} @ ${baudRate}`);
   }
 
@@ -525,8 +530,11 @@ export class PosnetDriver {
       'Zira AI Print Agent',
     ];
 
-    // Primary: trinit / trline / trend (1 grosz per line item, non-fiscal)
-    try {
+    // Primary: trinit / trline / trend. Despite the historical "test" label,
+    // this opens a fiscal transaction on a POSNET device, so never send it
+    // while the production kill switch is off. The prninit fallback below is
+    // a genuinely non-fiscal diagnostic print.
+    if (this.protocol !== 'POSNET' || this.realFiscalPrintEnabled()) try {
       const pricePerLine = 1;
       const total = lines.length * pricePerLine;
 
@@ -541,6 +549,8 @@ export class PosnetDriver {
       return;
     } catch (primaryErr) {
       logger.warn(`[PosnetDriver] trinit path failed, attempting prninit fallback: ${(primaryErr as Error).message}`);
+    } else {
+      logger.info('[PosnetDriver] Real fiscal test transaction disabled; using non-fiscal prninit test page');
     }
 
     // Fallback: prninit / prnline / prnend (legacy non-fiscal printout for older models)
@@ -579,6 +589,13 @@ export class PosnetDriver {
     // transaction, no journal.
     const isFiscalProtocol = this.protocol === 'POSNET';
     const attempt = isFiscalProtocol ? this.createReceiptAttempt(data) : null;
+
+    if (attempt && !this.realFiscalPrintEnabled()) {
+      const detail = 'Real POSNET fiscal receipt is disabled. Enable allowRealFiscalPrint only during controlled production go-live.';
+      this.lastDiagnostic = { code: 'REAL_FISCAL_PRINT_DISABLED', detail };
+      this.fiscalJournal.markBlocked(attempt.id, 'REAL_FISCAL_PRINT_DISABLED', { detail });
+      throw new Error(`REAL_FISCAL_PRINT_DISABLED: ${detail}`);
+    }
 
     if (attempt) this.fiscalJournal.markSent(attempt.id);
 
@@ -655,6 +672,11 @@ export class PosnetDriver {
 
   async printZReport(data: DailyReportData): Promise<void> {
     if (!this.isConnected()) throw new Error('Printer not connected');
+    if (this.protocol === 'POSNET' && !this.realFiscalPrintEnabled()) {
+      const detail = 'Real POSNET fiscal report transaction is disabled. Enable allowRealFiscalPrint only during controlled production go-live.';
+      this.lastDiagnostic = { code: 'REAL_FISCAL_PRINT_DISABLED', detail };
+      throw new Error(`REAL_FISCAL_PRINT_DISABLED: ${detail}`);
+    }
     logger.info('[PosnetDriver] Printing Z-report...');
 
     const frames: string[][] = [];
