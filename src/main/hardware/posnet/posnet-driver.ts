@@ -219,7 +219,7 @@ const TAB = 0x09;
 export type PosnetConnectionState = 'disconnected' | 'physical_present' | 'protocol_ready';
 
 export interface PosnetDiagnosticCode {
-  code: 'PORT_NOT_FOUND' | 'PORT_BUSY' | 'DEVICE_DETECTED_NO_PROTOCOL_RESPONSE' | 'WRONG_BAUD_OR_MODE' | 'COMMAND_REJECTED' | 'PRINT_OK' | 'ACCESS_DENIED' | 'REAL_FISCAL_PRINT_DISABLED' | 'FISCAL_ATTEMPT_RETRY_BLOCKED' | 'FISCAL_JOURNAL_UNAVAILABLE' | 'POSNET_THERMAL_PROTOCOL_UNSUPPORTED';
+  code: 'PORT_NOT_FOUND' | 'PORT_BUSY' | 'DEVICE_DETECTED_NO_PROTOCOL_RESPONSE' | 'WRONG_BAUD_OR_MODE' | 'COMMAND_REJECTED' | 'PRINT_OK' | 'ACCESS_DENIED' | 'REAL_FISCAL_PRINT_DISABLED' | 'FISCAL_ATTEMPT_RETRY_BLOCKED' | 'FISCAL_JOURNAL_UNAVAILABLE' | 'POSNET_THERMAL_PROTOCOL_UNSUPPORTED' | 'POSNET_FISCAL_Z_REPORT_UNSUPPORTED';
   detail?: string;
 }
 
@@ -657,35 +657,13 @@ export class PosnetDriver {
     });
   }
 
-  async printZReport(data: DailyReportData): Promise<void> {
+  async printZReport(_data: DailyReportData): Promise<void> {
     if (!this.isConnected()) throw new Error('Printer not connected');
     this.assertPrintProtocolSupported('print reports');
-    if (!this.realFiscalPrintEnabled()) {
-      const detail = 'Real POSNET fiscal report transaction is disabled. Enable allowRealFiscalPrint only during controlled production go-live.';
-      this.lastDiagnostic = { code: 'REAL_FISCAL_PRINT_DISABLED', detail };
-      throw new Error(`REAL_FISCAL_PRINT_DISABLED: ${detail}`);
-    }
-    logger.info('[PosnetDriver] Printing Z-report...');
-
-    const frames: string[][] = [];
-    frames.push(['trinit', 'bm0']);
-
-    frames.push(['trline', 'na=== Z-REPORT ===', 'vt0', 'pr0', 'il1.000']);
-    frames.push(['trline', `naDate: ${data.date}`, 'vt0', 'pr0', 'il1.000']);
-    if (data.cashierName) {
-      frames.push(['trline', `naCashier: ${data.cashierName}`, 'vt0', 'pr0', 'il1.000']);
-    }
-    frames.push(['trline', `naOrders: ${data.transactionCount}`, 'vt0', 'pr0', 'il1.000']);
-    frames.push(['trline', `naTotal: ${(data.grossSales / 100).toFixed(2)}`, 'vt0', 'pr0', 'il1.000']);
-
-    for (const p of data.paymentSummary ?? []) {
-      frames.push(['trline', `na${p.method}: ${(p.amount / 100).toFixed(2)}`, 'vt0', 'pr0', 'il1.000']);
-    }
-
-    frames.push(['trend', 'to0']);
-
-    await this.sendPosnetSequence(frames);
-    logger.info('[PosnetDriver] Z-report printed');
+    const detail =
+      'Automatic POSNET fiscal Z-report is not implemented. Run the authorized daily report from the printer/service workflow; no printer command was sent.';
+    this.lastDiagnostic = { code: 'POSNET_FISCAL_Z_REPORT_UNSUPPORTED', detail };
+    throw new Error(`POSNET_FISCAL_Z_REPORT_UNSUPPORTED: ${detail}`);
   }
 
   /** Display message on customer display */

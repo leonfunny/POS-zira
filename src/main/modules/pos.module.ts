@@ -669,6 +669,11 @@ export class PosModule extends BaseModule {
     await this.awaitServerShiftConsistencyForPayment();
   }
 
+  private async preflightOrdinaryPosPayment(): Promise<void> {
+    const openShift = assertLocalOpenShiftMatchesSession(database, this.posStore);
+    await this.refreshServerShiftConsistencyForPayment(openShift.id);
+  }
+
   private invalidateShiftVerification(): void {
     this.shiftVerificationGeneration += 1;
     this.shiftVerificationInFlight = null;
@@ -919,7 +924,15 @@ export class PosModule extends BaseModule {
       const token = getSecureAuthToken();
       if (!token) return;
       const configuredMachineId = String(getConfigValue('machineId') ?? '').trim();
-      const serverShift = await apiClient.getActiveShift(token, configuredMachineId || undefined);
+      if (!configuredMachineId) {
+        if (generation === this.shiftVerificationGeneration) {
+          this.setServerShiftMismatch(
+            'This POS register has no machineId, so its server shift cannot be verified safely. Configure the register before taking payment.',
+          );
+        }
+        return;
+      }
+      const serverShift = await apiClient.getActiveShift(token, configuredMachineId);
       if (generation !== this.shiftVerificationGeneration) {
         logger.debug('[PosModule] Ignoring stale server shift verification result');
         return;
@@ -1005,26 +1018,7 @@ export class PosModule extends BaseModule {
         return;
       }
 
-      let localBackendShiftId = localShift?.backend_id ?? null;
-      if (
-        serverShift
-        && localShift
-        && !localBackendShiftId
-        && serverShift.id !== localShift.id
-        && canReconcileActiveShift(
-          localShift.id,
-          localShift.staff_id,
-          serverShift,
-          configuredMachineId,
-        )
-      ) {
-        localBackendShiftId = serverShift.id;
-        database.run(
-          'UPDATE shifts SET backend_id = ?, synced = 1, sync_error = NULL WHERE id = ? AND backend_id IS NULL',
-          [localBackendShiftId, localShift.id],
-        );
-        database.markDirty();
-      }
+      const localBackendShiftId = localShift?.backend_id ?? null;
 
       this.setServerShiftMismatch(getVerifiedServerShiftMismatch({
         localShiftId,
@@ -4976,6 +4970,13 @@ export class PosModule extends BaseModule {
         const restoredContext = !billiardRecord
           ? this.posStore?.getState().checkoutDraft.restoredInterruption ?? null
           : null;
+        if (
+          !billiardRecord
+          && !restoredContext
+          && String(normalizedOrder.source || 'POS').toUpperCase() === 'POS'
+        ) {
+          await this.preflightOrdinaryPosPayment();
+        }
         if (billiardRecord || restoredContext) {
           assertProtectedPosPaymentMethods(normalizedOrder);
         }
@@ -6035,6 +6036,15 @@ export class PosModule extends BaseModule {
     ipcMain.handle('pos:has-fiscal-printer', async () => {
       const status = await (this.paymentController?.hasFiscalPrinter?.() ?? Promise.resolve({ configured: false, connected: false }));
       return { success: true, ...status };
+    });
+
+    ipcMain.handle('pos:payment:preflight', async () => {
+      try {
+        await this.preflightOrdinaryPosPayment();
+        return { success: true };
+      } catch (e: any) {
+        return { success: false, error: e?.message ?? String(e) };
+      }
     });
 
     // Surface a fiscal attempt stuck in UNKNOWN_NEEDS_RECONCILIATION so the UI

@@ -830,6 +830,13 @@ export default function PaymentModal({
         return;
       }
 
+      if (!protectedTender) {
+        const preflight = await window.electronAPI.pos.payment.preflight();
+        if (!preflight?.success) {
+          throw new Error(preflight?.error || 'POS payment preflight failed.');
+        }
+      }
+
       if (protectedTender && !tenderBoundaryCrossedRef.current) {
         const boundary = checkoutDraft?.billiard
           ? await window.electronAPI.pos.billiardCheckout.beginTender(checkoutDraft.billiard.handoffId)

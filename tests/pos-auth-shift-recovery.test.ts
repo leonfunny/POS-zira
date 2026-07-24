@@ -184,4 +184,21 @@ describe('POS auth-boundary shift recovery', () => {
       .toBeGreaterThanOrEqual(5);
     expect(source).toContain('Ignoring stale server shift verification result');
   });
+
+  it('fails closed without machineId and never auto-merges different shift ids', () => {
+    const source = readFileSync(
+      new URL('../src/main/modules/pos.module.ts', import.meta.url),
+      'utf8',
+    );
+    const verifier = source.slice(
+      source.indexOf('private async verifyShiftWithServer'),
+      source.indexOf('private allowCustomerDisplayIpc'),
+    );
+
+    expect(verifier).toContain('if (!configuredMachineId)');
+    expect(verifier).toContain('has no machineId');
+    expect(verifier).toContain('getActiveShift(token, configuredMachineId)');
+    expect(verifier).not.toContain('canReconcileActiveShift(');
+    expect(verifier).not.toContain('UPDATE shifts SET backend_id');
+  });
 });

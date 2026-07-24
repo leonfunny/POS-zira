@@ -112,6 +112,7 @@ describe('android shim installShim', () => {
     expect(typeof api.pos.sync.products).toBe('function');
     expect(typeof api.pos.payment.printReceiptAndOpenDrawer).toBe('function');
     expect(typeof api.pos.payment.hasFiscalPrinter).toBe('function');
+    expect(typeof api.pos.payment.preflight).toBe('function');
 
     // Boot subscriptions that fire unconditionally (S1 §7.8)
     expect(typeof api.pos.onFiscalUnknown).toBe('function');
@@ -185,6 +186,7 @@ describe('android shim S1 stub defaults', () => {
   });
 
   test('payment / receipt stubs let the CASH checkout complete without the recovery overlay', async () => {
+    expect(await api.pos.payment.preflight()).toEqual({ success: true });
     expect(await api.pos.payment.hasFiscalPrinter()).toEqual({
       success: true, configured: false, connected: false,
     });

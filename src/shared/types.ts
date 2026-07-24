@@ -1338,6 +1338,7 @@ export const IPC_CHANNELS = {
   POS_PRINT_RECEIPT_AND_OPEN_DRAWER: 'pos:print-receipt-and-open-drawer',
   POS_PRINT_FISCAL_RECEIPT: 'pos:print-fiscal-receipt',
   POS_HAS_FISCAL_PRINTER: 'pos:has-fiscal-printer',
+  POS_PAYMENT_PREFLIGHT: 'pos:payment:preflight',
   POS_OPEN_CASH_DRAWER: 'pos:open-cash-drawer',
   POS_PAYMENT_CARD: 'pos:payment:card',
   POS_ELAVON_STATUS: 'pos:elavon-status',

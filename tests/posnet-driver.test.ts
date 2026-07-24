@@ -259,9 +259,9 @@ describe('PosnetDriver port mutex integration', () => {
     expect(sendSpy.mock.calls[0][0]).not.toContainEqual(['trinit', 'bm0']);
   });
 
-  it('blocks POSNET report transaction while the production gate is off', async () => {
+  it('refuses unsupported POSNET Z-report without sending any transaction', async () => {
     const driver = new PosnetDriver('COM6', 9600, 'POSNET', {
-      isRealFiscalPrintEnabled: () => false,
+      isRealFiscalPrintEnabled: () => true,
     });
     (driver as any).connectionState = 'protocol_ready';
     const sendSpy = vi.spyOn(driver as any, 'sendPosnetSequence').mockResolvedValue([]);
@@ -274,7 +274,7 @@ describe('PosnetDriver port mutex integration', () => {
       refunds: 0,
       netSales: 1000,
       paymentSummary: [],
-    })).rejects.toThrow('REAL_FISCAL_PRINT_DISABLED');
+    })).rejects.toThrow('POSNET_FISCAL_Z_REPORT_UNSUPPORTED');
     expect(sendSpy).not.toHaveBeenCalled();
   });
 

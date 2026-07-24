@@ -783,6 +783,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       printReceiptAndOpenDrawer: (orderId: string) => ipcRenderer.invoke(IPC_CHANNELS.POS_PRINT_RECEIPT_AND_OPEN_DRAWER, orderId),
       printFiscalReceipt: (orderId: string) => ipcRenderer.invoke(IPC_CHANNELS.POS_PRINT_FISCAL_RECEIPT, orderId),
       hasFiscalPrinter: () => ipcRenderer.invoke(IPC_CHANNELS.POS_HAS_FISCAL_PRINTER),
+      preflight: () => ipcRenderer.invoke(IPC_CHANNELS.POS_PAYMENT_PREFLIGHT),
       reprintReceipt: (orderId: string) => ipcRenderer.invoke('pos:reprint-receipt', orderId),
       printRefundReceipt: (orderId: string) => ipcRenderer.invoke('pos:print-refund-receipt', orderId),
       getReconcilableFiscalAttempt: (orderId: string) => ipcRenderer.invoke('pos:fiscal:get-reconcilable', orderId),

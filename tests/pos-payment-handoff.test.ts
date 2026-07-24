@@ -139,6 +139,12 @@ describe('POS embedded numpad → PaymentModal wiring', () => {
     expect(POS_MODULE).toContain('Materialized server shift');
   });
 
+  it('freshly verifies the register shift for ordinary POS payments', () => {
+    expect(PAYMENT_MODAL).toContain('window.electronAPI.pos.payment.preflight()');
+    expect(POS_MODULE).toContain("ipcMain.handle('pos:payment:preflight'");
+    expect(POS_MODULE).toContain('await this.preflightOrdinaryPosPayment()');
+  });
+
   it('lets a cashier close a server ghost shift before reopening cleanly', () => {
     expect(POS_MODULE).toContain('Closed server ghost shift');
     expect(SHIFT_CONTROLLER).toContain('getActiveShift(token, this.getMachineId())');
