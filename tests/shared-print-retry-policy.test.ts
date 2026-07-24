@@ -21,6 +21,24 @@ describe('shared print retry policy', () => {
     }).decision).toBe('STOP_MANUAL_RETRY');
   });
 
+  it('keeps polling an order copy whose backend wait expired instead of failing it', () => {
+    // The backend never persists a TIMEOUT job status — timedOut means the
+    // blocking wait expired while the job still feeds the shared till
+    // (POS2: ~95% of receipts outlived the 10s hold, 2026-07-24).
+    expect(classifySharedPrintResponse('RECEIPT_ORDER_COPY', {
+      jobId: 'job-1',
+      status: 'TIMEOUT',
+      timedOut: true,
+      retryAllowed: false,
+    }).decision).toBe('ALREADY_IN_FLIGHT');
+
+    // Without a job to poll there is nothing to resume — still a manual stop.
+    expect(classifySharedPrintResponse('RECEIPT_ORDER_COPY', {
+      status: 'TIMEOUT',
+      timedOut: true,
+    }).decision).toBe('STOP_MANUAL_RETRY');
+  });
+
   it('routes fiscal timeout and uncertain failures away from auto retry', () => {
     expect(classifySharedPrintResponse('FISCAL_RECEIPT', {
       jobId: 'job-1',

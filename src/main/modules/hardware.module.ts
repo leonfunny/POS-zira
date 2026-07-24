@@ -2699,15 +2699,30 @@ export class HardwareModule extends BaseModule {
             `inferredPosCashDrawer=${inferredPosCashDrawerRequest ? 'true' : 'false'} ` +
             `supportsCashDrawer=${printerConfig?.supportsCashDrawer ? 'true' : 'false'}`,
           );
+          // A separate openDrawer() call is its own Windows spooler job and
+          // costs ~5s on the shared till; bundle the pulse into the receipt
+          // write whenever the driver supports it (same path the local cash
+          // flow uses), and keep the two-step sequence as the fallback.
+          const bundledReceiptWithDrawer = (
+            openDrawerRequested &&
+            printerConfig?.supportsCashDrawer &&
+            !isElzabDriver(targetPrinter) &&
+            typeof (targetPrinter as any).printReceiptWithDrawer === 'function'
+          )
+            ? (targetPrinter as any).printReceiptWithDrawer.bind(targetPrinter) as (data: ReceiptData) => Promise<void>
+            : null;
           if (isElzabDriver(targetPrinter)) {
             await targetPrinter.printReceipt({
               ...receiptPayload,
               orderId: receiptPayload.orderId || job.referenceId || receiptPayload.orderNumber,
             });
+          } else if (bundledReceiptWithDrawer) {
+            await bundledReceiptWithDrawer(receiptPayload);
+            logger.info(`[HardwareModule] Job ${job.jobId}: receipt printed with bundled cash drawer pulse`);
           } else {
             await targetPrinter.printReceipt(receiptPayload);
           }
-          if (openDrawerRequested) {
+          if (openDrawerRequested && !bundledReceiptWithDrawer) {
             if (printerConfig?.supportsCashDrawer) {
               try {
                 await targetPrinter.openDrawer();

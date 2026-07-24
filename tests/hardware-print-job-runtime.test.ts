@@ -24,6 +24,7 @@ const mock = vi.hoisted(() => ({
   thermalConnectImpl: null as null | ((driver: any) => Promise<boolean> | boolean),
   thermalInitiallyConnected: true,
   thermalInstances: [] as any[],
+  thermalSupportsBundledDrawer: false,
 }));
 
 vi.mock('electron', () => ({
@@ -71,6 +72,11 @@ vi.mock('../src/main/hardware/thermal/thermal-driver', () => {
     printReceipt = vi.fn();
     openDrawer = vi.fn();
     constructor() {
+      // Older thermal drivers lack the bundled receipt+drawer write; the
+      // module must feature-detect it, so the mock only exposes it on demand.
+      if (mock.thermalSupportsBundledDrawer) {
+        (this as any).printReceiptWithDrawer = vi.fn();
+      }
       mock.thermalInstances.push(this);
     }
     connect = vi.fn(async () => {
@@ -142,6 +148,7 @@ describe('HardwareModule print job runtime guards', () => {
     mock.posnetConnects = false;
     mock.thermalConnectImpl = null;
     mock.thermalInitiallyConnected = true;
+    mock.thermalSupportsBundledDrawer = false;
     mock.currentConfig = { multiPrinterMode: true, printers: {} };
     mock.lanFirstBeginPrintAttempt.mockResolvedValue({ action: 'PRINT', row: { status: 'PRINTING' } });
     mock.lanFirstMarkCompleted.mockResolvedValue(null);
@@ -298,6 +305,48 @@ describe('HardwareModule print job runtime guards', () => {
     expect(mock.thermalInstances[0].openDrawer).toHaveBeenCalledTimes(1);
     expect(socket.sendJobStatus).toHaveBeenCalledWith('job-cash', 'COMPLETED');
     expect(mock.markUsed).toHaveBeenCalledWith('receipt-printer-1');
+  });
+
+  it('bundles the drawer pulse into the receipt write when the driver supports it', async () => {
+    // A separate openDrawer() is its own Windows spooler job (~5s on the
+    // shared till) — with printReceiptWithDrawer available the module must
+    // send one write and skip the standalone drawer call.
+    mock.thermalSupportsBundledDrawer = true;
+    const socket = { sendJobStatus: vi.fn(), isConnected: vi.fn(() => false), sendDeviceStatus: vi.fn() };
+    const container = {
+      set: vi.fn(),
+      getOptional: vi.fn(() => null),
+    };
+
+    const { HardwareModule } = await import('../src/main/modules/hardware.module');
+    const module = new HardwareModule(container as any);
+    await module.reinitializePrinter();
+
+    container.getOptional.mockReturnValue(socket);
+    const receipt: ReceiptData = {
+      orderId: 'order-bundled',
+      orderNumber: 'POS-9',
+      items: [{ name: 'Tea', quantity: 1, unitPrice: 100, totalPrice: 100, vatRate: 23 }],
+      payment: { method: 'CASH', amount: 100 },
+      subtotal: 100,
+      total: 100,
+    };
+
+    await (module as any).handlePrintJob({
+      jobId: 'job-bundled-cash',
+      jobType: PrintJobType.RECEIPT,
+      printerType: PrinterType.RECEIPT,
+      printerId: 'receipt-printer-1',
+      referenceType: 'POS_RECEIPT',
+      payload: receipt,
+      openDrawer: true,
+    });
+
+    const driver = mock.thermalInstances[0] as any;
+    expect(driver.printReceiptWithDrawer).toHaveBeenCalledWith(receipt);
+    expect(driver.printReceipt).not.toHaveBeenCalled();
+    expect(driver.openDrawer).not.toHaveBeenCalled();
+    expect(socket.sendJobStatus).toHaveBeenCalledWith('job-bundled-cash', 'COMPLETED');
   });
 
   it('opens the cash drawer for legacy routed POS cash receipts even when openDrawer is missing', async () => {

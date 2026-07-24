@@ -191,7 +191,10 @@ describe('submitSharedReceiptPrint', () => {
     }
   });
 
-  it('does not auto retry a timed-out initial order copy', async () => {
+  it('polls a timed-out initial order copy instead of blind auto retry', async () => {
+    // A backend TIMEOUT response means the blocking wait expired while the
+    // job still feeds the shared till — the client must poll that job (never
+    // re-dispatch it) and report the print once it completes.
     listPrinterAssignments.mockResolvedValue({
       assignments: [{ role: 'SELF_CHECKOUT_RECEIPT', printerId: 'printer-remote-1' }],
     });
@@ -202,6 +205,7 @@ describe('submitSharedReceiptPrint', () => {
       retryAllowed: false,
       sent: false,
     });
+    getPrintJobStatus.mockResolvedValue({ jobId: 'job-timeout', status: 'COMPLETED' });
 
     const result = await submitSharedReceiptPrint(receiptData, {
       referenceType: 'POS_RECEIPT',
@@ -209,7 +213,8 @@ describe('submitSharedReceiptPrint', () => {
       source: 'pos',
     });
 
-    expect(result).toMatchObject({ handled: true, printed: false, jobId: 'job-timeout' });
+    expect(result).toMatchObject({ handled: true, printed: true, jobId: 'job-timeout', status: 'COMPLETED' });
+    expect(getPrintJobStatus).toHaveBeenCalledWith('jwt-token', 'job-timeout');
     expect(safeRetryPrintJob).not.toHaveBeenCalled();
   });
 

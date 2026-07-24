@@ -63,6 +63,15 @@ export function classifySharedPrintResponse(
   }
 
   if (status === 'TIMEOUT' || result?.timedOut) {
+    // The backend never persists a TIMEOUT job status — this response means
+    // "blocking wait expired, the job is still in flight on the shared till"
+    // (print-agent toJobStatusResponse). Order copies must keep polling the
+    // job instead of declaring failure: real POS1 receipts take 13-19s while
+    // the backend hold is 10s, so ~95% of POS2 receipts surfaced as failures
+    // and a retry only rediscovered the already-printed job (2026-07-24).
+    if (operation === 'RECEIPT_ORDER_COPY' && jobId) {
+      return { decision: 'ALREADY_IN_FLIGHT', reason: `backend wait expired; job still in flight (${jobId})` };
+    }
     return {
       decision: operation === 'FISCAL_RECEIPT' ? 'STOP_RECONCILE_REQUIRED' : 'STOP_MANUAL_RETRY',
       reason: `job timed out${jobId ? ` (${jobId})` : ''}`,
