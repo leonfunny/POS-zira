@@ -215,10 +215,20 @@ export class ElzabDriver {
       this.fiscalJournal.markBlocked(context.attempt.id, 'REAL_FISCAL_PRINT_DISABLED', {
         detail: error?.message || String(error),
       });
+      await this.flushFiscalJournal('safety-gate');
       throw error;
     }
 
     this.fiscalJournal.markSent(context.attempt.id);
+    const sentFlush = await this.flushFiscalJournal('before-send');
+    if (!sentFlush.success) {
+      const detail =
+        `ELZAB fiscal attempt ${context.attempt.id} could not be persisted before sidecar I/O: ${sentFlush.error || 'unknown durability error'}. No fiscal command was sent.`;
+      this.fiscalJournal.markFailed(context.attempt.id, 'FISCAL_JOURNAL_UNAVAILABLE', { detail });
+      await this.flushFiscalJournal('before-send-failure');
+      this.lastDiagnostic = { code: 'FISCAL_JOURNAL_UNAVAILABLE', detail };
+      throw new Error(`FISCAL_JOURNAL_UNAVAILABLE: ${detail}`);
+    }
 
     let result: ElzabOperationResult;
     try {
@@ -226,25 +236,52 @@ export class ElzabDriver {
     } catch (error: any) {
       const detail = error?.message || String(error);
       this.fiscalJournal.markUnknown(context.attempt.id, 'ELZAB_BRIDGE_THROWN_AFTER_SENT', { detail });
+      await this.flushFiscalJournal('unknown-bridge-outcome');
       this.notifyUnknown(fiscalData, 'ELZAB_BRIDGE_THROWN_AFTER_SENT', detail);
       throw new Error(`FISCAL_RESULT_UNKNOWN: ELZAB_STX receipt result is unknown after bridge error: ${detail}`);
     }
 
     if (result.ok) {
       this.fiscalJournal.markSuccess(context.attempt.id, result);
+      const outcomeFlush = await this.flushFiscalJournal('confirmed-success');
+      if (!outcomeFlush.success) {
+        const detail =
+          `ELZAB confirmed the receipt, but its fiscal result could not be persisted: ${outcomeFlush.error || 'unknown durability error'}. Do not print again; reconcile this order.`;
+        this.fiscalJournal.markUnknown(context.attempt.id, 'FISCAL_OUTCOME_DURABILITY_FAILED', { detail });
+        await this.flushFiscalJournal('confirmed-success-reconciliation');
+        this.lastDiagnostic = { code: 'FISCAL_JOURNAL_UNAVAILABLE', detail };
+        this.notifyUnknown(fiscalData, 'FISCAL_OUTCOME_DURABILITY_FAILED', detail);
+        throw new Error(`FISCAL_RESULT_UNKNOWN: ${detail}`);
+      }
       return;
     }
 
     const code = result.code || 'ELZAB_COMMAND_FAILED';
     if (this.isAmbiguousAfterSent(result)) {
       this.fiscalJournal.markUnknown(context.attempt.id, code, result);
+      await this.flushFiscalJournal('unknown-command-outcome');
       this.setFailure(result);
       this.notifyUnknown(fiscalData, code, result.detail);
       throw new Error(`FISCAL_RESULT_UNKNOWN: ELZAB_STX receipt result is unknown after ${code}${result.detail ? `: ${result.detail}` : ''}`);
     }
 
     this.fiscalJournal.markFailed(context.attempt.id, code, result);
+    await this.flushFiscalJournal('confirmed-command-failure');
     await this.requireOk(result, 'ELZAB_STX fiscal receipt failed');
+  }
+
+  private async flushFiscalJournal(stage: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const result = await this.fiscalJournal.flush();
+      if (!result.success) {
+        logger.error(`[ElzabDriver] Fiscal journal flush failed at ${stage}: ${result.error || 'unknown error'}`);
+      }
+      return result;
+    } catch (error: any) {
+      const detail = error?.message || String(error);
+      logger.error(`[ElzabDriver] Fiscal journal flush threw at ${stage}: ${detail}`);
+      return { success: false, error: detail };
+    }
   }
 
   async printDailyReport(data: DailyReportData): Promise<ElzabOperationResult> {

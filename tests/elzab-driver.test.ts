@@ -80,10 +80,11 @@ function createJournal(seed: FiscalAttemptRow[] = []): { journal: FiscalAttemptJ
   return {
     attempts,
     journal: {
+      flush: vi.fn(async () => ({ success: true })),
       findBlockingAttempt: vi.fn((orderId: string, paymentId?: string | null) => attempts.find((row) =>
         row.order_id === orderId &&
         (!paymentId || row.payment_id === paymentId) &&
-        (row.status === 'SUCCESS_CONFIRMED' || row.status === 'UNKNOWN_NEEDS_RECONCILIATION')
+        (row.status === 'SENT' || row.status === 'SUCCESS_CONFIRMED' || row.status === 'UNKNOWN_NEEDS_RECONCILIATION')
       ) || null),
       getNextAttemptNo: vi.fn((orderId: string, paymentId?: string | null) => {
         const matching = attempts.filter((row) => row.order_id === orderId && (!paymentId || row.payment_id === paymentId));

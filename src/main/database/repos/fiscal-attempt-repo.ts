@@ -40,6 +40,7 @@ export interface CreateFiscalAttemptInput {
 }
 
 export interface FiscalAttemptJournal {
+  flush(): Promise<{ success: boolean; error?: string }>;
   findBlockingAttempt(orderId: string, paymentId?: string | null): FiscalAttemptRow | null;
   findReconcilableAttempt(orderId: string, paymentId?: string | null): FiscalAttemptRow | null;
   resolveReconcilable(orderId: string, didPrint: boolean, paymentId?: string | null): FiscalAttemptRow | null;
@@ -53,6 +54,7 @@ export interface FiscalAttemptJournal {
 }
 
 const BLOCKING_STATUSES: FiscalAttemptStatus[] = [
+  'SENT',
   'SUCCESS_CONFIRMED',
   'UNKNOWN_NEEDS_RECONCILIATION',
 ];
@@ -100,6 +102,13 @@ export const fiscalAttemptRepo: FiscalAttemptJournal & {
   backfillFiskalColumns(): number;
   recordRemoteFiscalSuccess(orderId: string, jobId?: string | null, printerId?: string | null): void;
 } = {
+  async flush(): Promise<{ success: boolean; error?: string }> {
+    const result = await database.saveCoalesced();
+    return result.success
+      ? { success: true }
+      : { success: false, error: result.error || 'Database durability flush failed' };
+  },
+
   /**
    * Which of these orders have a confirmed fiscal paragon in the local
    * journal. Used by Order History to apply the fiscal-visibility filter to

@@ -15,7 +15,9 @@ describe('posnet fiscal journal parity with ELZAB', () => {
   it('journals every fiscal receipt attempt (pending -> sent -> success)', () => {
     expect(driverSource).toContain('this.fiscalJournal.createPending({');
     expect(driverSource).toContain('this.fiscalJournal.markSent(attempt.id)');
+    expect(driverSource).toContain("await this.flushFiscalJournal('before-send')");
     expect(driverSource).toContain('this.fiscalJournal.markSuccess(attempt.id');
+    expect(driverSource).toContain("await this.flushFiscalJournal('confirmed-success')");
   });
 
   it('blocks automatic retries when a prior attempt is confirmed or unknown', () => {

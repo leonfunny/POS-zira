@@ -160,6 +160,7 @@ describe('PosnetDriver port mutex integration', () => {
 
   it('printReceipt() uses stored line total for decimal weighted lines', async () => {
     const fiscalJournal = {
+      flush: vi.fn(async () => ({ success: true })),
       findBlockingAttempt: vi.fn(() => null),
       findReconcilableAttempt: vi.fn(),
       resolveReconcilable: vi.fn(),
@@ -204,9 +205,145 @@ describe('PosnetDriver port mutex integration', () => {
     expect(fiscalJournal.markSuccess).toHaveBeenCalledWith('attempt-weighted-1', { responses: 'ok' });
   });
 
+  it('does not send a printer byte until the SENT journal is durable', async () => {
+    let releaseFirstFlush!: (value: { success: boolean }) => void;
+    const firstFlush = new Promise<{ success: boolean }>((resolve) => {
+      releaseFirstFlush = resolve;
+    });
+    const fiscalJournal = {
+      flush: vi.fn()
+        .mockImplementationOnce(() => firstFlush)
+        .mockResolvedValue({ success: true }),
+      findBlockingAttempt: vi.fn(() => null),
+      findReconcilableAttempt: vi.fn(),
+      resolveReconcilable: vi.fn(),
+      getNextAttemptNo: vi.fn(() => 1),
+      createPending: vi.fn(() => ({ id: 'attempt-durable-1' })),
+      markSent: vi.fn(),
+      markSuccess: vi.fn(),
+      markFailed: vi.fn(),
+      markUnknown: vi.fn(),
+      markBlocked: vi.fn(),
+    };
+    const driver = new PosnetDriver('COM6', 9600, 'POSNET', {
+      fiscalJournal: fiscalJournal as any,
+      isRealFiscalPrintEnabled: () => true,
+    });
+    (driver as any).connectionState = 'protocol_ready';
+    const sendSpy = vi.spyOn(driver as any, 'sendPosnetSequence').mockResolvedValue([]);
+
+    const printing = driver.printReceipt({
+      orderId: 'order-durable-1',
+      items: [{ name: 'Tea', quantity: 1, unitPrice: 1000, totalPrice: 1000, vatRate: 23 }],
+      payment: { method: 'CASH', amount: 1000 },
+      subtotal: 1000,
+      total: 1000,
+    });
+    await Promise.resolve();
+
+    expect(fiscalJournal.markSent).toHaveBeenCalledWith('attempt-durable-1');
+    expect(sendSpy).not.toHaveBeenCalled();
+
+    releaseFirstFlush({ success: true });
+    await expect(printing).resolves.toBeUndefined();
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(fiscalJournal.flush).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails before serial I/O when the SENT journal cannot be persisted', async () => {
+    const fiscalJournal = {
+      flush: vi.fn()
+        .mockResolvedValueOnce({ success: false, error: 'disk full' })
+        .mockResolvedValue({ success: true }),
+      findBlockingAttempt: vi.fn(() => null),
+      findReconcilableAttempt: vi.fn(),
+      resolveReconcilable: vi.fn(),
+      getNextAttemptNo: vi.fn(() => 1),
+      createPending: vi.fn(() => ({ id: 'attempt-durable-fail' })),
+      markSent: vi.fn(),
+      markSuccess: vi.fn(),
+      markFailed: vi.fn(),
+      markUnknown: vi.fn(),
+      markBlocked: vi.fn(),
+    };
+    const driver = new PosnetDriver('COM6', 9600, 'POSNET', {
+      fiscalJournal: fiscalJournal as any,
+      isRealFiscalPrintEnabled: () => true,
+    });
+    (driver as any).connectionState = 'protocol_ready';
+    const sendSpy = vi.spyOn(driver as any, 'sendPosnetSequence').mockResolvedValue([]);
+
+    await expect(driver.printReceipt({
+      orderId: 'order-durable-fail',
+      items: [{ name: 'Tea', quantity: 1, unitPrice: 1000, totalPrice: 1000, vatRate: 23 }],
+      payment: { method: 'CASH', amount: 1000 },
+      subtotal: 1000,
+      total: 1000,
+    })).rejects.toThrow('FISCAL_JOURNAL_UNAVAILABLE');
+
+    expect(sendSpy).not.toHaveBeenCalled();
+    expect(fiscalJournal.markFailed).toHaveBeenCalledWith(
+      'attempt-durable-fail',
+      'FISCAL_JOURNAL_UNAVAILABLE',
+      expect.any(Object),
+    );
+  });
+
+  it('turns a post-print durability failure into a blocking unknown outcome', async () => {
+    let status: string | null = null;
+    const attempt = { id: 'attempt-outcome-fail', status: 'PENDING' };
+    const fiscalJournal = {
+      flush: vi.fn()
+        .mockResolvedValueOnce({ success: true })
+        .mockResolvedValueOnce({ success: false, error: 'rename failed' })
+        .mockResolvedValue({ success: true }),
+      findBlockingAttempt: vi.fn(() => (
+        ['SENT', 'SUCCESS_CONFIRMED', 'UNKNOWN_NEEDS_RECONCILIATION'].includes(String(status))
+          ? attempt
+          : null
+      )),
+      findReconcilableAttempt: vi.fn(),
+      resolveReconcilable: vi.fn(),
+      getNextAttemptNo: vi.fn(() => 1),
+      createPending: vi.fn(() => {
+        status = 'PENDING';
+        return attempt;
+      }),
+      markSent: vi.fn(() => { status = 'SENT'; attempt.status = 'SENT'; }),
+      markSuccess: vi.fn(() => { status = 'SUCCESS_CONFIRMED'; attempt.status = 'SUCCESS_CONFIRMED'; }),
+      markFailed: vi.fn(),
+      markUnknown: vi.fn(() => { status = 'UNKNOWN_NEEDS_RECONCILIATION'; attempt.status = 'UNKNOWN_NEEDS_RECONCILIATION'; }),
+      markBlocked: vi.fn(),
+    };
+    const driver = new PosnetDriver('COM6', 9600, 'POSNET', {
+      fiscalJournal: fiscalJournal as any,
+      isRealFiscalPrintEnabled: () => true,
+    });
+    (driver as any).connectionState = 'protocol_ready';
+    const sendSpy = vi.spyOn(driver as any, 'sendPosnetSequence').mockResolvedValue([]);
+    const data = {
+      orderId: 'order-outcome-fail',
+      items: [{ name: 'Tea', quantity: 1, unitPrice: 1000, totalPrice: 1000, vatRate: 23 }],
+      payment: { method: 'CASH' as const, amount: 1000 },
+      subtotal: 1000,
+      total: 1000,
+    };
+
+    await expect(driver.printReceipt(data)).rejects.toThrow('FISCAL_RESULT_UNKNOWN');
+    await expect(driver.printReceipt(data)).rejects.toThrow('FISCAL_ATTEMPT_RETRY_BLOCKED');
+
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(fiscalJournal.markUnknown).toHaveBeenCalledWith(
+      'attempt-outcome-fail',
+      'FISCAL_OUTCOME_DURABILITY_FAILED',
+      expect.any(Object),
+    );
+  });
+
   it('blocks a real POSNET receipt before SENT or serial I/O when the production gate is off', async () => {
     const pendingAttempt = { id: 'attempt-1' };
     const fiscalJournal = {
+      flush: vi.fn(async () => ({ success: true })),
       findBlockingAttempt: vi.fn(() => null),
       findReconcilableAttempt: vi.fn(),
       resolveReconcilable: vi.fn(),
@@ -411,6 +548,7 @@ describe('PosnetDriver port mutex integration', () => {
 
   it('rejects unsupported VAT before creating a fiscal attempt or sending any printer byte', async () => {
     const fiscalJournal = {
+      flush: vi.fn(async () => ({ success: true })),
       findBlockingAttempt: vi.fn(),
       findReconcilableAttempt: vi.fn(),
       resolveReconcilable: vi.fn(),

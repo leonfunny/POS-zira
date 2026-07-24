@@ -25,7 +25,8 @@ export type ElzabDiagnosticCode =
   | 'ELZAB_LINE_DISCOUNT_UNSUPPORTED'
   | 'REAL_FISCAL_PRINT_DISABLED'
   | 'FISCAL_IDEMPOTENCY_KEY_MISSING'
-  | 'FISCAL_ATTEMPT_RETRY_BLOCKED';
+  | 'FISCAL_ATTEMPT_RETRY_BLOCKED'
+  | 'FISCAL_JOURNAL_UNAVAILABLE';
 
 export interface ElzabOperationResult {
   ok: boolean;

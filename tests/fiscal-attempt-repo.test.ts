@@ -5,6 +5,7 @@ vi.mock('../src/main/database/database', () => ({
     get: vi.fn(),
     run: vi.fn(),
     save: vi.fn(),
+    saveCoalesced: vi.fn(),
     markDirty: vi.fn(),
   },
 }));
@@ -49,6 +50,13 @@ describe('fiscalAttemptRepo', () => {
     const [sql, params] = vi.mocked(database.get).mock.calls[0];
     expect(sql).toContain("result_json LIKE '%ReceiptBegin failed:%'");
     expect(sql).toContain("result_json LIKE '%ReceiptConditions failed:%'");
-    expect(params).toEqual(['order-1', 'SUCCESS_CONFIRMED', 'UNKNOWN_NEEDS_RECONCILIATION']);
+    expect(params).toEqual(['order-1', 'SENT', 'SUCCESS_CONFIRMED', 'UNKNOWN_NEEDS_RECONCILIATION']);
+  });
+
+  it('flushes the in-memory fiscal ledger through the coalesced durability barrier', async () => {
+    vi.mocked(database.saveCoalesced).mockResolvedValueOnce({ success: true } as any);
+
+    await expect(fiscalAttemptRepo.flush()).resolves.toEqual({ success: true });
+    expect(database.saveCoalesced).toHaveBeenCalledTimes(1);
   });
 });

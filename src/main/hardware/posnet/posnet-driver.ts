@@ -584,10 +584,20 @@ export class PosnetDriver {
       const detail = 'Real POSNET fiscal receipt is disabled. Enable allowRealFiscalPrint only during controlled production go-live.';
       this.lastDiagnostic = { code: 'REAL_FISCAL_PRINT_DISABLED', detail };
       this.fiscalJournal.markBlocked(attempt.id, 'REAL_FISCAL_PRINT_DISABLED', { detail });
+      await this.flushFiscalJournal('safety-gate');
       throw new Error(`REAL_FISCAL_PRINT_DISABLED: ${detail}`);
     }
 
     this.fiscalJournal.markSent(attempt.id);
+    const sentFlush = await this.flushFiscalJournal('before-send');
+    if (!sentFlush.success) {
+      const detail =
+        `POSNET fiscal attempt ${attempt.id} could not be persisted before printer I/O: ${sentFlush.error || 'unknown durability error'}. No printer command was sent.`;
+      this.fiscalJournal.markFailed(attempt.id, 'FISCAL_JOURNAL_UNAVAILABLE', { detail });
+      await this.flushFiscalJournal('before-send-failure');
+      this.lastDiagnostic = { code: 'FISCAL_JOURNAL_UNAVAILABLE', detail };
+      throw new Error(`FISCAL_JOURNAL_UNAVAILABLE: ${detail}`);
+    }
 
     try {
       await this.sendPosnetSequence(frames);
@@ -597,18 +607,44 @@ export class PosnetDriver {
         // Port lock / invalid port — nothing reached the printer, a clean
         // retry is safe.
         this.fiscalJournal.markFailed(attempt.id, this.lastDiagnostic?.code || 'POSNET_SEND_FAILED', { detail });
+        await this.flushFiscalJournal('safe-send-failure');
         throw error;
       }
       // Bytes may have reached the device: the paragon could have printed
       // even though we lost the confirmation. Block silent retries and
       // route staff to the reconciliation flow.
       this.fiscalJournal.markUnknown(attempt.id, 'POSNET_THROWN_AFTER_SENT', { detail });
+      await this.flushFiscalJournal('unknown-send-outcome');
       this.notifyUnknownSafe(data, 'POSNET_THROWN_AFTER_SENT', detail);
       throw new Error(`FISCAL_RESULT_UNKNOWN: POSNET receipt result is unknown after send error: ${detail}`);
     }
 
     this.fiscalJournal.markSuccess(attempt.id, { responses: 'ok' });
+    const outcomeFlush = await this.flushFiscalJournal('confirmed-success');
+    if (!outcomeFlush.success) {
+      const detail =
+        `POSNET confirmed the receipt, but its fiscal result could not be persisted: ${outcomeFlush.error || 'unknown durability error'}. Do not print again; reconcile this order.`;
+      this.fiscalJournal.markUnknown(attempt.id, 'FISCAL_OUTCOME_DURABILITY_FAILED', { detail });
+      await this.flushFiscalJournal('confirmed-success-reconciliation');
+      this.lastDiagnostic = { code: 'FISCAL_JOURNAL_UNAVAILABLE', detail };
+      this.notifyUnknownSafe(data, 'FISCAL_OUTCOME_DURABILITY_FAILED', detail);
+      throw new Error(`FISCAL_RESULT_UNKNOWN: ${detail}`);
+    }
     logger.info('[PosnetDriver] Receipt printed');
+  }
+
+  private async flushFiscalJournal(stage: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const result = await this.fiscalJournal.flush();
+      if (!result.success) {
+        logger.error(`[PosnetDriver] Fiscal journal flush failed at ${stage}: ${result.error || 'unknown error'}`);
+      }
+      return result;
+    } catch (error: any) {
+      const detail = error?.message || String(error);
+      logger.error(`[PosnetDriver] Fiscal journal flush threw at ${stage}: ${detail}`);
+      return { success: false, error: detail };
+    }
   }
 
   /** Port-lock and invalid-port failures happen before any byte is written. */
