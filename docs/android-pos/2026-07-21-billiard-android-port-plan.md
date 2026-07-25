@@ -11,7 +11,7 @@
 
 ## Global Constraints
 
-- **Repo:** `/var/www/www/enail/POS-zira-android-b1-20260717` (branch work only; never push to `main` directly).
+- **Repo:** `/var/www/pos-zira` (branch work only; never push to `main` directly).
 - **Client-only.** Zero backend/server changes. If a backend gap is found (401/403/missing route), STOP the task and draft a Server Change Request per `CLAUDE.md` template instead of working around it.
 - **Money path:** never fake success. `billiard.mutate` failures must throw/return the real error; no silent catch, no optimistic "paid". (Incident history: billiard estimateCharge pause bug — server is the source of truth for charges.)
 - **POSApp and all files under `src/renderer/components/billiard/`, `src/renderer/windows/`, `src/renderer/App.tsx` are the SHARED Windows renderer — do not edit them** unless a task explicitly says so. All Android work lives under `src/renderer/android-pos/` + `tests/`.
@@ -58,7 +58,7 @@
 - [ ] **Step 1: Create the work branch**
 
 ```bash
-cd /var/www/www/enail/POS-zira-android-b1-20260717
+cd /var/www/pos-zira
 git fetch origin
 git checkout codex/android-pos-build-ci
 git checkout -b codex/android-billiard-port

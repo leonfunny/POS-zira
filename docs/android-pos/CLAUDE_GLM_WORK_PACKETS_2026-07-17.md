@@ -359,3 +359,5 @@ After each packet, root/senior review returns one verdict:
 - `NO-GO`: contract/security evidence invalidates the next packet.
 
 No packet completion is evidence of production readiness. Production requires separate artifact, deployment, hardware, reconciliation, and owner-approval evidence.
+
+> **NOTE 2026-07-25 (consolidation):** the checkouts named above (`POS-zira-android-dev-20260717`, `POS-zira-latest`, …) no longer exist. All POS-zira work now happens in the single clone `/var/www/pos-zira`. Every commit they held was verified present on `origin`, except `0cf8784` (hotfix/pos1-fiscal-sync-20260716) which is preserved as a git bundle in `/home/paul/archive/pos-zira-20260725/`. The seven local-only review fixes referenced below live on `origin/fix/review-blockers-20260712` (`b081d55`) and their patch files in `/home/paul/archive/pos-zira-20260725/review-patches/`.
