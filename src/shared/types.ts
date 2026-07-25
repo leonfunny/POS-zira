@@ -221,6 +221,9 @@ export interface PrinterConfig {
   baudRate?: number;
   // For network-capable fiscal printers (e.g. ELZAB RNDIS/IP)
   address?: string;
+  // ELZAB fiscal printers and K10 cash registers use incompatible official toolchains.
+  elzabDriverFamily?: 'ELZABDR' | 'K10_ECR';
+  deviceModel?: string;
   // For ZEBRA/WINDOWS (Windows printer)
   windowsPrinter?: string;
   labelWidth?: number;   // mm

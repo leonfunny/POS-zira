@@ -13,6 +13,7 @@ import type { ToolDefinition } from '../core/tool-registry';
 import { SERVICE_TOKENS } from '../core/tokens';
 import { PosnetDriver } from '../hardware/posnet/posnet-driver';
 import { ElzabDriver } from '../hardware/elzab/elzab-driver';
+import { ElzabK10EcrBridge } from '../hardware/elzab/elzab-bridge';
 import { DeviceDetectionService } from '../hardware/posnet/device-detection-service';
 import { PosnetProbeEngine } from '../hardware/posnet/posnet-probe-engine';
 import { DeviceProfileRegistry } from '../hardware/posnet/device-profile-registry';
@@ -1431,24 +1432,31 @@ export class HardwareModule extends BaseModule {
 
     const config = getConfig();
     const currentPrinters = { ...(config.printers || {}) };
+    const isK10 = /(^|\b)k10(\b|$)/i.test(device.model || '');
     currentPrinters[printerType] = {
       ...(currentPrinters[printerType] || {}),
       enabled: true,
       protocol: 'ELZAB_STX' as PrinterProtocol,
       port,
-      baudRate: 9600,
+      baudRate: isK10 ? 115200 : 9600,
       address: '',
+      elzabDriverFamily: isK10 ? 'K10_ECR' : 'ELZABDR',
+      deviceModel: device.model || '',
       windowsPrinter: '',
     };
     setConfig({ multiPrinterMode: true, printers: currentPrinters });
 
     await this.reinitializePrinter();
 
-    logger.info(`[HardwareModule] autoSetupElzab: configured FISCAL with ELZAB_STX on ${port}`);
+    const message = isK10
+      ? `ELZAB ${device.model || 'K10'} configured on ${port} (FISCAL/K10_ECR). Status checks use the official ELZAB WinIP tools; real fiscal sale printing still requires the dedicated K10 receipt-buffer flow.`
+      : `ELZAB ${device.model || 'printer'} configured on ${port} (FISCAL/ELZAB_STX). Fiscal output still requires the official elzabdr/STX sidecar - set ZIRA_ELZAB_BRIDGE_PATH before live use.`;
+
+    logger.info(`[HardwareModule] autoSetupElzab: configured FISCAL with ${isK10 ? 'K10_ECR' : 'ELZAB_STX'} on ${port}`);
     return {
       success: true,
       port,
-      message: `ELZAB ${device.model || 'printer'} configured on ${port} (FISCAL/ELZAB_STX). Fiscal output still requires the official elzabdr/STX sidecar — set ZIRA_ELZAB_BRIDGE_PATH before live use.`,
+      message,
       action: 'configured',
     };
   }
@@ -2445,7 +2453,8 @@ export class HardwareModule extends BaseModule {
         return new ElzabDriver({
           port: config.port,
           address: config.address,
-          baudRate: config.baudRate || 9600,
+          baudRate: config.baudRate || (config.elzabDriverFamily === 'K10_ECR' ? 115200 : 9600),
+          bridge: config.elzabDriverFamily === 'K10_ECR' ? new ElzabK10EcrBridge() : undefined,
           onFiscalUnknown: (info) => {
             try { notifyPosRenderers(this.container, 'pos:fiscal-unknown', info); }
             catch (e: any) { logger.warn(`[HardwareModule] fiscal-unknown notify failed: ${e?.message ?? e}`); }

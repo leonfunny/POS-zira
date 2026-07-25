@@ -219,6 +219,13 @@ export class ElzabDriver {
       this.lastDiagnostic = { code: 'ELZAB_UNSUPPORTED_OPERATION', detail };
       throw new Error(`ELZAB_UNSUPPORTED_OPERATION: ${detail}`);
     }
+    if (this.bridge.canPrintFiscalReceipts?.() === false) {
+      const detail =
+        'This ELZAB bridge can verify the device, but it cannot send real fiscal receipts. ' +
+        'No fiscal command was sent.';
+      this.lastDiagnostic = { code: 'ELZAB_UNSUPPORTED_OPERATION', detail };
+      throw new Error(`ELZAB_UNSUPPORTED_OPERATION: ${detail}`);
+    }
     const context = this.createReceiptAttempt(fiscalData);
 
     try {
