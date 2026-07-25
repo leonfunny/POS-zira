@@ -119,19 +119,26 @@ function ZoomControls({
           </button>
         </>
       )}
+      {/* The 44px touch target is kept (see billiard-light-theme spec), but the
+          locked state paints a small chip instead of flooding the whole square
+          red — a full-bleed red block dominated the corner of the floor. */}
       <button
         type="button"
         onClick={onToggleLock}
         aria-label={locked ? unlockLabel : lockLabel}
         aria-pressed={locked}
         title={locked ? unlockLabel : lockLabel}
-        className={`flex h-11 w-11 items-center justify-center border-l border-slate-200 transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-400 ${
-          locked
-            ? 'bg-red-600 text-white hover:bg-red-700'
-            : 'text-slate-700 hover:bg-slate-100'
+        className={`flex h-11 w-11 items-center justify-center transition-colors focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-400 ${
+          locked ? 'hover:bg-red-50' : 'border-l border-slate-200 hover:bg-slate-100'
         }`}
       >
-        {locked ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
+        <span
+          className={`flex h-6 w-6 items-center justify-center rounded-md transition-colors ${
+            locked ? 'bg-red-600 text-white' : 'text-slate-700'
+          }`}
+        >
+          {locked ? <Lock className="h-3.5 w-3.5" /> : <Unlock className="h-4 w-4" />}
+        </span>
       </button>
     </div>
   );
@@ -1347,6 +1354,7 @@ function FloorPlanInner({ language, onPreflightPos, onPayInPos, active = true }:
                   onEditContextMenu={handleEditContextMenu}
                   isRenaming={renamingTableId === table.resource.id}
                   language={language}
+                  darkSurface={!floorBackgroundUrl && floorSurfaceTheme === 'dark'}
                 />
               ))}
 

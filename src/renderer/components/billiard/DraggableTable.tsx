@@ -30,6 +30,7 @@ export const DraggableTable = memo(function DraggableTable({
   onEditContextMenu,
   isRenaming,
   language,
+  darkSurface = false,
 }: {
   table: TableOverview;
   position: FloorPosition;
@@ -48,6 +49,12 @@ export const DraggableTable = memo(function DraggableTable({
   onEditContextMenu?: (id: string, x: number, y: number) => void;
   isRenaming?: boolean;
   language: Language;
+  /**
+   * True when the dark floor surface is what sits behind this tile. Asset
+   * artwork is dark-on-transparent, so on the dark floor both the silhouette
+   * and the dark label ink vanish into the background without help.
+   */
+  darkSurface?: boolean;
 }) {
   const { t } = useTranslation(language);
 
@@ -118,9 +125,11 @@ export const DraggableTable = memo(function DraggableTable({
   }, []);
 
   const theme = STATUS_THEME[table.status] || STATUS_THEME.free;
-  // Ink adapts to the surface: dark on asset photos (white glow behind),
-  // ivory on the green felt of the CSS table.
-  const ink = hasImage
+  // Ink adapts to the surface: dark on asset photos over the light floor
+  // (white glow behind), ivory both on the green felt of the CSS table and on
+  // asset photos over the dark floor — black ink there was unreadable.
+  const assetInkOnDark = hasImage && darkSurface;
+  const ink = hasImage && !darkSurface
     ? {
         name: 'text-black', body: 'text-black/80', soft: 'text-black/70',
         money: 'text-black', warn: 'text-orange-600', pause: 'text-amber-600',
@@ -253,6 +262,11 @@ export const DraggableTable = memo(function DraggableTable({
             alt={asset.name}
             className="absolute inset-0 w-full h-full object-contain pointer-events-none"
             draggable={false}
+            style={darkSurface
+              // Trace the artwork's alpha edge with a light halo so a dark
+              // chair or bed still reads as an object on the dark floor.
+              ? { filter: 'drop-shadow(0 0 1.5px rgba(255,255,255,0.75)) drop-shadow(0 0 6px rgba(190,230,215,0.28))' }
+              : undefined}
           />
         ) : (
           <>
@@ -273,7 +287,14 @@ export const DraggableTable = memo(function DraggableTable({
           className={`relative z-[1] flex flex-col items-center justify-center w-full px-1 ${!editMode && table.status !== 'free' ? 'pt-2' : ''}`}
           style={{
             transform: rotation ? `rotate(-${rotation}deg)` : undefined,
-            ...(hasImage ? { textShadow: '0 0 4px rgba(255,255,255,0.9), 0 1px 2px rgba(255,255,255,0.7)' } : {}),
+            ...(hasImage
+              ? {
+                textShadow: assetInkOnDark
+                  // Ivory ink needs a dark halo, not a white one.
+                  ? '0 1px 2px rgba(0,0,0,0.95), 0 0 5px rgba(0,0,0,0.8)'
+                  : '0 0 4px rgba(255,255,255,0.9), 0 1px 2px rgba(255,255,255,0.7)',
+              }
+              : {}),
           }}
         >
           {/* Name */}
