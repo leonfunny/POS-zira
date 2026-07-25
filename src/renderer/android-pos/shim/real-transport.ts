@@ -57,6 +57,7 @@ import { createRemotePrintCoordinator } from './remote-print';
 import { createAgentConnection, type AgentConnection } from './agent-connect';
 import { createProductAdminSurface } from './product-admin';
 import { createBilliardTransport } from './billiard-transport';
+import { createEntitlementsController } from './entitlements';
 import {
   buildBackendOrderItem,
   createOrderRepo,
@@ -540,6 +541,14 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
     request: (method, path, body) => client.request(method, path, body),
   });
 
+  // Real salon entitlements (shim/entitlements.ts): the plan decides which tabs
+  // exist, replacing the synthetic all-enabled answer. Same request seam (staff
+  // JWT + refresh-on-401); cleared on logout / dead session like billiard.
+  const entitlements = createEntitlementsController({
+    configStore,
+    request: (method, path, body) => client.request(method, path, body),
+  });
+
   const expiredListeners = new Set<() => void>();
   const productsSyncedListeners = new Set<() => void>();
   const orderSyncedListeners = new Set<(payload: { orderId: string; backendId: string }) => void>();
@@ -616,6 +625,10 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         // which re-arms the timer (polling is listener-gated since 917cb6a — a
         // bare read alone no longer restarts it).
         billiard.dispose();
+        // Tenant boundary: drop the cached plan too, so the next login cannot
+        // inherit the dead session's feature flags (and its persisted record is
+        // removed from storage).
+        entitlements.clear();
         for (const cb of [...expiredListeners]) {
           try { cb(); } catch { /* a listener throwing must not break others */ }
         }
@@ -746,6 +759,12 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
     //    allowlisted apiCall. Spread in (no key collides with the ports below).
     ...billiard,
 
+    // ── Real salon entitlements — the plan decides which tabs exist ─────────
+    entitlementsGet: () => entitlements.get(),
+    entitlementsFetch: () => entitlements.fetch(),
+    entitlementsIsEnabled: (feature: string) => entitlements.isEnabled(feature),
+    entitlementsOnChanged: (cb) => entitlements.onChanged(cb),
+
     // ── Product/stock/category admin (E-PARITY-3, owner-only) ──────────────
     productAdmin: createProductAdminSurface({ client, configStore }),
 
@@ -775,6 +794,10 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
           // correct salon's key via /print-agent/my-key. Also tears down any
           // socket still open to the old salon.
           await agentConnection.disconnect();
+          // The previous salon's plan must not decide THIS salon's tabs. The
+          // controller already refuses a record whose salonId differs, but drop
+          // it here too so nothing stale sits in storage across the switch.
+          entitlements.clear();
           // Abort the login if the wipe does not durably persist — otherwise
           // config (localStorage) would flip to salon B while salon A's catalog
           // image (IndexedDB) survives a failed flush, a cross-tenant leak on
@@ -877,6 +900,9 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
       // teardown path (T4) — the 10s background refresh must not outlive the
       // session.
       billiard.dispose();
+      // Drop the cached plan: the next login may be a different salon, and its
+      // tabs must be decided by ITS entitlements, never the previous session's.
+      entitlements.clear();
       // Clear tokens + identity; KEEP the local SQL.js mirror (S1 §2.B note —
       // logout ≠ wipe; a re-login to the same salon stays healthy).
       await tokenStore.clear();

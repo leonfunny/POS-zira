@@ -14,7 +14,7 @@
  * real ports by passing a transport to installShim — this surface never moves.
  */
 
-import type { AgentConfig, AuthUser } from '../../../shared/types';
+import type { AgentConfig, AuthUser, SalonEntitlements } from '../../../shared/types';
 import type {
   ShimLoginResult,
   ShimPosCategory,
@@ -168,12 +168,23 @@ export function buildConnectionStubs() {
 }
 
 /** Entitlements (S1 §1 #9, §2 — all-enabled default). */
-export function buildEntitlementsNamespace({ configStore }: StubDeps) {
+export function buildEntitlementsNamespace({ configStore, transport }: StubDeps) {
+  // The real transport supplies the four entitlements ports (shim/entitlements.ts
+  // → GET /admin/desktop/entitlements). The synthetic all-enabled object below
+  // remains ONLY for the no-transport install (S2 boot + unit tests) — on a real
+  // device the plan now decides which tabs exist, including Bi-a.
+  // The synthetic builder types `features` as a loose record; the transport
+  // ports are declared with the strict SalonEntitlements shape.
+  const synthetic = () => syntheticEntitlements(
+    configStore.getRawConfig().salonId ?? 'synthetic',
+  ) as unknown as SalonEntitlements;
   return {
-    get: async () => syntheticEntitlements(configStore.getRawConfig().salonId ?? 'synthetic'),
-    fetch: async () => syntheticEntitlements(configStore.getRawConfig().salonId ?? 'synthetic'),
-    isEnabled: async () => true,
-    onChanged: () => noopUnsubscribe(),
+    get: () => withTransport(transport.entitlementsGet, [], synthetic),
+    fetch: () => withTransport(transport.entitlementsFetch, [], synthetic),
+    isEnabled: (feature: string) => withTransport(transport.entitlementsIsEnabled, [feature], () => true),
+    onChanged: (cb: (e: any) => void) => (
+      transport.entitlementsOnChanged ? transport.entitlementsOnChanged(cb) : noopUnsubscribe()
+    ),
   };
 }
 

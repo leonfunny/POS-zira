@@ -34,7 +34,7 @@
  * Windows main-process handler cited in S1 for that method.
  */
 
-import type { AgentConfig, AuthUser } from '../../../shared/types';
+import type { AgentConfig, AuthUser, SalonEntitlements } from '../../../shared/types';
 import type {
   NailTurnBoardIpcResult,
   PosScheduleAssignNextPayload,
@@ -390,6 +390,19 @@ export interface ShimTransport {
    *  op 'online_api', but the typed surface still declares this). Rejects when
    *  no transport is present. */
   apiCall?(method: string, path: string, body?: any): Promise<any>;
+
+  // ── Real salon entitlements (shim/entitlements.ts) ─────────────────────────
+  // Without these the shim answers with syntheticEntitlements (all features
+  // enabled), which showed the Bi-a tab to every salon regardless of plan.
+  // Backed by GET /api/v1/admin/desktop/entitlements (staff JWT, 1h cache).
+  /** Cached-then-network read (Windows entitlements:get). */
+  entitlementsGet?(): Promise<SalonEntitlements>;
+  /** Force a network refresh (Windows entitlements:fetch). */
+  entitlementsFetch?(): Promise<SalonEntitlements>;
+  /** Single-feature check (Windows entitlements:is-enabled). */
+  entitlementsIsEnabled?(feature: string): Promise<boolean>;
+  /** Fires when the feature set actually changes (Windows entitlements:changed). */
+  entitlementsOnChanged?(cb: (entitlements: SalonEntitlements) => void): () => void;
 }
 
 /** Shape persisted by the config store — a subset of AgentConfig (S1 §2.A). */

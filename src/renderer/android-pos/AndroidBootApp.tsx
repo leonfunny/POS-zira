@@ -126,6 +126,11 @@ export default function AndroidBootApp() {
         });
     };
     resolveEntitlement(0);
+    // Live updates: a plan change (or the first successful fetch after a boot
+    // blip) flips the Bi-a tab without a restart.
+    const unsubscribeEntitlements = api.entitlements.onChanged?.((e: any) => {
+      if (!cancelled) setBilliardEnabled(!!e?.features?.billiard?.enabled);
+    });
     api.getConfig()
       .then((c: any) => {
         if (!cancelled && c?.language) setLanguage((c.language as Language) || 'en');
@@ -136,6 +141,7 @@ export default function AndroidBootApp() {
     return () => {
       cancelled = true;
       if (retryTimer) clearTimeout(retryTimer);
+      unsubscribeEntitlements?.();
     };
   }, [state]);
 
