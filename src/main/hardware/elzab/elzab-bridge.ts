@@ -516,14 +516,6 @@ function validateK10ReceiptData(data: ReceiptData): ElzabOperationResult {
       detail: 'ELZAB K10_ECR split-payment fiscal receipts are not wired. No fiscal command was sent.',
     };
   }
-  const paymentMethod = String(data.payment?.method || '').toUpperCase();
-  if (paymentMethod && paymentMethod !== 'CASH') {
-    return {
-      ok: false,
-      code: 'ELZAB_UNSUPPORTED_OPERATION',
-      detail: `ELZAB K10_ECR currently supports only CASH receipts via PoSekwSt. Got ${paymentMethod}; no fiscal command was sent.`,
-    };
-  }
   if (!data.items.length) {
     return {
       ok: false,

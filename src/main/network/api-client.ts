@@ -266,8 +266,12 @@ function mergeServerPrintersWithLocal(
       continue;
     }
 
+    const localIsK10 = localConfig?.elzabDriverFamily === 'K10_ECR';
     merged[type] = {
       ...serverConfig,
+      port: localIsK10 ? localConfig?.port ?? serverConfig.port : serverConfig.port,
+      address: localIsK10 ? localConfig?.address ?? serverConfig.address : serverConfig.address,
+      baudRate: localIsK10 ? localConfig?.baudRate ?? serverConfig.baudRate : serverConfig.baudRate,
       elzabDriverFamily: localConfig?.elzabDriverFamily ?? serverConfig.elzabDriverFamily,
       deviceModel: localConfig?.deviceModel ?? serverConfig.deviceModel,
       charset: localConfig?.charset ?? serverConfig.charset,
