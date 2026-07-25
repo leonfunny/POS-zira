@@ -1449,7 +1449,7 @@ export class HardwareModule extends BaseModule {
     await this.reinitializePrinter();
 
     const message = isK10
-      ? `ELZAB ${device.model || 'K10'} configured on ${port} (FISCAL/K10_ECR). Status checks use the official ELZAB WinIP tools; real fiscal sale printing still requires the dedicated K10 receipt-buffer flow.`
+      ? `ELZAB ${device.model || 'K10'} configured on ${port} (K10_ECR status/config only). K10 is a fiscal cash register, not a POS fiscal printer route; enter sales on the K10 or use a supported fiscal printer for POS receipts.`
       : `ELZAB ${device.model || 'printer'} configured on ${port} (FISCAL/ELZAB_STX). Fiscal output still requires the official elzabdr/STX sidecar - set ZIRA_ELZAB_BRIDGE_PATH before live use.`;
 
     logger.info(`[HardwareModule] autoSetupElzab: configured FISCAL with ${isK10 ? 'K10_ECR' : 'ELZAB_STX'} on ${port}`);

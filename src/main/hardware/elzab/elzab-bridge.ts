@@ -4,7 +4,6 @@ import os from 'os';
 import path from 'path';
 import { promisify } from 'util';
 import type { DailyReportData, ReceiptData } from '../../../shared/types';
-import { toFiscalSafeText } from '../../../shared/fiscal-text';
 import { isRealFiscalPrintEnabled } from '../real-fiscal-print-gate';
 
 export { isRealFiscalPrintEnabled } from '../real-fiscal-print-gate';
@@ -262,7 +261,7 @@ export class ElzabK10EcrBridge implements ElzabBridge {
   constructor(private readonly timeoutMs = 15_000) {}
 
   canPrintFiscalReceipts(): boolean {
-    return true;
+    return false;
   }
 
   async checkAvailability(): Promise<ElzabOperationResult> {
@@ -277,7 +276,9 @@ export class ElzabK10EcrBridge implements ElzabBridge {
 
     return {
       ok: true,
-      detail: 'ELZAB K10 ECR bridge available.',
+      detail:
+        'ELZAB K10 ECR bridge available for status/config reads. ' +
+        'K10 cash registers do not accept POS fiscal receipt prints through the official ECR/ELZABDR bridge.',
       data: { bridge: 'ELZAB_K10_ECR', tools: tools.displayRoot },
     };
   }
@@ -295,79 +296,16 @@ export class ElzabK10EcrBridge implements ElzabBridge {
   }
 
   async printReceipt(config: ElzabConnectionConfig, data: ReceiptData): Promise<ElzabOperationResult> {
-    const validation = validateK10ReceiptData(data);
-    if (!validation.ok) return validation;
-
-    const port = (config.port || '').trim().toUpperCase();
-    if (!/^COM\d{1,3}$/.test(port)) {
-      return {
-        ok: false,
-        code: 'ELZAB_TARGET_MISSING',
-        detail: 'ELZAB K10 ECR receipt printing requires a COM port.',
-      };
-    }
-
-    const tools = resolveK10EcrTools();
-    if (!tools) {
-      return {
-        ok: false,
-        code: 'ELZAB_BRIDGE_NOT_FOUND',
-        detail: 'ELZAB K10 ECR tools were not found. Install/extract official winexe.zip, or set ZIRA_ELZAB_K10_WINEXE_DIR.',
-      };
-    }
-
-    const baudRate = config.baudRate || 115200;
-    const workDir = path.join(os.tmpdir(), `zira-elzab-k10-receipt-${process.pid}-${Date.now()}`);
-    try {
-      mkdirSync(workDir, { recursive: true });
-      copyFileSync(tools.sequenceExe, path.join(workDir, 'PoSekwSt.exe'));
-      copyFileSync(tools.taxExe, path.join(workDir, 'OPodatek.exe'));
-      copyFileSync(tools.winIpDll, path.join(workDir, 'WinIP.dll'));
-      writeK10Config(workDir, port, baudRate);
-
-      const taxes = await readK10TaxRates(workDir, this.timeoutMs);
-      const sequence = buildK10ReceiptSequence(data, taxes);
-      const inputPath = path.join(workDir, 'POSEKWST.IN');
-      const outputPath = path.join(workDir, 'POSEKWST.OUT');
-      writeLatin1(inputPath, sequence);
-
-      await execFileAsync(path.join(workDir, 'PoSekwSt.exe'), ['POSEKWST.IN', outputPath], {
-        cwd: workDir,
-        timeout: Math.max(this.timeoutMs, 60_000),
-        windowsHide: true,
-        maxBuffer: 1024 * 1024,
-      });
-
-      const raw = existsSync(outputPath) ? readFileSync(outputPath, 'latin1') : '';
-      const report = readOptionalLatin1(path.join(workDir, 'RAPORT.TXT'));
-      const parsed = parseK10SequenceOutput(raw, report);
-      if (!parsed.ok) return parsed;
-
-      return {
-        ok: true,
-        detail: `ELZAB K10 fiscal receipt sent on ${port}.`,
-        data: {
-          bridge: 'ELZAB_K10_ECR',
-          target: port,
-          baudRate,
-          model: parsed.model,
-          sequenceCount: parsed.sequenceCount,
-          taxRates: taxes.map((tax) => ({ letter: tax.letter, rate: tax.rate, exempt: tax.exempt })),
-        },
-      };
-    } catch (error: any) {
-      return {
-        ok: false,
-        code: 'ELZAB_COMMAND_FAILED',
-        detail: error?.message || String(error),
-      };
-    } finally {
-      try {
-        rmSync(workDir, { recursive: true, force: true });
-      } catch {
-        /* best effort */
-      }
-    }
+    void config;
+    void data;
+    return {
+      ok: false,
+      code: 'ELZAB_UNSUPPORTED_OPERATION',
+      detail:
+        'ELZAB K10 is a fiscal cash register, not a POS fiscal printer. ' +
+        'The official WinIP/ECRInst and ELZABDR paths can read status/configuration, but they do not support sending a real POS fiscal receipt to K10. ' +
+        'Use a supported fiscal printer route such as POSNET or an ELZAB fiscal printer, or enter the sale directly on the K10.',
+    };
   }
 
   async printReport(): Promise<ElzabOperationResult> {
@@ -456,10 +394,6 @@ function writeLatin1(filePath: string, text: string): void {
   writeFileSync(filePath, Buffer.from(text, 'latin1'));
 }
 
-function readOptionalLatin1(filePath: string): string {
-  return existsSync(filePath) ? readFileSync(filePath, 'latin1') : '';
-}
-
 function writeK10Config(workDir: string, port: string, baudRate: number): void {
   writeLatin1(path.join(workDir, 'KONFIG.TXT'), `$01\t${port}:${baudRate}:STX0:1\t3\r\n`);
 }
@@ -481,206 +415,8 @@ function parseK10Status(raw: string): { model?: string; status: Record<string, n
   return { model, status };
 }
 
-interface K10TaxRate {
-  letter: string;
-  rate: number | null;
-  exempt: boolean;
-}
-
-function validateK10ReceiptData(data: ReceiptData): ElzabOperationResult {
-  if (data.isRefund || data.isReprint) {
-    return {
-      ok: false,
-      code: 'ELZAB_UNSUPPORTED_OPERATION',
-      detail: 'ELZAB K10_ECR currently supports only original sale receipts. Refunds and reprints are not sent.',
-    };
-  }
-  if (data.customerNip) {
-    return {
-      ok: false,
-      code: 'ELZAB_UNSUPPORTED_OPERATION',
-      detail: 'ELZAB K10_ECR NIP/customer invoice receipt flow is not wired. No fiscal command was sent.',
-    };
-  }
-  if ((data.discount || 0) > 0 || data.items.some((item) => (item.allocatedDiscount || 0) > 0)) {
-    return {
-      ok: false,
-      code: 'ELZAB_LINE_DISCOUNT_UNSUPPORTED',
-      detail: 'ELZAB K10_ECR raw receipt sequence does not support discounted Zira receipts yet. No fiscal command was sent.',
-    };
-  }
-  if (data.tenders && data.tenders.length > 1) {
-    return {
-      ok: false,
-      code: 'ELZAB_UNSUPPORTED_OPERATION',
-      detail: 'ELZAB K10_ECR split-payment fiscal receipts are not wired. No fiscal command was sent.',
-    };
-  }
-  if (!data.items.length) {
-    return {
-      ok: false,
-      code: 'ELZAB_UNSUPPORTED_OPERATION',
-      detail: 'ELZAB K10_ECR receipt requires at least one item. No fiscal command was sent.',
-    };
-  }
-  const lineTotal = data.items.reduce((sum, item) => sum + k10LineTotalGrosze(item), 0);
-  if (lineTotal !== Math.round(Number(data.total || 0))) {
-    return {
-      ok: false,
-      code: 'ELZAB_UNSUPPORTED_OPERATION',
-      detail: `ELZAB K10_ECR receipt total mismatch: line total ${lineTotal} grosze, receipt total ${Math.round(Number(data.total || 0))} grosze. No fiscal command was sent.`,
-    };
-  }
-  return { ok: true };
-}
-
-async function readK10TaxRates(workDir: string, timeoutMs: number): Promise<K10TaxRate[]> {
-  writeLatin1(path.join(workDir, 'OPODATEK.IN'), '#1\r\n#\r\n#\r\n');
-  const outputPath = path.join(workDir, 'OPODATEK.OUT');
-  await execFileAsync(path.join(workDir, 'OPodatek.exe'), ['OPODATEK.IN', outputPath], {
-    cwd: workDir,
-    timeout: Math.max(timeoutMs, 15_000),
-    windowsHide: true,
-    maxBuffer: 1024 * 1024,
-  });
-
-  const raw = existsSync(outputPath) ? readFileSync(outputPath, 'latin1') : '';
-  const report = readOptionalLatin1(path.join(workDir, 'RAPORT.TXT'));
-  const values = raw
-    .split(/\r?\n/)
-    .find((line) => line.startsWith('$'))
-    ?.slice(1)
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-  if (!values || values.length < 7) {
-    throw new Error(`ELZAB K10 tax-rate read failed${report ? `: ${summarizeK10Report(report)}` : ''}`);
-  }
-
-  return values.slice(0, 7).map((value, index) => ({
-    letter: String.fromCharCode('A'.charCodeAt(0) + index),
-    rate: parseK10TaxRate(value),
-    exempt: /^ZWOLNIONA$/i.test(value),
-  }));
-}
-
-function parseK10TaxRate(value: string): number | null {
-  if (/^REZERWA$/i.test(value) || /^ZWOLNIONA$/i.test(value)) return null;
-  const parsed = Number(value.replace(',', '.'));
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function buildK10ReceiptSequence(data: ReceiptData, taxes: K10TaxRate[]): string {
-  const lines: string[] = ['#1', '#', '#'];
-  lines.push(`$20h\t1\t4\t0\t${toLeHex4(Math.round(data.total))}`);
-
-  for (const item of data.items) {
-    const quantity = k10Quantity(item.quantity);
-    const lineTotal = k10LineTotalGrosze(item);
-    const vatLetter = k10VatLetter(item.vatRate, taxes);
-    lines.push(
-      `$06h\t0\t43\t0\t20h:'${k10FixedText(item.name, 28)}':'0':${toLeHex4(quantity.value)}:'${quantity.decimals}':'${k10Unit(item.unit)}':${toLeHex4(Math.round(item.unitPrice))}`,
-    );
-    lines.push(`$'${vatLetter}'\t0\t4\t0\t${toLeHex4(lineTotal)}`);
-  }
-
-  lines.push('$07h\t0\t0\t0');
-  lines.push('$24h\t1\t0\t0');
-  return `${lines.join('\r\n')}\r\n`;
-}
-
-function k10LineTotalGrosze(item: ReceiptData['items'][number]): number {
-  return Math.round(Number(item.totalPrice ?? (Number(item.unitPrice) * Number(item.quantity))));
-}
-
-function k10Quantity(quantityInput: number): { value: number; decimals: '0' | '1' | '2' | '3' } {
-  const quantity = Number(quantityInput);
-  if (!(quantity > 0)) {
-    throw new Error(`ELZAB K10 quantity must be positive. Got ${String(quantityInput)}.`);
-  }
-
-  for (const decimals of [0, 1, 2, 3] as const) {
-    const scale = 10 ** decimals;
-    const value = Math.round(quantity * scale);
-    if (Math.abs(quantity * scale - value) < 0.000001 && value > 0) {
-      return { value, decimals: String(decimals) as '0' | '1' | '2' | '3' };
-    }
-  }
-
-  throw new Error(`ELZAB K10 quantity supports at most 3 decimal places. Got ${quantity}.`);
-}
-
-function k10VatLetter(vatRateInput: number, taxes: K10TaxRate[]): string {
-  const vatRate = Number(vatRateInput);
-  const tax = taxes.find((candidate) => candidate.rate !== null && Math.abs(candidate.rate - vatRate) < 0.001);
-  if (tax) return tax.letter;
-  throw new Error(
-    `ELZAB K10 VAT rate ${vatRate}% is not configured in the cash register PTU table. ` +
-    `Read rates: ${taxes.map((candidate) => `${candidate.letter}=${candidate.exempt ? 'ZW' : candidate.rate ?? 'REZERWA'}`).join(', ')}.`,
-  );
-}
-
-function k10FixedText(value: string | undefined, length: number): string {
-  return toFiscalSafeText(value || '')
-    .replace(/[':;]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, length)
-    .padEnd(length, ' ');
-}
-
-function k10Unit(value: string | undefined): string {
-  return k10FixedText(value || 'szt', 4);
-}
-
-function toLeHex4(input: number): string {
-  const value = Math.round(Number(input));
-  if (!Number.isInteger(value) || value < 0 || value > 0xffffffff) {
-    throw new Error(`ELZAB K10 amount out of 4-byte range: ${String(input)}`);
-  }
-  return [0, 8, 16, 24]
-    .map((shift) => `${((value >>> shift) & 0xff).toString(16).padStart(2, '0')}h`)
-    .join(':');
-}
-
-function parseK10SequenceOutput(raw: string, report: string): ElzabOperationResult & { model?: string; sequenceCount?: number } {
-  const commandRows = raw.split(/\r?\n/).filter((line) => line.startsWith('$'));
-  const failed = commandRows.find((line) => !/^\$0(?:\t|$)/.test(line));
-  const model = raw
-    .split(/\r?\n/)
-    .find((line) => line.startsWith('#ELZAB'))
-    ?.slice(1)
-    .trim();
-
-  if (failed) {
-    return {
-      ok: false,
-      code: 'ELZAB_COMMAND_FAILED',
-      detail: `ELZAB K10 receipt sequence failed: ${failed}`,
-      data: { raw, report },
-    };
-  }
-  if (commandRows.length === 0) {
-    return {
-      ok: false,
-      code: 'ELZAB_COMMAND_FAILED',
-      detail: `ELZAB K10 receipt sequence produced no command confirmations${report ? `: ${summarizeK10Report(report)}` : ''}`,
-      data: { raw, report },
-    };
-  }
-
-  return { ok: true, model, sequenceCount: commandRows.length };
-}
-
-function summarizeK10Report(report: string): string {
-  const errorLine = report.split(/\r?\n/).find((line) => /^#\d+/.test(line) && !line.startsWith('#01\t'));
-  return (errorLine || report.split(/\r?\n/).filter(Boolean).slice(-1)[0] || 'unknown error').trim();
-}
-
 function resolveK10EcrTools(): {
   statusExe: string;
-  taxExe: string;
-  sequenceExe: string;
   winIpDll: string;
   displayRoot: string;
 } | undefined {
@@ -697,21 +433,13 @@ function resolveK10EcrTools(): {
       path.join(root, 'EXE bez widocznego okna', 'OStatus.exe'),
       path.join(root, 'OStatus.exe'),
     ].find((candidate) => existsSync(candidate));
-    const taxExe = [
-      path.join(root, 'EXE bez widocznego okna', 'OPodatek.exe'),
-      path.join(root, 'OPodatek.exe'),
-    ].find((candidate) => existsSync(candidate));
-    const sequenceExe = [
-      path.join(root, 'EXE bez widocznego okna', 'PoSekwSt.exe'),
-      path.join(root, 'PoSekwSt.exe'),
-    ].find((candidate) => existsSync(candidate));
     const winIpDll = [
       path.join(root, 'WinIP.dll'),
       path.join(path.dirname(root), 'WinIP.dll'),
     ].find((candidate) => existsSync(candidate));
 
-    if (statusExe && taxExe && sequenceExe && winIpDll) {
-      return { statusExe, taxExe, sequenceExe, winIpDll, displayRoot: root };
+    if (statusExe && winIpDll) {
+      return { statusExe, winIpDll, displayRoot: root };
     }
   }
 
