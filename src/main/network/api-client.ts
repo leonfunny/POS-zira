@@ -255,6 +255,8 @@ function mergeServerPrintersWithLocal(
         port: localConfig.port,
         address: localConfig.address,
         baudRate: localConfig.baudRate ?? serverConfig.baudRate,
+        elzabDriverFamily: localConfig.elzabDriverFamily ?? serverConfig.elzabDriverFamily,
+        deviceModel: localConfig.deviceModel ?? serverConfig.deviceModel,
         charset: localConfig.charset ?? serverConfig.charset,
         cutMode: localConfig.cutMode ?? serverConfig.cutMode,
         labelWidth: localConfig.labelWidth ?? serverConfig.labelWidth,
@@ -266,6 +268,8 @@ function mergeServerPrintersWithLocal(
 
     merged[type] = {
       ...serverConfig,
+      elzabDriverFamily: localConfig?.elzabDriverFamily ?? serverConfig.elzabDriverFamily,
+      deviceModel: localConfig?.deviceModel ?? serverConfig.deviceModel,
       charset: localConfig?.charset ?? serverConfig.charset,
       cutMode: localConfig?.cutMode ?? serverConfig.cutMode,
     };

@@ -1678,6 +1678,8 @@ export class HardwareModule extends BaseModule {
       port: config.port || null,
       baudRate: config.baudRate ?? null,
       address: config.address || null,
+      elzabDriverFamily: config.elzabDriverFamily || null,
+      deviceModel: config.deviceModel || null,
       windowsPrinter: config.windowsPrinter || null,
       labelWidth: config.labelWidth ?? null,
       labelHeight: config.labelHeight ?? null,
