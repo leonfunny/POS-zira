@@ -237,9 +237,16 @@ interface BilliardFloorPlanProps {
   language: Language;
   onPreflightPos?: () => Promise<void>;
   onPayInPos?: (input: { posCheckout: any; tableName?: string | null }) => Promise<void>;
+  /**
+   * False while the shell keeps this tab mounted but hidden. The tab is no
+   * longer torn down on every switch (that remount is what made the toolbar,
+   * the view lock and the tables flicker on re-entry), so it must instead go
+   * quiet: stop polling, and drop transient UI as an unmount used to.
+   */
+  active?: boolean;
 }
 
-function FloorPlanInner({ language, onPreflightPos, onPayInPos }: BilliardFloorPlanProps) {
+function FloorPlanInner({ language, onPreflightPos, onPayInPos, active = true }: BilliardFloorPlanProps) {
   const { t } = useTranslation(language);
   const toast = useToast();
   const { user } = useAuth();
@@ -249,10 +256,12 @@ function FloorPlanInner({ language, onPreflightPos, onPayInPos }: BilliardFloorP
   const viewportRef = useRef<HTMLDivElement>(null);
 
   // Data
-  const { data: overview, loading: isLoading, refetch: refetchOverview } = useFloorOverview() as any;
+  const { data: overview, loading: isLoading, refetch: refetchOverview } = useFloorOverview({
+    pollPaused: !active,
+  }) as any;
   const { data: typeData, refetch: refetchType } = useResourceType('POOL_TABLE', canEditLayout) as any;
   const { data: floorPlansData, refetch: refetchFloorPlans } = useFloorPlans() as any;
-  const { data: syncStatus } = useSyncStatus() as any;
+  const { data: syncStatus } = useSyncStatus({ pollPaused: !active }) as any;
   // WebSocket status only describes realtime updates. Hard-disable cashier
   // mutations solely after an HTTPS probe has confirmed the API is unreachable.
   const sessionActionsOffline = syncStatus?.apiReachable === false;
@@ -324,6 +333,39 @@ function FloorPlanInner({ language, onPreflightPos, onPayInPos }: BilliardFloorP
   const [floorToRename, setFloorToRename] = useState<FloorPlanType | null>(null);
   const [floorToDelete, setFloorToDelete] = useState<FloorPlanType | null>(null);
   const addFloorPendingRef = useRef(false);
+
+  // Leaving the tab closes everything transient — the same clean slate the old
+  // unmount produced — while the loaded floor, the locked view and the resolved
+  // identity survive, so coming back paints in one frame.
+  useEffect(() => {
+    if (active) return;
+    setEditMode(false);
+    setAddDialogOpen(false);
+    setSelectedTableId(null);
+    setEditMenu(null);
+    setRenamingTableId(null);
+    setPendingMeasureTable(null);
+    setAddItemSessionId(null);
+    setTransferSessionId(null);
+    setPaymentSession(null);
+    setUnsettledOpen(false);
+    setReservationsOpen(false);
+    setPriceTable(null);
+    setChangeImageId(null);
+    setChangeImageKey(null);
+    setFloorToRename(null);
+    setFloorToDelete(null);
+  }, [active]);
+
+  // Polling is paused while hidden, so refresh once on re-entry. The existing
+  // data stays on screen during this fetch (useQuery only shows loading when it
+  // has nothing for the current key), which is why this cannot flicker.
+  const wasActiveRef = useRef(active);
+  useEffect(() => {
+    const becameActive = active && !wasActiveRef.current;
+    wasActiveRef.current = active;
+    if (becameActive) void refetchOverview();
+  }, [active, refetchOverview]);
 
   const tables = useMemo(() => normalizeTableList(overview), [overview]);
   const pendingPayments = useMemo(
@@ -502,10 +544,13 @@ function FloorPlanInner({ language, onPreflightPos, onPayInPos }: BilliardFloorP
     const viewport = viewportRef.current;
     if (!viewport) return;
     const updateSize = () => {
-      setViewportSize({
-        width: viewport.clientWidth,
-        height: viewport.clientHeight,
-      });
+      const width = viewport.clientWidth;
+      const height = viewport.clientHeight;
+      // A hidden tab measures 0x0. Keeping the last real measurement means the
+      // canvas is already fitted when the tab is shown again, instead of
+      // painting one degenerate frame and resizing after the observer fires.
+      if (width <= 0 || height <= 0) return;
+      setViewportSize({ width, height });
     };
     updateSize();
     const observer = new ResizeObserver(updateSize);
@@ -1594,13 +1639,19 @@ function FloorPlanInner({ language, onPreflightPos, onPayInPos }: BilliardFloorP
 
 // ─── Exported component with ToastProvider wrapper ────────────────────
 
-export default function BilliardFloorPlan({ language, onPreflightPos, onPayInPos }: BilliardFloorPlanProps) {
+export default function BilliardFloorPlan({
+  language,
+  onPreflightPos,
+  onPayInPos,
+  active,
+}: BilliardFloorPlanProps) {
   return (
     <ToastProvider>
       <FloorPlanInner
         language={language}
         onPreflightPos={onPreflightPos}
         onPayInPos={onPayInPos}
+        active={active}
       />
     </ToastProvider>
   );

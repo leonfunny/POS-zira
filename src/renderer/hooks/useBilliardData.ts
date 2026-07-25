@@ -19,7 +19,17 @@ interface QueryResult<T> {
 function useQuery<T>(
   fetcher: () => Promise<T>,
   deps: any[] = [],
-  options?: { pollInterval?: number; enabled?: boolean; staleTime?: number },
+  options?: {
+    pollInterval?: number;
+    enabled?: boolean;
+    staleTime?: number;
+    /**
+     * Stop the background interval without discarding the resolved data.
+     * `enabled: false` would blank `data` and re-show the loading state, which
+     * is exactly the flicker a hidden-but-mounted tab must avoid.
+     */
+    pollPaused?: boolean;
+  },
 ): QueryResult<T> {
   // Every caller in this module supplies primitive query-key parts. Keep the
   // resolved value tied to that exact tuple so a category/search change cannot
@@ -122,10 +132,10 @@ function useQuery<T>(
 
   // Polling
   useEffect(() => {
-    if (!options?.pollInterval || options?.enabled === false) return;
+    if (!options?.pollInterval || options?.enabled === false || options?.pollPaused) return;
     const id = setInterval(() => { void fetchData(); }, options.pollInterval);
     return () => clearInterval(id);
-  }, [fetchData, options?.pollInterval, options?.enabled]);
+  }, [fetchData, options?.pollInterval, options?.enabled, options?.pollPaused]);
 
   const hasCurrentData = dataKeyRef.current === queryKey;
   const enabled = options?.enabled !== false;
@@ -181,11 +191,11 @@ function useBilliardUpdates(refetch: () => Promise<void>) {
 
 // ─── Billiard-specific hooks (cache-first via IPC) ──
 
-export function useFloorOverview() {
+export function useFloorOverview(options?: { pollPaused?: boolean }) {
   const result = useQuery(
     () => window.electronAPI.billiard.getFloorOverview(),
     [],
-    { pollInterval: 10000 },
+    { pollInterval: 10000, pollPaused: options?.pollPaused },
   );
   useBilliardUpdates(result.refetch);
   return result;
@@ -365,10 +375,10 @@ export function useVoidSessions(refetch?: () => Promise<void>) {
 
 // ─── Sync status hook ───────────────────────────────
 
-export function useSyncStatus() {
+export function useSyncStatus(options?: { pollPaused?: boolean }) {
   return useQuery(
     () => window.electronAPI.billiard.getSyncStatus(),
     [],
-    { pollInterval: 5000 },
+    { pollInterval: 5000, pollPaused: options?.pollPaused },
   );
 }

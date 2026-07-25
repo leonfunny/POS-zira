@@ -68,6 +68,9 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [touchKeyboardHeight, setTouchKeyboardHeight] = useState(0);
   const [productEditRequest, setProductEditRequest] = useState<{ variantId: string; returnTo: Tab } | null>(null);
+  // Latches on the first billiard visit so venues that never open the tab pay
+  // nothing for it, while everyone who uses it gets an instant tab switch.
+  const [billiardVisited, setBilliardVisited] = useState(false);
   const [billiardPaymentIntent, setBilliardPaymentIntent] = useState<BilliardPaymentIntent | null>(null);
   const [restoredCartReconciliation, setRestoredCartReconciliation] = useState<RestoredCartReconciliation | null>(null);
   const billiardRecoveryKeyRef = useRef<string | null>(null);
@@ -226,6 +229,10 @@ export default function App() {
       setActiveTab(visibleTabs[0]);
     }
   }, [visibleTabs, activeTab]);
+
+  useEffect(() => {
+    if (activeTab === 'billiard') setBilliardVisited(true);
+  }, [activeTab]);
 
   // Load connection/device status on mount
   useEffect(() => {
@@ -631,12 +638,19 @@ export default function App() {
               {activeTab === 'selfCheckout' && isTabAvailable('selfCheckout') && (
                 <SelfCheckoutTab language={(config?.language as Language) || 'en'} />
               )}
-              {activeTab === 'billiard' && isTabAvailable('billiard') && (
-                <BilliardFloorPlan
-                  language={(config?.language as Language) || 'en'}
-                  onPreflightPos={handlePreflightBilliardInPos}
-                  onPayInPos={handlePayBilliardInPos}
-                />
+              {/* Mounted on first visit and kept mounted afterwards: tearing the
+                  floor plan down on every tab switch made it re-fetch auth,
+                  re-derive its locked view and remount its zoom canvas, which
+                  is what flickered the toolbar and the tables on re-entry. */}
+              {billiardVisited && isTabAvailable('billiard') && (
+                <div className={activeTab === 'billiard' ? 'h-full' : 'hidden'}>
+                  <BilliardFloorPlan
+                    active={activeTab === 'billiard'}
+                    language={(config?.language as Language) || 'en'}
+                    onPreflightPos={handlePreflightBilliardInPos}
+                    onPayInPos={handlePayBilliardInPos}
+                  />
+                </div>
               )}
               {activeTab === 'chat' && isTabAvailable('chat') && (
                 <Chat language={(config?.language as Language) || 'en'} />
