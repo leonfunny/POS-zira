@@ -87,8 +87,6 @@ const printerConfigSchema = {
     port: { type: 'string' },
     baudRate: { type: 'number', default: 9600 },
     address: { type: 'string' },
-    elzabDriverFamily: { type: 'string', enum: ['ELZABDR', 'K10_ECR'] },
-    deviceModel: { type: 'string' },
     windowsPrinter: { type: 'string' },
     labelWidth: { type: 'number', default: 50 },
     labelHeight: { type: 'number', default: 30 },

@@ -1,7 +1,6 @@
 export { ElzabDriver } from './elzab-driver';
 export type { ElzabDriverOptions } from './elzab-driver';
 export {
-  ElzabK10EcrBridge,
   ElzabSidecarBridge,
   MissingElzabBridge,
   DevMockElzabBridge,

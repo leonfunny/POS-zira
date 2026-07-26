@@ -634,8 +634,13 @@ export class PaymentController {
     const missingPrinterMessage = '[Payment] No fiscal printer connected or remote fiscal route configured';
     const meta = { referenceType: 'POS_FISCAL_RECEIPT', referenceId: orderId, source: 'pos' };
 
-    const printer = await this.ensurePrinterReady(this.getPrinter(PrinterType.FISCAL), PrinterType.FISCAL);
+    const printer = this.getPrinter(PrinterType.FISCAL);
     if (printer) {
+      if (!printer.isConnected()) {
+        logger.warn(missingPrinterMessage);
+        throw new Error(missingPrinterMessage);
+      }
+
       try {
         await printer.printReceipt(receiptData);
         logger.info(successMessage);

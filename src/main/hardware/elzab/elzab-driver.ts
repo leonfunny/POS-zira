@@ -10,7 +10,6 @@ import logger from '../../logger';
 import { listSerialPorts, getVidForPort } from '../port-utils';
 import {
   createDefaultElzabBridge,
-  ElzabK10EcrBridge,
   isRealFiscalPrintEnabled,
   type ElzabBridge,
   type ElzabConnectionConfig,
@@ -60,11 +59,9 @@ export class ElzabDriver {
   private fiscalJournal: FiscalAttemptJournal;
   private listSerialPortsFn: () => Promise<string[]>;
   private getVidForPortFn: (port: string) => Promise<string | null>;
-  private readonly bridgeProvided: boolean;
 
   constructor(private options: ElzabDriverOptions) {
     this.options.baudRate = options.baudRate || 9600;
-    this.bridgeProvided = !!options.bridge;
     this.bridge = options.bridge || createDefaultElzabBridge();
     this.fiscalJournal = options.fiscalJournal || fiscalAttemptRepo;
     this.listSerialPortsFn = options.listSerialPortsFn || listSerialPorts;
@@ -85,8 +82,6 @@ export class ElzabDriver {
       });
       return false;
     }
-
-    await this.selectK10BridgeForPresentElzab();
 
     const availability = await this.bridge.checkAvailability();
     if (!availability.ok) {
@@ -148,23 +143,6 @@ export class ElzabDriver {
       logger.warn(`[ElzabDriver] Configured fiscal port ${configured} absent and no ELZAB (VID ${ELZAB_USB_VID}) device among present ports [${present.join(', ') || 'none'}].`);
     } catch (e: any) {
       logger.warn(`[ElzabDriver] resolveElzabPort scan failed: ${e?.message ?? e}`);
-    }
-  }
-
-  private async selectK10BridgeForPresentElzab(): Promise<void> {
-    if (this.bridgeProvided || !this.options.port || process.env.ZIRA_ELZAB_BRIDGE_PATH?.trim()) return;
-
-    try {
-      const vid = await this.getVidForPortFn(this.options.port);
-      if (vid !== ELZAB_USB_VID) return;
-      this.options.baudRate = 115200;
-      this.bridge = new ElzabK10EcrBridge();
-      logger.info(
-        `[ElzabDriver] ELZAB USB VID ${ELZAB_USB_VID} detected on ${this.options.port}; ` +
-        'using K10_ECR WinIP bridge at 115200 baud.',
-      );
-    } catch (e: any) {
-      logger.warn(`[ElzabDriver] K10 bridge auto-select failed: ${e?.message ?? e}`);
     }
   }
 
@@ -238,13 +216,6 @@ export class ElzabDriver {
       const detail =
         `Receipt item '${zeroPriced.name}' has a non-positive unit price and cannot be fiscalized. ` +
         'No fiscal command was sent. Print the non-fiscal order copy instead or fix the item price.';
-      this.lastDiagnostic = { code: 'ELZAB_UNSUPPORTED_OPERATION', detail };
-      throw new Error(`ELZAB_UNSUPPORTED_OPERATION: ${detail}`);
-    }
-    if (this.bridge.canPrintFiscalReceipts?.() === false) {
-      const detail =
-        'This ELZAB bridge can verify the device, but it cannot send real fiscal receipts. ' +
-        'No fiscal command was sent.';
       this.lastDiagnostic = { code: 'ELZAB_UNSUPPORTED_OPERATION', detail };
       throw new Error(`ELZAB_UNSUPPORTED_OPERATION: ${detail}`);
     }
