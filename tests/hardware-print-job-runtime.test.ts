@@ -8,6 +8,8 @@ import {
   type ReceiptData,
 } from '../src/shared/types';
 
+const PRINT_JOB_RETRY_DELAY_MS = 2_000;
+
 const mock = vi.hoisted(() => ({
   currentConfig: {} as Partial<AgentConfig>,
   getEnabled: vi.fn(),
@@ -24,6 +26,7 @@ const mock = vi.hoisted(() => ({
   thermalConnectImpl: null as null | ((driver: any) => Promise<boolean> | boolean),
   thermalInitiallyConnected: true,
   thermalInstances: [] as any[],
+  thermalPrintBusy: false,
   thermalSupportsBundledDrawer: false,
 }));
 
@@ -68,6 +71,7 @@ vi.mock('../src/main/hardware/elzab/elzab-driver', () => ({
 
 vi.mock('../src/main/hardware/thermal/thermal-driver', () => {
   class ThermalDriver {
+    static isAnyPrintBusy = vi.fn(() => mock.thermalPrintBusy);
     connected = mock.thermalInitiallyConnected;
     printReceipt = vi.fn();
     openDrawer = vi.fn();
@@ -148,6 +152,7 @@ describe('HardwareModule print job runtime guards', () => {
     mock.posnetConnects = false;
     mock.thermalConnectImpl = null;
     mock.thermalInitiallyConnected = true;
+    mock.thermalPrintBusy = false;
     mock.thermalSupportsBundledDrawer = false;
     mock.currentConfig = { multiPrinterMode: true, printers: {} };
     mock.lanFirstBeginPrintAttempt.mockResolvedValue({ action: 'PRINT', row: { status: 'PRINTING' } });
@@ -212,6 +217,115 @@ describe('HardwareModule print job runtime guards', () => {
     expect(socket.sendJobStatus).toHaveBeenCalledWith('job-1', 'PRINTING');
     expect(socket.sendJobStatus).toHaveBeenCalledWith('job-1', 'COMPLETED');
     expect(mock.markUsed).toHaveBeenCalledWith('receipt-printer-1');
+  });
+
+  it('retries a post-driver failure only when it is explicitly SAFE_BEFORE_PRINT', async () => {
+    vi.useFakeTimers();
+    const socket = { sendJobStatus: vi.fn(), isConnected: vi.fn(() => false), sendDeviceStatus: vi.fn() };
+    const container = {
+      set: vi.fn(),
+      getOptional: vi.fn(() => socket),
+    };
+
+    const { HardwareModule } = await import('../src/main/modules/hardware.module');
+    const module = new HardwareModule(container as any);
+    await module.reinitializePrinter();
+    const driver = mock.thermalInstances[0];
+    driver.printReceipt
+      .mockRejectedValueOnce(Object.assign(new Error('worker rejected before WritePrinter'), {
+        failureClass: 'SAFE_BEFORE_PRINT',
+      }))
+      .mockResolvedValueOnce(undefined);
+
+    const receipt: ReceiptData = {
+      orderId: 'order-safe-retry',
+      orderNumber: 'ZAM-safe-retry',
+      items: [{ name: 'Tea', quantity: 1, unitPrice: 100, totalPrice: 100, vatRate: 23 }],
+      payment: { method: 'CARD', amount: 100 },
+      subtotal: 100,
+      total: 100,
+    };
+    const printPromise = (module as any).handlePrintJob({
+      jobId: 'job-safe-retry',
+      jobType: PrintJobType.RECEIPT,
+      printerType: PrinterType.RECEIPT,
+      printerId: 'receipt-printer-1',
+      payload: receipt,
+    });
+
+    await vi.advanceTimersByTimeAsync(PRINT_JOB_RETRY_DELAY_MS);
+    await printPromise;
+
+    expect(driver.printReceipt).toHaveBeenCalledTimes(2);
+    expect(socket.sendJobStatus).toHaveBeenCalledWith('job-safe-retry', 'COMPLETED');
+    expect(socket.sendJobStatus).not.toHaveBeenCalledWith(
+      'job-safe-retry',
+      'FAILED',
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it('fails immediately without retry after an explicit UNCERTAIN_AFTER_PRINT result', async () => {
+    const socket = { sendJobStatus: vi.fn(), isConnected: vi.fn(() => false), sendDeviceStatus: vi.fn() };
+    const container = {
+      set: vi.fn(),
+      getOptional: vi.fn(() => socket),
+    };
+
+    const { HardwareModule } = await import('../src/main/modules/hardware.module');
+    const module = new HardwareModule(container as any);
+    await module.reinitializePrinter();
+    const driver = mock.thermalInstances[0];
+    driver.printReceipt.mockRejectedValue(
+      Object.assign(new Error('WritePrinter result is unknown'), {
+        failureClass: 'UNCERTAIN_AFTER_PRINT',
+      }),
+    );
+
+    await (module as any).handlePrintJob({
+      jobId: 'job-uncertain',
+      jobType: PrintJobType.RECEIPT,
+      printerType: PrinterType.RECEIPT,
+      printerId: 'receipt-printer-1',
+      payload: {
+        orderId: 'order-uncertain',
+        orderNumber: 'ZAM-uncertain',
+        items: [{ name: 'Tea', quantity: 1, unitPrice: 100, totalPrice: 100, vatRate: 23 }],
+        payment: { method: 'CARD', amount: 100 },
+        subtotal: 100,
+        total: 100,
+      } satisfies ReceiptData,
+    });
+
+    expect(driver.printReceipt).toHaveBeenCalledTimes(1);
+    expect(socket.sendJobStatus).toHaveBeenCalledWith(
+      'job-uncertain',
+      'FAILED',
+      'WritePrinter result is unknown',
+      'UNCERTAIN_AFTER_PRINT',
+    );
+  });
+
+  it('defers a periodic health check while any thermal print is busy', async () => {
+    vi.useFakeTimers();
+    const container = {
+      set: vi.fn(),
+      getOptional: vi.fn(() => null),
+    };
+    const { HardwareModule } = await import('../src/main/modules/hardware.module');
+    const module = new HardwareModule(container as any);
+    const runHealthCheck = vi.spyOn(module as any, 'runHealthCheck').mockResolvedValue(undefined);
+
+    (module as any).startHealthCheck();
+    mock.thermalPrintBusy = true;
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(runHealthCheck).not.toHaveBeenCalled();
+
+    mock.thermalPrintBusy = false;
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(runHealthCheck).toHaveBeenCalledTimes(1);
+    (module as any).stopHealthCheck();
   });
 
   it('can register startup printer drivers without connecting them on the critical path', async () => {
@@ -478,6 +592,70 @@ describe('HardwareModule print job runtime guards', () => {
     expect(mock.posnetInstances[0].openDrawer).not.toHaveBeenCalled();
     expect(socket.sendJobStatus).toHaveBeenCalledWith('job-fiscal', 'COMPLETED');
     expect(mock.markUsed).toHaveBeenCalledWith('fiscal-printer-1');
+  });
+
+  it('never retries a fiscal driver result classified as UNCERTAIN_AFTER_PRINT', async () => {
+    mock.posnetConnects = true;
+    const fiscalRow = {
+      id: 'fiscal-printer-1',
+      printer_type: PrinterType.FISCAL,
+      display_name: 'posnet thermal hd',
+      protocol: 'POSNET',
+      is_enabled: 1,
+      address: 'COM4',
+      supports_cash_drawer: 1,
+    };
+    mock.getEnabled.mockReturnValue([fiscalRow]);
+    mock.getAll.mockReturnValue([fiscalRow]);
+    mock.getById.mockImplementation((id: string) => (id === 'fiscal-printer-1' ? fiscalRow : null));
+    mock.rowToPrinterConfig.mockReturnValue({
+      enabled: true,
+      protocol: 'POSNET',
+      serverPrinterId: 'fiscal-printer-1',
+      port: 'COM4',
+      paperWidth: 80,
+      charsPerLine: 48,
+      supportsCashDrawer: true,
+    } satisfies PrinterConfig);
+    const socket = { sendJobStatus: vi.fn(), isConnected: vi.fn(() => false), sendDeviceStatus: vi.fn() };
+    const container = {
+      set: vi.fn(),
+      getOptional: vi.fn(() => socket),
+    };
+
+    const { HardwareModule } = await import('../src/main/modules/hardware.module');
+    const module = new HardwareModule(container as any);
+    await module.reinitializePrinter();
+    mock.posnetInstances[0].printReceipt.mockRejectedValue(
+      Object.assign(new Error('printer not connected after an ambiguous send'), {
+        failureClass: 'UNCERTAIN_AFTER_PRINT',
+      }),
+    );
+
+    await (module as any).handlePrintJob({
+      jobId: 'job-fiscal-uncertain',
+      jobType: PrintJobType.RECEIPT,
+      printerType: PrinterType.FISCAL,
+      printerId: 'fiscal-printer-1',
+      referenceType: 'POS_FISCAL_RECEIPT',
+      referenceId: 'order-fiscal-uncertain',
+      payload: {
+        orderId: 'order-fiscal-uncertain',
+        orderNumber: 'POS-fiscal-uncertain',
+        items: [{ name: 'Tea', quantity: 1, unitPrice: 100, totalPrice: 100, vatRate: 23 }],
+        payment: { method: 'CARD', amount: 100 },
+        subtotal: 100,
+        total: 100,
+      } satisfies ReceiptData,
+    });
+
+    expect(mock.posnetInstances[0].printReceipt).toHaveBeenCalledTimes(1);
+    expect(socket.sendJobStatus).toHaveBeenCalledWith(
+      'job-fiscal-uncertain',
+      'FAILED',
+      expect.stringContaining('FISCAL PRINT FAILED'),
+      'UNCERTAIN_AFTER_PRINT',
+    );
   });
 
   it('keeps the current printer driver when a backend refresh emits unchanged config', async () => {

@@ -1791,4 +1791,104 @@ export const migrations: Migration[] = [
         ON pos_billiard_handoffs(session_id, created_at);
     `,
   },
+  {
+    version: 62,
+    name: 'receipt_print_outbox',
+    // Initial non-fiscal order copies must not keep the payment modal open
+    // while Windows renders/spools them. Persist the intent next to the order
+    // and replay only outcomes that are provably safe-before-print. A process
+    // crash after DISPATCHING is deliberately left for operator review because
+    // the paper/drawer side effect may already have happened.
+    up: `
+      CREATE TABLE IF NOT EXISTS receipt_print_outbox (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id TEXT NOT NULL UNIQUE,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        order_id TEXT NOT NULL,
+        salon_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        shift_id TEXT,
+        document_type TEXT NOT NULL,
+        open_drawer INTEGER NOT NULL DEFAULT 0,
+        payload_json TEXT NOT NULL,
+        payload_hash TEXT NOT NULL,
+        route TEXT,
+        printer_id TEXT,
+        remote_job_id TEXT,
+        status TEXT NOT NULL,
+        failure_class TEXT,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at TEXT,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        dispatched_at TEXT,
+        completed_at TEXT,
+        FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+        UNIQUE (order_id, document_type)
+      );
+      CREATE INDEX IF NOT EXISTS idx_receipt_print_outbox_replay
+        ON receipt_print_outbox(status, next_attempt_at, seq);
+      CREATE INDEX IF NOT EXISTS idx_receipt_print_outbox_scope
+        ON receipt_print_outbox(salon_id, device_id, shift_id, status, seq);
+    `,
+  },
+  {
+    version: 63,
+    name: 'receipt_print_outbox_preserve_evidence',
+    // Receipt evidence must outlive deletion of a local unsynced order.
+    // Rebuild v62 without its ON DELETE CASCADE foreign key. Tenant switching
+    // snapshots this evidence into the per-salon archive before clearing the
+    // live DB, so the new tenant cannot read the old payload.
+    up: `
+      DROP INDEX IF EXISTS idx_receipt_print_outbox_replay;
+      DROP INDEX IF EXISTS idx_receipt_print_outbox_scope;
+      ALTER TABLE receipt_print_outbox RENAME TO receipt_print_outbox_v62;
+      CREATE TABLE receipt_print_outbox (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id TEXT NOT NULL UNIQUE,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        order_id TEXT NOT NULL,
+        salon_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        shift_id TEXT,
+        document_type TEXT NOT NULL,
+        open_drawer INTEGER NOT NULL DEFAULT 0,
+        payload_json TEXT NOT NULL,
+        payload_hash TEXT NOT NULL,
+        route TEXT,
+        printer_id TEXT,
+        remote_job_id TEXT,
+        status TEXT NOT NULL,
+        failure_class TEXT,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at TEXT,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        dispatched_at TEXT,
+        completed_at TEXT,
+        UNIQUE (order_id, document_type)
+      );
+      INSERT INTO receipt_print_outbox (
+        seq, job_id, idempotency_key, order_id, salon_id, device_id, shift_id,
+        document_type, open_drawer, payload_json, payload_hash, route,
+        printer_id, remote_job_id, status, failure_class, attempts,
+        next_attempt_at, last_error, created_at, updated_at, dispatched_at,
+        completed_at
+      )
+      SELECT
+        seq, job_id, idempotency_key, order_id, salon_id, device_id, shift_id,
+        document_type, open_drawer, payload_json, payload_hash, route,
+        printer_id, remote_job_id, status, failure_class, attempts,
+        next_attempt_at, last_error, created_at, updated_at, dispatched_at,
+        completed_at
+      FROM receipt_print_outbox_v62;
+      DROP TABLE receipt_print_outbox_v62;
+      CREATE INDEX IF NOT EXISTS idx_receipt_print_outbox_replay
+        ON receipt_print_outbox(status, next_attempt_at, seq);
+      CREATE INDEX IF NOT EXISTS idx_receipt_print_outbox_scope
+        ON receipt_print_outbox(salon_id, device_id, shift_id, status, seq);
+    `,
+  },
 ];

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ThermalDriver } from '../src/main/hardware/thermal/thermal-driver';
+import { WindowsThermalWorkerError } from '../src/main/hardware/thermal/windows-thermal-worker';
 import type { ReceiptData } from '../src/shared/types';
 
 vi.mock('../src/main/logger', () => ({
@@ -25,6 +26,74 @@ function buildReceipt(overrides: Partial<ReceiptData> = {}): ReceiptData {
 }
 
 describe('ThermalDriver receipt hybrid raster path', () => {
+  it('classifies a disconnected receipt attempt as explicitly safe before print', async () => {
+    const driver = new ThermalDriver('COM1', 9600, 'SERIAL', 80, 48, false, {
+      charset: 'utf8',
+      cutMode: 'partial',
+    });
+
+    const error = await driver.printReceipt(buildReceipt()).catch((caught) => caught);
+
+    expect(error).toMatchObject({
+      code: 'PRINTER_NOT_CONNECTED',
+      stage: 'DRIVER_PREFLIGHT',
+      failureClass: 'SAFE_BEFORE_PRINT',
+      action: 'print',
+    });
+  });
+
+  it('does not refresh physical-presence cache from Winspool acceptance alone', async () => {
+    const driver = new ThermalDriver('Xprinter XP-80T', 9600, 'USB', 80, 48, false, {
+      charset: 'utf8',
+      cutMode: 'partial',
+    });
+    const verifiedAt = Date.now() - 1_000;
+    const printRaw = vi.fn(async (_printerName: string, data: Buffer) => ({
+      jobId: 81,
+      bytesWritten: data.length,
+      spoolMs: 4,
+      preflightMs: 1,
+      reconcileMs: 25,
+      printerStatus: 0,
+      printerStatusText: 'READY',
+      jobStatus: 0x80,
+      jobStatusText: 'PRINTED',
+    }));
+    (driver as any).connected = true;
+    (driver as any).lastPresenceCheckAt = verifiedAt;
+    (driver as any).getWindowsWorker = () => ({ printRaw });
+
+    await driver.printReceipt(buildReceipt());
+
+    expect(printRaw).toHaveBeenCalledTimes(1);
+    expect((driver as any).lastPresenceCheckAt).toBe(verifiedAt);
+  });
+
+  it('does not legacy-fallback around a semantic PRINTER_NOT_READY failure', async () => {
+    const driver = new ThermalDriver('Xprinter XP-80T', 9600, 'USB', 80, 48, false, {
+      charset: 'utf8',
+      cutMode: 'partial',
+    });
+    const printerError = new WindowsThermalWorkerError({
+      message: 'Printer is not ready: OFFLINE|PAPER_OUT',
+      code: 'PRINTER_NOT_READY',
+      stage: 'PRINTER_PREFLIGHT',
+      failureClass: 'SAFE_BEFORE_PRINT',
+      action: 'print',
+    });
+    const printRaw = vi.fn(async () => {
+      throw printerError;
+    });
+    (driver as any).connected = true;
+    (driver as any).lastPresenceCheckAt = Date.now();
+    (driver as any).getWindowsWorker = () => ({ printRaw });
+
+    const error = await driver.printReceipt(buildReceipt()).catch((caught) => caught);
+
+    expect(error).toBe(printerError);
+    expect(printRaw).toHaveBeenCalledTimes(1);
+  });
+
   it('rasterizes only the Unicode span and keeps the ASCII tail on native ESC/POS text', async () => {
     const driver = new ThermalDriver('COM1', 9600, 'SERIAL', 80, 48, false, {
       charset: 'utf8',
@@ -36,7 +105,7 @@ describe('ThermalDriver receipt hybrid raster path', () => {
     const renderTextToRaster = vi.fn(async () => raster);
     const printRaw = vi.fn(async () => undefined);
     (driver as any).renderTextToRaster = renderTextToRaster;
-    (driver as any).printRaw = printRaw;
+    (driver as any).printRawUnlocked = printRaw;
 
     // Shop name and seller name were removed from the receipt template
     // per operator preference. Address is still rendered, so we use it to
@@ -51,7 +120,10 @@ describe('ThermalDriver receipt hybrid raster path', () => {
 
     const printed = printRaw.mock.calls[0][0] as Buffer;
     expect(printed).not.toEqual(raster);
-    expect(printed.includes(raster)).toBe(true);
+    const rasterOffset = printed.indexOf(raster);
+    expect(rasterOffset).toBeGreaterThanOrEqual(0);
+    expect(printed.lastIndexOf(raster)).toBe(rasterOffset);
+    expect(rasterOffset).toBeLessThan(printed.indexOf(Buffer.from('SUMA PLN')));
     expect(printed.toString('utf8')).toContain('ZAMOWIENIE');
     expect(printed.toString('utf8')).toContain('SUMA PLN');
     expect(printed.toString('utf8')).toContain('Dziekujemy za zakupy!');
@@ -67,7 +139,7 @@ describe('ThermalDriver receipt hybrid raster path', () => {
     const renderTextToRaster = vi.fn(async () => Buffer.from('raster'));
     const printRaw = vi.fn(async () => undefined);
     (driver as any).renderTextToRaster = renderTextToRaster;
-    (driver as any).printRaw = printRaw;
+    (driver as any).printRawUnlocked = printRaw;
 
     await driver.printReceipt(buildReceipt());
 
@@ -87,7 +159,7 @@ describe('ThermalDriver receipt hybrid raster path', () => {
     (driver as any).connected = true;
 
     const printRaw = vi.fn(async () => undefined);
-    (driver as any).printRaw = printRaw;
+    (driver as any).printRawUnlocked = printRaw;
 
     await driver.printReceiptWithDrawer(buildReceipt());
 
@@ -107,7 +179,7 @@ describe('ThermalDriver receipt hybrid raster path', () => {
     const renderTextToRaster = vi.fn(async () => raster);
     const printRaw = vi.fn(async () => undefined);
     (driver as any).renderTextToRaster = renderTextToRaster;
-    (driver as any).printRaw = printRaw;
+    (driver as any).printRawUnlocked = printRaw;
 
     await driver.printPlainLines([
       { text: 'Zażółć gesla', center: true },

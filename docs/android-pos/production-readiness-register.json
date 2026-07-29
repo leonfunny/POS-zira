@@ -38,10 +38,14 @@
     {
       "id": "r12-artifact-decision",
       "title": "Owner decision on hidden Android TV APK installer dependency (R12)",
-      "decision": "blocked",
+      "decision": "approved",
       "blocks": ["Windows installer", "repository-wide release safety"],
-      "evidence": null,
-      "notes": "package.json build.extraResources references android-tv-ads/app/build/outputs/apk/release/app-release.apk. Do not remove, build, copy, hash, or sign it in Android packets; the owner must choose removal or a separately signed, provenance-verified TV artifact."
+      "evidence": {
+        "approvedBy": "Paul",
+        "date": "2026-07-29",
+        "reference": "docs/android-pos/R12_WINDOWS_INSTALLER_DECISION_2026-07-29.md"
+      },
+      "notes": "Owner selected removal of the unrelated Android TV APK dependency from the Electron/Windows installer. This does not approve creating, copying, signing, or publishing any Android TV artifact."
     },
     {
       "id": "legacy-lane-migration",

@@ -1,6 +1,6 @@
 {
   "name": "zira-ai",
-  "version": "1.0.25",
+  "version": "1.0.26",
   "description": "Zira - Desktop application for connecting POS with thermal printers and barcode scanners",
   "author": "Zira AI <contact@zira-ai.com>",
   "license": "MIT",
@@ -138,16 +138,16 @@
         "to": "assets"
       },
       {
-        "from": "android-tv-ads/app/build/outputs/apk/release/app-release.apk",
-        "to": "tv-ads/app-release.apk"
-      },
-      {
         "from": "resources/drivers",
         "to": "drivers"
       },
       {
         "from": "resources/elzab",
         "to": "elzab"
+      },
+      {
+        "from": "resources/thermal",
+        "to": "thermal"
       }
     ]
   }

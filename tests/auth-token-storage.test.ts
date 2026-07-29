@@ -265,7 +265,11 @@ describe('Login handlers persist refresh_token (regression guards)', () => {
   it('login auto-connect falls back to the current print-agent key when the stored key is stale', () => {
     expect(source).toContain('connectWithAvailablePrintAgentKey');
     expect(source).toContain('Stored print-agent key failed after');
-    expect(source).toContain('Stored print-agent key salon mismatch after');
+    // The expected salon is now enforced inside the non-persisting probe, so a
+    // stale key fails before it can overwrite secure/config identity.
+    expect(source).toContain('...(expectedSalonId && { expectedSalonId })');
+    expect(source).toContain('expected ${options.expectedSalonId}');
+    expect(source).toContain("connectWithApiKey(apiKey, { persist: false })");
     expect(source).toContain('client.getMyPrintAgentKey(accessToken)');
     expect(source).toMatch(/connectWithAvailablePrintAgentKey\([\s\S]+result\.access_token,[\s\S]+'telegram login'[\s\S]+newSalonId/);
     expect(source).toMatch(/connectWithAvailablePrintAgentKey\([\s\S]+result\.access_token,[\s\S]+'email login'[\s\S]+newSalonId/);
@@ -280,6 +284,20 @@ describe('Login handlers persist refresh_token (regression guards)', () => {
     expect(idx).toBeGreaterThan(-1);
     const block = apiClientSource.slice(idx, apiClientSource.indexOf('setConfig(nextConfig)', idx));
     expect(block).not.toMatch(/\bapiKey\b/);
+  });
+
+  it('supports a side-effect-free print-agent identity probe before tenant commit', () => {
+    const connectStart = apiClientSource.indexOf('async connectWithApiKey(');
+    const applyStart = apiClientSource.indexOf('\n  applyConnectResponse(', connectStart);
+    const probeBlock = apiClientSource.slice(connectStart, applyStart);
+
+    expect(connectStart).toBeGreaterThan(-1);
+    expect(applyStart).toBeGreaterThan(connectStart);
+    expect(probeBlock).toContain('options: { persist?: boolean }');
+    expect(probeBlock).toContain('if (options.persist !== false)');
+    expect(probeBlock).toContain('this.applyConnectResponse(data)');
+    expect(apiClientSource.slice(applyStart)).toContain('localPrinterRepo.upsertMany');
+    expect(apiClientSource.slice(applyStart)).toContain('setConfig(nextConfig)');
   });
 
   it('GET_CONFIG returns renderer-safe config with credential fields stripped', () => {
