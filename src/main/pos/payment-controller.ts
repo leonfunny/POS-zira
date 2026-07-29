@@ -1,9 +1,10 @@
-import { ReceiptData, PrinterType } from '../../shared/types';
+import { ReceiptData, PrinterType, type PrintJobFailureClass } from '../../shared/types';
 import { orderRepo } from '../database/repos/order-repo';
 import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
 import { productRepo } from '../database/repos/product-repo';
 import { RECEIPT_NAME_LOCALE, resolveName } from '../../shared/catalog-names';
 import { calculateLineTotalGrosze, normalizeSellBy } from '../../shared/pos-sale';
+import { getExplicitPrintFailureClass } from '../printing/print-failure-classifier';
 import logger from '../logger';
 
 export interface PaymentResult {
@@ -17,6 +18,7 @@ export interface ReceiptWithDrawerResult {
   receiptPrinted: boolean;
   drawerOpened: boolean;
   error?: string;
+  failureClass?: PrintJobFailureClass;
 }
 
 export interface RefundReceiptOverride {
@@ -37,7 +39,18 @@ type GetPrinter = (type: string) => PrinterDriver | null;
 type SharedReceiptPrinter = (
   data: ReceiptData,
   meta: { referenceType?: string; referenceId?: string; source?: string; openDrawer?: boolean },
-) => Promise<{ handled: boolean; printed: boolean; printerId?: string; drawerOpenRequested?: boolean; error?: string }>;
+) => Promise<{
+  handled: boolean;
+  printed: boolean;
+  printerId?: string;
+  jobId?: string;
+  sent?: boolean;
+  status?: string;
+  failureClass?: PrintJobFailureClass | null;
+  drawerOpenRequested?: boolean;
+  stillPrinting?: boolean;
+  error?: string;
+}>;
 type SharedFiscalPrinter = (
   data: ReceiptData,
   meta: { referenceType?: string; referenceId?: string; source?: string },
@@ -46,6 +59,12 @@ type SharedFiscalStatusProvider = () => Promise<{ configured: boolean; connected
 
 type PrintReceiptOptions = {
   throwOnFailure?: boolean;
+  /**
+   * The durable outbox has already selected the local route. If that route
+   * disappears between readiness probing and dispatch, fail safely so the
+   * next outbox attempt can capture a shared job identity itself.
+   */
+  localOnly?: boolean;
 };
 
 const PAYMENT_PRINTER_CONNECT_TIMEOUT_MS = 5_000;
@@ -181,6 +200,18 @@ export class PaymentController {
       return 'Real fiscal printing is disabled. Enable allowRealFiscalPrint only during controlled production go-live.';
     }
     return raw ? `${fallback}: ${raw}` : fallback;
+  }
+
+  private classifiedPrintError(
+    message: string,
+    failureClass: PrintJobFailureClass,
+    cause?: unknown,
+  ): Error & { failureClass: PrintJobFailureClass } {
+    const error = new Error(message, cause === undefined ? undefined : { cause }) as Error & {
+      failureClass: PrintJobFailureClass;
+    };
+    error.failureClass = failureClass;
+    return error;
   }
 
   private grossFromNet(netGrosze: number, vatRate: number): number {
@@ -319,7 +350,18 @@ export class PaymentController {
     meta: { referenceType?: string; referenceId?: string; source?: string; openDrawer?: boolean },
     successMessage: string,
     failureMessage: string,
-  ): Promise<{ handled: boolean; printed: boolean; printerId?: string; drawerOpenRequested?: boolean; error?: string } | null> {
+  ): Promise<{
+    handled: boolean;
+    printed: boolean;
+    printerId?: string;
+    jobId?: string;
+    sent?: boolean;
+    status?: string;
+    failureClass?: PrintJobFailureClass | null;
+    drawerOpenRequested?: boolean;
+    stillPrinting?: boolean;
+    error?: string;
+  } | null> {
     if (!this.sharedReceiptPrinter) return null;
 
     try {
@@ -362,6 +404,21 @@ export class PaymentController {
     return null;
   }
 
+  /**
+   * Resolve the local receipt route before a durable outbox dispatch.
+   *
+   * A configured driver object is not enough: if its reconnect fails, the
+   * outbox must take the rich shared route itself so it can persist the remote
+   * printer/job identity instead of losing it through the legacy boolean API.
+   */
+  async isLocalReceiptPrinterReadyForOutbox(): Promise<boolean> {
+    const printer = await this.ensurePrinterReady(
+      this.getPrinter(PrinterType.RECEIPT),
+      PrinterType.RECEIPT,
+    );
+    return !!printer?.isConnected();
+  }
+
   private async printReceiptData(
     receiptData: ReceiptData,
     meta: { referenceType?: string; referenceId?: string; source?: string },
@@ -386,13 +443,20 @@ export class PaymentController {
         return true;
       } catch (err) {
         logger.error(`${failureMessage}: ${err}`);
-        this.journalReceiptPrint({ orderId, documentType, printerType, route: 'LOCAL', status: 'FAILED', error: this.describePrintFailure(err, failureMessage) });
-        if (options.throwOnFailure) throw new Error(this.describePrintFailure(err, failureMessage));
+        const described = this.describePrintFailure(err, failureMessage);
+        this.journalReceiptPrint({ orderId, documentType, printerType, route: 'LOCAL', status: 'FAILED', error: described });
+        if (options.throwOnFailure) {
+          throw this.classifiedPrintError(
+            described,
+            getExplicitPrintFailureClass(err) ?? 'UNCERTAIN_AFTER_PRINT',
+            err,
+          );
+        }
         return false;
       }
     }
 
-    if (printerType === PrinterType.RECEIPT) {
+    if (printerType === PrinterType.RECEIPT && !options.localOnly) {
       const shared = await this.routeSharedReceipt(receiptData, meta, successMessage, failureMessage);
       if (shared?.printed) {
         this.journalReceiptPrint({ orderId, documentType, printerType, route: 'SHARED_NETWORK', status: 'PRINTED', printerId: shared.printerId });
@@ -404,14 +468,21 @@ export class PaymentController {
           `${shared.error || 'shared printer did not accept the job'}`,
         );
         this.journalReceiptPrint({ orderId, documentType, printerType, route: 'SHARED_NETWORK', status: 'FAILED', printerId: shared.printerId, error: shared.error || failureMessage });
-        if (options.throwOnFailure) throw new Error(shared.error || failureMessage);
+        if (options.throwOnFailure) {
+          throw this.classifiedPrintError(
+            shared.error || failureMessage,
+            shared.failureClass ?? 'UNCERTAIN_AFTER_PRINT',
+          );
+        }
         return false;
       }
     }
 
     logger.warn(missingPrinterMessage);
     this.journalReceiptPrint({ orderId, documentType, printerType, route: null, status: 'NO_PRINTER' });
-    if (options.throwOnFailure) throw new Error(missingPrinterMessage);
+    if (options.throwOnFailure) {
+      throw this.classifiedPrintError(missingPrinterMessage, 'SAFE_BEFORE_PRINT');
+    }
     return false;
   }
 
@@ -434,7 +505,7 @@ export class PaymentController {
     }
   }
 
-  private buildSaleReceiptData(orderId: string): ReceiptData | null {
+  public buildSaleReceiptData(orderId: string): ReceiptData | null {
     const order = orderRepo.getById(orderId);
     if (!order) {
       const snap = fiscalAttemptRepo.getReceiptSnapshot(orderId);
@@ -510,8 +581,12 @@ export class PaymentController {
    * Print an order (non-fiscal customer copy) for a completed order on the
    * RECEIPT/thermal printer.
    */
-  async printReceipt(orderId: string): Promise<boolean> {
-    const receiptData = this.buildSaleReceiptData(orderId);
+  async printReceipt(
+    orderId: string,
+    receiptDataOverride?: ReceiptData,
+    options: PrintReceiptOptions = {},
+  ): Promise<boolean> {
+    const receiptData = receiptDataOverride ?? this.buildSaleReceiptData(orderId);
     if (!receiptData) {
       logger.warn(`[Payment] Cannot print receipt: order ${orderId} not found`);
       return false;
@@ -524,6 +599,7 @@ export class PaymentController {
       '[Payment] Receipt print failed',
       '[Payment] No receipt printer connected, skipping print',
       PrinterType.RECEIPT,
+      options,
     );
   }
 
@@ -533,8 +609,12 @@ export class PaymentController {
    * This is only for the initial POS flow where the tender includes CASH. It
    * intentionally does not replace reprint/refund/remote receipt paths.
    */
-  async printReceiptAndOpenDrawer(orderId: string): Promise<ReceiptWithDrawerResult> {
-    const receiptData = this.buildSaleReceiptData(orderId);
+  async printReceiptAndOpenDrawer(
+    orderId: string,
+    receiptDataOverride?: ReceiptData,
+    options: PrintReceiptOptions = {},
+  ): Promise<ReceiptWithDrawerResult> {
+    const receiptData = receiptDataOverride ?? this.buildSaleReceiptData(orderId);
     if (!receiptData) {
       const error = `Order ${orderId} not found`;
       logger.warn(`[Payment] Cannot print receipt/open drawer: ${error}`);
@@ -555,12 +635,36 @@ export class PaymentController {
           return { receiptPrinted: true, drawerOpened: true };
         } catch (err) {
           logger.error(`${failureMessage}: ${err}`);
-          this.journalReceiptPrint({ orderId, documentType: 'ORDER', printerType: PrinterType.RECEIPT, route: 'LOCAL', status: 'FAILED', error: this.describePrintFailure(err, failureMessage) });
-          const drawerOpened = await this.openCashDrawer();
+          const describedError = this.describePrintFailure(err, failureMessage);
+          this.journalReceiptPrint({ orderId, documentType: 'ORDER', printerType: PrinterType.RECEIPT, route: 'LOCAL', status: 'FAILED', error: describedError });
+          const failureClass = getExplicitPrintFailureClass(err);
+          let drawerOpened = false;
+          let effectiveError = describedError;
+          let effectiveFailureClass = failureClass ?? 'UNCERTAIN_AFTER_PRINT';
+          if (failureClass === 'SAFE_BEFORE_PRINT') {
+            try {
+              drawerOpened = await this.openCashDrawerStrict();
+            } catch (drawerError) {
+              const describedDrawerError = this.describePrintFailure(
+                drawerError,
+                '[Payment] Standalone cash drawer fallback failed',
+              );
+              effectiveError = `${describedError}; ${describedDrawerError}`;
+              effectiveFailureClass =
+                getExplicitPrintFailureClass(drawerError) ?? 'UNCERTAIN_AFTER_PRINT';
+              logger.error(describedDrawerError);
+            }
+          }
+          if (failureClass !== 'SAFE_BEFORE_PRINT') {
+            logger.warn(
+              '[Payment] Skipping standalone cash drawer pulse because the combined receipt/drawer outcome is not explicitly safe before print',
+            );
+          }
           return {
             receiptPrinted: false,
             drawerOpened,
-            error: this.describePrintFailure(err, failureMessage),
+            error: effectiveError,
+            failureClass: effectiveFailureClass,
           };
         }
       }
@@ -590,6 +694,25 @@ export class PaymentController {
       return { receiptPrinted, drawerOpened };
     }
 
+    if (options.localOnly) {
+      const error = '[Payment] Local receipt printer became unavailable before print';
+      logger.warn(error);
+      this.journalReceiptPrint({
+        orderId,
+        documentType: 'ORDER',
+        printerType: PrinterType.RECEIPT,
+        route: 'LOCAL',
+        status: 'NO_PRINTER',
+        error,
+      });
+      return {
+        receiptPrinted: false,
+        drawerOpened: false,
+        error,
+        failureClass: 'SAFE_BEFORE_PRINT',
+      };
+    }
+
     const shared = await this.routeSharedReceipt(
       receiptData,
       { referenceType: 'POS_RECEIPT', referenceId: orderId, source: 'pos', openDrawer: true },
@@ -607,13 +730,23 @@ export class PaymentController {
         `${shared.error || 'shared printer did not accept the job'}`,
       );
       this.journalReceiptPrint({ orderId, documentType: 'ORDER', printerType: PrinterType.RECEIPT, route: 'SHARED_NETWORK', status: 'FAILED', printerId: shared.printerId, error: shared.error });
-      return { receiptPrinted: false, drawerOpened: false, error: shared.error };
+      return {
+        receiptPrinted: false,
+        drawerOpened: false,
+        error: shared.error,
+        failureClass: shared.failureClass ?? 'UNCERTAIN_AFTER_PRINT',
+      };
     }
 
     const error = '[Payment] No receipt printer connected, skipping print and drawer';
     logger.warn(error);
     this.journalReceiptPrint({ orderId, documentType: 'ORDER', printerType: PrinterType.RECEIPT, route: null, status: 'NO_PRINTER' });
-    return { receiptPrinted: false, drawerOpened: false, error };
+    return {
+      receiptPrinted: false,
+      drawerOpened: false,
+      error,
+      failureClass: 'SAFE_BEFORE_PRINT',
+    };
   }
 
   /**
@@ -737,7 +870,7 @@ export class PaymentController {
   /**
    * Open cash drawer
    */
-  async openCashDrawer(): Promise<boolean> {
+  private async openCashDrawerStrict(): Promise<boolean> {
     let printer = await this.ensurePrinterReady(this.getPrinter(PrinterType.RECEIPT), PrinterType.RECEIPT);
     if (!printer || !printer.isConnected()) {
       // Drawer-only fallback is safe for POSNET and does not create fiscal
@@ -749,10 +882,14 @@ export class PaymentController {
       return false;
     }
 
+    await printer.openDrawer();
+    logger.info('[Payment] Cash drawer opened');
+    return true;
+  }
+
+  async openCashDrawer(): Promise<boolean> {
     try {
-      await printer.openDrawer();
-      logger.info('[Payment] Cash drawer opened');
-      return true;
+      return await this.openCashDrawerStrict();
     } catch (err) {
       logger.error(`[Payment] Cash drawer open failed: ${err}`);
       return false;

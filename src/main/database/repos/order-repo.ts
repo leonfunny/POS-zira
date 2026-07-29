@@ -5,6 +5,7 @@ import { adaptServerOrderItem } from '../../sync/pos-order-adapter';
 import { allocateRefundTenders } from '../../pos/refund-backend-payload';
 import { posEventEmitter } from '../../events/pos-event-emitter';
 import { STOCK_TRACKED_GUARD_SQL } from './product-repo';
+import { receiptPrintOutboxRepo } from './receipt-print-outbox-repo';
 
 export interface OrderRow {
   id: string;
@@ -533,6 +534,11 @@ export const orderRepo = {
     let restocked = 0;
 
     database.transaction(() => {
+      receiptPrintOutboxRepo.prepareInitialForOrderMutation(
+        id,
+        'Initial receipt cancelled before deleting the local unsynced order',
+      );
+
       for (const item of items) {
         if (item.variant_id && item.quantity > 0 && item.inventory_policy !== 'ALREADY_CONSUMED') {
           database.run(
@@ -630,6 +636,11 @@ export const orderRepo = {
     let stockChanged = false;
 
     database.transaction(() => {
+      receiptPrintOutboxRepo.prepareInitialForOrderMutation(
+        id,
+        'Initial receipt cancelled before mutating the local unsynced order',
+      );
+
       if (nextItems) {
         for (const item of currentItems) {
           if (item.variant_id && item.quantity > 0) {
