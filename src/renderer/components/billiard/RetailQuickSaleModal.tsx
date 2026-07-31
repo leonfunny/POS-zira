@@ -247,7 +247,7 @@ export function RetailQuickSaleModal({
     { key: 'CASH', label: tOr('billiard.cash', 'Cash'), icon: Banknote },
     { key: 'CARD', label: tOr('billiard.card', 'Card'), icon: CreditCard },
     { key: 'BLIK', label: 'BLIK', icon: Smartphone },
-    { key: 'TRANSFER', label: tOr('billiard.transfer2', 'Transfer'), icon: Landmark },
+    { key: 'TRANSFER', label: tOr('billiard.payTransfer', 'Transfer'), icon: Landmark },
   ];
 
   return (
