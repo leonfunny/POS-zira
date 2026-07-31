@@ -106,6 +106,9 @@ export function RetailQuickSaleModal({
   const [customerName, setCustomerName] = useState('');
   const [method, setMethod] = useState<PayMethod>('CASH');
   const [cashReceived, setCashReceived] = useState('');
+  // One idempotency id per cart: a network retry of the same tap replays the
+  // sale server-side instead of charging twice. Regenerated for each new sale.
+  const [attemptId, setAttemptId] = useState(() => crypto.randomUUID());
   const [done, setDone] = useState<{
     sessionId: string;
     total: number;
@@ -193,6 +196,7 @@ export function RetailQuickSaleModal({
   };
 
   const reset = () => {
+    setAttemptId(crypto.randomUUID());
     setCart([]);
     setCustomerName('');
     setMethod('CASH');
@@ -208,6 +212,7 @@ export function RetailQuickSaleModal({
           variantId, name, quantity, unitPrice,
         })),
         paymentMethod: method,
+        paymentAttemptId: attemptId,
         cashReceived: method === 'CASH' && !Number.isNaN(cashValue) ? cashValue : undefined,
         customerName: customerName.trim() || undefined,
       });

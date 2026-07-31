@@ -386,6 +386,9 @@ export interface QuickSaleItemInput {
 export interface QuickSaleInput {
   items: QuickSaleItemInput[];
   paymentMethod: 'CASH' | 'CARD' | 'BLIK' | 'BANK_TRANSFER' | 'TRANSFER';
+  /** Per-cart UUID; the backend uses it as the idempotency key (headers are
+   *  unavailable through the queue-aware transport). */
+  paymentAttemptId?: string;
   cashReceived?: number;
   customerName?: string;
 }
