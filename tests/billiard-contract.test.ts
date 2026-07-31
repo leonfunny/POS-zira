@@ -246,9 +246,11 @@ describe('billiard desktop/backend contract', () => {
   });
 
   it('allows the counter-parity routes (merge/split, shift) and refuses POS retail', () => {
-    // Walk-in retail is deliberately NOT allowlisted on the POS: counter
-    // retail goes through the normal POS tab (fiscal receipt + order history).
-    expect(getBilliardMutationPolicy('POST', '/billiard/retail/quick-sale')).toBeNull();
+    // No retail UI in the billiard tab; finished POS-tab orders are mirrored
+    // into the billiard ledger through this queue-safe, idempotent route.
+    expect(getBilliardMutationPolicy('POST', '/billiard/retail/quick-sale')).toBe('queue-safe');
+    expect(isAllowedBilliardOperation('retail_mirror', 'POST', '/billiard/retail/quick-sale')).toBe(true);
+    expect(isAllowedBilliardOperation('online_api', 'POST', '/billiard/retail/quick-sale')).toBe(false);
     expect(getBilliardMutationPolicy('GET', '/billiard/retail/today')).toBeNull();
     expect(isAllowedBilliardOperation('merge_sessions', 'PATCH', '/billiard/sessions/merge')).toBe(true);
     expect(isAllowedBilliardOperation('split_bill', 'POST', '/billiard/sessions/session-1/split')).toBe(true);

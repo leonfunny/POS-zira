@@ -37,9 +37,12 @@ const BILLIARD_MUTATION_RULES: BilliardMutationRule[] = [
   { method: 'POST', path: /^\/billiard\/sessions\/void-batch$/, operation: 'void_sessions_batch', policy: 'online-only' },
   { method: 'POST', path: /^\/billiard\/sessions\/[^/?#]+\/void$/, operation: 'void_session', policy: 'online-only' },
   // Counter parity ops (merge/split/shift). All online-only: each needs the
-  // server's authoritative result — nothing to replay offline. Walk-in retail
-  // is deliberately NOT allowlisted: on the POS machine retail goes through
-  // the normal POS tab (fiscal receipt + order history live there).
+  // server's authoritative result — nothing to replay offline. There is NO
+  // retail UI in the billiard tab: on the POS machine retail is sold in the
+  // normal POS tab; the finished order is then MIRRORED into the billiard
+  // ledger below (queue-safe — the server is idempotent on paymentAttemptId,
+  // so an offline replay can never double-book the sale).
+  { method: 'POST', path: /^\/billiard\/retail\/quick-sale$/, operation: 'retail_mirror', policy: 'queue-safe' },
   { method: 'POST', path: /^\/billiard\/sessions\/[^/?#]+\/split$/, operation: 'split_bill', policy: 'online-only' },
   { method: 'GET', path: /^\/billiard\/shifts\/current$/, operation: 'online_api', policy: 'online-only' },
   { method: 'POST', path: /^\/billiard\/shifts\/open$/, operation: 'open_shift', policy: 'online-only' },

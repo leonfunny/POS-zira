@@ -105,6 +105,15 @@ function safe(fn: () => void, context: string): void {
   }
 }
 
+// Post-finalize hooks (e.g. billiard retail mirror). Kept outside the event
+// payload path: a listener failure must never affect the cashflow events.
+type OrderFinalizedListener = (order: OrderRow, items: OrderItemRow[]) => void;
+const orderFinalizedListeners: OrderFinalizedListener[] = [];
+
+export function onOrderFinalized(listener: OrderFinalizedListener): void {
+  orderFinalizedListeners.push(listener);
+}
+
 export const posEventEmitter = {
   /**
    * Emit SaleCompleted + one PaymentCaptured per tender for a finalized local
@@ -182,6 +191,13 @@ export const posEventEmitter = {
         });
       });
     }, `emitOrderFinalized(${order.id})`);
+    for (const listener of orderFinalizedListeners) {
+      try {
+        listener(order, items);
+      } catch (err) {
+        logger.warn(`[PosEventEmitter] order-finalized listener failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
   },
 
   /**

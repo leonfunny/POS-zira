@@ -26,6 +26,9 @@ import { billiardFloorPlanRepo } from '../database/repos/billiard-floor-plan-rep
 import type { BackupRunReason, LocalBackupService } from '../database/backup-service';
 import { PrinterType, ReceiptData } from '../../shared/types';
 import { getConfig, getSecureAuthToken } from '../config/store';
+import { isFeatureEnabled } from '../entitlements/entitlements-controller';
+import { onOrderFinalized } from '../events/pos-event-emitter';
+import { buildRetailMirrorPayload } from '../../shared/billiard-retail-mirror';
 import SocketClient from '../network/socket-client';
 import { notifyPosRenderers } from '../windows/notify-pos-renderers';
 import { ShiftController } from '../pos/shift-controller';
@@ -105,6 +108,29 @@ export class SyncModule extends BaseModule {
     this.container.set(SERVICE_TOKENS.BILLIARD_SYNC, this.billiardSync);
     this.container.set(SERVICE_TOKENS.STAFF_SYNC, this.staffSync);
     this.container.set(SERVICE_TOKENS.SYNC_LOG_SERVICE, this.syncLogService);
+
+    // Billiard salons: mirror every finished POS-tab retail order into the
+    // billiard ledger so counter retail shows up in the billiard history and
+    // report exactly like web-made retail. Queue-safe + idempotent (server
+    // dedupes on paymentAttemptId), so offline sales replay without ever
+    // double-booking; table-handoff orders are excluded by the builder.
+    onOrderFinalized((order, items) => {
+      try {
+        if (!isFeatureEnabled('billiard', getConfig().entitlements)) return;
+        const payload = buildRetailMirrorPayload(order as any, items as any);
+        if (!payload) return;
+        void this.billiardSync
+          ?.executeMutation('retail_mirror', 'POST', '/billiard/retail/quick-sale', payload)
+          .then(() => {
+            logger.info(`[SyncModule] Retail order ${order.id.slice(0, 8)} mirrored to the billiard ledger`);
+          })
+          .catch((err: any) => {
+            logger.warn(`[SyncModule] billiard retail mirror failed for ${order.id.slice(0, 8)}: ${err?.message ?? err}`);
+          });
+      } catch (err: any) {
+        logger.warn(`[SyncModule] billiard retail mirror hook error: ${err?.message ?? err}`);
+      }
+    });
 
     // Path A outbound timers start as fallback — stopped once Path B push detected.
     this.orderSync.startPeriodicSync();
