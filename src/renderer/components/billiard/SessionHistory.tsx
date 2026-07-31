@@ -9,7 +9,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   History, Calendar, X, RefreshCw, ChevronLeft, ChevronRight,
   ChevronDown, ChevronUp, Search, Filter, Clock, Users,
-  CreditCard, Banknote, Smartphone, Package, Timer,
+  CreditCard, Banknote, Smartphone, Package, Timer, WifiOff,
 } from 'lucide-react';
 import type { Language } from '../../i18n/translations';
 import { useTranslation } from '../../i18n/useTranslation';
@@ -54,6 +54,8 @@ interface HistorySession {
 interface HistoryData {
   sessions: HistorySession[];
   total: number;
+  /** True when served from the offline cache instead of the server. */
+  fromCache?: boolean;
 }
 
 type DateRange = 'today' | 'yesterday' | 'week' | 'month' | 'custom';
@@ -325,6 +327,13 @@ export function SessionHistory({ language, onClose }: SessionHistoryProps) {
         {error && (
           <div className="mx-4 mt-4 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
             {error}
+          </div>
+        )}
+
+        {data?.fromCache && (
+          <div className="mx-4 mt-3 flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">
+            <WifiOff className="h-4 w-4 shrink-0" />
+            {t('history.offlineCache') || 'Offline — showing locally cached history; recent web-side sessions may be missing.'}
           </div>
         )}
 
