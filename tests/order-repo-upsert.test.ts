@@ -18,12 +18,6 @@ vi.mock('../src/main/logger', () => ({
   },
 }));
 
-vi.mock('../src/main/events/pos-event-emitter', () => ({
-  posEventEmitter: {
-    emitOrderFinalized: vi.fn(),
-  },
-}));
-
 import { database } from '../src/main/database/database';
 import { orderRepo } from '../src/main/database/repos/order-repo';
 
@@ -91,25 +85,5 @@ describe('orderRepo.upsertFromServer shift assignment', () => {
 
     const insertParams = vi.mocked(database.run).mock.calls[0][1] as unknown[];
     expect(insertParams[15]).toBe('server-shift-1');
-  });
-
-  it('owns a transaction by default for standalone REST mirroring', () => {
-    orderRepo.upsertFromServer(adaptedOrder(), items as any);
-
-    expect(database.transaction).toHaveBeenCalledOnce();
-  });
-
-  it('does not open a nested transaction when the sync pull owns it', () => {
-    orderRepo.upsertFromServer(
-      adaptedOrder(),
-      items as any,
-      { callerOwnsTransaction: true },
-    );
-
-    expect(database.transaction).not.toHaveBeenCalled();
-    expect(database.run).toHaveBeenCalledWith(
-      expect.stringMatching(/INSERT INTO orders/),
-      expect.any(Array),
-    );
   });
 });

@@ -24,8 +24,6 @@ export const RECEIPT_NOT_PRINTED_FALLBACK =
 export interface PrintReceiptResponse {
   success?: boolean;
   receiptPrinted?: boolean;
-  /** Durable background print intent accepted with the paid order. */
-  receiptQueued?: boolean;
 }
 
 export interface ReceiptOutcome {
@@ -47,7 +45,7 @@ export function deriveReceiptOutcome(
   printResult: PrintReceiptResponse | undefined | null,
   t: (key: string) => string,
 ): ReceiptOutcome {
-  const receiptPrinted = Boolean(printResult?.receiptPrinted || printResult?.receiptQueued);
+  const receiptPrinted = Boolean(printResult?.receiptPrinted);
   if (receiptPrinted) return { receiptPrinted: true, warning: null };
 
   const translated = t(RECEIPT_NOT_PRINTED_KEY);

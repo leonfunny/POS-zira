@@ -27,13 +27,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('pos:fiscal-unknown', listener);
       return () => ipcRenderer.removeListener('pos:fiscal-unknown', listener);
     },
-    onReceiptPrintStatus: (callback: (info: any) => void) => {
-      const listener = (_e: any, info: any) => callback(info);
-      ipcRenderer.on('pos:receipt-print-status', listener);
-      return () => ipcRenderer.removeListener('pos:receipt-print-status', listener);
-    },
-    listReceiptPrintStatuses: () =>
-      ipcRenderer.invoke('pos:receipt-print-status:list'),
     // === Kitchen self-order pickup queue (cashier side) ===
     onPickupOrderEvent: (callback: (msg: { event: string; data: any }) => void) => {
       const listener = (_e: any, msg: any) => callback(msg);
@@ -114,8 +107,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.invoke('pos:product-admin:categories:delete', categoryId, payload),
     },
     orders: {
-      create: (order: any, items: any[], options?: { queueInitialReceipt?: boolean }) =>
-        ipcRenderer.invoke('pos:orders:create', order, items, options),
+      create: (order: any, items: any[]) => ipcRenderer.invoke('pos:orders:create', order, items),
       getDailyStats: (date: string, options?: { fiscalOnly?: boolean }) => ipcRenderer.invoke('pos:orders:getDailyStats', date, options),
       getHistory: (filters: any) => ipcRenderer.invoke('pos:orders:getHistory', filters),
     getConfirmedFiscalIds: (orderIds: string[]) =>

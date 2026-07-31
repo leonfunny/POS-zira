@@ -76,11 +76,6 @@ export interface SharedReceiptPrintMeta {
   referenceId?: string;
   source?: string;
   openDrawer?: boolean;
-  /**
-   * Durable outbox mode: return as soon as the backend exposes the fixed job
-   * identity so it can be flushed before any longer completion polling.
-   */
-  returnOnAccepted?: boolean;
 }
 
 export interface SharedReceiptPrintResult {
@@ -95,11 +90,6 @@ export interface SharedReceiptPrintResult {
   /** Job accepted and still not terminal after the full wait budget — the paper may yet come out on the shared till. */
   stillPrinting?: boolean;
   error?: string;
-}
-
-export interface SharedReceiptJobIdentity {
-  printerId: string;
-  jobId: string;
 }
 
 function isUnsupportedDrawerIntentError(err: unknown): boolean {
@@ -273,58 +263,6 @@ async function resolveFinalReceiptResult(
   }
 }
 
-/**
- * Reconcile one already-accepted shared receipt job.
- *
- * This deliberately bypasses assignment discovery, the in-memory resume
- * registry and createPrintJob. The caller obtained this identity from the
- * durable receipt outbox, so changing route or creating another job could
- * duplicate a customer receipt (and its cash-drawer pulse) after restart.
- */
-export async function reconcileSharedReceiptPrintJob(
-  identity: SharedReceiptJobIdentity,
-): Promise<SharedReceiptPrintResult> {
-  const printerId = String(identity?.printerId || '').trim();
-  const jobId = String(identity?.jobId || '').trim();
-  if (!printerId || !jobId) {
-    throw new Error('shared-receipt-reconcile-identity-incomplete');
-  }
-
-  const token = getSecureAuthToken();
-  const apiKey = getSecureApiKey();
-  if (!token && !apiKey) {
-    throw new Error('shared-receipt-reconcile-auth-unavailable');
-  }
-
-  const config = getConfig();
-  const client = new ApiClient(config.serverUrl || 'https://api.enail.pro');
-  const current = await getReceiptJobStatus(
-    client,
-    token,
-    apiKey,
-    config.machineId,
-    jobId,
-  );
-  const final = await resolveFinalReceiptResult(
-    client,
-    token,
-    apiKey,
-    config.machineId,
-    printerId,
-    current,
-  );
-
-  return {
-    ...final,
-    handled: true,
-    printerId,
-    jobId,
-    // The drawer intent, if any, belonged to the original remote job. Polling
-    // it must never request or infer a second drawer pulse.
-    drawerOpenRequested: false,
-  };
-}
-
 export async function submitSharedReceiptPrint(
   receiptData: ReceiptData,
   meta: SharedReceiptPrintMeta = {},
@@ -380,9 +318,7 @@ export async function submitSharedReceiptPrint(
       payload: receiptData,
       referenceType,
       referenceId,
-      ...(initialPosReceipt && !meta.returnOnAccepted
-        ? { waitForCompletion: true, timeoutMs: SHARED_RECEIPT_COMPLETION_TIMEOUT_MS }
-        : {}),
+      ...(initialPosReceipt ? { waitForCompletion: true, timeoutMs: SHARED_RECEIPT_COMPLETION_TIMEOUT_MS } : {}),
       ...(idempotencyKey ? { idempotencyKey } : {}),
       ...(meta.openDrawer ? { openDrawer: true } : {}),
     };
@@ -457,58 +393,6 @@ export async function submitSharedReceiptPrint(
 
     const jobId = (result.jobId || result.id) as string | undefined;
     if (idempotencyKey && jobId) rememberReceiptJob(idempotencyKey, jobId);
-    if (initialPosReceipt && meta.returnOnAccepted && jobId) {
-      const status = normalizePrintJobStatus(result);
-      const decision = classifySharedPrintResponse('RECEIPT_ORDER_COPY', result);
-      if (decision.decision === 'SUCCESS') {
-        return {
-          handled: true,
-          printed: true,
-          sent: result.sent,
-          printerId,
-          jobId,
-          status,
-          failureClass: result.failureClass ?? null,
-          drawerOpenRequested,
-        };
-      }
-      if (
-        decision.decision === 'ALREADY_IN_FLIGHT'
-        || (
-          result.sent !== false
-          && !['FAILED', 'CANCELLED'].includes(status)
-        )
-      ) {
-        return {
-          handled: true,
-          printed: false,
-          sent: result.sent !== false,
-          printerId,
-          jobId,
-          status: status || 'SENT',
-          failureClass: result.failureClass ?? null,
-          drawerOpenRequested,
-          stillPrinting: true,
-          error: 'Shared receipt job accepted; completion will be reconciled from the durable outbox',
-        };
-      }
-      return {
-        handled: true,
-        printed: false,
-        sent: result.sent,
-        printerId,
-        jobId,
-        status,
-        failureClass: result.failureClass ?? null,
-        drawerOpenRequested,
-        error: String(
-          result.errorMessage
-          || result.message
-          || result.retryBlockedReason
-          || decision.reason,
-        ),
-      };
-    }
     if (initialPosReceipt && currentBody.waitForCompletion) {
       const final = await resolveFinalReceiptResult(client, token, apiKey, config.machineId, printerId, result, idempotencyKey);
       logger.info(

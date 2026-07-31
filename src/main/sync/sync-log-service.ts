@@ -222,19 +222,16 @@ export class SyncLogService {
           const payloadStr = typeof rawPayload === 'string' ? rawPayload : JSON.stringify(rawPayload);
 
           // Apply to local database
-          const applied = applyEntry(
-            {
-              seq: entry.seq,
-              entity_type: entry.entity_type,
-              entity_id: entry.entity_id,
-              event: entry.event || 'updated',
-              payload,
-              source,
-              source_tx: sourceTx,
-              created_at: createdAt,
-            },
-            { callerOwnsTransaction: true },
-          );
+          const applied = applyEntry({
+            seq: entry.seq,
+            entity_type: entry.entity_type,
+            entity_id: entry.entity_id,
+            event: entry.event || 'updated',
+            payload,
+            source,
+            source_tx: sourceTx,
+            created_at: createdAt,
+          });
 
           // Record in local log for audit trail
           syncLogRepo.insertAcceptedEntry({

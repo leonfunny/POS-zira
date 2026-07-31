@@ -814,20 +814,6 @@ interface ElectronAPI {
       complete: (checkoutId: string, orderId: string) => Promise<{ success: boolean; restored?: boolean; durabilityError?: string; error?: string }>;
     };
     onFiscalUnknown: (callback: (info: { orderId?: string; orderNumber?: string; code: string; detail?: string }) => void) => () => void;
-    onReceiptPrintStatus: (callback: (info: {
-      jobId: string;
-      orderId: string;
-      orderNumber?: string | null;
-      status: 'COMPLETED' | 'FAILED_SAFE' | 'NEEDS_REVIEW';
-      error?: string | null;
-    }) => void) => () => void;
-    listReceiptPrintStatuses: () => Promise<Array<{
-      jobId: string;
-      orderId: string;
-      orderNumber?: string | null;
-      status: 'FAILED_SAFE' | 'NEEDS_REVIEW';
-      error?: string | null;
-    }>>;
     onPickupOrderEvent: (callback: (msg: { event: string; data: any }) => void) => () => void;
     pickupOrders: {
       machineId: () => Promise<string | null>;
@@ -882,15 +868,13 @@ interface ElectronAPI {
       deleteCategory: (categoryId: string, payload: ProductAdminCategoryDeleteInput) => Promise<ProductAdminIpcResult<ProductAdminCategoryDeleteResponse>>;
     };
     orders: {
-      create: (order: any, items: any[], options?: { queueInitialReceipt?: boolean }) => Promise<{
+      create: (order: any, items: any[]) => Promise<{
         success: boolean;
         id?: string;
         error?: string;
         duplicate?: boolean;
         paymentCommitted?: boolean;
         durabilityError?: string;
-        receiptQueued?: boolean;
-        receiptPrintJobId?: string;
       }>;
       getDailyStats: (date: string, options?: { fiscalOnly?: boolean }) => Promise<PosDailyStats>;
       getHistory: (filters: { from: string; to: string; paymentMethod?: string; staffName?: string; page?: number; limit?: number; fiscalOnly?: boolean }) => Promise<{ orders: PosOrderRow[]; total: number; page: number; limit: number }>;

@@ -1349,10 +1349,7 @@ export class ApiClient {
    * Connect with API Key
    * POST /api/v1/print-agent/connect
    */
-  async connectWithApiKey(
-    apiKey: string,
-    options: { persist?: boolean } = {},
-  ): Promise<ConnectResponse> {
+  async connectWithApiKey(apiKey: string): Promise<ConnectResponse> {
     const config = getConfig();
     const url = `${this.baseUrl}/api/v1/print-agent/connect`;
 
@@ -1392,25 +1389,11 @@ export class ApiClient {
       salonName: data.salonName,
     }));
 
-    if (options.persist !== false) {
-      this.applyConnectResponse(data);
-    }
-
-    return data;
-  }
-
-  /**
-   * Commit a previously verified print-agent connection response.
-   *
-   * AuthModule probes with persist:false while the old tenant's receipt
-   * lifecycle is still active, then calls this only after archive/clear has
-   * succeeded. Keeping probe and commit separate prevents a new salon config
-   * or printer mirror from becoming visible beside old-tenant outbox rows.
-   */
-  applyConnectResponse(data: ConnectResponse): void {
     const serverPrinters = normalizeServerPrinters(data.printers);
     const localPrinters = normalizeServerPrinterRows(data.printers);
     const legacyPrinterProtocol = normalizeProtocol(data.printerConfig?.protocol);
+
+    // Save connection info to config
     const nextConfig: Parameters<typeof setConfig>[0] = {
       agentId: data.agentId,
       salonId: data.salonId,
@@ -1434,14 +1417,13 @@ export class ApiClient {
       logger.info(`[ApiClient] Applied ${Object.keys(serverPrinters).length} server printer mapping(s) with local target preservation`);
     }
 
-    // Mirror rows are keyed by the target agent. Write them before making the
-    // target config active, so a mirror failure cannot expose a half-committed
-    // tenant identity to runtime consumers.
+    setConfig(nextConfig);
     if (localPrinters.length > 0) {
       localPrinterRepo.upsertMany(data.agentId, localPrinters);
       logger.info(`[ApiClient] Mirrored ${localPrinters.length} server printer row(s) to local database`);
     }
-    setConfig(nextConfig);
+
+    return data;
   }
 
   /**

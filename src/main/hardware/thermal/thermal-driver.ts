@@ -9,14 +9,9 @@ import { ReceiptData, PrinterStatusInfo } from '../../../shared/types';
 import { listWindowsPrinters, listSerialPorts, sanitizePrinterName, probeEscPosPort, isWindowsPrinterPresent, flushStuckPrintJobs, getStuckPrintJobStatus } from '../port-utils';
 import { matchBrand, type RecoveryResult } from '../detection/types';
 import { withPortLock } from '../posnet/port-mutex';
-import {
-  isSafeWindowsThermalWorkerTransportFailure,
-  WindowsThermalWorker,
-  WindowsThermalWorkerError,
-} from './windows-thermal-worker';
 
 const execFileAsync = promisify(execFile);
-const LEGACY_PRESENCE_CACHE_TTL_MS = 60_000;
+const PRESENCE_CACHE_TTL_MS = 60_000;
 
 /**
  * Connection type for thermal printer
@@ -30,17 +25,13 @@ export type ThermalConnectionType = 'USB' | 'SERIAL';
  */
 export class ThermalDriver {
   private static usbPrintLocks = new Map<string, Promise<void>>();
-  private static activeUsbPrintOperations = 0;
 
   private connected = false;
   private formatter: EscPosFormatter;
   private connectionType: ThermalConnectionType;
-  private windowsWorker: WindowsThermalWorker | null = null;
   /** Detected brand name, used for recovery matching. */
   private brand: string = '';
-  /** Known USB VIDs used by the native worker to detect silent unplug. */
-  private expectedUsbVids: string[] = [];
-  /** Timestamp of last successful legacy/health PowerShell presence check. */
+  /** Timestamp of last successful printer presence check (ms). */
   private lastPresenceCheckAt: number = 0;
 
   /**
@@ -63,10 +54,7 @@ export class ThermalDriver {
     this.formatter = new EscPosFormatter(paperWidth, charsPerLine, opts);
     // Auto-detect brand from printer name for recovery
     const matched = matchBrand(printerNameOrPort);
-    if (matched) {
-      this.brand = matched.brand;
-      this.expectedUsbVids = [...matched.vids];
-    }
+    if (matched) this.brand = matched.brand;
     logger.info(`[ThermalDriver] Initialized for "${printerNameOrPort}" (${connectionType}, ${paperWidth}mm, charset=${opts?.charset ?? 'utf8'}, cut=${opts?.cutMode ?? 'partial'}${windowsTextMode ? ', TEXT' : ''})${this.brand ? ` [${this.brand}]` : ''}`);
   }
 
@@ -99,40 +87,6 @@ export class ThermalDriver {
    */
   static async listPorts(): Promise<string[]> {
     return listSerialPorts();
-  }
-
-  /**
-   * Used by the periodic hardware scanner. PnP/Get-Printer discovery is
-   * intentionally deferred while a receipt is rendering, waiting in the
-   * per-printer FIFO, or being handed to Winspool.
-   */
-  static isAnyPrintBusy(): boolean {
-    return ThermalDriver.activeUsbPrintOperations > 0;
-  }
-
-  private getWindowsWorker(): WindowsThermalWorker | null {
-    if (process.platform !== 'win32' || this.windowsTextMode) return null;
-    if (!this.windowsWorker) this.windowsWorker = new WindowsThermalWorker();
-    return this.windowsWorker;
-  }
-
-  private printPreflightError(code: string, message: string): WindowsThermalWorkerError {
-    return new WindowsThermalWorkerError({
-      message,
-      code,
-      stage: 'DRIVER_PREFLIGHT',
-      failureClass: 'SAFE_BEFORE_PRINT',
-      action: 'print',
-    });
-  }
-
-  private assertConnectedForPrint(): void {
-    if (!this.connected) {
-      throw this.printPreflightError(
-        'PRINTER_NOT_CONNECTED',
-        'Printer not connected',
-      );
-    }
   }
 
   /**
@@ -174,24 +128,6 @@ export class ThermalDriver {
 
         this.connected = true;
         this.lastPresenceCheckAt = Date.now();
-        const worker = this.getWindowsWorker();
-        if (worker) {
-          try {
-            const warmupStartedAt = Date.now();
-            await worker.warmup();
-            logger.info(
-              `[ThermalDriver] Persistent Windows print worker ready in ` +
-              `${Date.now() - warmupStartedAt}ms`,
-            );
-          } catch (error: any) {
-            // A worker startup failure is pre-print and the legacy path remains
-            // available. Do not mark otherwise healthy printer hardware down.
-            logger.warn(
-              `[ThermalDriver] Persistent print worker unavailable; legacy ` +
-              `PowerShell fallback remains enabled: ${error?.message || error}`,
-            );
-          }
-        }
         logger.info(`[ThermalDriver] Connected to USB printer "${this.printerNameOrPort}" (verified present)`);
       } else {
         // Serial path: present-port list check + ESC/POS probe
@@ -274,13 +210,6 @@ export class ThermalDriver {
    */
   disconnect(): void {
     this.connected = false;
-    if (this.windowsWorker) {
-      const worker = this.windowsWorker;
-      this.windowsWorker = null;
-      void worker.stop().catch((error: any) => {
-        logger.debug(`[ThermalDriver] Print worker stop failed: ${error?.message || error}`);
-      });
-    }
     logger.info('[ThermalDriver] Disconnected');
   }
 
@@ -298,9 +227,6 @@ export class ThermalDriver {
   async reconnect(newIdentifier: string): Promise<void> {
     logger.info(`[ThermalDriver] Reconnecting: "${this.printerNameOrPort}" → "${newIdentifier}"`);
     this.printerNameOrPort = newIdentifier;
-    const matched = matchBrand(newIdentifier);
-    this.brand = matched?.brand || '';
-    this.expectedUsbVids = matched ? [...matched.vids] : [];
     if (newIdentifier.match(/^COM\d+$/i)) {
       this.connectionType = 'SERIAL';
       // Verify serial port is present
@@ -320,11 +246,7 @@ export class ThermalDriver {
   getBrand(): string { return this.brand; }
 
   /** Set brand explicitly (e.g. from auto-setup). */
-  setBrand(brand: string): void {
-    this.brand = brand;
-    const matched = matchBrand(brand);
-    this.expectedUsbVids = matched ? [...matched.vids] : [];
-  }
+  setBrand(brand: string): void { this.brand = brand; }
 
   /**
    * Attempt to recover the printer when it disappears.
@@ -442,10 +364,10 @@ export class ThermalDriver {
     const current = new Promise<void>((resolve) => { release = resolve; });
     const next = previous.catch(() => undefined).then(() => current);
     ThermalDriver.usbPrintLocks.set(key, next);
-    ThermalDriver.activeUsbPrintOperations += 1;
+
+    await previous.catch(() => undefined);
 
     try {
-      await previous.catch(() => undefined);
       logger.debug(`[ThermalDriver] Acquired USB print lock for "${this.printerNameOrPort}" (${operation})`);
       return await fn();
     } finally {
@@ -453,140 +375,43 @@ export class ThermalDriver {
       if (ThermalDriver.usbPrintLocks.get(key) === next) {
         ThermalDriver.usbPrintLocks.delete(key);
       }
-      ThermalDriver.activeUsbPrintOperations = Math.max(
-        0,
-        ThermalDriver.activeUsbPrintOperations - 1,
-      );
       logger.debug(`[ThermalDriver] Released USB print lock for "${this.printerNameOrPort}" (${operation})`);
     }
   }
 
-  /**
-   * Keep Unicode rendering and the physical write inside one per-printer FIFO.
-   * Otherwise two receipts can render concurrently and the later, shorter one
-   * can overtake the first at Winspool.
-   */
-  private async formatAndPrint(
-    operation: string,
-    build: () => Promise<Buffer> | Buffer,
-  ): Promise<void> {
-    if (this.connectionType === 'USB') {
-      await this.withUsbPrintLock(operation, async () => {
-        const data = await build();
-        await this.printRawUnlocked(data);
-      });
-      return;
-    }
-
-    const data = await build();
-    await this.printRawUnlocked(data);
-  }
-
   private async printRawUnlocked(data: Buffer | string): Promise<void> {
     // ─── Pre-flight verification ───────────────────────────────────────────
-    if (this.connectionType !== 'USB') {
+    if (this.connectionType === 'USB') {
+      // Skip presence check if we verified recently.
+      const now = Date.now();
+      if (now - this.lastPresenceCheckAt > PRESENCE_CACHE_TTL_MS) {
+        const present = await isWindowsPrinterPresent(this.printerNameOrPort);
+        if (!present) {
+          this.connected = false;
+          throw new Error(
+            `Printer "${this.printerNameOrPort}" is not physically connected. ` +
+            `Check the USB cable and power, then click Detect Printers.`
+          );
+        }
+        this.lastPresenceCheckAt = now;
+      }
+    } else {
       // SERIAL — re-probe to confirm printer still responds
       const ports = await listSerialPorts();
       if (!ports.includes(this.printerNameOrPort.toUpperCase())) {
         this.connected = false;
-        throw this.printPreflightError(
-          'PRINTER_NOT_PRESENT',
+        throw new Error(
           `Serial port "${this.printerNameOrPort}" is not present. ` +
-          `Check the cable and click Detect Printers.`,
+          `Check the cable and click Detect Printers.`
         );
       }
       const responded = await probeEscPosPort(this.printerNameOrPort, this.baudRate);
       if (!responded) {
         this.connected = false;
-        throw this.printPreflightError(
-          'PRINTER_NOT_RESPONDING',
+        throw new Error(
           `No printer responding on ${this.printerNameOrPort}. ` +
-          `Check the cable and printer power, then click Detect Printers.`,
+          `Check the cable and printer power, then click Detect Printers.`
         );
-      }
-    }
-
-    const buf = typeof data === 'string' ? Buffer.from(data, 'latin1') : data;
-
-    // Fast path: one long-lived PowerShell/.NET worker. It compiles
-    // System.Drawing + native SetupAPI/Winspool once at app startup. Every
-    // receipt gets an in-process present-PnP probe (silent USB-unplug guard),
-    // PRINTER_INFO_2 check, and exact-job reconciliation without spawning a
-    // new PowerShell process on the critical path.
-    if (this.connectionType === 'USB') {
-      const safeName = sanitizePrinterName(this.printerNameOrPort);
-      if (!safeName) {
-        throw this.printPreflightError(
-          'INVALID_PRINTER_NAME',
-          `Invalid printer name: "${this.printerNameOrPort}"`,
-        );
-      }
-      const worker = this.getWindowsWorker();
-      if (worker) {
-        try {
-          const startedAt = Date.now();
-          const result = await worker.printRaw(
-            safeName,
-            buf,
-            'Zira AI Receipt',
-            this.expectedUsbVids,
-          );
-          logger.info(
-            `[ThermalDriver] Winspool reconciled ${result.bytesWritten} bytes as ` +
-            `job ${result.jobId} (${result.jobStatusText}) in ${result.spoolMs}ms ` +
-            `(preflight ${result.preflightMs}ms, physical PnP ` +
-            `${result.presenceProbeMs}ms/${result.presenceReason} on ` +
-            `${result.portName || 'unknown port'}, reconcile ${result.reconcileMs}ms, ` +
-            `printer ${result.printerStatusText}, ` +
-            `round-trip ${Date.now() - startedAt}ms)`,
-          );
-          return;
-        } catch (error) {
-          if (
-            error instanceof WindowsThermalWorkerError
-            && error.code === 'PRINTER_NOT_PRESENT'
-          ) {
-            // Native SetupAPI proved a silent USB unplug before StartDoc.
-            // Clear the route immediately so the next safe outbox retry can
-            // select a shared printer instead of waiting for the health scan.
-            this.connected = false;
-          }
-          if (isSafeWindowsThermalWorkerTransportFailure(error)) {
-            logger.warn(
-              `[ThermalDriver] Persistent worker transport failed before print ` +
-              `(${error.code}/${error.stage}); using safe legacy fallback`,
-            );
-          } else {
-            // Once a print request may have crossed into the worker, falling
-            // back could emit duplicate paper and a second drawer pulse.
-            throw error;
-          }
-        }
-      }
-    }
-
-    // Worker startup/stdio failures that are proven safe before print retain
-    // the old one-shot implementation. Its slower PowerShell PnP probe is
-    // deliberately kept only on this exceptional fallback path.
-    if (this.connectionType === 'USB') {
-      const now = Date.now();
-      if (now - this.lastPresenceCheckAt > LEGACY_PRESENCE_CACHE_TTL_MS) {
-        const presenceCheckStartedAt = Date.now();
-        const present = await isWindowsPrinterPresent(this.printerNameOrPort);
-        logger.info(
-          `[ThermalDriver] Legacy physical-presence fallback for ` +
-          `"${this.printerNameOrPort}" completed in ` +
-          `${Date.now() - presenceCheckStartedAt}ms (present=${present})`,
-        );
-        if (!present) {
-          this.connected = false;
-          throw this.printPreflightError(
-            'PRINTER_NOT_PRESENT',
-            `Printer "${this.printerNameOrPort}" is not physically connected. ` +
-            `Check the USB cable and power, then click Detect Printers.`,
-          );
-        }
-        this.lastPresenceCheckAt = now;
       }
     }
 
@@ -594,16 +419,12 @@ export class ThermalDriver {
 
     try {
       // Write data to temp file
+      const buf = typeof data === 'string' ? Buffer.from(data, 'latin1') : data;
       fs.writeFileSync(tempFile, buf);
 
       if (this.connectionType === 'USB') {
         const safeName = sanitizePrinterName(this.printerNameOrPort);
-        if (!safeName) {
-          throw this.printPreflightError(
-            'INVALID_PRINTER_NAME',
-            `Invalid printer name: "${this.printerNameOrPort}"`,
-          );
-        }
+        if (!safeName) throw new Error(`Invalid printer name: "${this.printerNameOrPort}"`);
 
         // ─── Combined flush + print + post-check in ONE PowerShell call ───
         // This replaces 3 separate PS spawns (flush, print, post-check) with
@@ -875,23 +696,21 @@ export class ThermalDriver {
    * emitting mangled code-page text. Short documents — full raster is fine.
    */
   async printPlainLines(lines: EscPosPlainLine[]): Promise<void> {
-    this.assertConnectedForPrint();
+    if (!this.connected) {
+      throw new Error('Printer not connected');
+    }
 
-    await this.formatAndPrint(
-      `thermal.printPlainLines(${this.printerNameOrPort})`,
-      async () => {
-        const hasUnicode = lines.some((line) => this.plainLineHasNonAsciiText(line));
-        const hasQrData = lines.some((line) => !!line.qrData);
-        return hasUnicode
-          ? hasQrData
-            ? await this.formatPlainLinesWithNativeQr(lines)
-            : await this.renderTextToRaster(lines)
-          : Buffer.concat([
-              this.formatter.formatPlainLinesAsText(lines, { includeInit: true }),
-              this.formatter.getReceiptTrailer(),
-            ]);
-      },
-    );
+    const hasUnicode = lines.some((line) => this.plainLineHasNonAsciiText(line));
+    const hasQrData = lines.some((line) => !!line.qrData);
+    const data = hasUnicode
+      ? hasQrData
+        ? await this.formatPlainLinesWithNativeQr(lines)
+        : await this.renderTextToRaster(lines)
+      : Buffer.concat([
+          this.formatter.formatPlainLinesAsText(lines, { includeInit: true }),
+          this.formatter.getReceiptTrailer(),
+        ]);
+    await this.printRaw(data);
   }
 
   private async formatPlainLinesWithNativeQr(lines: EscPosPlainLine[]): Promise<Buffer> {
@@ -926,14 +745,14 @@ export class ThermalDriver {
    * Print receipt
    */
   async printReceipt(data: ReceiptData): Promise<void> {
-    this.assertConnectedForPrint();
+    if (!this.connected) {
+      throw new Error('Printer not connected');
+    }
 
     logger.info('[ThermalDriver] Printing receipt...');
 
-    await this.formatAndPrint(
-      `thermal.printReceipt(${this.printerNameOrPort})`,
-      () => this.formatReceiptForPrint(data),
-    );
+    const receiptData = await this.formatReceiptForPrint(data);
+    await this.printRaw(receiptData);
 
     logger.info('[ThermalDriver] Receipt printed successfully');
   }
@@ -942,20 +761,18 @@ export class ThermalDriver {
    * Print a cash-sale order copy and pulse the cash drawer in one spooler job.
    */
   async printReceiptWithDrawer(data: ReceiptData): Promise<void> {
-    this.assertConnectedForPrint();
+    if (!this.connected) {
+      throw new Error('Printer not connected');
+    }
 
     logger.info('[ThermalDriver] Printing receipt with cash drawer pulse...');
 
-    await this.formatAndPrint(
-      `thermal.printReceiptWithDrawer(${this.printerNameOrPort})`,
-      async () => {
-        const receiptData = await this.formatReceiptForPrint(data);
-        return Buffer.concat([
-          this.formatter.getCashDrawerCommand(),
-          receiptData,
-        ]);
-      },
-    );
+    const receiptData = await this.formatReceiptForPrint(data);
+    const combined = Buffer.concat([
+      this.formatter.getCashDrawerCommand(),
+      receiptData,
+    ]);
+    await this.printRaw(combined);
 
     logger.info('[ThermalDriver] Receipt printed and cash drawer pulse sent');
   }
@@ -1003,26 +820,6 @@ export class ThermalDriver {
     const dotsWidth =
       this.paperWidth <= 58 ? 384 : this.paperWidth <= 76 ? 432 : 576;
     const bytesPerRow = dotsWidth / 8;
-
-    const worker = this.getWindowsWorker();
-    if (worker) {
-      try {
-        const startedAt = Date.now();
-        const rendered = await worker.renderLines(lines, dotsWidth, opts);
-        logger.info(
-          `[ThermalDriver] Persistent worker rasterized ${lines.length} lines ` +
-          `to ${rendered.bytes} bytes in ${rendered.renderMs}ms ` +
-          `(round-trip ${Date.now() - startedAt}ms)`,
-        );
-        return rendered.data;
-      } catch (error: any) {
-        // Rendering has no printer side effect, so falling back is always safe.
-        logger.warn(
-          `[ThermalDriver] Persistent raster worker failed; using legacy ` +
-          `renderer: ${error?.message || error}`,
-        );
-      }
-    }
 
     // Escape text for PowerShell string literal
     const escapedLines = JSON.stringify(lines);
@@ -1163,7 +960,9 @@ export class ThermalDriver {
    *   would otherwise interpret ESC/POS bytes as garbage.
    */
   async printTest(opts?: { salonName?: string; sellerName?: string; sellerNip?: string }): Promise<void> {
-    this.assertConnectedForPrint();
+    if (!this.connected) {
+      throw new Error('Printer not connected');
+    }
 
     logger.info(`[ThermalDriver] Printing test page (${this.windowsTextMode ? 'TEXT' : 'ESC/POS'})...`);
 
@@ -1172,10 +971,9 @@ export class ThermalDriver {
       const present = await isWindowsPrinterPresent(this.printerNameOrPort);
       if (!present) {
         this.connected = false;
-        throw this.printPreflightError(
-          'PRINTER_NOT_PRESENT',
+        throw new Error(
           `Printer "${this.printerNameOrPort}" is not physically connected. ` +
-          `Check the cable and power, then click Detect Printers.`,
+          `Check the cable and power, then click Detect Printers.`
         );
       }
       try { await flushStuckPrintJobs(this.printerNameOrPort); } catch { /* best-effort */ }
@@ -1256,12 +1054,7 @@ export class ThermalDriver {
     try {
       fs.writeFileSync(tempFile, text, 'utf8');
       const safeName = sanitizePrinterName(this.printerNameOrPort);
-      if (!safeName) {
-        throw this.printPreflightError(
-          'INVALID_PRINTER_NAME',
-          `Invalid printer name: "${this.printerNameOrPort}"`,
-        );
-      }
+      if (!safeName) throw new Error(`Invalid printer name: "${this.printerNameOrPort}"`);
 
       const escapedFile = tempFile.replace(/\\/g, '\\\\');
       const psScript = `Get-Content -Path '${escapedFile}' | Out-Printer '${safeName}'`;
@@ -1281,7 +1074,9 @@ export class ThermalDriver {
    * Open cash drawer (if supported)
    */
   async openDrawer(): Promise<void> {
-    this.assertConnectedForPrint();
+    if (!this.connected) {
+      throw new Error('Printer not connected');
+    }
 
     logger.info('[ThermalDriver] Opening cash drawer...');
 
@@ -1295,7 +1090,9 @@ export class ThermalDriver {
    * Cut paper (if supported)
    */
   async cutPaper(fullCut: boolean = false): Promise<void> {
-    this.assertConnectedForPrint();
+    if (!this.connected) {
+      throw new Error('Printer not connected');
+    }
 
     const cutCmd = this.formatter.getCutCommand(fullCut);
     await this.printRaw(cutCmd);
@@ -1307,7 +1104,9 @@ export class ThermalDriver {
    * Print daily report (Raport Dobowy)
    */
   async printDailyReport(data: DailyReportData): Promise<void> {
-    this.assertConnectedForPrint();
+    if (!this.connected) {
+      throw new Error('Printer not connected');
+    }
 
     logger.info('[ThermalDriver] Printing daily report...');
 
@@ -1321,7 +1120,9 @@ export class ThermalDriver {
    * Print X Report (non-zeroing report)
    */
   async printXReport(data: DailyReportData): Promise<void> {
-    this.assertConnectedForPrint();
+    if (!this.connected) {
+      throw new Error('Printer not connected');
+    }
 
     logger.info('[ThermalDriver] Printing X report...');
 
@@ -1335,7 +1136,9 @@ export class ThermalDriver {
    * Print Z Report (end of day, zeroing report)
    */
   async printZReport(data: DailyReportData): Promise<void> {
-    this.assertConnectedForPrint();
+    if (!this.connected) {
+      throw new Error('Printer not connected');
+    }
 
     logger.info('[ThermalDriver] Printing Z report...');
 

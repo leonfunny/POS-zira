@@ -32,7 +32,6 @@ vi.mock('../src/main/printing/shared-print-retry-policy', async (importOriginal)
 });
 
 import {
-  reconcileSharedReceiptPrintJob,
   resetSharedReceiptResumeRegistry,
   submitSharedReceiptPrint,
 } from '../src/main/printing/shared-receipt-printer';
@@ -70,36 +69,6 @@ describe('submitSharedReceiptPrint — in-flight polling (POS2 timeout bug)', ()
     expect(result.printed).toBe(true);
     expect(result.jobId).toBe('JOB-A');
     expect(getPrintJobStatus.mock.calls.length).toBeGreaterThanOrEqual(3);
-  });
-
-  it('returns the fixed remote identity immediately for the durable outbox', async () => {
-    createPrintJob.mockResolvedValue({
-      jobId: 'JOB-OUTBOX',
-      status: 'SENT',
-      sent: true,
-    });
-
-    const result = await submitSharedReceiptPrint(
-      receiptFor('ORD-OUTBOX'),
-      {
-        ...POS_RECEIPT_META,
-        referenceId: 'ORD-OUTBOX',
-        returnOnAccepted: true,
-      },
-    );
-
-    expect(result).toMatchObject({
-      handled: true,
-      printed: false,
-      stillPrinting: true,
-      printerId: 'PRN-POS1',
-      jobId: 'JOB-OUTBOX',
-      status: 'SENT',
-    });
-    expect(getPrintJobStatus).not.toHaveBeenCalled();
-    const body = createPrintJob.mock.calls[0][1];
-    expect(body.idempotencyKey).toContain('ORD-OUTBOX');
-    expect(body.waitForCompletion).toBeUndefined();
   });
 });
 
@@ -147,46 +116,5 @@ describe('submitSharedReceiptPrint — same-session resume (POS2 409 bug)', () =
     expect(body.idempotencyKey).toBeUndefined();
     expect(body.waitForCompletion).toBeUndefined();
     expect(body.referenceType).toBe('POS_RECEIPT_REPRINT');
-  });
-});
-
-describe('reconcileSharedReceiptPrintJob — durable restart resume', () => {
-  it('polls only the stored job and never discovers a printer or creates again', async () => {
-    getPrintJobStatus.mockResolvedValue({
-      jobId: 'JOB-PERSISTED',
-      status: 'COMPLETED',
-    });
-
-    // The in-memory registry is deliberately empty, matching a fresh process.
-    resetSharedReceiptResumeRegistry();
-    const result = await reconcileSharedReceiptPrintJob({
-      printerId: 'PRN-POS1-PERSISTED',
-      jobId: 'JOB-PERSISTED',
-    });
-
-    expect(result).toMatchObject({
-      handled: true,
-      printed: true,
-      printerId: 'PRN-POS1-PERSISTED',
-      jobId: 'JOB-PERSISTED',
-    });
-    expect(getPrintJobStatus).toHaveBeenCalledWith(
-      'jwt-token',
-      'JOB-PERSISTED',
-    );
-    expect(listPrinterAssignments).not.toHaveBeenCalled();
-    expect(createPrintJob).not.toHaveBeenCalled();
-  });
-
-  it('does not fall back to create when polling the stored job is unavailable', async () => {
-    getPrintJobStatus.mockRejectedValue(new Error('status endpoint unavailable'));
-
-    await expect(reconcileSharedReceiptPrintJob({
-      printerId: 'PRN-POS1-PERSISTED',
-      jobId: 'JOB-PERSISTED',
-    })).rejects.toThrow('status endpoint unavailable');
-
-    expect(listPrinterAssignments).not.toHaveBeenCalled();
-    expect(createPrintJob).not.toHaveBeenCalled();
   });
 });

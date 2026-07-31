@@ -5,7 +5,6 @@ import { adaptServerOrderItem } from '../../sync/pos-order-adapter';
 import { allocateRefundTenders } from '../../pos/refund-backend-payload';
 import { posEventEmitter } from '../../events/pos-event-emitter';
 import { STOCK_TRACKED_GUARD_SQL } from './product-repo';
-import { receiptPrintOutboxRepo } from './receipt-print-outbox-repo';
 
 export interface OrderRow {
   id: string;
@@ -132,20 +131,6 @@ export interface ServerMirroredGrossItemRepairResult {
   repaired: number;
   skipped: number;
   skipped_reasons: Record<string, number>;
-}
-
-export interface ServerOrderUpsertOptions {
-  /** The caller already owns the sql.js transaction containing this upsert. */
-  callerOwnsTransaction?: boolean;
-}
-
-function runServerOrderMutation<T>(
-  options: ServerOrderUpsertOptions | undefined,
-  mutation: () => T,
-): T {
-  return options?.callerOwnsTransaction
-    ? mutation()
-    : database.transaction(mutation);
 }
 
 type ServerMirroredGrossRepairCandidate = {
@@ -548,11 +533,6 @@ export const orderRepo = {
     let restocked = 0;
 
     database.transaction(() => {
-      receiptPrintOutboxRepo.prepareInitialForOrderMutation(
-        id,
-        'Initial receipt cancelled before deleting the local unsynced order',
-      );
-
       for (const item of items) {
         if (item.variant_id && item.quantity > 0 && item.inventory_policy !== 'ALREADY_CONSUMED') {
           database.run(
@@ -650,11 +630,6 @@ export const orderRepo = {
     let stockChanged = false;
 
     database.transaction(() => {
-      receiptPrintOutboxRepo.prepareInitialForOrderMutation(
-        id,
-        'Initial receipt cancelled before mutating the local unsynced order',
-      );
-
       if (nextItems) {
         for (const item of currentItems) {
           if (item.variant_id && item.quantity > 0) {
@@ -1025,11 +1000,7 @@ export const orderRepo = {
     return result;
   },
 
-  upsertFromServer(
-    adaptedOrder: any,
-    items: OrderItemRow[],
-    options?: ServerOrderUpsertOptions,
-  ): { inserted: boolean; localOrderId: string } {
+  upsertFromServer(adaptedOrder: any, items: OrderItemRow[]): { inserted: boolean; localOrderId: string } {
     const existing = orderRepo.getById(adaptedOrder.id);
     if (existing) {
       if (
@@ -1039,7 +1010,7 @@ export const orderRepo = {
       ) {
         throw new Error('Server Billiard order origin conflicts with the local paid order journal.');
       }
-      runServerOrderMutation(options, () => {
+      database.transaction(() => {
         database.run(
           `UPDATE orders
            SET client_attempt_id = COALESCE(client_attempt_id, ?),
@@ -1093,7 +1064,7 @@ export const orderRepo = {
 
     const { _origin, ...dbRow } = adaptedOrder;
 
-    runServerOrderMutation(options, () => {
+    database.transaction(() => {
       database.run(
         `INSERT INTO orders (id, order_number, status, subtotal, discount, tax, total, payment_method, payment_amount, change_amount, staff_id, staff_name, customer_id, customer_name, customer_nip, shift_id, source, table_id, covers, order_type, tip, mode, payment_tenders, client_attempt_id, billiard_origin_json, synced, backend_id, synced_at, refund_amount, refund_reason, refunded_at, refund_lines, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?)`,
