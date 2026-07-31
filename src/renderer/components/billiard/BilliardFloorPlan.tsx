@@ -7,7 +7,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import type { CSSProperties } from 'react';
 import {
   Target, Plus, Loader2, Move, MousePointer, ZoomIn, ZoomOut, Maximize, Copy,
-  CalendarClock, Lock, Unlock, WifiOff, ShoppingCart,
+  CalendarClock, Lock, Unlock, WifiOff,
 } from 'lucide-react';
 import {
   TransformWrapper,
@@ -58,7 +58,6 @@ import { AddItemToTabModal } from './AddItemToTabModal';
 import { TransferTableDialog } from './TransferTableDialog';
 import { PaymentDialog } from './PaymentDialog';
 import { UnsettledPanel } from './UnsettledPanel';
-import { RetailQuickSaleModal } from './RetailQuickSaleModal';
 import { ShiftChip } from './ShiftChip';
 import { EditPriceDialog } from './EditPriceDialog';
 import { ReservationPanel } from './ReservationPanel';
@@ -317,7 +316,6 @@ function FloorPlanInner({ language, onPreflightPos, onPayInPos, active = true }:
   const [transferSessionId, setTransferSessionId] = useState<string | null>(null);
   const [paymentSession, setPaymentSession] = useState<any>(null);
   const [unsettledOpen, setUnsettledOpen] = useState(false);
-  const [retailOpen, setRetailOpen] = useState(false);
   const [priceTable, setPriceTable] = useState<TableOverview | null>(null);
   const [priceSaving, setPriceSaving] = useState(false);
   const [reservationsOpen, setReservationsOpen] = useState(false);
@@ -1139,21 +1137,11 @@ function FloorPlanInner({ language, onPreflightPos, onPayInPos, active = true }:
       )}
 
       {!editMode && (
-        <div className="flex flex-wrap items-center gap-2">
-          <ShiftChip
-            language={language}
-            online={syncStatus?.apiReachable !== false}
-            pollPaused={!active}
-          />
-          <button
-            type="button"
-            onClick={() => setRetailOpen(true)}
-            className="flex w-fit items-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-900 transition-colors hover:bg-emerald-100"
-          >
-            <ShoppingCart className="h-4 w-4" />
-            {t('billiard.retailQuickSale') || 'Retail sale (no table)'}
-          </button>
-        </div>
+        <ShiftChip
+          language={language}
+          online={syncStatus?.apiReachable !== false}
+          pollPaused={!active}
+        />
       )}
 
       {!editMode && unsettledSummary.count > 0 && (
@@ -1585,13 +1573,6 @@ function FloorPlanInner({ language, onPreflightPos, onPayInPos, active = true }:
           }}
         />
       )}
-
-      <RetailQuickSaleModal
-        open={retailOpen}
-        onOpenChange={setRetailOpen}
-        language={language}
-        online={syncStatus?.apiReachable !== false}
-      />
 
       <UnsettledPanel
         open={unsettledOpen}

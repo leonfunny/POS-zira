@@ -375,44 +375,6 @@ export function useVoidSessions(refetch?: () => Promise<void>) {
 
 // ─── Counter parity: walk-in retail, merge/split, business shift ─────
 
-export interface QuickSaleItemInput {
-  variantId?: string;
-  /** Canonical product name — goes on the bill/kitchen ticket, never localized. */
-  name: string;
-  quantity: number;
-  unitPrice: number;
-}
-
-export interface QuickSaleInput {
-  items: QuickSaleItemInput[];
-  paymentMethod: 'CASH' | 'CARD' | 'BLIK' | 'BANK_TRANSFER' | 'TRANSFER';
-  /** Per-cart UUID; the backend uses it as the idempotency key (headers are
-   *  unavailable through the queue-aware transport). */
-  paymentAttemptId?: string;
-  cashReceived?: number;
-  customerName?: string;
-}
-
-/** Walk-in retail: server creates a settled fnb_only session and returns it
- *  flattened at the top level plus `replayed`/`changeAmount` — the change
- *  amount is authoritative there. */
-export function useQuickSale(refetch?: () => Promise<void>) {
-  return useMutation(
-    (data: QuickSaleInput) => window.electronAPI.billiard.mutate(
-      'retail_quick_sale', 'POST', '/billiard/retail/quick-sale', data,
-    ),
-    refetch,
-  );
-}
-
-export function useRetailToday(options?: { pollPaused?: boolean; enabled?: boolean }) {
-  return useQuery(
-    () => window.electronAPI.billiard.mutate('online_api', 'GET', '/billiard/retail/today'),
-    [],
-    { pollInterval: 60000, pollPaused: options?.pollPaused, enabled: options?.enabled },
-  );
-}
-
 export function useMergeSessions(refetch?: () => Promise<void>) {
   return useMutation(
     (sessionIds: string[]) => window.electronAPI.billiard.mutate(

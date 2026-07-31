@@ -36,11 +36,10 @@ const BILLIARD_MUTATION_RULES: BilliardMutationRule[] = [
   { method: 'POST', path: /^\/billiard\/sessions\/[^/?#]+\/payment$/, operation: 'process_payment', policy: 'online-only' },
   { method: 'POST', path: /^\/billiard\/sessions\/void-batch$/, operation: 'void_sessions_batch', policy: 'online-only' },
   { method: 'POST', path: /^\/billiard\/sessions\/[^/?#]+\/void$/, operation: 'void_session', policy: 'online-only' },
-  // Walk-in retail (fnb_only session, born settled) + counter parity ops.
-  // All online-only: each needs the server's authoritative result (session id
-  // for the receipt, split math, shift state) — nothing to replay offline.
-  { method: 'POST', path: /^\/billiard\/retail\/quick-sale$/, operation: 'retail_quick_sale', policy: 'online-only' },
-  { method: 'GET', path: /^\/billiard\/retail\/today$/, operation: 'online_api', policy: 'online-only' },
+  // Counter parity ops (merge/split/shift). All online-only: each needs the
+  // server's authoritative result — nothing to replay offline. Walk-in retail
+  // is deliberately NOT allowlisted: on the POS machine retail goes through
+  // the normal POS tab (fiscal receipt + order history live there).
   { method: 'POST', path: /^\/billiard\/sessions\/[^/?#]+\/split$/, operation: 'split_bill', policy: 'online-only' },
   { method: 'GET', path: /^\/billiard\/shifts\/current$/, operation: 'online_api', policy: 'online-only' },
   { method: 'POST', path: /^\/billiard\/shifts\/open$/, operation: 'open_shift', policy: 'online-only' },

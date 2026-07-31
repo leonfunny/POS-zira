@@ -245,16 +245,16 @@ describe('billiard desktop/backend contract', () => {
     expect(isAllowedBilliardOperation('online_api', 'DELETE', '/billiard/floor-plans/floor-2')).toBe(true);
   });
 
-  it('allows the counter-parity routes (retail, merge/split, shift) online-only', () => {
-    expect(getBilliardMutationPolicy('POST', '/billiard/retail/quick-sale')).toBe('online-only');
-    expect(isAllowedBilliardOperation('retail_quick_sale', 'POST', '/billiard/retail/quick-sale')).toBe(true);
-    expect(isAllowedBilliardOperation('online_api', 'GET', '/billiard/retail/today')).toBe(true);
+  it('allows the counter-parity routes (merge/split, shift) and refuses POS retail', () => {
+    // Walk-in retail is deliberately NOT allowlisted on the POS: counter
+    // retail goes through the normal POS tab (fiscal receipt + order history).
+    expect(getBilliardMutationPolicy('POST', '/billiard/retail/quick-sale')).toBeNull();
+    expect(getBilliardMutationPolicy('GET', '/billiard/retail/today')).toBeNull();
     expect(isAllowedBilliardOperation('merge_sessions', 'PATCH', '/billiard/sessions/merge')).toBe(true);
     expect(isAllowedBilliardOperation('split_bill', 'POST', '/billiard/sessions/session-1/split')).toBe(true);
     expect(isAllowedBilliardOperation('online_api', 'GET', '/billiard/shifts/current')).toBe(true);
     expect(isAllowedBilliardOperation('open_shift', 'POST', '/billiard/shifts/open')).toBe(true);
     // Wrong labels or stray paths stay rejected.
-    expect(isAllowedBilliardOperation('online_api', 'POST', '/billiard/retail/quick-sale')).toBe(false);
     expect(getBilliardMutationPolicy('POST', '/billiard/shifts/close')).toBeNull();
     expect(getBilliardMutationPolicy('DELETE', '/billiard/sessions/merge')).toBeNull();
   });
