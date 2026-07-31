@@ -1,0 +1,110 @@
+{
+    "totalRevenue": 492.14,
+    "fnbRevenue": 492,
+    "retailRevenue": 445,
+    "retailSessions": 16,
+    "totalSessions": 17,
+    "avgSessionDuration": 20,
+    "avgSpendPerSession": 28.95,
+    "utilizationPercent": 0,
+    "happyHourSessions": 0,
+    "happyHourRevenue": 0,
+    "revenueByTable": [
+        {
+            "resourceId": "504ef4d9-4fcd-4235-8171-8c4abfa131fe",
+            "resourceName": "Walk-in",
+            "revenue": 445,
+            "sessions": 16,
+            "avgDuration": 21.75
+        },
+        {
+            "resourceId": "b3975d21-271b-4fb6-b7ee-54e3c4ed8941",
+            "resourceName": "B\u00e0n #6",
+            "revenue": 47.14,
+            "sessions": 1,
+            "avgDuration": 0
+        }
+    ],
+    "topFnbItems": [
+        {
+            "name": "TEST fnb fix - tr\u00e0 s\u1eefa",
+            "quantity": 6,
+            "revenue": 144
+        },
+        {
+            "name": "Xoai Cat Lat",
+            "quantity": 2,
+            "revenue": 54
+        },
+        {
+            "name": "TEST M1 b\u00e1nh m\u00ec g\u00e0",
+            "quantity": 2,
+            "revenue": 50
+        },
+        {
+            "name": "Custom snack",
+            "quantity": 4,
+            "revenue": 49
+        },
+        {
+            "name": "TEST M2 tr\u00e0 s\u1eefa matcha",
+            "quantity": 1,
+            "revenue": 24
+        },
+        {
+            "name": "Xoai Lac",
+            "quantity": 1,
+            "revenue": 20
+        },
+        {
+            "name": "Smoke Cola",
+            "quantity": 2,
+            "revenue": 20
+        },
+        {
+            "name": "T16 Beer",
+            "quantity": 2,
+            "revenue": 20
+        },
+        {
+            "name": "T16 Test Cola",
+            "quantity": 2,
+            "revenue": 17
+        },
+        {
+            "name": "T16 Fries",
+            "quantity": 1,
+            "revenue": 15
+        }
+    ],
+    "peakHours": [
+        {
+            "hour": 12,
+            "sessions": 1
+        },
+        {
+            "hour": 14,
+            "sessions": 1
+        },
+        {
+            "hour": 15,
+            "sessions": 2
+        },
+        {
+            "hour": 16,
+            "sessions": 4
+        },
+        {
+            "hour": 17,
+            "sessions": 3
+        },
+        {
+            "hour": 18,
+            "sessions": 3
+        },
+        {
+            "hour": 19,
+            "sessions": 3
+        }
+    ]
+}

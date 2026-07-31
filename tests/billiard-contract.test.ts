@@ -259,6 +259,23 @@ describe('billiard desktop/backend contract', () => {
     expect(getBilliardMutationPolicy('DELETE', '/billiard/sessions/merge')).toBeNull();
   });
 
+  it('allows the history/report reads and rejects lookalikes', () => {
+    expect(isAllowedBilliardOperation(
+      'online_api', 'GET',
+      '/billiard/sessions/history?from=2026-07-29&to=2026-07-31&limit=20&page=1&paymentStatus=PAID',
+    )).toBe(true);
+    expect(isAllowedBilliardOperation(
+      'online_api', 'GET', '/billiard/analytics?from=2026-07-29&to=2026-07-31',
+    )).toBe(true);
+    // Path traversal, extra segments and writes stay out.
+    expect(getBilliardMutationPolicy('GET', '/billiard/sessions/history?from=../etc')).toBeNull();
+    expect(getBilliardMutationPolicy('POST', '/billiard/sessions/history?from=2026-07-29')).toBeNull();
+    expect(getBilliardMutationPolicy('GET', '/billiard/analytics?from=now&to=later')).toBeNull();
+    // The plain GET-session rule still refuses the literal "history" segment
+    // (query-less), so nothing falls through to a wrong handler.
+    expect(isAllowedBilliardOperation('online_api', 'GET', '/billiard/sessions/history')).toBe(true);
+  });
+
   it('guards floor creation and reconciles floor CRUD with the local cache', () => {
     const floorPlan = readSource('../src/renderer/components/billiard/BilliardFloorPlan.tsx');
     const renameFloorDialog = readSource('../src/renderer/components/billiard/RenameFloorDialog.tsx');

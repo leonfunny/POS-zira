@@ -44,6 +44,10 @@ const BILLIARD_MUTATION_RULES: BilliardMutationRule[] = [
   { method: 'POST', path: /^\/billiard\/sessions\/[^/?#]+\/split$/, operation: 'split_bill', policy: 'online-only' },
   { method: 'GET', path: /^\/billiard\/shifts\/current$/, operation: 'online_api', policy: 'online-only' },
   { method: 'POST', path: /^\/billiard\/shifts\/open$/, operation: 'open_shift', policy: 'online-only' },
+  // History & report reads: the server is the single source of truth shared
+  // with the web dashboard (same endpoints ⇒ numbers match by construction).
+  { method: 'GET', path: /^\/billiard\/sessions\/history\?[A-Za-z0-9=&%._:-]*$/, operation: 'online_api', policy: 'online-only' },
+  { method: 'GET', path: /^\/billiard\/analytics\?from=\d{4}-\d{2}-\d{2}&to=\d{4}-\d{2}-\d{2}$/, operation: 'online_api', policy: 'online-only' },
   { method: 'DELETE', path: /^\/billiard\/sessions\/[^/?#]+\/items\/[^/?#]+$/, operation: 'remove_item', policy: 'online-only' },
   { method: 'PATCH', path: /^\/billiard\/sessions\/[^/?#]+\/items\/[^/?#]+$/, operation: 'update_item', policy: 'online-only' },
   { method: 'GET', path: /^\/billiard\/bookings\?date=\d{4}-\d{2}-\d{2}&limit=200$/, operation: 'online_api', policy: 'online-only' },

@@ -1,0 +1,401 @@
+{
+    "data": [
+        {
+            "id": "b9a5faf6-7f8d-4d0f-8db4-64849dcbc78e",
+            "createdAt": "2026-07-31T16:57:02.147Z",
+            "updatedAt": "2026-07-31T17:01:57.136Z",
+            "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+            "resourceId": "4e1b3723-f041-4236-9ea1-3bdb321df673",
+            "bookingId": null,
+            "customerId": null,
+            "customerName": "Merge A",
+            "startedAt": "2026-07-31T16:57:02.167Z",
+            "endedAt": "2026-07-31T17:01:57.094Z",
+            "shiftId": "e6c1fe5a-a727-4735-b35c-912df2c46825",
+            "pausedAt": null,
+            "totalPausedSeconds": 0,
+            "status": "COMPLETED",
+            "settlementChannel": "WEB",
+            "hourlyRate": "60.00",
+            "billingMode": "PER_MINUTE",
+            "packageMode": false,
+            "packageMinutes": null,
+            "packagePrice": null,
+            "autoEndAt": null,
+            "pricingSnapshot": {
+                "currency": "PLN",
+                "timezone": "Europe/Warsaw",
+                "basePrice": 60,
+                "capturedAt": "2026-07-31T16:57:02.167Z",
+                "billingMode": "PER_MINUTE",
+                "packageMode": false,
+                "peakHourEnd": "06:00",
+                "packagePrice": null,
+                "peakHourStart": "23:00",
+                "packageMinutes": null,
+                "weekendMultiplier": 1,
+                "peakHourMultiplier": 1.3,
+                "posDiscountBreakdown": {
+                    "globalDiscountGrosze": 0,
+                    "timeOnlyDiscountGrosze": 0
+                }
+            },
+            "durationMinutes": 5,
+            "timeCharge": "4.92",
+            "fnbCharge": "0.00",
+            "totalCharge": "4.92",
+            "discountAmount": "0.00",
+            "surchargePercent": "0.00",
+            "surchargeAmount": "0.00",
+            "markupAmount": "0.00",
+            "paidAmount": "0.00",
+            "paymentStatus": "VOID",
+            "paymentMethod": null,
+            "paymentAmounts": null,
+            "splitPaymentDetails": null,
+            "startedBy": "5bf2ff13-1c5c-4ecf-8f3c-9f152796a192",
+            "endedBy": "5bf2ff13-1c5c-4ecf-8f3c-9f152796a192",
+            "voidReason": "smoke test POS parity 31/07 \u2014 d\u1ecdn",
+            "voidedBy": "5bf2ff13-1c5c-4ecf-8f3c-9f152796a192",
+            "voidedAt": "2026-07-31T17:01:57.139Z",
+            "endedBySystem": false,
+            "guestCount": 1,
+            "comboId": null,
+            "notes": null,
+            "fnbOnly": false,
+            "retailIdempotencyKey": null,
+            "posCheckoutId": null,
+            "posCheckoutSnapshot": null,
+            "posOrderId": null,
+            "posSettledAt": null,
+            "resource": {
+                "id": "4e1b3723-f041-4236-9ea1-3bdb321df673",
+                "createdAt": "2026-02-13T08:24:33.406Z",
+                "updatedAt": "2026-02-28T04:24:33.947Z",
+                "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+                "resourceTypeId": "0b477782-ea2b-4100-8453-0b060a8231f5",
+                "name": "B\u00e0n #1",
+                "description": null,
+                "isActive": true,
+                "displayOrder": 1,
+                "metadata": {
+                    "translations": {
+                        "en": "B\u00e0n #1",
+                        "pl": "B\u00e0n #1",
+                        "vi": "B\u00e0n #1"
+                    },
+                    "availableFrom": "10:00",
+                    "availableUntil": "24:00"
+                },
+                "requiresStaff": false,
+                "defaultSupervisorId": null,
+                "maxConcurrentBookings": 1,
+                "pricingRules": {
+                    "currency": "PLN",
+                    "basePrice": 60,
+                    "peakHourEnd": "06:00",
+                    "peakHourStart": "23:00",
+                    "weekendMultiplier": 1,
+                    "peakHourMultiplier": 1.3
+                },
+                "availableFrom": null,
+                "availableUntil": null,
+                "availableDays": [
+                    0,
+                    1,
+                    2,
+                    3,
+                    4,
+                    5,
+                    6
+                ],
+                "weeklySchedule": {
+                    "0": {
+                        "from": "10:00",
+                        "until": "02:00"
+                    },
+                    "1": null,
+                    "2": {
+                        "from": "14:00",
+                        "until": "23:00"
+                    },
+                    "3": {
+                        "from": "14:00",
+                        "until": "23:00"
+                    },
+                    "4": {
+                        "from": "14:00",
+                        "until": "23:00"
+                    },
+                    "5": {
+                        "from": "14:00",
+                        "until": "00:00"
+                    },
+                    "6": {
+                        "from": "12:00",
+                        "until": "02:00"
+                    }
+                }
+            },
+            "customer": null,
+            "items": []
+        },
+        {
+            "id": "3f47138b-b1f5-4556-83de-434901b89da0",
+            "createdAt": "2026-07-31T17:00:48.704Z",
+            "updatedAt": "2026-07-31T17:00:48.704Z",
+            "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+            "resourceId": "504ef4d9-4fcd-4235-8171-8c4abfa131fe",
+            "bookingId": null,
+            "customerId": null,
+            "customerName": null,
+            "startedAt": "2026-07-31T17:00:48.711Z",
+            "endedAt": "2026-07-31T17:00:48.711Z",
+            "shiftId": "e6c1fe5a-a727-4735-b35c-912df2c46825",
+            "pausedAt": null,
+            "totalPausedSeconds": 0,
+            "status": "COMPLETED",
+            "settlementChannel": "WEB",
+            "hourlyRate": "0.00",
+            "billingMode": "PER_MINUTE",
+            "packageMode": false,
+            "packageMinutes": null,
+            "packagePrice": null,
+            "autoEndAt": null,
+            "pricingSnapshot": {
+                "fnbOnly": true,
+                "timezone": "Europe/Warsaw",
+                "quickSale": {
+                    "fingerprint": "ec56aa2e02061454414aa23f3d4bd9369e7f93738f57c2fee24970fca8f48463"
+                },
+                "capturedAt": "2026-07-31T17:00:48.711Z",
+                "billingMode": "PER_MINUTE",
+                "retailQuickSale": true
+            },
+            "durationMinutes": 0,
+            "timeCharge": "0.00",
+            "fnbCharge": "7.00",
+            "totalCharge": "7.00",
+            "discountAmount": "0.00",
+            "surchargePercent": "0.00",
+            "surchargeAmount": "0.00",
+            "markupAmount": "0.00",
+            "paidAmount": "7.00",
+            "paymentStatus": "PAID",
+            "paymentMethod": "CASH",
+            "paymentAmounts": {
+                "CASH": 7
+            },
+            "splitPaymentDetails": [
+                {
+                    "kind": "SINGLE",
+                    "amount": 7,
+                    "paidAt": "2026-07-31T17:00:48.711Z",
+                    "captureMode": "MANUAL",
+                    "cashReceived": 10,
+                    "changeAmount": 3,
+                    "paymentMethod": "CASH",
+                    "requestedAmount": 7,
+                    "paymentAttemptId": "34c1f691-76f9-47de-af4e-6cd54603529b",
+                    "requestFingerprint": "ec56aa2e02061454414aa23f3d4bd9369e7f93738f57c2fee24970fca8f48463"
+                }
+            ],
+            "startedBy": "5bf2ff13-1c5c-4ecf-8f3c-9f152796a192",
+            "endedBy": "5bf2ff13-1c5c-4ecf-8f3c-9f152796a192",
+            "voidReason": null,
+            "voidedBy": null,
+            "voidedAt": null,
+            "endedBySystem": false,
+            "guestCount": 1,
+            "comboId": null,
+            "notes": null,
+            "fnbOnly": true,
+            "retailIdempotencyKey": "34c1f691-76f9-47de-af4e-6cd54603529b",
+            "posCheckoutId": null,
+            "posCheckoutSnapshot": null,
+            "posOrderId": null,
+            "posSettledAt": null,
+            "resource": {
+                "id": "504ef4d9-4fcd-4235-8171-8c4abfa131fe",
+                "createdAt": "2026-04-26T11:35:14.489Z",
+                "updatedAt": "2026-04-26T11:35:14.489Z",
+                "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+                "resourceTypeId": "92fff258-93a5-4eca-804b-b70aa558cb4e",
+                "name": "Walk-in",
+                "description": "Virtual seat for walk-in / kitchen-only orders",
+                "isActive": true,
+                "displayOrder": 0,
+                "metadata": {
+                    "fnbOnly": true
+                },
+                "requiresStaff": false,
+                "defaultSupervisorId": null,
+                "maxConcurrentBookings": 999,
+                "pricingRules": {
+                    "basePrice": 0
+                },
+                "availableFrom": null,
+                "availableUntil": null,
+                "availableDays": [
+                    0,
+                    1,
+                    2,
+                    3,
+                    4,
+                    5,
+                    6
+                ],
+                "weeklySchedule": null
+            },
+            "customer": null,
+            "items": [
+                {
+                    "id": "07fbfdeb-4a01-4297-94d7-0ef723bc80a5",
+                    "createdAt": "2026-07-31T17:00:48.704Z",
+                    "updatedAt": "2026-07-31T17:00:48.727Z",
+                    "sessionId": "3f47138b-b1f5-4556-83de-434901b89da0",
+                    "variantId": null,
+                    "name": "Smoke Sprite",
+                    "quantity": "1.000",
+                    "unitPrice": "7.00",
+                    "totalPrice": "7.00",
+                    "addedAt": "2026-07-31T17:00:48.716Z",
+                    "addedBy": "5bf2ff13-1c5c-4ecf-8f3c-9f152796a192",
+                    "kitchenSentAt": "2026-07-31T17:00:48.736Z"
+                }
+            ]
+        },
+        {
+            "id": "91e46d15-e385-400c-99f3-4eb5bb0ff7b5",
+            "createdAt": "2026-07-31T17:00:32.775Z",
+            "updatedAt": "2026-07-31T17:00:32.775Z",
+            "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+            "resourceId": "504ef4d9-4fcd-4235-8171-8c4abfa131fe",
+            "bookingId": null,
+            "customerId": null,
+            "customerName": null,
+            "startedAt": "2026-07-31T17:00:32.794Z",
+            "endedAt": "2026-07-31T17:00:32.794Z",
+            "shiftId": "e6c1fe5a-a727-4735-b35c-912df2c46825",
+            "pausedAt": null,
+            "totalPausedSeconds": 0,
+            "status": "COMPLETED",
+            "settlementChannel": "WEB",
+            "hourlyRate": "0.00",
+            "billingMode": "PER_MINUTE",
+            "packageMode": false,
+            "packageMinutes": null,
+            "packagePrice": null,
+            "autoEndAt": null,
+            "pricingSnapshot": {
+                "fnbOnly": true,
+                "timezone": "Europe/Warsaw",
+                "quickSale": {
+                    "fingerprint": "5dee8158c850701313b8033324007b23c9fc314830ba4bfe40fe5e9813cddf82"
+                },
+                "capturedAt": "2026-07-31T17:00:32.794Z",
+                "billingMode": "PER_MINUTE",
+                "retailQuickSale": true
+            },
+            "durationMinutes": 0,
+            "timeCharge": "0.00",
+            "fnbCharge": "8.00",
+            "totalCharge": "8.00",
+            "discountAmount": "0.00",
+            "surchargePercent": "0.00",
+            "surchargeAmount": "0.00",
+            "markupAmount": "0.00",
+            "paidAmount": "8.00",
+            "paymentStatus": "PAID",
+            "paymentMethod": "CASH",
+            "paymentAmounts": {
+                "CASH": 8
+            },
+            "splitPaymentDetails": [
+                {
+                    "kind": "SINGLE",
+                    "amount": 8,
+                    "paidAt": "2026-07-31T17:00:32.794Z",
+                    "captureMode": "MANUAL",
+                    "cashReceived": 10,
+                    "changeAmount": 2,
+                    "paymentMethod": "CASH",
+                    "requestedAmount": 8,
+                    "paymentAttemptId": "18d8f6e4-c51b-45bd-b98d-4141b26433a0",
+                    "requestFingerprint": "5dee8158c850701313b8033324007b23c9fc314830ba4bfe40fe5e9813cddf82"
+                }
+            ],
+            "startedBy": "5bf2ff13-1c5c-4ecf-8f3c-9f152796a192",
+            "endedBy": "5bf2ff13-1c5c-4ecf-8f3c-9f152796a192",
+            "voidReason": null,
+            "voidedBy": null,
+            "voidedAt": null,
+            "endedBySystem": false,
+            "guestCount": 1,
+            "comboId": null,
+            "notes": null,
+            "fnbOnly": true,
+            "retailIdempotencyKey": "18d8f6e4-c51b-45bd-b98d-4141b26433a0",
+            "posCheckoutId": null,
+            "posCheckoutSnapshot": null,
+            "posOrderId": null,
+            "posSettledAt": null,
+            "resource": {
+                "id": "504ef4d9-4fcd-4235-8171-8c4abfa131fe",
+                "createdAt": "2026-04-26T11:35:14.489Z",
+                "updatedAt": "2026-04-26T11:35:14.489Z",
+                "salonId": "cbe3776f-5fdd-4ab0-993c-becc29fce2c2",
+                "resourceTypeId": "92fff258-93a5-4eca-804b-b70aa558cb4e",
+                "name": "Walk-in",
+                "description": "Virtual seat for walk-in / kitchen-only orders",
+                "isActive": true,
+                "displayOrder": 0,
+                "metadata": {
+                    "fnbOnly": true
+                },
+                "requiresStaff": false,
+                "defaultSupervisorId": null,
+                "maxConcurrentBookings": 999,
+                "pricingRules": {
+                    "basePrice": 0
+                },
+                "availableFrom": null,
+                "availableUntil": null,
+                "availableDays": [
+                    0,
+                    1,
+                    2,
+                    3,
+                    4,
+                    5,
+                    6
+                ],
+                "weeklySchedule": null
+            },
+            "customer": null,
+            "items": [
+                {
+                    "id": "f8ad27f0-8869-4f18-b6a8-e5f9e5e3540b",
+                    "createdAt": "2026-07-31T17:00:32.775Z",
+                    "updatedAt": "2026-07-31T17:00:32.810Z",
+                    "sessionId": "91e46d15-e385-400c-99f3-4eb5bb0ff7b5",
+                    "variantId": null,
+                    "name": "Smoke Fanta",
+                    "quantity": "1.000",
+                    "unitPrice": "8.00",
+                    "totalPrice": "8.00",
+                    "addedAt": "2026-07-31T17:00:32.802Z",
+                    "addedBy": "5bf2ff13-1c5c-4ecf-8f3c-9f152796a192",
+                    "kitchenSentAt": "2026-07-31T17:00:32.815Z"
+                }
+            ]
+        }
+    ],
+    "total": 19,
+    "totals": {
+        "completed": 19,
+        "cancelled": 0,
+        "billiardRevenue": 492.14,
+        "avgDurationMinutes": 119
+    }
+}
