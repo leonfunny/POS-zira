@@ -1,4 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('electron', () => ({
+  ipcMain: { handle: vi.fn() },
+  BrowserWindow: class {},
+}));
+
+vi.mock('../src/main/config/store', () => ({
+  getConfig: vi.fn(() => ({})),
+  setConfig: vi.fn(),
+}));
+
 import { isFeatureEnabled, isFeatureEnabledStrict } from '../src/main/entitlements/entitlements-controller';
 
 function entitlements(billiard?: { enabled: boolean; expiresAt?: string }) {
