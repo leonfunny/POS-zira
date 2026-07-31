@@ -393,8 +393,9 @@ export interface QuickSaleInput {
   customerName?: string;
 }
 
-/** Walk-in retail: server creates a settled fnb_only session and returns
- *  `{ session, replayed, changeAmount }` — change is authoritative there. */
+/** Walk-in retail: server creates a settled fnb_only session and returns it
+ *  flattened at the top level plus `replayed`/`changeAmount` — the change
+ *  amount is authoritative there. */
 export function useQuickSale(refetch?: () => Promise<void>) {
   return useMutation(
     (data: QuickSaleInput) => window.electronAPI.billiard.mutate(

@@ -216,10 +216,9 @@ export function RetailQuickSaleModal({
         cashReceived: method === 'CASH' && !Number.isNaN(cashValue) ? cashValue : undefined,
         customerName: customerName.trim() || undefined,
       });
-      const session = result?.session;
-      if (!session?.id) throw new Error(tOr('billiard.retailSaleFailed', 'Sale failed'));
+      if (!result?.id) throw new Error(tOr('billiard.retailSaleFailed', 'Sale failed'));
       setDone({
-        sessionId: session.id,
+        sessionId: result.id,
         total,
         changeAmount: Number(result?.changeAmount ?? 0),
         method,

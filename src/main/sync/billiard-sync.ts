@@ -269,10 +269,11 @@ export class BilliardSync {
           await this.syncPendingPayments(token, 'void batch');
           await this.flushPaymentJournal('session void batch');
           this.notifyRenderer('payment-updated');
-        } else if (op === 'retail_quick_sale' && result?.session?.id) {
-          // Walk-in retail returns a settled fnb_only session — cache it so
-          // the local receipt printer and history can read it immediately.
-          billiardSessionRepo.upsertOne(result.session);
+        } else if (op === 'retail_quick_sale' && result?.id) {
+          // Walk-in retail returns the settled fnb_only session flattened at
+          // the top level (plus replayed/changeAmount) — cache it so the local
+          // receipt printer and history can read it immediately.
+          billiardSessionRepo.upsertOne(result);
           this.notifyRenderer('payment-updated');
         } else if (op === 'merge_sessions') {
           // Source sessions vanish into the target — pull a fresh dashboard
