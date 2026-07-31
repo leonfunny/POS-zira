@@ -24,6 +24,9 @@ const BILLIARD_MUTATION_RULES: BilliardMutationRule[] = [
   { method: 'PUT', path: /^\/billiard\/table-layouts\/[^/?#]+$/, operation: 'upsert_layout', policy: 'queue-safe' },
   { method: 'POST', path: /^\/billiard\/sessions$/, operation: 'start_session', policy: 'online-only' },
   { method: 'GET', path: /^\/billiard\/sessions\/[^/?#]+$/, operation: 'online_api', policy: 'online-only' },
+  // Must precede the generic PATCH /billiard/sessions/:id rule below — the
+  // literal "merge" segment would otherwise be captured as a session id.
+  { method: 'PATCH', path: /^\/billiard\/sessions\/merge$/, operation: 'merge_sessions', policy: 'online-only' },
   { method: 'PATCH', path: /^\/billiard\/sessions\/[^/?#]+$/, operation: 'update_session', policy: 'queue-safe' },
   { method: 'PATCH', path: /^\/billiard\/sessions\/[^/?#]+\/pause$/, operation: 'pause_session', policy: 'online-only' },
   { method: 'PATCH', path: /^\/billiard\/sessions\/[^/?#]+\/resume$/, operation: 'resume_session', policy: 'online-only' },
@@ -33,6 +36,14 @@ const BILLIARD_MUTATION_RULES: BilliardMutationRule[] = [
   { method: 'POST', path: /^\/billiard\/sessions\/[^/?#]+\/payment$/, operation: 'process_payment', policy: 'online-only' },
   { method: 'POST', path: /^\/billiard\/sessions\/void-batch$/, operation: 'void_sessions_batch', policy: 'online-only' },
   { method: 'POST', path: /^\/billiard\/sessions\/[^/?#]+\/void$/, operation: 'void_session', policy: 'online-only' },
+  // Walk-in retail (fnb_only session, born settled) + counter parity ops.
+  // All online-only: each needs the server's authoritative result (session id
+  // for the receipt, split math, shift state) — nothing to replay offline.
+  { method: 'POST', path: /^\/billiard\/retail\/quick-sale$/, operation: 'retail_quick_sale', policy: 'online-only' },
+  { method: 'GET', path: /^\/billiard\/retail\/today$/, operation: 'online_api', policy: 'online-only' },
+  { method: 'POST', path: /^\/billiard\/sessions\/[^/?#]+\/split$/, operation: 'split_bill', policy: 'online-only' },
+  { method: 'GET', path: /^\/billiard\/shifts\/current$/, operation: 'online_api', policy: 'online-only' },
+  { method: 'POST', path: /^\/billiard\/shifts\/open$/, operation: 'open_shift', policy: 'online-only' },
   { method: 'DELETE', path: /^\/billiard\/sessions\/[^/?#]+\/items\/[^/?#]+$/, operation: 'remove_item', policy: 'online-only' },
   { method: 'PATCH', path: /^\/billiard\/sessions\/[^/?#]+\/items\/[^/?#]+$/, operation: 'update_item', policy: 'online-only' },
   { method: 'GET', path: /^\/billiard\/bookings\?date=\d{4}-\d{2}-\d{2}&limit=200$/, operation: 'online_api', policy: 'online-only' },
