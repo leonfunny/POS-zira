@@ -5,6 +5,7 @@ import {
   type ReceiptPrintOutboxRoute,
   type ReceiptPrintOutboxRow,
 } from '../database/repos/receipt-print-outbox-repo';
+import logger from '../logger';
 
 export interface ReceiptPrintOutboxScope {
   salonId: string;
@@ -168,6 +169,7 @@ export class ReceiptPrintOutbox {
   private readonly retryDelayMs: (attempts: number) => number;
   private drainPromise: Promise<void> | null = null;
   private recoveredScopeKey: string | null = null;
+  private readonly pendingRemoteNudges = new Set<string>();
 
   constructor(private readonly deps: ReceiptPrintOutboxDeps) {
     this.repo = deps.repo ?? receiptPrintOutboxRepo;
@@ -191,14 +193,75 @@ export class ReceiptPrintOutbox {
     return drain;
   }
 
+  /**
+   * Wake only an already-accepted remote job with this exact backend id.
+   *
+   * Socket status is merely a nudge: drain() still performs the authoritative
+   * GET for the stored REMOTE_ACCEPTED identity. An unrelated event must never
+   * start a PENDING receipt, create another job, or pulse a cash drawer.
+   */
+  async nudgeRemoteJob(remoteJobId: string): Promise<void> {
+    const cleanRemoteJobId = String(remoteJobId || '').trim();
+    if (!cleanRemoteJobId) return;
+
+    while (this.pendingRemoteNudges.size >= 100) {
+      const oldest = this.pendingRemoteNudges.values().next().value;
+      if (!oldest) break;
+      this.pendingRemoteNudges.delete(oldest);
+    }
+    this.pendingRemoteNudges.add(cleanRemoteJobId);
+
+    try {
+      // Completion can arrive while create-job or its outcome flush is still
+      // in flight. Wait for that drain to persist REMOTE_ACCEPTED, then check
+      // the durable identity once more so the signal is not lost.
+      const activeDrain = this.drainPromise;
+      if (activeDrain) await activeDrain.catch(() => undefined);
+
+      const scope = cleanScope(this.deps.getScope());
+      const head = this.repo.getHead(scope.salonId, scope.deviceId);
+      if (
+        head?.status === 'REMOTE_ACCEPTED'
+        && head.remote_job_id === cleanRemoteJobId
+      ) {
+        await this.wake();
+      }
+    } finally {
+      this.pendingRemoteNudges.delete(cleanRemoteJobId);
+    }
+  }
+
+  /** Exact delay for the current FIFO head; the 1s interval remains a watchdog. */
+  getNextWakeDelayMs(): number | null {
+    const scope = cleanScope(this.deps.getScope());
+    const head = this.repo.getHead(scope.salonId, scope.deviceId);
+    if (!head?.next_attempt_at) return null;
+    const dueAt = parseTimestamp(head.next_attempt_at);
+    if (!Number.isFinite(dueAt)) return null;
+    return Math.max(0, dueAt - this.now().getTime());
+  }
+
   private nowIso(): string {
     return this.now().toISOString();
   }
 
-  private async flushRequired(): Promise<void> {
-    const result = await this.deps.flush();
-    if (result && result.success === false) {
-      throw new Error(`receipt-print-outbox-flush-failed: ${result.error || 'unknown error'}`);
+  private async flushRequired(
+    stage: string,
+    row?: ReceiptPrintOutboxRow,
+  ): Promise<void> {
+    const startedAt = Date.now();
+    let success = false;
+    try {
+      const result = await this.deps.flush();
+      if (result && result.success === false) {
+        throw new Error(`receipt-print-outbox-flush-failed: ${result.error || 'unknown error'}`);
+      }
+      success = true;
+    } finally {
+      logger.info(
+        `[ReceiptLatency] job=${row?.job_id || 'none'} order=${row?.order_id || 'none'} `
+        + `flushStage=${stage} flushMs=${Date.now() - startedAt} success=${success}`,
+      );
     }
   }
 
@@ -265,7 +328,7 @@ export class ReceiptPrintOutbox {
       scope.deviceId,
       this.nowIso(),
     );
-    if (recovered > 0) await this.flushRequired();
+    if (recovered > 0) await this.flushRequired('recovery');
     this.recoveredScopeKey = scopeKey;
   }
 
@@ -288,7 +351,7 @@ export class ReceiptPrintOutbox {
             remoteJobId: row.remote_job_id,
             updatedAt: this.nowIso(),
           });
-          await this.flushRequired();
+          await this.flushRequired('remote-review', row);
           continue;
         }
       } else {
@@ -299,14 +362,17 @@ export class ReceiptPrintOutbox {
             failureClass: 'SAFE_BEFORE_PRINT',
             updatedAt: this.nowIso(),
           });
-          await this.flushRequired();
+          await this.flushRequired('pre-dispatch-review', row);
           continue;
         }
       }
 
       const nowMs = this.now().getTime();
       const dueAt = row.next_attempt_at ? parseTimestamp(row.next_attempt_at) : Number.NaN;
-      if (Number.isFinite(dueAt) && dueAt > nowMs) {
+      const matchingRemoteNudge = row.status === 'REMOTE_ACCEPTED'
+        && !!row.remote_job_id
+        && this.pendingRemoteNudges.delete(row.remote_job_id);
+      if (Number.isFinite(dueAt) && dueAt > nowMs && !matchingRemoteNudge) {
         // Strict FIFO: never skip a sleeping head and print a newer receipt.
         // The bounded stale/manual-review checks above still run first so a
         // malformed or far-future poll time cannot block the queue forever.
@@ -322,7 +388,7 @@ export class ReceiptPrintOutbox {
           failureClass: 'SAFE_BEFORE_PRINT',
           updatedAt: this.nowIso(),
         });
-        await this.flushRequired();
+        await this.flushRequired('payload-review', row);
         continue;
       }
 
@@ -334,7 +400,7 @@ export class ReceiptPrintOutbox {
         // Hard safety boundary: DISPATCHING must reach disk before any local
         // WritePrinter call or remote HTTP request can happen.
         try {
-          await this.flushRequired();
+          await this.flushRequired('pre-dispatch', dispatchRow);
         } catch (error) {
           this.repo.markFailedSafe(row.job_id, {
             error: errorMessage(error),
@@ -343,12 +409,13 @@ export class ReceiptPrintOutbox {
           });
           // Best effort only. If this also fails, the last durable state was
           // PENDING, which is still safe to retry because dispatch never ran.
-          await this.flushRequired().catch(() => undefined);
+          await this.flushRequired('pre-dispatch-failure', dispatchRow).catch(() => undefined);
           throw error;
         }
       }
 
-      let result: ReceiptPrintDispatchResult;
+      let result: ReceiptPrintDispatchResult | null = null;
+      const dispatchStartedAt = Date.now();
       try {
         result = await this.deps.dispatch(dispatchRow, payload);
       } catch (error) {
@@ -383,9 +450,21 @@ export class ReceiptPrintOutbox {
             updatedAt: this.nowIso(),
           });
         }
-        await this.flushRequired();
+        await this.flushRequired('dispatch-error', dispatchRow);
         continue;
+      } finally {
+        const createdAt = parseTimestamp(dispatchRow.created_at);
+        const queueAgeMs = Number.isFinite(createdAt)
+          ? Math.max(0, Date.now() - createdAt)
+          : -1;
+        logger.info(
+          `[ReceiptLatency] job=${dispatchRow.job_id} order=${dispatchRow.order_id} `
+          + `dispatchFrom=${dispatchRow.status} dispatchMs=${Date.now() - dispatchStartedAt} `
+          + `queueAgeMs=${queueAgeMs} result=${result?.kind || 'THREW'}`,
+        );
       }
+
+      if (!result) continue;
 
       if (
         dispatchRow.status === 'REMOTE_ACCEPTED'
@@ -406,7 +485,7 @@ export class ReceiptPrintOutbox {
           remoteJobId: dispatchRow.remote_job_id,
           updatedAt: this.nowIso(),
         });
-        await this.flushRequired();
+        await this.flushRequired('identity-review', dispatchRow);
         continue;
       }
 
@@ -449,7 +528,7 @@ export class ReceiptPrintOutbox {
           updatedAt: this.nowIso(),
         });
       }
-      await this.flushRequired();
+      await this.flushRequired('outcome', dispatchRow);
 
       if (result.kind === 'REMOTE_ACCEPTED' || result.kind === 'FAILED_SAFE') {
         // This row remains the queue head. Stop until its poll/retry time so a

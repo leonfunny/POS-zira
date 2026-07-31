@@ -468,6 +468,12 @@ const MANUAL_REPRINT_BLOCKED_INITIAL_STATUSES = new Set<ReceiptPrintOutboxStatus
   'DISPATCHING',
   'REMOTE_ACCEPTED',
 ]);
+const REMOTE_RECEIPT_TERMINAL_STATUSES = new Set([
+  'COMPLETED',
+  'PRINTED',
+  'FAILED',
+  'CANCELLED',
+]);
 
 function positiveGrosze(value: unknown): number {
   const amount = Math.round(Number(value) || 0);
@@ -733,6 +739,9 @@ export class PosModule extends BaseModule {
   private productAdminMutationReplayTimer: ReturnType<typeof setInterval> | null = null;
   private receiptPrintOutbox: ReceiptPrintOutbox | null = null;
   private receiptPrintReplayTimer: ReturnType<typeof setInterval> | null = null;
+  private receiptPrintDueTimer: ReturnType<typeof setTimeout> | null = null;
+  private receiptPrintReplayEnabled = false;
+  private receiptPrintReplayGeneration = 0;
   private receiptPrintNotifiedStatuses = new Map<string, ReceiptPrintOutboxStatus>();
   private billiardHandoffInFlight = new Map<string, Promise<any>>();
   private billiardTenderBoundaryInFlight = new Set<string>();
@@ -8432,6 +8441,28 @@ export class PosModule extends BaseModule {
   }
 
   setupSocketHandlers(socket: SocketClient): void {
+    socket.on('job:updated', (data: any) => {
+      const status = String(data?.status || '').trim().toUpperCase();
+      const remoteJobId = String(data?.jobId || data?.id || '').trim();
+      if (!remoteJobId || !REMOTE_RECEIPT_TERMINAL_STATUSES.has(status)) return;
+
+      const serverTimestamp = Date.parse(String(
+        data?.completedAt || data?.updatedAt || data?.createdAt || '',
+      ));
+      const ingressMs = Number.isFinite(serverTimestamp)
+        ? Math.max(0, Date.now() - serverTimestamp)
+        : -1;
+      logger.info(
+        `[ReceiptLatency] remoteJob=${remoteJobId} socketStatus=${status} `
+        + `socketIngressMs=${ingressMs}`,
+      );
+
+      // The event status is never trusted as the outcome. It only wakes the
+      // exact durable REMOTE_ACCEPTED row, which then performs an authoritative
+      // status GET without creating a job, reprinting, or pulsing the drawer.
+      void this.wakeReceiptPrintOutbox(`job-updated:${status}`, remoteJobId);
+    });
+
     socket.on('elavon:payment-status-update', (data: any) => {
       const posWindow = this.windowManager?.getWindow('pos');
       if (posWindow && !posWindow.isDestroyed()) posWindow.webContents.send('pos:elavon-status', data);
@@ -8727,22 +8758,75 @@ export class PosModule extends BaseModule {
     }
   }
 
-  private async wakeReceiptPrintOutbox(reason: string): Promise<void> {
-    if (!this.receiptPrintOutbox) return;
+  private async wakeReceiptPrintOutbox(
+    reason: string,
+    remoteJobId?: string,
+  ): Promise<void> {
+    const generation = this.receiptPrintReplayGeneration;
+    if (!this.receiptPrintOutbox || !this.receiptPrintReplayEnabled) return;
     try {
-      await this.receiptPrintOutbox.wake();
+      if (remoteJobId) {
+        await this.receiptPrintOutbox.nudgeRemoteJob(remoteJobId);
+      } else {
+        await this.receiptPrintOutbox.wake();
+      }
     } catch (error: any) {
       logger.warn(
         `[PosModule] Receipt print queue wake (${reason}) deferred: ` +
         `${error?.message || error}`,
       );
     } finally {
-      this.emitReceiptPrintStatusChanges();
+      // A stop/destroy can run while a DB flush or remote status GET is in
+      // flight. Never let that stale completion resurrect an exact timer (or
+      // clear a newer generation's timer after a later restart).
+      if (
+        this.receiptPrintReplayEnabled
+        && generation === this.receiptPrintReplayGeneration
+      ) {
+        this.emitReceiptPrintStatusChanges();
+        this.scheduleReceiptPrintDueWake(generation);
+      }
+    }
+  }
+
+  private scheduleReceiptPrintDueWake(generation: number): void {
+    if (
+      !this.receiptPrintReplayEnabled
+      || generation !== this.receiptPrintReplayGeneration
+    ) return;
+    if (this.receiptPrintDueTimer) {
+      clearTimeout(this.receiptPrintDueTimer);
+      this.receiptPrintDueTimer = null;
+    }
+    if (!this.receiptPrintOutbox) return;
+
+    try {
+      const delayMs = this.receiptPrintOutbox.getNextWakeDelayMs();
+      if (delayMs === null) return;
+      const boundedDelayMs = Math.min(
+        2_147_000_000,
+        Math.max(1, Math.ceil(delayMs)),
+      );
+      this.receiptPrintDueTimer = setTimeout(() => {
+        this.receiptPrintDueTimer = null;
+        if (
+          !this.receiptPrintReplayEnabled
+          || generation !== this.receiptPrintReplayGeneration
+        ) return;
+        void this.wakeReceiptPrintOutbox('due');
+      }, boundedDelayMs);
+      this.receiptPrintDueTimer.unref?.();
+    } catch (error: any) {
+      logger.debug(
+        `[PosModule] Receipt print exact wake deferred: ${error?.message || error}`,
+      );
     }
   }
 
   private startReceiptPrintReplayTimer(): void {
     if (this.receiptPrintReplayTimer) return;
+    this.receiptPrintReplayEnabled = true;
+    this.receiptPrintReplayGeneration += 1;
     void this.wakeReceiptPrintOutbox('startup');
     this.receiptPrintReplayTimer = setInterval(() => {
       void this.wakeReceiptPrintOutbox('timer');
@@ -8751,9 +8835,16 @@ export class PosModule extends BaseModule {
   }
 
   private stopReceiptPrintReplayTimer(): void {
-    if (!this.receiptPrintReplayTimer) return;
-    clearInterval(this.receiptPrintReplayTimer);
-    this.receiptPrintReplayTimer = null;
+    this.receiptPrintReplayEnabled = false;
+    this.receiptPrintReplayGeneration += 1;
+    if (this.receiptPrintReplayTimer) {
+      clearInterval(this.receiptPrintReplayTimer);
+      this.receiptPrintReplayTimer = null;
+    }
+    if (this.receiptPrintDueTimer) {
+      clearTimeout(this.receiptPrintDueTimer);
+      this.receiptPrintDueTimer = null;
+    }
   }
 
   async start(): Promise<void> {

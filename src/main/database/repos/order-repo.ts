@@ -134,6 +134,20 @@ export interface ServerMirroredGrossItemRepairResult {
   skipped_reasons: Record<string, number>;
 }
 
+export interface ServerOrderUpsertOptions {
+  /** The caller already owns the sql.js transaction containing this upsert. */
+  callerOwnsTransaction?: boolean;
+}
+
+function runServerOrderMutation<T>(
+  options: ServerOrderUpsertOptions | undefined,
+  mutation: () => T,
+): T {
+  return options?.callerOwnsTransaction
+    ? mutation()
+    : database.transaction(mutation);
+}
+
 type ServerMirroredGrossRepairCandidate = {
   id: string;
   order_number: string | null;
@@ -1011,7 +1025,11 @@ export const orderRepo = {
     return result;
   },
 
-  upsertFromServer(adaptedOrder: any, items: OrderItemRow[]): { inserted: boolean; localOrderId: string } {
+  upsertFromServer(
+    adaptedOrder: any,
+    items: OrderItemRow[],
+    options?: ServerOrderUpsertOptions,
+  ): { inserted: boolean; localOrderId: string } {
     const existing = orderRepo.getById(adaptedOrder.id);
     if (existing) {
       if (
@@ -1021,7 +1039,7 @@ export const orderRepo = {
       ) {
         throw new Error('Server Billiard order origin conflicts with the local paid order journal.');
       }
-      database.transaction(() => {
+      runServerOrderMutation(options, () => {
         database.run(
           `UPDATE orders
            SET client_attempt_id = COALESCE(client_attempt_id, ?),
@@ -1075,7 +1093,7 @@ export const orderRepo = {
 
     const { _origin, ...dbRow } = adaptedOrder;
 
-    database.transaction(() => {
+    runServerOrderMutation(options, () => {
       database.run(
         `INSERT INTO orders (id, order_number, status, subtotal, discount, tax, total, payment_method, payment_amount, change_amount, staff_id, staff_name, customer_id, customer_name, customer_nip, shift_id, source, table_id, covers, order_type, tip, mode, payment_tenders, client_attempt_id, billiard_origin_json, synced, backend_id, synced_at, refund_amount, refund_reason, refunded_at, refund_lines, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?)`,

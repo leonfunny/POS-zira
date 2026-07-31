@@ -163,15 +163,17 @@ namespace Zira.Thermal
         private const uint JobStatusComplete = 0x00001000;
         private const uint JobStatusRetained = 0x00002000;
 
-        private const uint FatalJobStatusMask =
+        private const uint HardFailureJobStatusMask =
             JobStatusPaused |
             JobStatusError |
-            JobStatusDeleting |
             JobStatusOffline |
             JobStatusPaperOut |
-            JobStatusDeleted |
             JobStatusBlockedDeviceQueue |
             JobStatusUserIntervention;
+
+        private const uint CleanupJobStatusMask =
+            JobStatusDeleting |
+            JobStatusDeleted;
 
         private const uint CompleteJobStatusMask =
             JobStatusPrinted |
@@ -1150,19 +1152,26 @@ namespace Zira.Thermal
 
                 lastStatus = query.Status;
                 lastStatusText = DescribeJobStatus(lastStatus);
-                uint fatalStatus = lastStatus & FatalJobStatusMask;
-                if (fatalStatus != 0)
+                uint hardFailureStatus = lastStatus & HardFailureJobStatusMask;
+                uint cleanupStatus = lastStatus & CleanupJobStatusMask;
+                if (hardFailureStatus != 0)
                 {
-                    BestEffortDeleteJob(printerHandle, jobId);
+                    bool deleteRequested = cleanupStatus == 0;
+                    if (deleteRequested)
+                    {
+                        BestEffortDeleteJob(printerHandle, jobId);
+                    }
                     timer.Stop();
                     throw new WorkerException(
                         "PRINT_JOB_NOT_READY",
                         "JOB_RECONCILE",
                         UncertainAfterPrint,
                         "Accepted print job " + jobId +
-                        " entered " + DescribeJobStatus(fatalStatus) +
+                        " entered " + DescribeJobStatus(hardFailureStatus) +
                         " (status=0x" + lastStatus.ToString("X8") +
-                        "); delete requested"
+                        (deleteRequested
+                            ? "); delete requested"
+                            : "); no additional delete requested")
                     );
                 }
 
@@ -1175,6 +1184,20 @@ namespace Zira.Thermal
                         StatusText = lastStatusText,
                         ElapsedMs = timer.ElapsedMilliseconds
                     };
+                }
+
+                if (cleanupStatus != 0)
+                {
+                    timer.Stop();
+                    throw new WorkerException(
+                        "PRINT_JOB_NOT_READY",
+                        "JOB_RECONCILE",
+                        UncertainAfterPrint,
+                        "Accepted print job " + jobId +
+                        " entered " + DescribeJobStatus(cleanupStatus) +
+                        " (status=0x" + lastStatus.ToString("X8") +
+                        "); no additional delete requested"
+                    );
                 }
 
                 if (timer.ElapsedMilliseconds >= JobReconcileWindowMs)

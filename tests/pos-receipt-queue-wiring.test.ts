@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { EventEmitter } from 'node:events';
 import ts from 'typescript';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -771,5 +772,105 @@ describe('Receipt outbox route identity wiring', () => {
     expect(readinessCall).toBeGreaterThan(-1);
     expect(sharedSubmit).toBeGreaterThan(readinessCall);
     expect(richMapping).toBeGreaterThan(sharedSubmit);
+  });
+});
+
+describe('Receipt outbox remote completion scheduling', () => {
+  function buildReceiptLifecycleModule(outbox: {
+    wake: ReturnType<typeof vi.fn>;
+    nudgeRemoteJob: ReturnType<typeof vi.fn>;
+    getNextWakeDelayMs: ReturnType<typeof vi.fn>;
+  }) {
+    const module = new PosModule({
+      getOptional: vi.fn(() => undefined),
+    } as any) as any;
+    module.receiptPrintOutbox = outbox;
+    module.receiptPrintReplayEnabled = true;
+    module.receiptPrintReplayGeneration = 1;
+    module.emitReceiptPrintStatusChanges = vi.fn();
+    return module;
+  }
+
+  it('uses only a terminal job event to nudge the exact durable remote identity', async () => {
+    const outbox = {
+      wake: vi.fn(async () => undefined),
+      nudgeRemoteJob: vi.fn(async () => undefined),
+      getNextWakeDelayMs: vi.fn(() => null),
+    };
+    const module = buildReceiptLifecycleModule(outbox);
+    const socket = new EventEmitter();
+    module.setupSocketHandlers(socket as any);
+
+    socket.emit('job:updated', { jobId: 'remote-printing', status: 'PRINTING' });
+    socket.emit('job:updated', { status: 'COMPLETED' });
+    socket.emit('job:updated', {
+      jobId: 'remote-complete',
+      status: 'COMPLETED',
+      updatedAt: new Date().toISOString(),
+    });
+
+    await vi.waitFor(() => {
+      expect(outbox.nudgeRemoteJob).toHaveBeenCalledOnce();
+    });
+    expect(outbox.nudgeRemoteJob).toHaveBeenCalledWith('remote-complete');
+    expect(outbox.wake).not.toHaveBeenCalled();
+  });
+
+  it('fires the exact due timer and clears it together with the watchdog', async () => {
+    vi.useFakeTimers();
+    try {
+      const outbox = {
+        wake: vi.fn(async () => undefined),
+        nudgeRemoteJob: vi.fn(async () => undefined),
+        getNextWakeDelayMs: vi.fn()
+          .mockReturnValueOnce(250)
+          .mockReturnValueOnce(500),
+      };
+      const module = buildReceiptLifecycleModule(outbox);
+
+      module.startReceiptPrintReplayTimer();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(outbox.wake).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(249);
+      expect(outbox.wake).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(outbox.wake).toHaveBeenCalledTimes(2);
+
+      module.stopReceiptPrintReplayTimer();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(outbox.wake).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not resurrect a due timer when an in-flight wake settles after stop', async () => {
+    vi.useFakeTimers();
+    try {
+      let finishWake!: () => void;
+      const outbox = {
+        wake: vi.fn(() => new Promise<void>((resolve) => { finishWake = resolve; })),
+        nudgeRemoteJob: vi.fn(async () => undefined),
+        getNextWakeDelayMs: vi.fn(() => 25),
+      };
+      const module = buildReceiptLifecycleModule(outbox);
+
+      module.startReceiptPrintReplayTimer();
+      await Promise.resolve();
+      expect(outbox.wake).toHaveBeenCalledOnce();
+
+      module.stopReceiptPrintReplayTimer();
+      finishWake();
+      await Promise.resolve();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(outbox.wake).toHaveBeenCalledOnce();
+      expect(outbox.getNextWakeDelayMs).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

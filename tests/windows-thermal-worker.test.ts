@@ -161,23 +161,38 @@ describe('Windows thermal worker resource', () => {
     expect(source).toContain('FatalPrinterStatusMask');
     expect(source).toContain('PrinterStatusOffline');
     expect(source).toContain('PrinterStatusPaperOut');
-    expect(source).toContain('FatalJobStatusMask');
+    expect(source).toContain('HardFailureJobStatusMask');
+    expect(source).toContain('CleanupJobStatusMask');
     expect(source).toContain('JobStatusBlockedDeviceQueue');
     expect(source).toContain('JobControlDelete');
     expect(source).toContain('ReconcileJob(handle, jobId)');
     expect(source).toContain('bool jobSubmitted = false;');
     expect(source).toContain('jobSubmitted = true;');
     expect(source).toContain('jobSubmitted ? UncertainAfterPrint : SafeBeforePrint');
-    const fatalMask = source.slice(
-      source.indexOf('private const uint FatalJobStatusMask'),
+    const hardFailureMask = source.slice(
+      source.indexOf('private const uint HardFailureJobStatusMask'),
+      source.indexOf('private const uint CleanupJobStatusMask'),
+    );
+    const cleanupMask = source.slice(
+      source.indexOf('private const uint CleanupJobStatusMask'),
       source.indexOf('private const uint CompleteJobStatusMask'),
     );
     const completeMask = source.slice(
       source.indexOf('private const uint CompleteJobStatusMask'),
       source.indexOf('[StructLayout', source.indexOf('private const uint CompleteJobStatusMask')),
     );
-    expect(fatalMask).toContain('JobStatusDeleting');
-    expect(fatalMask).toContain('JobStatusDeleted');
+    expect(hardFailureMask).toContain('JobStatusPaused');
+    expect(hardFailureMask).toContain('JobStatusError');
+    expect(hardFailureMask).toContain('JobStatusOffline');
+    expect(hardFailureMask).toContain('JobStatusPaperOut');
+    expect(hardFailureMask).toContain('JobStatusBlockedDeviceQueue');
+    expect(hardFailureMask).toContain('JobStatusUserIntervention');
+    expect(hardFailureMask).not.toContain('JobStatusDeleting');
+    expect(hardFailureMask).not.toContain('JobStatusDeleted');
+    expect(cleanupMask).toContain('JobStatusDeleting');
+    expect(cleanupMask).toContain('JobStatusDeleted');
+    expect(cleanupMask).not.toContain('JobStatusError');
+    expect(cleanupMask).not.toContain('JobStatusPaperOut');
     expect(completeMask).toContain('JobStatusPrinted');
     expect(completeMask).toContain('JobStatusComplete');
     expect(completeMask).not.toContain('JobStatusDeleted');
@@ -186,6 +201,60 @@ describe('Windows thermal worker resource', () => {
     expect(source).toContain('SAFE_BEFORE_PRINT');
     expect(source).toContain('UNCERTAIN_AFTER_PRINT');
     expect(source).toContain("type = 'ready'");
+  });
+
+  it('accepts 0x94 as printed while preserving hard-fault and cleanup-only uncertainty', () => {
+    const source = readFileSync(workerScriptPath, 'utf8');
+    const constantValue = (name: string): number => {
+      const match = source.match(new RegExp(`private const uint ${name} = (0x[0-9A-F]+);`, 'i'));
+      expect(match, `missing ${name}`).not.toBeNull();
+      return Number.parseInt(match![1], 16);
+    };
+    const maskValue = (name: string): number => {
+      const match = source.match(new RegExp(`private const uint ${name} =([\\s\\S]*?);`));
+      expect(match, `missing ${name}`).not.toBeNull();
+      return Array.from(match![1].matchAll(/JobStatus[A-Za-z]+/g))
+        .reduce((mask, flag) => mask | constantValue(flag[0]), 0);
+    };
+
+    const hard = maskValue('HardFailureJobStatusMask');
+    const cleanup = maskValue('CleanupJobStatusMask');
+    const complete = maskValue('CompleteJobStatusMask');
+    const classify = (status: number): 'HARD' | 'COMPLETE' | 'CLEANUP' | 'PENDING' => {
+      if ((status & hard) !== 0) return 'HARD';
+      if ((status & complete) !== 0) return 'COMPLETE';
+      if ((status & cleanup) !== 0) return 'CLEANUP';
+      return 'PENDING';
+    };
+
+    expect(classify(0x94)).toBe('COMPLETE'); // DELETING | PRINTING | PRINTED
+    expect(classify(0x04)).toBe('CLEANUP'); // DELETING only
+    expect(classify(0x100)).toBe('CLEANUP'); // DELETED only
+    expect(classify(0xc0)).toBe('HARD'); // PRINTED | PAPER_OUT
+    expect(classify(0x82)).toBe('HARD'); // PRINTED | ERROR
+    expect(classify(0x44)).toBe('HARD'); // PAPER_OUT | DELETING
+
+    const reconcile = source.slice(
+      source.indexOf('private static JobReconcileResult ReconcileJob'),
+      source.indexOf('private static void BestEffortDeleteJob'),
+    );
+    const hardBranch = reconcile.indexOf('if (hardFailureStatus != 0)');
+    const completeBranch = reconcile.indexOf('if ((lastStatus & CompleteJobStatusMask) != 0)');
+    const cleanupBranch = reconcile.indexOf('if (cleanupStatus != 0)');
+    const timeoutBranch = reconcile.indexOf('if (timer.ElapsedMilliseconds >= JobReconcileWindowMs)');
+    expect(hardBranch).toBeGreaterThan(-1);
+    expect(completeBranch).toBeGreaterThan(hardBranch);
+    expect(cleanupBranch).toBeGreaterThan(completeBranch);
+    expect(timeoutBranch).toBeGreaterThan(cleanupBranch);
+
+    const hardBlock = reconcile.slice(hardBranch, completeBranch);
+    expect(hardBlock).toContain('bool deleteRequested = cleanupStatus == 0;');
+    expect(hardBlock.indexOf('if (deleteRequested)'))
+      .toBeLessThan(hardBlock.indexOf('BestEffortDeleteJob(printerHandle, jobId)'));
+    const cleanupBlock = reconcile.slice(cleanupBranch, timeoutBranch);
+    expect(cleanupBlock).not.toContain('BestEffortDeleteJob');
+    expect(cleanupBlock).not.toContain('SetJob(');
+    expect(cleanupBlock).toContain('no additional delete requested');
   });
 });
 

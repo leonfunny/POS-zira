@@ -9,6 +9,15 @@ vi.mock('../src/main/database/database', () => ({
   },
 }));
 
+vi.mock('../src/main/logger', () => ({
+  default: {
+    debug: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+  },
+}));
+
 import {
   receiptPrintPayloadHash,
   stableReceiptPrintPayloadJson,
@@ -346,6 +355,80 @@ describe('ReceiptPrintOutbox', () => {
     // backend job can be reconciled.
     await outbox.wake();
     expect(dispatch).toHaveBeenCalledOnce();
+  });
+
+  it('keeps a terminal socket nudge that arrives while remote acceptance is still flushing', async () => {
+    let releaseCreate!: () => void;
+    const createGate = new Promise<void>((resolve) => { releaseCreate = resolve; });
+    const dispatchedRows: ReceiptPrintOutboxRow[] = [];
+    const dispatch = vi.fn(async (row: ReceiptPrintOutboxRow) => {
+      dispatchedRows.push({ ...row });
+      if (row.status === 'DISPATCHING') {
+        await createGate;
+        return {
+          kind: 'REMOTE_ACCEPTED',
+          route: 'SHARED_NETWORK',
+          printerId: 'printer-pos1',
+          remoteJobId: 'remote-1',
+        } as const;
+      }
+      return {
+        kind: 'COMPLETED',
+        route: 'SHARED_NETWORK',
+        printerId: row.printer_id,
+        remoteJobId: row.remote_job_id,
+      } as const;
+    });
+    const { outbox, repo } = build([makeRow(1)], dispatch);
+
+    const initialWake = outbox.wake();
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalledOnce());
+    const terminalNudge = outbox.nudgeRemoteJob('remote-1');
+    releaseCreate();
+    await Promise.all([initialWake, terminalNudge]);
+
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(dispatchedRows[1]).toMatchObject({
+      status: 'REMOTE_ACCEPTED',
+      printer_id: 'printer-pos1',
+      remote_job_id: 'remote-1',
+      attempts: 1,
+    });
+    expect(repo.getByJobId('job-1')).toMatchObject({
+      status: 'COMPLETED',
+      attempts: 1,
+      remote_job_id: 'remote-1',
+    });
+  });
+
+  it('ignores an unrelated remote nudge without dispatching a pending receipt', async () => {
+    const dispatch = vi.fn(async () => ({
+      kind: 'COMPLETED',
+      route: 'LOCAL',
+    } as const));
+    const { outbox, repo } = build([makeRow(1)], dispatch);
+
+    await outbox.nudgeRemoteJob('remote-from-another-order');
+
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(repo.getByJobId('job-1')).toMatchObject({
+      status: 'PENDING',
+      attempts: 0,
+    });
+  });
+
+  it('reports the exact due delay for the current FIFO head', () => {
+    const remote = makeRow(1, 'REMOTE_ACCEPTED', {
+      route: 'SHARED_NETWORK',
+      printer_id: 'printer-pos1',
+      remote_job_id: 'remote-1',
+      next_attempt_at: '2026-07-29T10:01:00.250Z',
+    });
+    const { outbox } = build([remote], vi.fn());
+
+    expect(outbox.getNextWakeDelayMs()).toBe(250);
+    now = new Date('2026-07-29T10:01:00.400Z');
+    expect(outbox.getNextWakeDelayMs()).toBe(0);
   });
 
   it('quarantines a replay result that tries to replace the stored remote identity', async () => {
