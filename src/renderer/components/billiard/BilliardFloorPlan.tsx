@@ -59,6 +59,7 @@ import { TransferTableDialog } from './TransferTableDialog';
 import { PaymentDialog } from './PaymentDialog';
 import { UnsettledPanel } from './UnsettledPanel';
 import { RetailQuickSaleModal } from './RetailQuickSaleModal';
+import { ShiftChip } from './ShiftChip';
 import { EditPriceDialog } from './EditPriceDialog';
 import { ReservationPanel } from './ReservationPanel';
 import { RenameFloorDialog } from './RenameFloorDialog';
@@ -1138,14 +1139,21 @@ function FloorPlanInner({ language, onPreflightPos, onPayInPos, active = true }:
       )}
 
       {!editMode && (
-        <button
-          type="button"
-          onClick={() => setRetailOpen(true)}
-          className="flex w-fit items-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-900 transition-colors hover:bg-emerald-100"
-        >
-          <ShoppingCart className="h-4 w-4" />
-          {t('billiard.retailQuickSale') || 'Retail sale (no table)'}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <ShiftChip
+            language={language}
+            online={syncStatus?.apiReachable !== false}
+            pollPaused={!active}
+          />
+          <button
+            type="button"
+            onClick={() => setRetailOpen(true)}
+            className="flex w-fit items-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-900 transition-colors hover:bg-emerald-100"
+          >
+            <ShoppingCart className="h-4 w-4" />
+            {t('billiard.retailQuickSale') || 'Retail sale (no table)'}
+          </button>
+        </div>
       )}
 
       {!editMode && unsettledSummary.count > 0 && (
