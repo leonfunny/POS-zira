@@ -373,6 +373,79 @@ export function useVoidSessions(refetch?: () => Promise<void>) {
   );
 }
 
+// ─── Counter parity: walk-in retail, merge/split, business shift ─────
+
+export interface QuickSaleItemInput {
+  variantId?: string;
+  /** Canonical product name — goes on the bill/kitchen ticket, never localized. */
+  name: string;
+  quantity: number;
+  unitPrice: number;
+}
+
+export interface QuickSaleInput {
+  items: QuickSaleItemInput[];
+  paymentMethod: 'CASH' | 'CARD' | 'BLIK' | 'BANK_TRANSFER' | 'TRANSFER';
+  cashReceived?: number;
+  customerName?: string;
+}
+
+/** Walk-in retail: server creates a settled fnb_only session and returns
+ *  `{ session, replayed, changeAmount }` — change is authoritative there. */
+export function useQuickSale(refetch?: () => Promise<void>) {
+  return useMutation(
+    (data: QuickSaleInput) => window.electronAPI.billiard.mutate(
+      'retail_quick_sale', 'POST', '/billiard/retail/quick-sale', data,
+    ),
+    refetch,
+  );
+}
+
+export function useRetailToday(options?: { pollPaused?: boolean; enabled?: boolean }) {
+  return useQuery(
+    () => window.electronAPI.billiard.mutate('online_api', 'GET', '/billiard/retail/today'),
+    [],
+    { pollInterval: 60000, pollPaused: options?.pollPaused, enabled: options?.enabled },
+  );
+}
+
+export function useMergeSessions(refetch?: () => Promise<void>) {
+  return useMutation(
+    (sessionIds: string[]) => window.electronAPI.billiard.mutate(
+      'merge_sessions', 'PATCH', '/billiard/sessions/merge', { sessionIds },
+    ),
+    refetch,
+  );
+}
+
+export function useSplitBill() {
+  return useMutation(
+    (args: { sessionId: string; amounts: number[] }) => window.electronAPI.billiard.mutate(
+      'split_bill', 'POST', `/billiard/sessions/${args.sessionId}/split`,
+      { splitType: 'BY_AMOUNT', amounts: args.amounts },
+    ),
+  );
+}
+
+/** Business-shift snapshot: `{ shift: {...} | null }`. Poll respects
+ *  pollPaused so a hidden billiard tab never wakes the network (flicker rule). */
+export function useCurrentShift(options?: { pollPaused?: boolean }) {
+  return useQuery<{ shift: any | null }>(
+    () => window.electronAPI.billiard.mutate('online_api', 'GET', '/billiard/shifts/current'),
+    [],
+    { pollInterval: 60000, pollPaused: options?.pollPaused },
+  );
+}
+
+export function useOpenShift(refetch?: () => Promise<void>) {
+  return useMutation(
+    (args: { openingCash: number; notes?: string }) => window.electronAPI.billiard.mutate(
+      'open_shift', 'POST', '/billiard/shifts/open', args,
+    ),
+    refetch,
+  );
+}
+
 // ─── Sync status hook ───────────────────────────────
 
 export function useSyncStatus(options?: { pollPaused?: boolean }) {
