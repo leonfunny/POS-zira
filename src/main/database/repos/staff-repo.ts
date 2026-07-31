@@ -21,22 +21,6 @@ export interface StaffWriteInput {
   isActive?: boolean;
 }
 
-export interface StaffUpsertOptions {
-  /** The caller already owns the sql.js transaction containing this upsert. */
-  callerOwnsTransaction?: boolean;
-}
-
-function runStaffUpsert(
-  options: StaffUpsertOptions | undefined,
-  mutation: () => void,
-): void {
-  if (options?.callerOwnsTransaction) {
-    mutation();
-    return;
-  }
-  database.transaction(mutation);
-}
-
 function normalizeStaffInput(input: StaffWriteInput, existing?: StaffRow): StaffRow {
   const name = input.name?.trim();
   if (!name) throw new Error('Staff name is required');
@@ -128,8 +112,8 @@ export const staffRepo = {
     return this.getById(id)!;
   },
 
-  upsertMany(staff: StaffRow[], options?: StaffUpsertOptions): void {
-    runStaffUpsert(options, () => {
+  upsertMany(staff: StaffRow[]): void {
+    database.transaction(() => {
       for (const s of staff) {
         database.run(
           `INSERT INTO pos_staff (id, user_id, name, commission_rate, is_active, updated_at, role, backend_synced_at)

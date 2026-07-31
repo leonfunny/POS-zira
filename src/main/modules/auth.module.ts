@@ -383,12 +383,12 @@ export class AuthModule extends BaseModule {
     ipcMain.handle(IPC_CHANNELS.AUTH_CHANGE_SALON, async () => {
       try {
         const socket = this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET);
+        socket?.disconnect();
         // Archive the leaving salon before clearing — abort if it can't be saved.
         const cleared = await this.archiveSalonThenClear(getConfig().salonId || '', 'change salon');
         if (!cleared.ok) {
           return { success: false, error: cleared.error || 'Không lưu được dữ liệu salon hiện tại — huỷ đổi salon' };
         }
-        socket?.disconnect();
         setSecureApiKey('');
         setConfig({
           apiKey: '', agentId: '', salonId: '', salonName: '', salonSlug: '',
@@ -665,6 +665,7 @@ export class AuthModule extends BaseModule {
             result.access_token,
             'telegram login',
             newSalonId,
+            resolveAuthSalonName(result),
           ).catch((err: any) => logger.debug('[AuthModule] background auto-connect after telegram login failed:', err?.message));
 
           // Trigger post-login sync (clearSalonData may have wiped products while socket was already connected)
@@ -692,8 +693,9 @@ export class AuthModule extends BaseModule {
       const client = new ApiClient(config.serverUrl || 'https://api.enail.pro');
       // Branching logic lives in the pure helper resolveCurrentUser
       // (network/auth-get-user.ts) — see auth-get-user-startup.test.ts
-      // for the per-branch behaviour spec. Identity persistence is delayed
-      // until the tenant archive/clear guard below succeeds.
+      // for the per-branch behaviour spec. The handler here is only
+      // wiring: pass real dependencies in, run the helper, return its
+      // result verbatim.
       const result = await resolveCurrentUser({
         getAuthToken: getSecureAuthToken,
         getMe: (token) => client.getMe(token),
@@ -703,10 +705,7 @@ export class AuthModule extends BaseModule {
           clearSecureAuthTokens();
           setConfig({ authUser: { id: '', email: '', firstName: '', lastName: '', role: '', salonId: '' } });
         },
-        // Commit the resolved identity only after any tenant archive/clear
-        // below succeeds. Persisting it here could mix a new tenant identity
-        // with the old tenant's blocked receipt evidence.
-        onUserResolved: () => undefined,
+        onUserResolved: (authUser) => setConfig({ authUser }),
       });
 
       const resolvedUser = result.data?.isAuthenticated ? result.data.user : undefined;
@@ -718,16 +717,10 @@ export class AuthModule extends BaseModule {
         const cleared = await this.archiveSalonThenClear(currentSalonId, 'startup auth salon switch');
         if (!cleared.ok) {
           logger.error(`[AuthModule] startup salon switch: could not archive ${currentSalonId} (${cleared.error}); kept existing data, skipped clear`);
-          return {
-            success: false,
-            data: { isAuthenticated: false },
-            error: cleared.error || 'Không thể đổi salon khi tác vụ in chưa được xử lý',
-          };
         }
       }
       if (newSalonId) {
         setConfig({
-          authUser: resolvedUser,
           salonId: newSalonId,
           salonName: resolvedUser?.salonName || config.salonName || '',
         });
@@ -737,16 +730,6 @@ export class AuthModule extends BaseModule {
     });
 
     ipcMain.handle(IPC_CHANNELS.AUTH_LOGOUT, async () => {
-      try {
-        database.prepareReceiptPrintOutboxForTenantExit(
-          getConfig().salonId || '',
-          'Initial receipt cancelled before user logout',
-          { allowNeedsReview: true },
-        );
-      } catch (e: any) {
-        logger.warn(`[AuthModule] Logout blocked by receipt lifecycle guard: ${e?.message || e}`);
-        return { success: false, error: e?.message || 'Không thể đăng xuất khi tác vụ in chưa được xử lý' };
-      }
       const socket = this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET);
       socket?.disconnect();
       clearSecureTokens();
@@ -833,6 +816,7 @@ export class AuthModule extends BaseModule {
             result.access_token,
             'email login',
             newSalonId,
+            authUser.salonName || '',
           ).catch((err: any) => logger.debug('[AuthModule] background auto-connect after email login failed:', err?.message));
 
           // Trigger post-login sync (clearSalonData may have wiped products while socket was already connected)
@@ -942,10 +926,7 @@ export class AuthModule extends BaseModule {
     }
   }
 
-  async connectWithApiKey(
-    apiKey: string,
-    options: { expectedSalonId?: string } = {},
-  ): Promise<ConnectResponse | null> {
+  async connectWithApiKey(apiKey: string): Promise<ConnectResponse | null> {
     const config = getConfig();
     const socket = this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET);
     if (!socket) throw new Error('Socket not initialized');
@@ -959,89 +940,38 @@ export class AuthModule extends BaseModule {
     const prevAgentId = config.agentId;
     const prevSalonId = config.salonId;
 
-    let response: ConnectResponse | null = null;
-    const client = new ApiClient(config.serverUrl || 'https://api.enail.pro');
-    // Call REST /print-agent/connect to populate salonName, salonId, agentId, salonSlug.
-    // Probe only: ApiClient must not publish the target config/printer mirror
-    // while old-tenant receipt rows can still dispatch with dynamic auth.
-    try {
-      response = await client.connectWithApiKey(apiKey, { persist: false });
-    } catch (err: any) {
-      logger.warn('[AuthModule] REST connect failed, proceeding with socket only:', err?.message);
-    }
-
-    if (
-      options.expectedSalonId
-      && (!response?.salonId || response.salonId !== options.expectedSalonId)
-    ) {
-      throw new Error(
-        `Print-agent key belongs to salon ${response?.salonId || 'unknown'}, `
-        + `expected ${options.expectedSalonId}`,
-      );
-    }
-
-    const apiKeyChanged = Boolean(prevApiKey && prevApiKey !== apiKey);
-    const identityChanged = Boolean(
-      apiKeyChanged
-      || (
-        response
-        && (
-          (prevAgentId && response.agentId && prevAgentId !== response.agentId)
-          || (prevSalonId && response.salonId && prevSalonId !== response.salonId)
-        )
-      )
-    );
-
-    // A different credential whose REST identity cannot be resolved must not
-    // replace a paired tenant key. We cannot prove which salon would receive
-    // an old receipt payload, so fail closed and keep all old identity state.
-    if (
-      !response
-      && apiKey !== prevApiKey
-      && Boolean(prevSalonId || prevAgentId)
-    ) {
-      throw new Error(
-        'Cannot verify the new print-agent key while the current salon is paired. '
-        + 'The existing credentials and local data were kept.',
-      );
-    }
-
-    if (response) {
-      if (identityChanged) {
-        const cleared = await this.archiveSalonThenClear(prevSalonId || '', 'apiKey/agent change');
-        if (!cleared.ok) {
-          // Fail closed: never proceed with a half-cleared tenant if we could
-          // not first save the leaving salon's data. The probe has not committed
-          // either key or config, so the old identity remains untouched.
-          throw new Error(`Không lưu được dữ liệu salon hiện tại — huỷ kết nối: ${cleared.error || ''}`);
-        }
-        logger.info(
-          `[AuthModule] Cleared salon data on apiKey/agent change: oldAgentId=${prevAgentId ?? 'none'} newAgentId=${response.agentId ?? 'none'} oldSalonId=${prevSalonId ?? 'none'} newSalonId=${response.salonId ?? 'none'}`,
-        );
-      }
-    }
-
-    // Commit credentials and target identity only after the old tenant's
-    // receipt lifecycle/archive guard has completed. There is no await between
-    // these synchronous writes, so runtime consumers cannot observe a mixed
-    // key/config pair on the successful path.
     if (!setSecureApiKey(apiKey)) {
       throw new Error('Failed to store API key securely');
     }
+
+    let response: ConnectResponse | null = null;
+    // Call REST /print-agent/connect to populate salonName, salonId, agentId, salonSlug.
+    // Only catch the REST call itself; tenant wipe errors must fail closed.
     try {
-      if (response) {
-        client.applyConnectResponse(response);
-      } else {
-        setConfig({ isPaired: true });
-      }
-    } catch (error) {
-      if (!setSecureApiKey(prevApiKey || '')) {
-        logger.error('[AuthModule] Failed to restore previous API key after connection-state commit failed');
-      }
-      throw error;
+      const client = new ApiClient(config.serverUrl || 'https://api.enail.pro');
+      response = await client.connectWithApiKey(apiKey);
+    } catch (err: any) {
+      logger.warn('[AuthModule] REST connect failed, proceeding with socket only:', err?.message);
+      setConfig({ isPaired: true });
     }
 
     if (response) {
+      const identityChanged =
+        (prevApiKey && prevApiKey !== apiKey) ||
+        (prevAgentId && response.agentId && prevAgentId !== response.agentId) ||
+        (prevSalonId && response.salonId && prevSalonId !== response.salonId);
+      if (identityChanged) {
+        logger.info(
+          `[AuthModule] Cleared salon data on apiKey/agent change: oldAgentId=${prevAgentId ?? 'none'} newAgentId=${response.agentId ?? 'none'} oldSalonId=${prevSalonId ?? 'none'} newSalonId=${response.salonId ?? 'none'}`,
+        );
+        const cleared = await this.archiveSalonThenClear(prevSalonId || '', 'apiKey/agent change');
+        if (!cleared.ok) {
+          // Fail closed: never proceed with a half-cleared tenant if we could
+          // not first save the leaving salon's data.
+          throw new Error(`Không lưu được dữ liệu salon hiện tại — huỷ kết nối: ${cleared.error || ''}`);
+        }
+      }
+
       // Server-pushed printers carry their own isEnabled flag (typically false
       // until the dashboard admin flips it). Without this re-apply, a cashier
       // who relied on the boot-time auto-on would see Receipts toggle OFF
@@ -1059,7 +989,7 @@ export class AuthModule extends BaseModule {
     }
 
     const latestConfig = getConfig();
-    if (socket.isConnected() && identityChanged) {
+    if (socket.isConnected() && prevApiKey && prevApiKey !== apiKey) {
       socket.disconnect();
     }
     await socket.connectWithApiKey(latestConfig.serverUrl || 'https://api.enail.pro', apiKey, latestConfig.machineId);
@@ -1071,14 +1001,27 @@ export class AuthModule extends BaseModule {
     accessToken: string,
     context: string,
     expectedSalonId = '',
+    expectedSalonName = '',
   ): Promise<void> {
     const existingKey = getSecureApiKey();
     if (existingKey?.startsWith('pa_')) {
       try {
-        await this.connectWithApiKey(existingKey, {
-          ...(expectedSalonId && { expectedSalonId }),
+        const response = await this.connectWithApiKey(existingKey);
+        if (!expectedSalonId || response?.salonId === expectedSalonId) {
+          return;
+        }
+        logger.warn(
+          `[AuthModule] Stored print-agent key salon mismatch after ${context}: expected=${expectedSalonId} actual=${response?.salonId || 'unknown'}; fetching current key`,
+        );
+        setSecureApiKey('');
+        setConfig({
+          apiKey: '',
+          agentId: '',
+          salonId: expectedSalonId,
+          ...(expectedSalonName && { salonName: expectedSalonName }),
+          isPaired: false,
         });
-        return;
+        this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET)?.disconnect();
       } catch (err: any) {
         logger.warn(`[AuthModule] Stored print-agent key failed after ${context}; fetching current key: ${err?.message || err}`);
       }
@@ -1089,9 +1032,21 @@ export class AuthModule extends BaseModule {
       throw new Error('No print-agent API key available');
     }
 
-    await this.connectWithApiKey(keyResult.apiKey, {
-      ...(expectedSalonId && { expectedSalonId }),
-    });
+    const response = await this.connectWithApiKey(keyResult.apiKey);
+    if (expectedSalonId && response?.salonId !== expectedSalonId) {
+      setSecureApiKey('');
+      setConfig({
+        apiKey: '',
+        agentId: '',
+        salonId: expectedSalonId,
+        ...(expectedSalonName && { salonName: expectedSalonName }),
+        isPaired: false,
+      });
+      this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET)?.disconnect();
+      throw new Error(
+        `Print-agent key belongs to salon ${response?.salonId || 'unknown'}, expected ${expectedSalonId}`,
+      );
+    }
   }
 
   private getAuthenticatedApiContext(): { client: ApiClient; token: string } {
@@ -1193,12 +1148,6 @@ export class AuthModule extends BaseModule {
     newSalonId: string,
     context: string,
   ): Promise<{ ok: boolean; willRestart: boolean; error?: string }> {
-    try {
-      database.assertNoActiveReceiptPrintOutcomes(oldSalonId);
-    } catch (e: any) {
-      logger.warn(`[AuthModule] ${context}: blocked by receipt lifecycle guard: ${e?.message || e}`);
-      return { ok: false, willRestart: false, error: e?.message || 'Tác vụ in chưa được xử lý' };
-    }
     const backup = this.container.getOptional<LocalBackupService>(SERVICE_TOKENS.BACKUP_SERVICE);
     if (!backup) {
       logger.error(`[AuthModule] ${context}: backup service unavailable — aborting switch to protect salon ${oldSalonId}`);
@@ -1209,30 +1158,6 @@ export class AuthModule extends BaseModule {
       logger.error(`[AuthModule] ${context}: archive of leaving salon ${oldSalonId} failed: ${archived.error}`);
       return { ok: false, willRestart: false, error: `Không lưu được dữ liệu salon hiện tại: ${archived.error}` };
     }
-    // The first archive is a read-only safety point. Only after it succeeds
-    // may pre-dispatch rows be cancelled. Refresh the archive afterwards for
-    // BOTH fresh and restored targets, so returning to this salon can never
-    // replay a stale receipt/drawer intent.
-    try {
-      database.prepareReceiptPrintOutboxForTenantExit(
-        oldSalonId,
-        `Initial receipt cancelled before ${context}`,
-        { allowNeedsReview: true },
-      );
-    } catch (e: any) {
-      return { ok: false, willRestart: false, error: e?.message || 'Tác vụ in chưa được xử lý' };
-    }
-    const cancellationArchived = await backup.archiveSalon(oldSalonId);
-    if (!cancellationArchived.success) {
-      logger.error(`[AuthModule] ${context}: failed to archive cancelled receipt intents: ${cancellationArchived.error}`);
-      return {
-        ok: false,
-        willRestart: false,
-        error:
-          `Tác vụ in tự động đã được hủy an toàn nhưng không cập nhật được bản lưu salon `
-          + `(${cancellationArchived.error || 'archive failed'}). Đổi salon đã dừng; nếu cần hãy in lại thủ công.`,
-      };
-    }
     if (backup.hasSalonArchive(newSalonId)) {
       const staged = await backup.stageSalonRestore(newSalonId);
       if (staged.success) {
@@ -1240,24 +1165,9 @@ export class AuthModule extends BaseModule {
         return { ok: true, willRestart: true };
       }
       logger.error(`[AuthModule] ${context}: stage restore for ${newSalonId} failed (${staged.error}); aborting switch to avoid wiping archived salon data`);
-      return {
-        ok: false,
-        willRestart: false,
-        error:
-          `Không thể khôi phục dữ liệu salon đích: ${staged.error}. `
-          + 'Tác vụ in tự động đang chờ đã được hủy an toàn; nếu cần hãy in lại thủ công.',
-      };
+      return { ok: false, willRestart: false, error: `Khong the khoi phuc du lieu salon dich: ${staged.error}` };
     }
-    try {
-      database.clearSalonData(oldSalonId, { archivedReviewEvidence: true });
-    } catch (e: any) {
-      logger.error(`[AuthModule] ${context}: guarded salon clear was not durable: ${e?.message || e}`);
-      return {
-        ok: false,
-        willRestart: false,
-        error: e?.message || 'Không thể lưu trạng thái xóa dữ liệu salon',
-      };
-    }
+    database.clearSalonData();
     logger.info(`[AuthModule] ${context}: archived ${oldSalonId}, no usable archive for ${newSalonId} — fresh + full sync`);
     return { ok: true, willRestart: false };
   }
@@ -1272,12 +1182,6 @@ export class AuthModule extends BaseModule {
       database.clearSalonData();
       return { ok: true };
     }
-    try {
-      database.assertNoActiveReceiptPrintOutcomes(oldSalonId);
-    } catch (e: any) {
-      logger.warn(`[AuthModule] ${context}: blocked by receipt lifecycle guard: ${e?.message || e}`);
-      return { ok: false, error: e?.message || 'Tác vụ in chưa được xử lý' };
-    }
     const backup = this.container.getOptional<LocalBackupService>(SERVICE_TOKENS.BACKUP_SERVICE);
     if (!backup) {
       logger.error(`[AuthModule] ${context}: backup service unavailable; skipping clear to avoid data loss`);
@@ -1288,31 +1192,7 @@ export class AuthModule extends BaseModule {
       logger.error(`[AuthModule] ${context}: salon archive failed (${archived.error}); skipping clear to avoid data loss`);
       return { ok: false, error: archived.error };
     }
-    try {
-      database.prepareReceiptPrintOutboxForTenantExit(
-        oldSalonId,
-        `Initial receipt cancelled before ${context}`,
-        { allowNeedsReview: true },
-      );
-    } catch (e: any) {
-      return { ok: false, error: e?.message || 'Tác vụ in chưa được xử lý' };
-    }
-    const cancellationArchived = await backup.archiveSalon(oldSalonId);
-    if (!cancellationArchived.success) {
-      logger.error(`[AuthModule] ${context}: failed to archive cancelled receipt intents: ${cancellationArchived.error}`);
-      return {
-        ok: false,
-        error:
-          `Tác vụ in tự động đã được hủy an toàn nhưng không cập nhật được bản lưu salon `
-          + `(${cancellationArchived.error || 'archive failed'}). Xóa dữ liệu đã dừng; nếu cần hãy in lại thủ công.`,
-      };
-    }
-    try {
-      database.clearSalonData(oldSalonId, { archivedReviewEvidence: true });
-    } catch (e: any) {
-      logger.error(`[AuthModule] ${context}: guarded salon clear was not durable: ${e?.message || e}`);
-      return { ok: false, error: e?.message || 'Không thể lưu trạng thái xóa dữ liệu salon' };
-    }
+    database.clearSalonData();
     return { ok: true };
   }
 
@@ -1363,6 +1243,7 @@ export class AuthModule extends BaseModule {
     const secureKey = getSecureApiKey();
     const token = getSecureAuthToken();
     const salonId = config.salonId || config.authUser?.salonId || '';
+    const salonName = config.salonName || config.authUser?.salonName || '';
     const serverUrl = config.serverUrl || 'https://api.enail.pro';
 
     const plan = resolveStartupConnectPlan({
@@ -1383,13 +1264,13 @@ export class AuthModule extends BaseModule {
         void (async () => {
           try {
             await this.connectWithAvailablePrintAgentKey(
-              new ApiClient(serverUrl), token!, 'startup', salonId,
+              new ApiClient(serverUrl), token!, 'startup', salonId, salonName,
             );
           } catch (e: any) {
             logger.warn('[AuthModule] Startup auto-connect failed:', e?.message || e);
             try {
               await this.connectWithAvailablePrintAgentKey(
-                new ApiClient(serverUrl), token!, 'startup', salonId,
+                new ApiClient(serverUrl), token!, 'startup', salonId, salonName,
               );
             } catch (retryErr: any) {
               logger.warn('[AuthModule] Startup auto-connect retry failed:', retryErr?.message || retryErr);

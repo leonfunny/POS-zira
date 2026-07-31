@@ -34,27 +34,6 @@ describe('staffRepo', () => {
 
     expect(sql).toContain('ON CONFLICT(id) DO UPDATE SET');
     expect(sql).toContain('user_id = COALESCE(excluded.user_id, pos_staff.user_id)');
-    expect(database.transaction).toHaveBeenCalledOnce();
-  });
-
-  it('does not open a nested transaction when sync pull owns the batch', () => {
-    staffRepo.upsertMany(
-      [{
-        id: 'profile-1',
-        user_id: 'user-1',
-        name: 'Alice',
-        commission_rate: 0,
-        is_active: 1,
-        updated_at: null,
-      }],
-      { callerOwnsTransaction: true },
-    );
-
-    expect(database.transaction).not.toHaveBeenCalled();
-    expect(database.run).toHaveBeenCalledWith(
-      expect.stringMatching(/INSERT INTO pos_staff/),
-      expect.any(Array),
-    );
   });
 
   it('marks local rows missing from backend inactive during reconciliation', () => {

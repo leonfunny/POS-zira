@@ -266,17 +266,6 @@ class Database {
     if (!this.db) {
       return { success: false, dbPath: this.dbPath || undefined, error: 'Database not initialized' };
     }
-    // Async and sync atomic writers share `<pos.db>.tmp`. Never let saveSync
-    // race an in-flight async export/write: the two renames can report false
-    // success, overwrite a newer snapshot, or corrupt the temp-file protocol.
-    // Synchronous callers fail closed and may retry after the async writer.
-    if (this.saving) {
-      return {
-        success: false,
-        dbPath: this.dbPath || undefined,
-        error: 'Database async save is in progress; synchronous save refused',
-      };
-    }
     try {
       const saveVersion = this.dirtyVersion;
       const data = this.db.export();
@@ -310,7 +299,7 @@ class Database {
       return;
     }
     this.db.run(sql, this.sanitizeParams(params));
-    this.markDirty();
+    this.dirty = true;
   }
 
   get<T = any>(sql: string, params?: any[]): T | null {
@@ -353,7 +342,7 @@ class Database {
     try {
       const result = fn();
       this.db.run('COMMIT');
-      this.markDirty();
+      this.dirty = true;
       return result;
     } catch (error) {
       this.db.run('ROLLBACK');
@@ -377,24 +366,16 @@ class Database {
    * This prevents data leakage between different salon accounts.
    * Keeps schema intact but removes all business data.
    */
-  clearSalonData(
-    salonId = '',
-    options: { archivedReviewEvidence?: boolean } = {},
-  ): void {
+  clearSalonData(): void {
     if (!this.db) {
       throw new Error('Database not initialized');
     }
-    this.assertSynchronousSaveAvailable('clearing salon data');
 
     logger.info('[DB] Clearing salon-specific data for tenant isolation...');
 
     const tablesToClear = [
       'kitchen_self_order_items',
       'kitchen_self_orders',
-      // Receipt rows have already been guarded/cancelled above. On an
-      // archived tenant switch the refreshed per-salon archive retains the
-      // evidence; the live DB must not expose old payloads to the new tenant.
-      'receipt_print_outbox',
       'order_items',      // Must be first (FK to orders)
       'orders',
       'forecast_order_draft_lines',
@@ -481,11 +462,6 @@ class Database {
     const validTablePattern = /^[a-z_]+$/;
 
     this.transaction(() => {
-      this.prepareReceiptPrintOutboxForTenantExitInTransaction(
-        salonId,
-        'Initial receipt cancelled before clearing salon data',
-        { allowNeedsReview: options.archivedReviewEvidence === true },
-      );
       for (const table of tablesToClear) {
         if (!validTablePattern.test(table)) {
           logger.error(`[DB] Invalid table name rejected: ${table}`);
@@ -500,7 +476,7 @@ class Database {
       logger.info('[DB] Reset sync metadata');
     });
 
-    this.markDirty();
+    this.dirty = true;
     // Tenant switches must be durable before the next salon can continue.
     const flush = this.saveSync();
     if (!flush.success) {
@@ -519,146 +495,6 @@ class Database {
       logger.warn(`[DB] Failed to clear product-admin pending assets: ${error instanceof Error ? error.message : String(error)}`);
     }
     logger.info('[DB] Salon data cleared successfully');
-  }
-
-  /**
-   * Cancel only rows that are provably pre-dispatch before logout/salon
-   * switch. Active dispatch/remote acceptance blocks the identity change;
-   * archived tenant switches may retain NEEDS_REVIEW in the archive while
-   * ordinary logout keeps it immutable in the live DB.
-   */
-  prepareReceiptPrintOutboxForTenantExit(
-    salonId = '',
-    reason = 'Initial receipt cancelled before leaving the salon session',
-    options: { allowNeedsReview?: boolean } = {},
-  ): { cancelled: number } {
-    this.assertSynchronousSaveAvailable('preparing receipt state for tenant exit');
-    let cancelled = 0;
-    this.transaction(() => {
-      cancelled = this.prepareReceiptPrintOutboxForTenantExitInTransaction(
-        salonId,
-        reason,
-        options,
-      );
-    });
-    // Ensure an older async save cannot clear the dirty flag for this guard
-    // transition before the synchronous durability barrier below.
-    this.markDirty();
-    // Always cross a disk barrier, including a retry that sees CANCELLED in
-    // memory after an earlier save failed. Otherwise logout/switch could
-    // proceed while the on-disk row is still PENDING and resurrect it later.
-    const flush = this.saveSync();
-    if (!flush.success) {
-      throw new Error(
-        `Không thể lưu trạng thái hủy tác vụ in trước khi rời salon: ${flush.error || 'unknown error'}`,
-      );
-    }
-    return { cancelled };
-  }
-
-  private assertSynchronousSaveAvailable(context: string): void {
-    if (!this.saving) return;
-    const error = new Error(
-      `Database async save is in progress; ${context} was not started`,
-    ) as Error & { code?: string };
-    error.code = 'DATABASE_SAVE_IN_PROGRESS';
-    throw error;
-  }
-
-  assertNoActiveReceiptPrintOutcomes(salonId = ''): void {
-    const blocker = this.findUncertainReceiptPrintOutcome(salonId, false);
-    if (blocker) {
-      throw this.receiptPrintTenantExitBlockedError(blocker);
-    }
-  }
-
-  private prepareReceiptPrintOutboxForTenantExitInTransaction(
-    salonId: string,
-    reason: string,
-    options: { allowNeedsReview?: boolean } = {},
-  ): number {
-    if (!this.db) {
-      throw new Error('Database not initialized');
-    }
-    const blocker = this.findUncertainReceiptPrintOutcome(
-      salonId,
-      options.allowNeedsReview !== true,
-    );
-    if (blocker) {
-      throw this.receiptPrintTenantExitBlockedError(blocker);
-    }
-    const scope = String(salonId || '').trim();
-    const scopeClause = scope ? ' AND salon_id = ?' : '';
-    const params = scope ? [scope] : [];
-    const cancellable = this.get<{ count: number }>(
-      `SELECT COUNT(*) AS count
-       FROM receipt_print_outbox
-       WHERE status IN ('PENDING', 'FAILED_SAFE')
-       ${scopeClause}`,
-      params,
-    )?.count ?? 0;
-    if (cancellable <= 0) return 0;
-
-    const updatedAt = new Date().toISOString();
-    this.run(
-      `UPDATE receipt_print_outbox
-       SET status = 'CANCELLED',
-           failure_class = 'SAFE_BEFORE_PRINT',
-           last_error = ?,
-           next_attempt_at = NULL,
-           updated_at = ?
-       WHERE status IN ('PENDING', 'FAILED_SAFE')
-       ${scopeClause}`,
-      [String(reason || '').trim().slice(0, 2000), updatedAt, ...params],
-    );
-    return cancellable;
-  }
-
-  private findUncertainReceiptPrintOutcome(
-    salonId: string,
-    includeNeedsReview: boolean,
-  ): {
-    job_id: string;
-    status: string;
-    printer_id: string | null;
-    remote_job_id: string | null;
-  } | null {
-    const scope = String(salonId || '').trim();
-    const scopeClause = scope ? ' AND salon_id = ?' : '';
-    const blockedStatuses = includeNeedsReview
-      ? "'DISPATCHING', 'REMOTE_ACCEPTED', 'NEEDS_REVIEW'"
-      : "'DISPATCHING', 'REMOTE_ACCEPTED'";
-    return this.get<{
-      job_id: string;
-      status: string;
-      printer_id: string | null;
-      remote_job_id: string | null;
-    }>(
-      `SELECT job_id, status, printer_id, remote_job_id
-       FROM receipt_print_outbox
-       WHERE status IN (${blockedStatuses})
-      ${scopeClause}
-       ORDER BY seq ASC LIMIT 1`,
-      scope ? [scope] : [],
-    );
-  }
-
-  private receiptPrintTenantExitBlockedError(blocker: {
-    job_id: string;
-    status: string;
-    remote_job_id: string | null;
-  }): Error {
-    const remoteIdentity = blocker.remote_job_id
-      ? `, remote job ${blocker.remote_job_id}`
-      : '';
-    const error = new Error(
-      `Không thể đăng xuất hoặc đổi salon khi kết quả in đơn chưa chắc chắn `
-      + `(${blocker.status}, job ${blocker.job_id}${remoteIdentity}). `
-      + 'Hãy kiểm tra giấy/máy in và xử lý cảnh báo in trước.',
-    ) as Error & { code?: string; receiptPrintJobId?: string };
-    error.code = 'RECEIPT_PRINT_OUTCOME_UNCERTAIN';
-    error.receiptPrintJobId = blocker.job_id;
-    return error;
   }
 
   private runMigrations(): void {

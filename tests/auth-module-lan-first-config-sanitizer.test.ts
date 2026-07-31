@@ -5,20 +5,12 @@ const {
   handlers,
   getConfigMock,
   setConfigMock,
-  getSecureApiKeyMock,
-  setSecureApiKeyMock,
-  apiConnectWithKeyMock,
-  apiApplyConnectResponseMock,
   browserWindows,
   fetchMock,
 } = vi.hoisted(() => ({
   handlers: new Map<string, (...args: any[]) => unknown>(),
   getConfigMock: vi.fn(),
   setConfigMock: vi.fn(),
-  getSecureApiKeyMock: vi.fn(),
-  setSecureApiKeyMock: vi.fn(),
-  apiConnectWithKeyMock: vi.fn(),
-  apiApplyConnectResponseMock: vi.fn(),
   browserWindows: [] as Array<{ isDestroyed: () => boolean; webContents: { send: (...args: any[]) => void } }>,
   fetchMock: vi.fn(),
 }));
@@ -52,24 +44,20 @@ vi.mock('../src/main/config/store', () => ({
   getConfig: getConfigMock,
   getConfigValue: vi.fn(),
   getSecureAiApiKey: vi.fn(),
-  getSecureApiKey: getSecureApiKeyMock,
+  getSecureApiKey: vi.fn(),
   getSecureAuthToken: vi.fn(),
   getSecureRemotePin: vi.fn(),
   setConfig: setConfigMock,
   setConfigValue: vi.fn(),
   setSecureAiApiKey: vi.fn(),
-  setSecureApiKey: setSecureApiKeyMock,
+  setSecureApiKey: vi.fn(),
   setSecureAuthToken: vi.fn(),
   setSecureRefreshToken: vi.fn(),
   setSecureRemotePin: vi.fn(),
 }));
 
 vi.mock('../src/main/database/database', () => ({
-  database: {
-    clearSalonData: vi.fn(),
-    prepareReceiptPrintOutboxForTenantExit: vi.fn(),
-    assertNoActiveReceiptPrintOutcomes: vi.fn(),
-  },
+  database: { clearSalonData: vi.fn() },
 }));
 
 vi.mock('../src/main/database/repos/local-printer-repo', () => ({
@@ -77,10 +65,7 @@ vi.mock('../src/main/database/repos/local-printer-repo', () => ({
 }));
 
 vi.mock('../src/main/network/api-client', () => ({
-  ApiClient: class {
-    connectWithApiKey = apiConnectWithKeyMock;
-    applyConnectResponse = apiApplyConnectResponseMock;
-  },
+  ApiClient: class {},
   normalizeServerPrinterRows: vi.fn((rows) => rows),
 }));
 
@@ -116,8 +101,6 @@ vi.mock('../src/main/logger', () => ({
 
 import { AuthModule } from '../src/main/modules/auth.module';
 import { database } from '../src/main/database/database';
-import { resolveCurrentUser } from '../src/main/network/auth-get-user';
-import { SERVICE_TOKENS } from '../src/main/core/tokens';
 
 function baseConfig(): AgentConfig {
   return {
@@ -173,7 +156,6 @@ describe('AuthModule salon restore orchestration', () => {
 
     expect(result).toMatchObject({ ok: false, willRestart: false });
     expect(result.error).toContain('stage failed');
-    expect(database.assertNoActiveReceiptPrintOutcomes).toHaveBeenCalledWith('old-salon');
     expect(backup.archiveSalon).toHaveBeenCalledWith('old-salon');
     expect(backup.stageSalonRestore).toHaveBeenCalledWith('new-salon');
     expect(database.clearSalonData).not.toHaveBeenCalled();
@@ -204,271 +186,6 @@ describe('AuthModule salon restore orchestration', () => {
 
     expect(result).toEqual({ ok: true, willRestart: true });
     expect(database.clearSalonData).not.toHaveBeenCalled();
-    expect(database.prepareReceiptPrintOutboxForTenantExit).toHaveBeenCalledWith(
-      'old-salon',
-      expect.stringContaining('login-test'),
-      { allowNeedsReview: true },
-    );
-    expect(backup.archiveSalon).toHaveBeenCalledTimes(2);
-  });
-
-  it('blocks salon switch before archive when receipt outcome is uncertain', async () => {
-    vi.mocked(database.assertNoActiveReceiptPrintOutcomes).mockImplementationOnce(() => {
-      throw Object.assign(new Error('REMOTE_ACCEPTED job remote-locked'), {
-        code: 'RECEIPT_PRINT_OUTCOME_UNCERTAIN',
-      });
-    });
-    const backup = {
-      archiveSalon: vi.fn(),
-      hasSalonArchive: vi.fn(),
-      stageSalonRestore: vi.fn(),
-    };
-
-    const result = await authModuleWithBackup(backup).switchSalonForLogin(
-      'old-salon',
-      'new-salon',
-      'login-test',
-    );
-
-    expect(result).toMatchObject({
-      ok: false,
-      willRestart: false,
-      error: expect.stringContaining('REMOTE_ACCEPTED'),
-    });
-    expect(backup.archiveSalon).not.toHaveBeenCalled();
-    expect(database.clearSalonData).not.toHaveBeenCalled();
-  });
-
-  it('leaves safe receipt intents untouched when the first archive fails', async () => {
-    const backup = {
-      archiveSalon: vi.fn().mockResolvedValue({ success: false, error: 'disk full' }),
-      hasSalonArchive: vi.fn(),
-      stageSalonRestore: vi.fn(),
-    };
-
-    const result = await authModuleWithBackup(backup).switchSalonForLogin(
-      'old-salon',
-      'new-salon',
-      'login-test',
-    );
-
-    expect(result).toMatchObject({ ok: false, willRestart: false });
-    expect(database.assertNoActiveReceiptPrintOutcomes).toHaveBeenCalledWith('old-salon');
-    expect(database.prepareReceiptPrintOutboxForTenantExit).not.toHaveBeenCalled();
-    expect(database.clearSalonData).not.toHaveBeenCalled();
-  });
-
-  it('does not commit a fresh-target switch when the guarded clear is not durable', async () => {
-    const backup = {
-      archiveSalon: vi.fn().mockResolvedValue({ success: true }),
-      hasSalonArchive: vi.fn().mockReturnValue(false),
-      stageSalonRestore: vi.fn(),
-    };
-    vi.mocked(database.clearSalonData).mockImplementationOnce(() => {
-      throw new Error('Database async save is in progress; synchronous save refused');
-    });
-
-    const result = await authModuleWithBackup(backup).switchSalonForLogin(
-      'old-salon',
-      'new-salon',
-      'login-test',
-    );
-
-    expect(result).toMatchObject({
-      ok: false,
-      willRestart: false,
-      error: expect.stringContaining('async save is in progress'),
-    });
-    expect(backup.archiveSalon).toHaveBeenCalledTimes(2);
-  });
-});
-
-describe('AuthModule startup tenant mismatch', () => {
-  beforeEach(() => {
-    handlers.clear();
-    vi.clearAllMocks();
-    getConfigMock.mockReturnValue({
-      ...baseConfig(),
-      salonId: 'old-salon',
-      salonName: 'Old salon',
-      authUser: {
-        id: 'old-user',
-        email: 'old@example.test',
-        firstName: 'Old',
-        lastName: 'User',
-        role: 'OWNER',
-        salonId: 'old-salon',
-      },
-    });
-  });
-
-  it('does not commit the new identity when archive/clear is blocked', async () => {
-    vi.mocked(resolveCurrentUser).mockResolvedValueOnce({
-      success: true,
-      data: {
-        isAuthenticated: true,
-        user: {
-          id: 'new-user',
-          email: 'new@example.test',
-          firstName: 'New',
-          lastName: 'User',
-          role: 'OWNER',
-          salonId: 'new-salon',
-          salonName: 'New salon',
-        },
-      },
-    });
-    const backup = {
-      archiveSalon: vi.fn().mockResolvedValue({ success: false, error: 'review evidence blocked' }),
-      hasSalonArchive: vi.fn(),
-      stageSalonRestore: vi.fn(),
-    };
-    const module = authModuleWithBackup(backup);
-    module.registerIpcHandlers();
-
-    const result = await handlers.get(IPC_CHANNELS.AUTH_GET_USER)?.({});
-
-    expect(result).toMatchObject({
-      success: false,
-      data: { isAuthenticated: false },
-      error: expect.stringContaining('review evidence blocked'),
-    });
-    expect(setConfigMock).not.toHaveBeenCalledWith(
-      expect.objectContaining({ salonId: 'new-salon' }),
-    );
-    expect(setConfigMock).not.toHaveBeenCalledWith(
-      expect.objectContaining({
-        authUser: expect.objectContaining({ salonId: 'new-salon' }),
-      }),
-    );
-  });
-});
-
-describe('AuthModule print-agent credential commit boundary', () => {
-  const oldConfig = {
-    ...baseConfig(),
-    agentId: 'agent-old',
-    salonId: 'salon-old',
-    salonName: 'Old salon',
-    machineId: 'machine-1',
-  };
-  const targetResponse = {
-    agentId: 'agent-new',
-    salonId: 'salon-new',
-    salonName: 'New salon',
-    serverUrl: 'https://api.example.test',
-  };
-
-  function moduleForConnect(backup: any, socket: any) {
-    return new AuthModule({
-      getOptional: vi.fn((token) => {
-        if (token === SERVICE_TOKENS.SOCKET) return socket;
-        if (token === SERVICE_TOKENS.BACKUP_SERVICE) return backup;
-        return undefined;
-      }),
-    } as any);
-  }
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    getConfigMock.mockReturnValue(oldConfig);
-    getSecureApiKeyMock.mockReturnValue('pa_old');
-    setSecureApiKeyMock.mockReturnValue(true);
-    apiConnectWithKeyMock.mockResolvedValue(targetResponse);
-    apiApplyConnectResponseMock.mockImplementation(() => undefined);
-    vi.mocked(database.assertNoActiveReceiptPrintOutcomes).mockImplementation(() => undefined);
-    vi.mocked(database.prepareReceiptPrintOutboxForTenantExit).mockImplementation(() => undefined);
-    vi.mocked(database.clearSalonData).mockImplementation(() => undefined);
-  });
-
-  it('keeps the old secure key, config, and printer mirror when the receipt/archive guard fails', async () => {
-    const backup = {
-      archiveSalon: vi.fn().mockResolvedValue({ success: false, error: 'receipt archive blocked' }),
-    };
-    const socket = {
-      isConnected: vi.fn(() => true),
-      disconnect: vi.fn(),
-      connectWithApiKey: vi.fn(),
-    };
-    const module = moduleForConnect(backup, socket);
-
-    await expect(module.connectWithApiKey('pa_new')).rejects.toThrow(
-      'receipt archive blocked',
-    );
-
-    expect(apiConnectWithKeyMock).toHaveBeenCalledWith('pa_new', { persist: false });
-    expect(setSecureApiKeyMock).not.toHaveBeenCalled();
-    expect(apiApplyConnectResponseMock).not.toHaveBeenCalled();
-    expect(setConfigMock).not.toHaveBeenCalledWith(
-      expect.objectContaining({ salonId: 'salon-new' }),
-    );
-    expect(socket.disconnect).not.toHaveBeenCalled();
-    expect(socket.connectWithApiKey).not.toHaveBeenCalled();
-  });
-
-  it('commits the new key and identity only after receipt cancellation is archived and cleared', async () => {
-    const lifecycle: string[] = [];
-    const backup = {
-      archiveSalon: vi.fn(async () => {
-        lifecycle.push('archive');
-        return { success: true };
-      }),
-    };
-    const socket = {
-      isConnected: vi.fn(() => true),
-      disconnect: vi.fn(() => { lifecycle.push('socket-disconnect'); }),
-      connectWithApiKey: vi.fn(async () => { lifecycle.push('socket-connect'); }),
-    };
-    vi.mocked(database.assertNoActiveReceiptPrintOutcomes).mockImplementation(() => {
-      lifecycle.push('receipt-guard');
-    });
-    vi.mocked(database.prepareReceiptPrintOutboxForTenantExit).mockImplementation(() => {
-      lifecycle.push('receipt-cancel');
-    });
-    vi.mocked(database.clearSalonData).mockImplementation(() => {
-      lifecycle.push('clear-old-tenant');
-    });
-    apiConnectWithKeyMock.mockImplementation(async () => {
-      lifecycle.push('probe-target');
-      return targetResponse;
-    });
-    setSecureApiKeyMock.mockImplementation(() => {
-      lifecycle.push('commit-key');
-      return true;
-    });
-    apiApplyConnectResponseMock.mockImplementation(() => {
-      lifecycle.push('commit-config-and-printers');
-    });
-
-    await moduleForConnect(backup, socket).connectWithApiKey('pa_new');
-
-    expect(lifecycle.indexOf('probe-target')).toBeLessThan(lifecycle.indexOf('receipt-guard'));
-    expect(lifecycle.indexOf('clear-old-tenant')).toBeLessThan(lifecycle.indexOf('commit-key'));
-    expect(lifecycle.indexOf('commit-key')).toBeLessThan(lifecycle.indexOf('commit-config-and-printers'));
-    expect(lifecycle.indexOf('commit-config-and-printers')).toBeLessThan(lifecycle.indexOf('socket-connect'));
-    expect(setSecureApiKeyMock).toHaveBeenCalledTimes(1);
-    expect(apiApplyConnectResponseMock).toHaveBeenCalledWith(targetResponse);
-  });
-
-  it('rejects a key for the wrong expected salon before any tenant or credential commit', async () => {
-    const backup = { archiveSalon: vi.fn() };
-    const socket = {
-      isConnected: vi.fn(() => false),
-      disconnect: vi.fn(),
-      connectWithApiKey: vi.fn(),
-    };
-
-    await expect(
-      moduleForConnect(backup, socket).connectWithApiKey(
-        'pa_new',
-        { expectedSalonId: 'salon-expected' },
-      ),
-    ).rejects.toThrow('expected salon-expected');
-
-    expect(backup.archiveSalon).not.toHaveBeenCalled();
-    expect(setSecureApiKeyMock).not.toHaveBeenCalled();
-    expect(apiApplyConnectResponseMock).not.toHaveBeenCalled();
-    expect(socket.connectWithApiKey).not.toHaveBeenCalled();
   });
 });
 

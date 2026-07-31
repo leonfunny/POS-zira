@@ -43,10 +43,6 @@ import QuickAddCameraModal, {
 import AddProductWebviewPanel from './AddProductWebviewPanel';
 import DebtWebviewPanel from './DebtWebviewPanel';
 import { buildRetailCartItem, formatRetailSaleError, resolveRetailCartItem } from './retail-sale-flow';
-import {
-  createReceiptPrintStatusHandler,
-  type ReceiptPrintStatusInfo,
-} from './receipt-print-status-tracker';
 import type {
   BilliardPaymentIntent,
   RestoredCartReconciliation,
@@ -1387,24 +1383,6 @@ export default function POSLayout({
     });
     return () => unsub?.();
   }, []);
-
-  // Initial order copies print in the durable main-process queue. Only surface
-  // failures/ambiguous outcomes; successful jobs stay silent so the next sale
-  // is never interrupted by receipt UI.
-  useEffect(() => {
-    const handleStatus = createReceiptPrintStatusHandler((message) => {
-      showScanToast(message, 'warn');
-    });
-
-    // Subscribe before replaying durable unresolved rows so an event that
-    // lands during the query cannot be lost. The local tracker deduplicates
-    // overlap and prevents an old snapshot from overriding live completion.
-    const unsub = window.electronAPI.pos.onReceiptPrintStatus?.(handleStatus);
-    void window.electronAPI.pos.listReceiptPrintStatuses?.()
-      .then((rows: ReceiptPrintStatusInfo[]) => rows.forEach(handleStatus))
-      .catch(() => undefined);
-    return () => unsub?.();
-  }, [showScanToast]);
 
   const hideNonFiscalOrders = config?.showNonFiscalOrders === false;
 

@@ -58,15 +58,6 @@ describe('deriveReceiptOutcome — sale-vs-warning decision', () => {
     expect(out.warning).toBeNull();
   });
 
-  it('durably queued initial receipt → no warning and cashier can continue immediately', () => {
-    const out = deriveReceiptOutcome(
-      { success: true, receiptPrinted: false, receiptQueued: true },
-      (k) => k,
-    );
-    expect(out.receiptPrinted).toBe(true);
-    expect(out.warning).toBeNull();
-  });
-
   it('receiptPrinted=false with MISSING translation (t = key => key) returns the readable English fallback, NEVER the raw i18n key', () => {
     // This is the regression that slipped past the source-grep test:
     // the runtime was showing the raw key string.

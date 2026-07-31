@@ -40,19 +40,11 @@ export interface SyncLogEntry {
   created_at: string;
 }
 
-export interface ApplyEntryOptions {
-  /** pullFromServer already owns the transaction for entity + log + cursor. */
-  callerOwnsTransaction?: boolean;
-}
-
 /**
  * Apply a single inbound sync log entry to the local database.
  * Returns true if the entry was applied successfully.
  */
-export function applyEntry(
-  entry: SyncLogEntry,
-  options: ApplyEntryOptions = {},
-): boolean {
+export function applyEntry(entry: SyncLogEntry): boolean {
   try {
     switch (entry.entity_type) {
       case 'product':
@@ -60,9 +52,9 @@ export function applyEntry(
       case 'stock':
         return applyStock(entry);
       case 'order':
-        return applyOrder(entry, options);
+        return applyOrder(entry);
       case 'staff':
-        return applyStaff(entry, options);
+        return applyStaff(entry);
       case 'invoice':
         return applyInvoice(entry);
       case 'checkin':
@@ -83,10 +75,6 @@ export function applyEntry(
     }
   } catch (err: any) {
     logger.warn(`[EntityApplicator] Failed to apply ${entry.entity_type}/${entry.event} seq=${entry.seq}: ${err.message}`);
-    // Under pullFromServer, a thrown applicator error must roll back the
-    // entity mutation, accepted audit row, and cursor together. Intentional
-    // invalidations/no-ops return false instead of throwing.
-    if (options.callerOwnsTransaction) throw err;
     return false;
   }
 }
@@ -296,10 +284,7 @@ function applyStock(entry: SyncLogEntry): boolean {
 
 // ─── Order ──────────────────────────────────────────────────
 
-function applyOrder(
-  entry: SyncLogEntry,
-  options: ApplyEntryOptions,
-): boolean {
+function applyOrder(entry: SyncLogEntry): boolean {
   const p = entry.payload;
   const orderId = entry.entity_id;
   if (!orderId) return false;
@@ -336,35 +321,13 @@ function applyOrder(
       const adaptedItems = items.map((it: any) =>
         adaptServerOrderItem(it, adapted.id, p),
       );
-      const invalidItem = adaptedItems.find((item: any) => (
-        !String(item?.name || '').trim()
-        || typeof item?.price !== 'number'
-        || item.price < 0
-        || typeof item?.total !== 'number'
-        || item.total < 0
-      ));
-      if (invalidItem) {
-        // POS-origin order events can carry a thin request payload before the
-        // backend emits the canonical findOrderById snapshot. Treat that as an
-        // invalidation/no-op: advancing the sync cursor is safe, while trying
-        // to mirror it would either create a zero-value partial row or become
-        // a permanent poison pill that blocks every later sequence.
-        logger.debug(
-          `[EntityApplicator] Order ${orderId} payload items[] is not a `
-          + 'canonical mirror; awaiting the full server snapshot',
-        );
-        return false;
-      }
-      orderRepo.upsertFromServer(adapted, adaptedItems, {
-        callerOwnsTransaction: options.callerOwnsTransaction,
-      });
+      orderRepo.upsertFromServer(adapted, adaptedItems);
       logger.info(
         `[EntityApplicator] Mirrored server order ${orderId} ` +
           `(${adaptedItems.length} items, status=${adapted.status})`,
       );
       return true;
     } catch (e: any) {
-      if (options.callerOwnsTransaction) throw e;
       logger.error(
         `[EntityApplicator] Failed to mirror server order ${orderId}: ${e.message}`,
       );
@@ -379,11 +342,8 @@ function applyOrder(
     try {
       const adapted = { ...adaptServerOrder(p), id: localId };
       const adaptedItems = p.items.map((it: any) => adaptServerOrderItem(it, localId!, p));
-      orderRepo.upsertFromServer(adapted, adaptedItems, {
-        callerOwnsTransaction: options.callerOwnsTransaction,
-      });
+      orderRepo.upsertFromServer(adapted, adaptedItems);
     } catch (e: any) {
-      if (options.callerOwnsTransaction) throw e;
       logger.warn(`[EntityApplicator] Could not enrich Billiard order ${localId}: ${e?.message || e}`);
     }
   }
@@ -515,10 +475,7 @@ function applyOrder(
 
 // ─── Staff ──────────────────────────────────────────────────
 
-function applyStaff(
-  entry: SyncLogEntry,
-  options: ApplyEntryOptions,
-): boolean {
+function applyStaff(entry: SyncLogEntry): boolean {
   const p = entry.payload;
   if (!entry.entity_id) return false;
 
@@ -529,22 +486,19 @@ function applyStaff(
 
   const name = p.name || p.fullName || `${p.firstName || ''} ${p.lastName || ''}`.trim() || 'Staff';
 
-  staffRepo.upsertMany(
-    [{
-      id: entry.entity_id,
-      // Canonical users.id (FK target on bookings.staff_user_id). Same shape
-      // fallbacks as staff-sync.ts so a sync_log entry written before the
-      // backend exposed userId still applies cleanly with user_id=null.
-      user_id: p.userId ?? p.user_id ?? p.user?.id ?? null,
-      name,
-      commission_rate: p.commissionRate ?? p.commission_rate ?? 0,
-      is_active: p.isActive !== false ? 1 : 0,
-      role: p.role ?? null,
-      updated_at: p.updatedAt ?? entry.created_at,
-      backend_synced_at: new Date().toISOString(),
-    }],
-    { callerOwnsTransaction: options.callerOwnsTransaction },
-  );
+  staffRepo.upsertMany([{
+    id: entry.entity_id,
+    // Canonical users.id (FK target on bookings.staff_user_id). Same shape
+    // fallbacks as staff-sync.ts so a sync_log entry written before the
+    // backend exposed userId still applies cleanly with user_id=null.
+    user_id: p.userId ?? p.user_id ?? p.user?.id ?? null,
+    name,
+    commission_rate: p.commissionRate ?? p.commission_rate ?? 0,
+    is_active: p.isActive !== false ? 1 : 0,
+    role: p.role ?? null,
+    updated_at: p.updatedAt ?? entry.created_at,
+    backend_synced_at: new Date().toISOString(),
+  }]);
 
   return true;
 }

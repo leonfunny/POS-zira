@@ -458,6 +458,7 @@ describe('real repository verdict', () => {
       'play-flavor',
       'release-signing',
       'version-code-source',
+      'hidden-tv-apk-r12',
       'legacy-publish-lane',
       'node-engines-contract',
       'local-publish-scripts',
@@ -471,10 +472,6 @@ describe('real repository verdict', () => {
       // Android build runner exercises unsigned release + bundle artifacts.
       'electron-publish-defaults',
       'release-artifact-ci',
-      // Owner chose removal of the unrelated Android TV APK from the Windows
-      // installer on 2026-07-29; the Android production lane remains NO-GO.
-      'hidden-tv-apk-r12',
-      'r12-artifact-decision',
     ]) {
       expect(byId.get(id), id).toBe('PASS');
     }
@@ -486,7 +483,7 @@ describe('real repository verdict', () => {
       'android-pos/app/build/intermediates/merged_manifests/release/processReleaseManifest/AndroidManifest.xml',
     ));
     expect(byId.get('merged-manifest-evidence')).toBe(manifestsBuilt ? 'PASS' : 'BLOCKED');
-    for (const id of REQUIRED_REGISTER_IDS.filter((id) => id !== 'r12-artifact-decision')) {
+    for (const id of REQUIRED_REGISTER_IDS) {
       expect(byId.get(id), id).toBe('BLOCKED');
     }
   });
