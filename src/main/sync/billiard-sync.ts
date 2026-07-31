@@ -269,6 +269,16 @@ export class BilliardSync {
           await this.syncPendingPayments(token, 'void batch');
           await this.flushPaymentJournal('session void batch');
           this.notifyRenderer('payment-updated');
+        } else if (op === 'retail_quick_sale' && result?.session?.id) {
+          // Walk-in retail returns a settled fnb_only session — cache it so
+          // the local receipt printer and history can read it immediately.
+          billiardSessionRepo.upsertOne(result.session);
+          this.notifyRenderer('payment-updated');
+        } else if (op === 'merge_sessions') {
+          // Source sessions vanish into the target — pull a fresh dashboard
+          // synchronously so stale ACTIVE rows drop off the floor before the
+          // dialog closes.
+          await this.refreshDashboard().catch(() => {});
         } else if (sessionReconciliationRead && result?.id) {
           const status = canonicalBilliardSessionStatus(result.status);
           if (status === 'COMPLETED') {
@@ -303,6 +313,8 @@ export class BilliardSync {
           || op === 'process_payment'
           || op === 'void_session'
           || op === 'void_sessions_batch'
+          || op === 'retail_quick_sale'
+          || op === 'merge_sessions'
           || sessionReconciliationRead
           || SESSION_STATE_OPERATIONS.has(op);
         if (!resourceCreateInProgress && !journalIsAuthoritative && !floorPlanMutation) {
