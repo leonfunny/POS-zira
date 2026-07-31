@@ -178,7 +178,7 @@ import {
   setConfigValue,
   getSecureApiKey,
 } from '../config/store';
-import { isFeatureEnabled } from '../entitlements/entitlements-controller';
+import { isFeatureEnabledStrict } from '../entitlements/entitlements-controller';
 import type {
   ProductAdminCategoryListResponse,
   ProductAdminCategoryDeleteInput,
@@ -8069,7 +8069,9 @@ export class PosModule extends BaseModule {
     const billiardShiftLink = {
       enabled: (): boolean => {
         try {
-          return isFeatureEnabled('billiard', getConfig().entitlements);
+          // Strict: never fire off permissive offline defaults — a grocery
+          // salon must not see billiard notices or open billiard shifts.
+          return isFeatureEnabledStrict('billiard', getConfig().entitlements);
         } catch {
           return false;
         }

@@ -295,4 +295,18 @@ export function registerEntitlementsHandlers(mainWindow: BrowserWindow | null) {
 /**
  * Export for use in guards
  */
-export { isFeatureEnabled, isCacheValid, fetchEntitlementsFromBackend };
+/**
+ * Like isFeatureEnabled but WITHOUT the permissive default fallback: returns
+ * false unless server-cached entitlements EXPLICITLY enable the feature.
+ * Use for cross-ledger side effects (billiard shift link, retail mirror)
+ * that must never fire off offline defaults at a non-billiard salon.
+ */
+function isFeatureEnabledStrict(
+  feature: FeatureKey,
+  entitlements: SalonEntitlements | undefined,
+): boolean {
+  if (!entitlements?.features?.[feature]) return false;
+  return isFeatureEnabled(feature, entitlements);
+}
+
+export { isFeatureEnabled, isFeatureEnabledStrict, isCacheValid, fetchEntitlementsFromBackend };

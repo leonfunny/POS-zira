@@ -26,7 +26,7 @@ import { billiardFloorPlanRepo } from '../database/repos/billiard-floor-plan-rep
 import type { BackupRunReason, LocalBackupService } from '../database/backup-service';
 import { PrinterType, ReceiptData } from '../../shared/types';
 import { getConfig, getSecureAuthToken } from '../config/store';
-import { isFeatureEnabled } from '../entitlements/entitlements-controller';
+import { isFeatureEnabledStrict } from '../entitlements/entitlements-controller';
 import { onOrderFinalized } from '../events/pos-event-emitter';
 import { buildRetailMirrorPayload } from '../../shared/billiard-retail-mirror';
 import SocketClient from '../network/socket-client';
@@ -116,7 +116,7 @@ export class SyncModule extends BaseModule {
     // double-booking; table-handoff orders are excluded by the builder.
     onOrderFinalized((order, items) => {
       try {
-        if (!isFeatureEnabled('billiard', getConfig().entitlements)) return;
+        if (!isFeatureEnabledStrict('billiard', getConfig().entitlements)) return;
         const payload = buildRetailMirrorPayload(order as any, items as any);
         if (!payload) return;
         void this.billiardSync
