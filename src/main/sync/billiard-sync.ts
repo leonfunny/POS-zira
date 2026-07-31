@@ -5,6 +5,7 @@ import { billiardFloorPlanRepo } from '../database/repos/billiard-floor-plan-rep
 import { billiardComboRepo } from '../database/repos/billiard-combo-repo';
 import { billiardSessionRepo } from '../database/repos/billiard-session-repo';
 import { billiardMutationRepo } from '../database/repos/billiard-mutation-repo';
+import { billiardHistoryCacheRepo } from '../database/repos/billiard-history-cache-repo';
 import { database } from '../database/database';
 import { getSecureAuthToken } from '../config/store';
 import logger from '../logger';
@@ -18,6 +19,12 @@ import {
   normalizeBilliardDashboard,
   normalizeBilliardPendingPayments,
 } from '../../shared/billiard-contract';
+import {
+  mapServerAnalyticsToDailyReport,
+  mapServerHistorySession,
+  type DailyReportData,
+  type HistorySessionRow,
+} from '../../shared/billiard-history-contract';
 
 const MAX_QUEUE_RETRIES = 3;
 const SESSION_STATE_OPERATIONS = new Set([
@@ -63,6 +70,11 @@ export class BilliardSync {
 
     logger.info('[BilliardSync] Starting full sync...');
     this.pendingPaymentsSignature = null;
+    try {
+      billiardHistoryCacheRepo.pruneOlderThan(30);
+    } catch (err) {
+      logger.debug(`[BilliardSync] history cache prune skipped: ${err}`);
+    }
 
     let resources = 0;
     let floors = 0;
@@ -1003,5 +1015,102 @@ export class BilliardSync {
         }
       }
     } catch { /* ignore if electron not ready */ }
+  }
+
+  // ── History & daily report (server = source of truth, cache = offline) ──
+
+  async getSessionHistory(params: {
+    dateFrom: string;
+    dateTo: string;
+    status?: string;
+    resourceId?: string;
+    search?: string;
+    limit: number;
+    offset: number;
+  }): Promise<{ sessions: HistorySessionRow[]; total: number; fromCache: boolean }> {
+    const token = getSecureAuthToken();
+    const limit = Math.max(1, Math.min(100, params.limit || 20));
+    const page = Math.floor((params.offset || 0) / limit) + 1;
+    const normalizedStatus = (params.status || '').toUpperCase();
+    const searchNeedle = (params.search || '').trim().toLowerCase();
+
+    if (token) {
+      const query = new URLSearchParams({
+        from: params.dateFrom,
+        to: params.dateTo,
+        page: String(page),
+        limit: String(limit),
+      });
+      if (normalizedStatus === 'COMPLETED' || normalizedStatus === 'CANCELLED') {
+        query.set('status', normalizedStatus);
+      }
+      if (params.resourceId) query.set('resourceId', params.resourceId);
+
+      const probe = this.beginApiProbe();
+      try {
+        const res = await apiClient.request(
+          'GET',
+          `/billiard/sessions/history?${query.toString()}`,
+          token,
+        );
+        this.setApiReachable(true, probe);
+        const rows: HistorySessionRow[] = (Array.isArray(res?.data) ? res.data : [])
+          .map(mapServerHistorySession);
+        billiardHistoryCacheRepo.upsertMany(rows);
+        // The server has no free-text search; filter the fetched page locally
+        // so the box still works (documented limitation: current page only).
+        const sessions = searchNeedle
+          ? rows.filter((row) =>
+              [row.tableName, row.customer_name ?? '', ...row.items.map((i) => i.name)]
+                .join(' ')
+                .toLowerCase()
+                .includes(searchNeedle))
+          : rows;
+        return { sessions, total: Number(res?.total ?? sessions.length), fromCache: false };
+      } catch (err: any) {
+        this.setApiReachable(!isBilliardNetworkError(err), probe);
+        // HTTP errors are authoritative; only transport failures fall through
+        // to the offline cache.
+        if (!isBilliardNetworkError(err)) throw err;
+        logger.debug(`[BilliardSync] history fetch offline, serving cache: ${err?.message}`);
+      }
+    }
+
+    const cached = billiardHistoryCacheRepo.query({
+      dateFrom: params.dateFrom,
+      dateTo: params.dateTo,
+      status: normalizedStatus === 'ALL' ? undefined : normalizedStatus || undefined,
+      resourceId: params.resourceId,
+      search: params.search,
+      limit,
+      offset: params.offset || 0,
+    });
+    return { ...cached, fromCache: true };
+  }
+
+  async getDailyReport(dateFrom: string, dateTo: string): Promise<DailyReportData> {
+    const token = getSecureAuthToken();
+    if (!token) {
+      throw Object.assign(new Error('Not authenticated'), { code: 'OFFLINE' });
+    }
+    const probe = this.beginApiProbe();
+    try {
+      const res = await apiClient.request(
+        'GET',
+        `/billiard/analytics?from=${dateFrom}&to=${dateTo}`,
+        token,
+      );
+      this.setApiReachable(true, probe);
+      return mapServerAnalyticsToDailyReport(res);
+    } catch (err: any) {
+      this.setApiReachable(!isBilliardNetworkError(err), probe);
+      if (isBilliardNetworkError(err)) {
+        throw Object.assign(
+          new Error('Network required for the daily report'),
+          { code: 'OFFLINE' },
+        );
+      }
+      throw err;
+    }
   }
 }

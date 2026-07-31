@@ -294,6 +294,36 @@ export class SyncModule extends BaseModule {
       return await this.billiardSync.executeMutation(op, method, path, body);
     });
 
+    ipcMain.handle('billiard:session-history:get', async (_event, params: any) => {
+      try {
+        if (!this.billiardSync) return { success: false, error: 'Billiard sync not initialized' };
+        const data = await this.billiardSync.getSessionHistory(params ?? {});
+        return { success: true, data };
+      } catch (e: any) {
+        logger.warn(`[SyncModule] billiard:session-history:get error: ${e.message}`);
+        return { success: false, error: e.message };
+      }
+    });
+
+    ipcMain.handle('billiard:session-history:tables', async () => {
+      try {
+        const rows = billiardResourceRepo.getAll();
+        return { success: true, data: rows.map((r: any) => ({ id: r.id, name: r.name })) };
+      } catch (e: any) {
+        return { success: false, error: e.message };
+      }
+    });
+
+    ipcMain.handle('billiard:daily-report:get', async (_event, dateFrom: string, dateTo: string) => {
+      try {
+        if (!this.billiardSync) return { success: false, error: 'Billiard sync not initialized' };
+        const data = await this.billiardSync.getDailyReport(dateFrom, dateTo);
+        return { success: true, data };
+      } catch (e: any) {
+        return { success: false, error: e.message, code: e.code };
+      }
+    });
+
     ipcMain.handle('billiard:sync:status', async () => {
       try {
         if (!this.billiardSync) {

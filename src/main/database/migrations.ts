@@ -1891,4 +1891,30 @@ export const migrations: Migration[] = [
         ON receipt_print_outbox(salon_id, device_id, shift_id, status, seq);
     `,
   },
+  {
+    version: 64,
+    name: 'billiard_history_cache',
+    // Offline read-cache for the billiard history tab. The server is the
+    // source of truth (shared with the web dashboard); every online page view
+    // upserts here so the cashier can still browse recent history without a
+    // network. Deliberately separate from billiard_sessions so the
+    // floor/pending/tombstone logic never sees these rows.
+    up: `
+      CREATE TABLE IF NOT EXISTS billiard_history_cache (
+        id TEXT PRIMARY KEY,
+        ended_at TEXT,
+        started_at TEXT,
+        status TEXT NOT NULL,
+        payment_status TEXT,
+        resource_id TEXT,
+        search_blob TEXT NOT NULL DEFAULT '',
+        payload TEXT NOT NULL,
+        cached_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_billiard_history_cache_ended
+        ON billiard_history_cache(ended_at);
+      CREATE INDEX IF NOT EXISTS idx_billiard_history_cache_resource
+        ON billiard_history_cache(resource_id, ended_at);
+    `,
+  },
 ];
