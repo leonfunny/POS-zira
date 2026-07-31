@@ -4,7 +4,25 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error || '');
 }
 
+export function getExplicitPrintFailureClass(error: unknown): PrintJobFailureClass | null {
+  if (!error || typeof error !== 'object') return null;
+
+  const failureClass = (error as { failureClass?: unknown }).failureClass;
+  if (
+    failureClass === 'SAFE_BEFORE_PRINT'
+    || failureClass === 'UNCERTAIN_AFTER_PRINT'
+    || failureClass === 'FINAL'
+  ) {
+    return failureClass;
+  }
+
+  return null;
+}
+
 export function classifyPrintFailureAfterDriverCall(error: unknown, fiscal: boolean): PrintJobFailureClass {
+  const explicitFailureClass = getExplicitPrintFailureClass(error);
+  if (explicitFailureClass) return explicitFailureClass;
+
   const message = errorMessage(error);
 
   if (/FISCAL_RESULT_UNKNOWN|UNKNOWN_NEEDS_RECONCILIATION|APP_RESTART_AFTER_SENT/i.test(message)) {

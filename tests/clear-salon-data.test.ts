@@ -67,6 +67,17 @@ describe('database.clearSalonData() table list', () => {
     expect(source).toContain('Failed to persist cleared salon data');
   });
 
+  it('guards receipt outcomes before removing old-tenant live payloads', () => {
+    expect(block).toMatch(/'receipt_print_outbox'/);
+    expect(source).toContain("\"'DISPATCHING', 'REMOTE_ACCEPTED', 'NEEDS_REVIEW'\"");
+    expect(source).toContain('WHERE status IN (${blockedStatuses})');
+    expect(source).toContain("status IN ('PENDING', 'FAILED_SAFE')");
+    expect(source).toContain("status = 'CANCELLED'");
+    expect(source).toContain('prepareReceiptPrintOutboxForTenantExitInTransaction');
+    expect(source.indexOf('prepareReceiptPrintOutboxForTenantExitInTransaction'))
+      .toBeLessThan(source.indexOf('for (const table of tablesToClear)'));
+  });
+
   it('covers every migration table except shared/system tables', () => {
     const migrations = readFileSync(
       resolve(__dirname, '../src/main/database/migrations.ts'),

@@ -5,7 +5,7 @@ vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: () => [] },
 }));
 
-const { logger, atomicWriteFile } = vi.hoisted(() => ({
+const { logger, atomicWriteFile, atomicWriteFileSync } = vi.hoisted(() => ({
   logger: {
     info: vi.fn(),
     warn: vi.fn(),
@@ -13,12 +13,13 @@ const { logger, atomicWriteFile } = vi.hoisted(() => ({
     debug: vi.fn(),
   },
   atomicWriteFile: vi.fn(),
+  atomicWriteFileSync: vi.fn(),
 }));
 
 vi.mock('../src/main/logger', () => ({ default: logger }));
 vi.mock('../src/main/database/atomic-write', () => ({
   atomicWriteFile,
-  atomicWriteFileSync: vi.fn(),
+  atomicWriteFileSync,
 }));
 
 import { database } from '../src/main/database/database';
@@ -84,5 +85,29 @@ describe('database save dirty tracking', () => {
 
     expect(atomicWriteFile).toHaveBeenCalledTimes(2);
     expect((database as any).dirty).toBe(false);
+  });
+
+  it('saveSync fails closed while the async writer owns the shared temp file', async () => {
+    let finishWrite!: () => void;
+    atomicWriteFile.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      finishWrite = resolve;
+    }));
+
+    database.markDirty();
+    const asyncSave = database.save();
+    await Promise.resolve();
+    // Simulate the tenant lifecycle transaction becoming newer while the old
+    // snapshot is still writing.
+    database.markDirty();
+
+    expect(database.saveSync()).toMatchObject({
+      success: false,
+      error: expect.stringContaining('async save is in progress'),
+    });
+    expect(atomicWriteFileSync).not.toHaveBeenCalled();
+
+    finishWrite();
+    await expect(asyncSave).resolves.toMatchObject({ success: true });
+    expect((database as any).dirty).toBe(true);
   });
 });

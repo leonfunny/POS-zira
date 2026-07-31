@@ -123,6 +123,61 @@ describe('database migrations', () => {
     expect(migration!.up).toContain('ALTER TABLE pos_billiard_handoffs_v61 RENAME TO pos_billiard_handoffs');
   });
 
+  it('creates a durable, ordered receipt outbox with per-order idempotency', () => {
+    const migration = migrations.find((m) => m.name === 'receipt_print_outbox');
+    expect(migration).toBeDefined();
+    expect(migration!.version).toBe(62);
+    expect(migration!.up).toContain('CREATE TABLE IF NOT EXISTS receipt_print_outbox');
+    expect(migration!.up).toContain('seq INTEGER PRIMARY KEY AUTOINCREMENT');
+    expect(migration!.up).toContain('idempotency_key TEXT NOT NULL UNIQUE');
+    expect(migration!.up).toContain('UNIQUE (order_id, document_type)');
+    expect(migration!.up).toContain('FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE');
+    expect(migration!.up).toContain('idx_receipt_print_outbox_replay');
+  });
+
+  it('rebuilds the receipt outbox without an order-delete cascade and retains evidence', async () => {
+    const SQL = await initSqlJs();
+    const db = new SQL.Database();
+    db.run('PRAGMA foreign_keys = ON');
+    db.run('CREATE TABLE orders (id TEXT PRIMARY KEY)');
+
+    for (const name of ['receipt_print_outbox', 'receipt_print_outbox_preserve_evidence']) {
+      const migration = migrations.find((entry) => entry.name === name)!;
+      for (const statement of migration.up.split(';').map((part) => part.trim()).filter(Boolean)) {
+        db.run(statement);
+      }
+      if (name === 'receipt_print_outbox') {
+        db.run("INSERT INTO orders (id) VALUES ('order-1')");
+        db.run(`
+          INSERT INTO receipt_print_outbox (
+            job_id, idempotency_key, order_id, salon_id, device_id,
+            document_type, open_drawer, payload_json, payload_hash, status,
+            created_at, updated_at
+          ) VALUES (
+            'job-1', 'key-1', 'order-1', 'salon-1', 'pos-1',
+            'INITIAL_ORDER_COPY', 1, '{"payment":{"method":"CASH"}}',
+            'sha256:test', 'COMPLETED', '2026-07-29T10:00:00.000Z',
+            '2026-07-29T10:00:01.000Z'
+          )
+        `);
+      }
+    }
+
+    expect(db.exec('PRAGMA foreign_key_list(receipt_print_outbox)')[0]?.values ?? [])
+      .toEqual([]);
+    db.run("DELETE FROM orders WHERE id = 'order-1'");
+    const evidence = db.exec(
+      "SELECT job_id, order_id, status, payload_json FROM receipt_print_outbox WHERE job_id = 'job-1'",
+    );
+    expect(evidence[0].values).toEqual([[
+      'job-1',
+      'order-1',
+      'COMPLETED',
+      '{"payment":{"method":"CASH"}}',
+    ]]);
+    db.close();
+  });
+
   it('applies the tender-boundary rebuild to an existing v60 row', async () => {
     const SQL = await initSqlJs();
     const db = new SQL.Database();

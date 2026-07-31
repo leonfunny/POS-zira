@@ -71,7 +71,10 @@ import { notifyPosRenderers } from '../windows/notify-pos-renderers';
 import { app } from 'electron';
 import logger from '../logger';
 import { buildKitchenTicketLines, buildPickupSlipLines, type KitchenTicketData } from '../printing/kitchen-ticket';
-import { classifyPrintFailureAfterDriverCall } from '../printing/print-failure-classifier';
+import {
+  classifyPrintFailureAfterDriverCall,
+  getExplicitPrintFailureClass,
+} from '../printing/print-failure-classifier';
 import {
   getFiscalDailyReportDate,
   getFiscalDailyReportDateFromDbTimestamp,
@@ -2080,6 +2083,10 @@ export class HardwareModule extends BaseModule {
     if (this.healthCheckTimer) return;
 
     this.healthCheckTimer = setInterval(async () => {
+      if (ThermalDriver.isAnyPrintBusy()) {
+        logger.debug('[HardwareModule] Deferring periodic health check while a thermal print is in progress');
+        return;
+      }
       try {
         await this.runHealthCheck();
       } catch (err) {
@@ -2746,34 +2753,40 @@ export class HardwareModule extends BaseModule {
         logger.error(`[HardwareModule] Job ${job.jobId} attempt ${attempt + 1} failed:`, error);
         if (lanFirstInput) {
           const failMsg = error?.message || String(error);
+          const failureClass = getExplicitPrintFailureClass(error)
+            ?? (error instanceof LanFirstSafeBeforePrintError
+              ? 'SAFE_BEFORE_PRINT'
+              : classifyPrintFailureAfterDriverCall(error, false));
           await lanFirstPrintAttemptRepo.markFailed({
             ...lanFirstInput,
-            failureClass: error instanceof LanFirstSafeBeforePrintError ? 'SAFE_BEFORE_PRINT' : 'UNCERTAIN_AFTER_PRINT',
+            failureClass,
             errorMessage: failMsg,
           });
           socket?.sendJobStatus(
             job.jobId,
             'FAILED',
             failMsg,
-            error instanceof LanFirstSafeBeforePrintError ? 'SAFE_BEFORE_PRINT' : 'UNCERTAIN_AFTER_PRINT',
+            failureClass,
           );
           return;
         }
 
-        if (attempt < PRINT_JOB_MAX_RETRIES) {
-          logger.info(`[HardwareModule] Retrying in ${PRINT_JOB_RETRY_DELAY}ms...`);
-          await new Promise(r => setTimeout(r, PRINT_JOB_RETRY_DELAY));
-        } else {
-          const failMsg = fiscal
-            ? `FISCAL PRINT FAILED — sale must be blocked: ${error.message}`
-            : error.message;
-          socket?.sendJobStatus(
-            job.jobId,
-            'FAILED',
-            failMsg,
-            classifyPrintFailureAfterDriverCall(error, fiscal),
+        const failureClass = classifyPrintFailureAfterDriverCall(error, fiscal);
+        if (failureClass === 'SAFE_BEFORE_PRINT' && attempt < PRINT_JOB_MAX_RETRIES) {
+          logger.info(
+            `[HardwareModule] Job ${job.jobId}: failure is SAFE_BEFORE_PRINT; ` +
+            `retrying in ${PRINT_JOB_RETRY_DELAY}ms...`,
           );
+          await new Promise(r => setTimeout(r, PRINT_JOB_RETRY_DELAY));
+          continue;
         }
+
+        const errorMessage = error?.message || String(error);
+        const failMsg = fiscal
+          ? `FISCAL PRINT FAILED — sale must be blocked: ${errorMessage}`
+          : errorMessage;
+        socket?.sendJobStatus(job.jobId, 'FAILED', failMsg, failureClass);
+        return;
       }
     }
   }

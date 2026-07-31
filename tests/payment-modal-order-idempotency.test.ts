@@ -53,7 +53,7 @@ describe('PaymentModal order creation idempotency', () => {
     const durableIndex = protectedBoundaryPreparation.indexOf('tenderBoundaryCrossedRef.current = true;');
     const readyIndex = protectedBoundaryPreparation.indexOf("setProtectedBoundaryStatus('ready')");
     const orderIdIndex = completePayment.indexOf('const orderId = orderAttemptIdRef.current;');
-    const createIndex = saveOrderAndFinish.indexOf('pos.orders.create(order, items)');
+    const createIndex = saveOrderAndFinish.indexOf('pos.orders.create(order, items,');
     expect(payableIndex).toBeGreaterThan(-1);
     expect(boundaryIndex).toBeGreaterThan(-1);
     expect(restoredBoundaryIndex).toBeGreaterThan(boundaryIndex);
@@ -74,7 +74,7 @@ describe('PaymentModal order creation idempotency', () => {
   });
 
   it('marks the order completed immediately after local order creation succeeds', () => {
-    const createIndex = saveOrderAndFinish.indexOf('window.electronAPI.pos.orders.create(order, items)');
+    const createIndex = saveOrderAndFinish.indexOf('window.electronAPI.pos.orders.create(order, items,');
     const failureIndex = saveOrderAndFinish.indexOf('if (result && !result.success)');
     const completedIndex = saveOrderAndFinish.indexOf('completedOrderIdRef.current = orderId;');
     const syncIndex = saveOrderAndFinish.indexOf('window.electronAPI.pos.sync.orders()');
