@@ -117,6 +117,8 @@ export class SyncModule extends BaseModule {
     onOrderFinalized((order, items) => {
       try {
         if (!isFeatureEnabledStrict('billiard', getConfig().entitlements)) return;
+        // Data gate: only salons that actually have pool tables mirror retail.
+        if (billiardResourceRepo.getAll().length === 0) return;
         const payload = buildRetailMirrorPayload(order as any, items as any);
         if (!payload) return;
         void this.billiardSync

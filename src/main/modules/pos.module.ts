@@ -179,6 +179,7 @@ import {
   getSecureApiKey,
 } from '../config/store';
 import { isFeatureEnabledStrict } from '../entitlements/entitlements-controller';
+import { billiardResourceRepo } from '../database/repos/billiard-resource-repo';
 import type {
   ProductAdminCategoryListResponse,
   ProductAdminCategoryDeleteInput,
@@ -8069,9 +8070,12 @@ export class PosModule extends BaseModule {
     const billiardShiftLink = {
       enabled: (): boolean => {
         try {
-          // Strict: never fire off permissive offline defaults — a grocery
-          // salon must not see billiard notices or open billiard shifts.
-          return isFeatureEnabledStrict('billiard', getConfig().entitlements);
+          // Two gates, both fail-closed: the plan entitlement AND actual
+          // billiard tables in the local cache. The entitlement alone is
+          // plan-based (grocery salons also have it), so the salon's own
+          // data decides — chesaigon has zero pool tables, the bia club 15.
+          if (!isFeatureEnabledStrict('billiard', getConfig().entitlements)) return false;
+          return billiardResourceRepo.getAll().length > 0;
         } catch {
           return false;
         }
@@ -8117,26 +8121,6 @@ export class PosModule extends BaseModule {
       },
     };
 
-    // Close-shift screen asks whether a billiard shift will be closed along.
-    ipcMain.handle('billiard:shift:preclose', async () => {
-      const billiardSalon = billiardShiftLink.enabled();
-      try {
-        if (!billiardSalon) return { billiardSalon, open: false };
-        const token = getSecureAuthToken();
-        if (!token) return { billiardSalon, open: false, offline: true };
-        const current = await apiClient.request('GET', '/billiard/shifts/current', token);
-        const shift = current?.shift;
-        if (!shift) return { billiardSalon, open: false };
-        return {
-          billiardSalon,
-          open: true,
-          openedAt: shift.openedAt ?? null,
-          openingCash: shift.openingCash ?? null,
-        };
-      } catch {
-        return { billiardSalon, open: false, offline: true };
-      }
-    });
 
     ipcMain.handle('pos:shift:open', (_e, data: { staffId: string; staffName: string; openingCash: number }) => {
       try {

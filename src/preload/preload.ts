@@ -148,11 +148,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('billiard:daily-report:get', dateFrom, dateTo),
   },
 
-  // Unified-shift link (billiard salons): what happens alongside a POS shift
-  billiardShift: {
-    preclose: () => ipcRenderer.invoke('billiard:shift:preclose'),
-  },
-
   // Generic REST API proxy (for billiard, etc.)
   apiCall: (method: string, path: string, body?: any) =>
     ipcRenderer.invoke(IPC_CHANNELS.API_CALL, method, path, body),

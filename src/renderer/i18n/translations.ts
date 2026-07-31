@@ -15,8 +15,6 @@ export const languageNames: Record<Language, string> = {
 export const translations: Record<Language, Record<string, string>> = {
   // English
   en: {
-    'pos.shift.billiardAutoOpen': 'A billiard business shift will open together with this POS shift (same float).',
-    'pos.shift.billiardAutoClose': 'The open billiard shift will close together with this POS shift. Detailed cash reconciliation stays on the web (Daily close tab).',
     'history.title': 'Session history',
     'history.searchCustomer': 'Search customer…',
     'history.allStatuses': 'All statuses',
@@ -1840,8 +1838,6 @@ export const translations: Record<Language, Record<string, string>> = {
 
   // Vietnamese
   vi: {
-    'pos.shift.billiardAutoOpen': 'Ca bi-a sẽ tự mở cùng ca POS này (cùng tiền đầu ca).',
-    'pos.shift.billiardAutoClose': 'Ca bi-a đang mở sẽ tự đóng cùng ca POS này. Đối chiếu tiền chi tiết xem tab Đóng ca trên web.',
     'history.title': 'Lịch sử phiên',
     'history.searchCustomer': 'Tìm khách…',
     'history.allStatuses': 'Mọi trạng thái',
@@ -3625,8 +3621,6 @@ export const translations: Record<Language, Record<string, string>> = {
 
   // Turkish
   tr: {
-    'pos.shift.billiardAutoOpen': 'Bu POS vardiyasıyla birlikte bilardo vardiyası da açılacak (aynı kasa).',
-    'pos.shift.billiardAutoClose': 'Açık bilardo vardiyası bu POS vardiyasıyla birlikte kapanacak. Ayrıntılı kasa mutabakatı webde (Gün sonu sekmesi).',
     'history.title': 'Oturum geçmişi',
     'history.searchCustomer': 'Müşteri ara…',
     'history.allStatuses': 'Tüm durumlar',
@@ -4910,8 +4904,6 @@ export const translations: Record<Language, Record<string, string>> = {
 
   // Chinese
   zh: {
-    'pos.shift.billiardAutoOpen': '台球营业班次将与本POS班次一同开启（同一备用金）。',
-    'pos.shift.billiardAutoClose': '当前台球班次将与本POS班次一同关闭。详细对账请见网页（日结页）。',
     'history.title': '场次历史',
     'history.searchCustomer': '搜索顾客…',
     'history.allStatuses': '全部状态',
@@ -6195,8 +6187,6 @@ export const translations: Record<Language, Record<string, string>> = {
 
   // Ukrainian
   uk: {
-    'pos.shift.billiardAutoOpen': 'Більярдна зміна відкриється разом із цією POS-зміною (та сама каса).',
-    'pos.shift.billiardAutoClose': 'Відкрита більярдна зміна закриється разом із цією POS-зміною. Детальна звірка каси — на вебі (вкладка Закриття дня).',
     'history.title': 'Історія сесій',
     'history.searchCustomer': 'Пошук клієнта…',
     'history.allStatuses': 'Усі статуси',
@@ -7480,8 +7470,6 @@ export const translations: Record<Language, Record<string, string>> = {
 
   // Russian
   ru: {
-    'pos.shift.billiardAutoOpen': 'Бильярдная смена откроется вместе с этой POS-сменой (та же касса).',
-    'pos.shift.billiardAutoClose': 'Открытая бильярдная смена закроется вместе с этой POS-сменой. Детальная сверка кассы — на вебе (вкладка Закрытие дня).',
     'history.title': 'История сессий',
     'history.searchCustomer': 'Поиск клиента…',
     'history.allStatuses': 'Все статусы',
@@ -8765,8 +8753,6 @@ export const translations: Record<Language, Record<string, string>> = {
 
   // Polish (existing language, keeping for compatibility)
   pl: {
-    'pos.shift.billiardAutoOpen': 'Zmiana bilardowa otworzy się razem z tą zmianą POS (ta sama kasa).',
-    'pos.shift.billiardAutoClose': 'Otwarta zmiana bilardowa zamknie się razem z tą zmianą POS. Szczegółowe rozliczenie kasy — na webie (zakładka Zamknięcie dnia).',
     'history.title': 'Historia sesji',
     'history.searchCustomer': 'Szukaj klienta…',
     'history.allStatuses': 'Wszystkie statusy',

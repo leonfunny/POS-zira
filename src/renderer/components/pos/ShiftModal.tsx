@@ -25,25 +25,11 @@ export default function ShiftModal({ mode, onSubmit, onClose, t }: ShiftModalPro
   const initialCashAmountRef = useRef(cashAmount);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [billiardLink, setBilliardLink] = useState<{
-    billiardSalon: boolean;
-    open: boolean;
-    offline?: boolean;
-  } | null>(null);
 
   const label = (key: string, fallback: string) => {
     const translated = t(key);
     return translated && translated !== key ? translated : fallback;
   };
-
-  // Billiard salons: tell the cashier what this shift action also does.
-  useEffect(() => {
-    let cancelled = false;
-    window.electronAPI?.billiardShift?.preclose?.()
-      .then((res: any) => { if (!cancelled && res) setBilliardLink(res); })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [mode]);
 
   useEffect(() => {
     if (mode !== 'open') return;
@@ -185,16 +171,6 @@ export default function ShiftModal({ mode, onSubmit, onClose, t }: ShiftModalPro
               <span className="text-sm font-medium text-slate-500">{t('pos.currency')}</span>
             </div>
           </div>
-          {billiardLink?.billiardSalon && mode === 'open' && (
-            <div className="px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm">
-              {label('pos.shift.billiardAutoOpen', 'A billiard business shift will open together with this POS shift (same float).')}
-            </div>
-          )}
-          {billiardLink?.billiardSalon && mode === 'close' && billiardLink.open && (
-            <div className="px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm">
-              {label('pos.shift.billiardAutoClose', 'The open billiard shift will close together with this POS shift. Detailed cash reconciliation stays on the web (Daily close tab).')}
-            </div>
-          )}
         {error && (
           <div className="px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">
             {error}

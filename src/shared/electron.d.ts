@@ -1205,16 +1205,6 @@ interface ElectronAPI {
     get: (dateFrom: string, dateTo: string) => Promise<{ success: boolean; data?: any; error?: string }>;
   };
 
-  billiardShift: {
-    preclose: () => Promise<{
-      billiardSalon: boolean;
-      open: boolean;
-      offline?: boolean;
-      openedAt?: string | null;
-      openingCash?: number | null;
-    }>;
-  };
-
   // Happy Hour discount rules (billiard)
   happyHour: {
     getAll: () => Promise<{ success: boolean; data?: any[]; error?: string }>;
