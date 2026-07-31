@@ -178,6 +178,7 @@ import {
   setConfigValue,
   getSecureApiKey,
 } from '../config/store';
+import { isFeatureEnabled } from '../entitlements/entitlements-controller';
 import type {
   ProductAdminCategoryListResponse,
   ProductAdminCategoryDeleteInput,
@@ -8060,10 +8061,86 @@ export class PosModule extends BaseModule {
       }
     });
 
+    // ── Unified shift for billiard salons ─────────────────────────────
+    // One cashier action drives both ledgers: the POS cashier shift (local)
+    // and the server-side billiard business shift. Gated on the billiard
+    // entitlement so grocery salons are untouched. Fire-and-forget: a network
+    // failure never blocks the local shift flow (the floor chip nags later).
+    const billiardShiftLink = {
+      enabled: (): boolean => {
+        try {
+          return isFeatureEnabled('billiard', getConfig().entitlements);
+        } catch {
+          return false;
+        }
+      },
+      open: (openingCashGrosze: number, posShiftId: string): void => {
+        void (async () => {
+          try {
+            if (!billiardShiftLink.enabled()) return;
+            const token = getSecureAuthToken();
+            if (!token) return;
+            const current = await apiClient.request('GET', '/billiard/shifts/current', token);
+            if (current?.shift) return;
+            await apiClient.request('POST', '/billiard/shifts/open', token, {
+              openingCash: Math.round(openingCashGrosze) / 100,
+              notes: `auto: opened with POS shift ${posShiftId.slice(0, 8)}`,
+            });
+            logger.info('[PosModule] Billiard shift auto-opened with POS shift');
+          } catch (e: any) {
+            logger.debug(`[PosModule] billiard shift auto-open skipped: ${e?.message ?? e}`);
+          }
+        })();
+      },
+      close: (closingCashGrosze: number, posShiftId: string): void => {
+        void (async () => {
+          try {
+            if (!billiardShiftLink.enabled()) return;
+            const token = getSecureAuthToken();
+            if (!token) return;
+            const current = await apiClient.request('GET', '/billiard/shifts/current', token);
+            const shiftId = current?.shift?.id;
+            if (!shiftId) return;
+            const drawer = (Math.round(closingCashGrosze) / 100).toFixed(2);
+            const closed = await apiClient.request('POST', `/billiard/shifts/${shiftId}/close`, token, {
+              notes: `auto: closed with POS shift ${posShiftId.slice(0, 8)}; combined drawer count ${drawer} PLN`,
+            });
+            logger.info(
+              `[PosModule] Billiard shift auto-closed (expected cash ${closed?.expectedCash ?? '?'} PLN)`,
+            );
+          } catch (e: any) {
+            logger.warn(`[PosModule] billiard shift auto-close failed: ${e?.message ?? e}`);
+          }
+        })();
+      },
+    };
+
+    // Close-shift screen asks whether a billiard shift will be closed along.
+    ipcMain.handle('billiard:shift:preclose', async () => {
+      const billiardSalon = billiardShiftLink.enabled();
+      try {
+        if (!billiardSalon) return { billiardSalon, open: false };
+        const token = getSecureAuthToken();
+        if (!token) return { billiardSalon, open: false, offline: true };
+        const current = await apiClient.request('GET', '/billiard/shifts/current', token);
+        const shift = current?.shift;
+        if (!shift) return { billiardSalon, open: false };
+        return {
+          billiardSalon,
+          open: true,
+          openedAt: shift.openedAt ?? null,
+          openingCash: shift.openingCash ?? null,
+        };
+      } catch {
+        return { billiardSalon, open: false, offline: true };
+      }
+    });
+
     ipcMain.handle('pos:shift:open', (_e, data: { staffId: string; staffName: string; openingCash: number }) => {
       try {
         if (!this.shiftController) return { success: false, error: 'Shift controller not initialized' };
         const shiftId = this.shiftController.openShift(data.staffId, data.staffName, data.openingCash);
+        billiardShiftLink.open(data.openingCash, shiftId);
         this.posStore?.dispatch({ type: 'session/open', payload: { shiftId, staffId: data.staffId, staffName: data.staffName } });
         this.invalidateShiftVerification();
         this.setServerShiftMismatch(null);
@@ -8125,6 +8202,7 @@ export class PosModule extends BaseModule {
           }
         }
         const report = this.shiftController.closeShift(data.shiftId, data.closingCash, Boolean(data.fiscalOnly));
+        billiardShiftLink.close(data.closingCash, data.shiftId);
         this.posStore?.dispatch({ type: 'session/close' });
         this.invalidateShiftVerification();
         this.setServerShiftMismatch(null);
