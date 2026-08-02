@@ -37,67 +37,32 @@ import {
   type SellBy,
 } from '../../../shared/pos-sale';
 
-// ── State interfaces (mirror src/main/pos/pos-store.ts) ─────────────────────
+// ── State interfaces ────────────────────────────────────────────────────────
+//
+// These used to be RE-DECLARED here as a reduced copy of the Windows shapes,
+// and that copy is what let the platforms drift: the local CartItem had no
+// `locked`/`billiard`, and the local CheckoutDraftState had no `billiard`, so
+// the Android reducer could not even represent a frozen billiard checkout.
+// They now come from the one shared definition (src/shared/pos/pos-state.ts),
+// re-exported so every existing importer of this module is untouched.
 
-export interface CartItem {
-  id: string;
-  variantId: string;
-  name: string;
-  sku: string;
-  price: number; // grosze
-  quantity: number;
-  saleUnit?: string | null;
-  sellBy?: SellBy | string | null;
-  total: number; // grosze
-  imageUrl?: string;
-  staffId?: string;
-  staffName?: string;
-  duration?: number;
-  notes?: string;
-  course?: number;
-  vatRate?: number;
-  name_translations?: string | null;
-}
+export type {
+  CartItem,
+  CartState,
+  CheckoutDraftState,
+  PosSessionState,
+  DisplayState,
+  PosState,
+} from '../../../shared/pos/pos-state';
 
-export interface CartState {
-  items: CartItem[];
-  subtotal: number;
-  discount: number;
-  discountType?: 'fixed' | 'percentage';
-  discountPercent?: number;
-  tax: number;
-  total: number;
-}
-
-export interface CheckoutDraftState {
-  customerNip?: string;
-  customerName?: string;
-  requiresInvoice?: boolean;
-  kitchenSelfOrder?: Record<string, unknown>;
-}
-
-export interface PosSessionState {
-  shiftId: string | null;
-  staffId: string | null;
-  staffName: string | null;
-  isOpen: boolean;
-  openedAt: string | null;
-}
-
-export interface DisplayState {
-  mode: 'cart' | 'idle' | 'thankyou' | 'promo' | 'interactive' | 'checkin';
-  [key: string]: unknown;
-}
-
-export interface PosState {
-  cart: CartState;
-  checkoutDraft: CheckoutDraftState;
-  session: PosSessionState;
-  display: DisplayState;
-  activeTable?: string | null;
-  activeCustomer?: { id: string; name: string; nip?: string } | null;
-  tip?: number;
-}
+import type {
+  CartItem,
+  CartState,
+  CheckoutDraftState,
+  DisplayState,
+  PosState,
+} from '../../../shared/pos/pos-state';
+import type { PosCheckoutSnapshot } from '../../../shared/billiard-pos-handoff';
 
 // ── Actions (mirror src/main/pos/pos-store.ts) ──────────────────────────────
 
@@ -106,6 +71,11 @@ export type PosAction =
   | { type: 'cart/removeItem'; payload: { id: string } }
   | { type: 'cart/updateQuantity'; payload: { id: string; quantity: number } }
   | { type: 'cart/clear' }
+  // Post-payment clear. The SHARED PaymentModal dispatches this
+  // (PaymentModal.tsx:832); before this action existed the Android reducer fell
+  // through to `default: return state` and the cart stayed on screen after a
+  // completed sale.
+  | { type: 'cart/completeCheckout' }
   | { type: 'cart/applyDiscount'; payload: { amount: number; discountType?: 'fixed' | 'percentage' } }
   | { type: 'cart/clearDiscount' }
   | { type: 'cart/setItemNotes'; payload: { id: string; notes: string } }
@@ -121,7 +91,11 @@ export type PosAction =
   | { type: 'customer/select'; payload: { id: string; name: string; nip?: string } }
   | { type: 'customer/clear' }
   | { type: 'tip/set'; payload: { amount: number } }
-  | { type: 'tip/clear' };
+  | { type: 'tip/clear' }
+  // Atomic whole-cart replacement, used by the billiard handoff to activate a
+  // frozen checkout and by crash recovery to restore a parked cart. Renderer
+  // dispatches are refused at the shim boundary (main-process-only action).
+  | { type: 'state/replaceCheckoutSnapshot'; payload: { snapshot: PosCheckoutSnapshot } };
 
 // ── Initial state (copied) ──────────────────────────────────────────────────
 
@@ -187,6 +161,9 @@ export function posReducer(
 ): PosState {
   switch (action.type) {
     case 'cart/addItem': {
+      // A frozen billiard checkout is the server's bill — the cashier may not
+      // append to it (Windows pos-store.ts:296-299).
+      if (state.checkoutDraft.billiard) return state;
       const incomingSellBy = normalizeSellBy(action.payload.sellBy);
       if (!isValidSaleQuantity(action.payload.quantity, incomingSellBy)) {
         return state;
@@ -221,6 +198,8 @@ export function posReducer(
     }
 
     case 'cart/removeItem': {
+      // Frozen server-origin lines are not editable (Windows pos-store.ts:238).
+      if (state.cart.items.some((item) => item.id === action.payload.id && item.locked)) return state;
       const items = state.cart.items.filter((i) => i.id !== action.payload.id);
       const display = items.length === 0 ? { ...state.display, mode: 'idle' as const } : state.display;
       const checkoutDraft = items.length === 0 ? createInitialState().checkoutDraft : state.checkoutDraft;
@@ -230,6 +209,7 @@ export function posReducer(
     case 'cart/updateQuantity': {
       const existing = state.cart.items.find((item) => item.id === action.payload.id);
       if (!existing) return state;
+      if (existing.locked) return state; // Windows pos-store.ts:248
       const sellBy = normalizeSellBy(existing.sellBy);
       if (!isValidSaleQuantity(action.payload.quantity, sellBy)) return state;
       const items = state.cart.items.map((i) =>
@@ -243,17 +223,47 @@ export function posReducer(
     }
 
     case 'cart/clear': {
+      // Never discard a frozen billiard bill by clearing the cart.
+      if (state.checkoutDraft.billiard) return state;
       const display = state.display?.mode === 'cart' ? { ...state.display, mode: 'idle' as const } : state.display;
       return { ...state, cart: createInitialState().cart, checkoutDraft: createInitialState().checkoutDraft, tip: 0, display };
     }
 
-    case 'checkoutDraft/update':
-      return { ...state, checkoutDraft: { ...state.checkoutDraft, ...action.payload } };
+    case 'cart/completeCheckout': {
+      // The paid-and-done clear. A billiard cart may only be cleared AFTER its
+      // local order is durably committed, otherwise a crash here would lose the
+      // bill with the money already taken (Windows pos-store.ts:375-378).
+      if (state.checkoutDraft.billiard && state.checkoutDraft.billiard.orderCommitted !== true) return state;
+      const display = state.display?.mode === 'cart' ? { ...state.display, mode: 'idle' as const } : state.display;
+      return { ...state, cart: createInitialState().cart, checkoutDraft: createInitialState().checkoutDraft, tip: 0, display };
+    }
+
+    case 'checkoutDraft/update': {
+      // While a billiard checkout is frozen only the invoice fields may move —
+      // the renderer must not overwrite the handoff context (Windows
+      // pos-store.ts:283-290).
+      const payload = state.checkoutDraft.billiard
+        ? {
+            customerNip: action.payload.customerNip,
+            customerName: action.payload.customerName,
+            requiresInvoice: action.payload.requiresInvoice,
+          }
+        : action.payload;
+      return { ...state, checkoutDraft: { ...state.checkoutDraft, ...payload } };
+    }
 
     case 'checkoutDraft/clear':
-      return { ...state, checkoutDraft: createInitialState().checkoutDraft };
+      if (state.checkoutDraft.billiard) return state;
+      return {
+        ...state,
+        checkoutDraft: state.checkoutDraft.restoredInterruption
+          ? { restoredInterruption: state.checkoutDraft.restoredInterruption }
+          : createInitialState().checkoutDraft,
+      };
 
     case 'cart/applyDiscount': {
+      // The frozen line allocation is the fiscal source of truth.
+      if (state.checkoutDraft.billiard) return state;
       const { amount, discountType } = action.payload;
       const discount = discountType === 'percentage'
         ? Math.min(Math.round((state.cart.subtotal * amount) / 100), state.cart.subtotal)
@@ -270,6 +280,7 @@ export function posReducer(
     }
 
     case 'cart/clearDiscount': {
+      if (state.checkoutDraft.billiard) return state;
       return {
         ...state,
         cart: recalcCart({
@@ -282,6 +293,7 @@ export function posReducer(
     }
 
     case 'cart/setItemNotes': {
+      if (state.cart.items.some((item) => item.id === action.payload.id && item.locked)) return state;
       const items = state.cart.items.map((i) =>
         i.id === action.payload.id ? { ...i, notes: action.payload.notes } : i,
       );
@@ -291,6 +303,7 @@ export function posReducer(
     case 'cart/setItemPrice': {
       const newPrice = Math.max(0, action.payload.price);
       const existingItem = state.cart.items.find((i) => i.id === action.payload.id);
+      if (existingItem?.locked) return state; // Windows pos-store.ts:337
       if (existingItem && !validateCartItemCatalogPrice({ ...existingItem, price: newPrice })) return state;
       const items = state.cart.items.map((i) =>
         i.id === action.payload.id ? normalizedCartItem({ ...i, price: newPrice }) : i,
@@ -299,6 +312,7 @@ export function posReducer(
     }
 
     case 'cart/setItemStaff': {
+      if (state.cart.items.some((item) => item.id === action.payload.id && item.locked)) return state;
       const items = state.cart.items.map((i) =>
         i.id === action.payload.id
           ? { ...i, staffId: action.payload.staffId, staffName: action.payload.staffName }
@@ -308,6 +322,7 @@ export function posReducer(
     }
 
     case 'cart/setItemCourse': {
+      if (state.cart.items.some((item) => item.id === action.payload.id && item.locked)) return state;
       const items = state.cart.items.map((i) =>
         i.id === action.payload.id ? { ...i, course: action.payload.course } : i,
       );
@@ -327,6 +342,9 @@ export function posReducer(
       };
 
     case 'session/close':
+      // Pay, hold or discard a protected cart before closing the shift —
+      // closing here would silently drop an unresolved bill.
+      if (state.checkoutDraft.billiard || state.checkoutDraft.restoredInterruption) return state;
       return {
         ...state,
         session: createInitialState().session,
@@ -356,7 +374,16 @@ export function posReducer(
       };
 
     case 'customer/clear':
-      return { ...state, activeCustomer: null, checkoutDraft: createInitialState().checkoutDraft };
+      if (state.checkoutDraft.billiard) {
+        return { ...state, activeCustomer: null };
+      }
+      return {
+        ...state,
+        activeCustomer: null,
+        checkoutDraft: state.checkoutDraft.restoredInterruption
+          ? { restoredInterruption: state.checkoutDraft.restoredInterruption }
+          : createInitialState().checkoutDraft,
+      };
 
     case 'tip/set':
       return { ...state, tip: action.payload.amount };
@@ -364,9 +391,47 @@ export function posReducer(
     case 'tip/clear':
       return { ...state, tip: 0 };
 
+    case 'state/replaceCheckoutSnapshot': {
+      const saved = action.payload.snapshot?.state as Partial<PosState> | undefined;
+      if (!saved?.cart || !Array.isArray(saved.cart.items)) return state;
+      // Never let one frozen checkout overwrite a DIFFERENT active one.
+      const activeCheckoutId = state.checkoutDraft.billiard?.origin.checkoutId;
+      const incomingCheckoutId = saved.checkoutDraft?.billiard?.origin.checkoutId;
+      if (activeCheckoutId && activeCheckoutId !== incomingCheckoutId) return state;
+      const cart = restoreCheckoutSnapshotCart(
+        saved.cart as CartState,
+        Boolean(saved.checkoutDraft?.billiard),
+      );
+      return {
+        ...state,
+        cart,
+        checkoutDraft: saved.checkoutDraft ? { ...saved.checkoutDraft } : {},
+        activeTable: saved.activeTable ?? null,
+        activeCustomer: saved.activeCustomer ? { ...saved.activeCustomer } : null,
+        tip: Number(saved.tip) || 0,
+        // Shift and display configuration are live process state, not recalled
+        // historical state. Only switch the customer display atomically.
+        display: { ...state.display, mode: cart.items.length > 0 ? 'cart' : 'idle' },
+      };
+    }
+
     default:
       return state;
   }
+}
+
+/**
+ * Restore a cart from a checkout snapshot. A billiard cart is AUTHORITATIVE —
+ * its totals come from the server's frozen allocation and must not be
+ * recomputed locally; an ordinary recalled cart is recalculated
+ * (Windows pos-store.ts restoreCheckoutSnapshotCart).
+ */
+export function restoreCheckoutSnapshotCart(
+  saved: CartState,
+  authoritativeBilliard: boolean,
+): CartState {
+  const cloned = { ...saved, items: saved.items.map((item) => ({ ...item })) };
+  return authoritativeBilliard ? cloned : recalcCart(cloned);
 }
 
 // ── Store — backs pos.getState / dispatch / onStateChanged (S1 §2.C) ─────────
@@ -384,6 +449,26 @@ export class ShimPosStore {
   dispatch(action: PosAction): void {
     this.state = posReducer(this.state, action);
     this.broadcast();
+  }
+
+  /**
+   * Flip the frozen billiard cart to "its local order is durably committed",
+   * which is what unlocks `cart/completeCheckout` (Windows pos-store.ts:600).
+   * Identity must match exactly so a stale caller cannot unlock a different
+   * checkout. Not reachable from the renderer — the handoff orchestration owns it.
+   */
+  markBilliardOrderCommitted(checkoutId: string, orderId: string): boolean {
+    const billiard = this.state.checkoutDraft.billiard;
+    if (!billiard || billiard.origin.checkoutId !== checkoutId || billiard.orderId !== orderId) return false;
+    this.state = {
+      ...this.state,
+      checkoutDraft: {
+        ...this.state.checkoutDraft,
+        billiard: { ...billiard, orderCommitted: true },
+      },
+    };
+    this.broadcast();
+    return true;
   }
 
   onStateChanged(callback: StateListener): () => void {
