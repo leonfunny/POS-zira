@@ -279,7 +279,7 @@ export interface AndroidProductRepo {
   getById(id: string): AndroidProductRow | null;
   getByBarcode(barcode: string): AndroidProductRow | null;
   getByCategory(categoryId: string): AndroidProductRow[];
-  search(query: string): AndroidProductRow[];
+  search(query: string, categoryId?: string): AndroidProductRow[];
   /** Bulk upsert for the catalog sync worker (S6). */
   upsertProducts(products: AndroidProductRow[]): void;
 }
@@ -359,16 +359,25 @@ export function createProductRepo(db: AndroidDatabase): AndroidProductRepo {
       );
     },
 
-    search(query: string): AndroidProductRow[] { // (product-repo.ts:410-432)
+    search(query: string, categoryId?: string): AndroidProductRow[] { // (product-repo.ts:420-449)
       const trimmed = query.trim();
       if (!trimmed || normalizeSearch(trimmed).length < 2) return [];
+      // Optional category narrowing (Windows product-repo.ts:423-424,435-438).
+      // The billiard F&B picker searches WITHIN the selected category tab, so
+      // the filter has to run in SQL like Windows does — not after scoring.
+      const normalizedCategoryId = typeof categoryId === 'string' ? categoryId.trim() : '';
 
       // One full scan — sku/barcode/name filtering happens in JS on the same
       // dataset (the previous Windows version ran two SELECT * per keystroke).
       const normalizedQuery = normalizeSearch(trimmed);
       const tokens = searchTokens(trimmed);
       const allActive = db.all<AndroidProductRow>(
-        `SELECT * FROM product_variants WHERE is_active = 1 ${HIDE_TEMPLATES_WITH_VARIANTS} ORDER BY name`,
+        `SELECT * FROM product_variants
+         WHERE is_active = 1
+         ${normalizedCategoryId ? 'AND category_id = ?' : ''}
+         ${HIDE_TEMPLATES_WITH_VARIANTS}
+         ORDER BY name`,
+        normalizedCategoryId ? [normalizedCategoryId] : undefined,
       );
       return allActive
         .map((product) => ({ product, score: scoreSearchMatch(product, trimmed, normalizedQuery, tokens) }))

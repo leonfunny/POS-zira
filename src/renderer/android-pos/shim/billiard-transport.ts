@@ -32,6 +32,25 @@ export interface BilliardTransportDeps {
   request: (method: string, path: string, body?: any) => Promise<any>;
   /** Dashboard poll interval. Default 10s to match Windows (billiard-sync.ts:163). */
   pollMs?: number;
+  /**
+   * LOCAL catalog readers (the SQL.js product mirror) — the F&B product list of
+   * the billiard add-item modal.
+   *
+   * There is no `/billiard/fnb/*` route on the backend and there never was:
+   * Windows serves this list from the SAME local ProductSync cache
+   * (sync.module.ts:245-263 → productRepo.getAll/search/getByCategory +
+   * getCategories). Android has that mirror already, so it reads it the same
+   * way instead of hitting the network.
+   *
+   * Optional: a transport built without a catalog (the S2 synthetic tests)
+   * keeps returning empty lists.
+   */
+  catalog?: {
+    getAll(): Promise<any[]>;
+    search(query: string, categoryId?: string): Promise<any[]>;
+    getByCategory(categoryId: string): Promise<any[]>;
+    getCategories(): Promise<any[]>;
+  };
 }
 
 /** The exact `billiard*` / `apiCall` members of ShimTransport + dispose(). */
@@ -204,7 +223,7 @@ function assembleOverview(dashboard: any, floorPlansResp: any, pendingResp: any)
   return { tables, floorPlans, layouts, sessions, pendingPayments, _fromCache: false };
 }
 
-export function createBilliardTransport({ request, pollMs = 10_000 }: BilliardTransportDeps): BilliardTransportMethods {
+export function createBilliardTransport({ request, pollMs = 10_000, catalog }: BilliardTransportDeps): BilliardTransportMethods {
   let cache: { overview: any | null; fetchedAt: number } = { overview: null, fetchedAt: 0 };
   let lastSync: string | null = null;
   let online = false;
@@ -221,10 +240,10 @@ export function createBilliardTransport({ request, pollMs = 10_000 }: BilliardTr
   // refresh must not revert the floor plan to stale money state.
   let refreshSeq = 0;
   let appliedSeq = 0;
-  // The backend has NO /billiard/fnb/* routes (verified 404 in Task 2). The
-  // add-item product modal therefore shows an empty list until a real F&B route
-  // ships (P2 follow-up). Log once so a developer sees why, then stay silent.
-  let fnbMissingLogged = false;
+  // Warn once when the F&B list cannot be served from the local catalog (no
+  // catalog injected, or a read threw) — Windows logs the same situation and
+  // returns [] rather than breaking the add-item modal (sync.module.ts:249-252).
+  let fnbCatalogWarned = false;
 
   interface ApiProbe {
     tracker: ApiReachabilityTracker;
@@ -259,14 +278,36 @@ export function createBilliardTransport({ request, pollMs = 10_000 }: BilliardTr
     }
   };
 
-  const logFnbMissingOnce = () => {
-    if (fnbMissingLogged) return;
-    fnbMissingLogged = true;
+  const warnFnbCatalogOnce = (reason: string) => {
+    if (fnbCatalogWarned) return;
+    fnbCatalogWarned = true;
     try {
       (globalThis.console?.warn ?? (() => {}))(
-        '[billiard-transport] /billiard/fnb/* routes are not deployed on this backend; F&B product list stays empty (P2 follow-up).',
+        `[billiard-transport] F&B list unavailable from the local catalog (${reason}); returning an empty list.`,
       );
     } catch { /* console must never break the read */ }
+  };
+
+  /**
+   * F&B reads are LOCAL (SQL.js mirror) — deliberately outside trackedRequest:
+   * they issue no HTTP, so they must not move the REST-reachability signal that
+   * gates the online-only cashier actions.
+   *
+   * Failure policy copied from Windows (sync.module.ts:245-263): log and return
+   * an empty list; a catalog hiccup must not break the add-item modal.
+   */
+  const readFnb = async (read: () => Promise<any[]>, reason: string): Promise<any[]> => {
+    if (!catalog) {
+      warnFnbCatalogOnce('no local catalog wired into this transport');
+      return [];
+    }
+    try {
+      const rows = await read();
+      return Array.isArray(rows) ? rows : [];
+    } catch (e: any) {
+      warnFnbCatalogOnce(`${reason}: ${e?.message || e}`);
+      return [];
+    }
   };
 
   const emit = (type: string) => {
@@ -355,9 +396,17 @@ export function createBilliardTransport({ request, pollMs = 10_000 }: BilliardTr
       return activeOnly ? list.filter((c: any) => c.isActive !== false) : list;
     },
     billiardGetFloorPlans: () => trackedRequest(() => request('GET', '/billiard/floor-plans')),
-    // /billiard/fnb/* is not deployed (Task 2) — empty list + one-time warn.
-    billiardGetFnbProducts: () => { logFnbMissingOnce(); return Promise.resolve([]); },
-    billiardGetFnbCategories: () => { logFnbMissingOnce(); return Promise.resolve([]); },
+    // F&B products/categories come from the LOCAL catalog mirror, exactly like
+    // the Windows counter (sync.module.ts:245-263) — same precedence:
+    // search wins over categoryId, categoryId over the full list.
+    billiardGetFnbProducts: (search?: string, categoryId?: string) => {
+      const query = typeof search === 'string' ? search.trim() : '';
+      const category = typeof categoryId === 'string' ? categoryId.trim() : '';
+      if (query) return readFnb(() => catalog!.search(query, category || undefined), 'search');
+      if (category) return readFnb(() => catalog!.getByCategory(category), 'getByCategory');
+      return readFnb(() => catalog!.getAll(), 'getAll');
+    },
+    billiardGetFnbCategories: () => readFnb(() => catalog!.getCategories(), 'getCategories'),
     billiardGetResourceType: async (code: string) => {
       const o = cache.overview ?? await refreshOverview();
       const tables: any[] = Array.isArray(o?.tables) ? o.tables : [];

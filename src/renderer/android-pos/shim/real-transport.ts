@@ -539,6 +539,16 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
   // fetch and no poll timer until a billiard read actually runs).
   const billiard = createBilliardTransport({
     request: (method, path, body) => client.request(method, path, body),
+    // F&B list for the billiard add-item modal = the LOCAL catalog mirror, the
+    // same source the Windows counter uses (sync.module.ts:245-263). These
+    // closures are lazy — `db()` is defined below and is only invoked when the
+    // modal actually reads, never during construction.
+    catalog: {
+      getAll: async () => createProductRepo(await db()).getAll(),
+      search: async (query, categoryId) => createProductRepo(await db()).search(query, categoryId),
+      getByCategory: async (categoryId) => createProductRepo(await db()).getByCategory(categoryId),
+      getCategories: async () => createCategoryRepo(await db()).getCategories(),
+    },
   });
 
   // Real salon entitlements (shim/entitlements.ts): the plan decides which tabs

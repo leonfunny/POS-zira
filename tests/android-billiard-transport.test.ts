@@ -454,3 +454,84 @@ describe('billiard online-only transport', () => {
     t.dispose();
   });
 });
+
+/**
+ * F&B list of the billiard add-item modal.
+ *
+ * The port previously hard-coded `[]` on the premise that the backend has no
+ * `/billiard/fnb/*` route. The premise is true but irrelevant: Windows never
+ * called such a route either — it reads the LOCAL ProductSync cache
+ * (sync.module.ts:245-263). These tests pin the same source + precedence, and
+ * that the reads stay local (no HTTP, no reachability side effect).
+ */
+describe('billiard F&B reads the local catalog (Windows sync.module.ts:245-263 parity)', () => {
+  const PRODUCTS = [{ id: 'p1', name: 'Tiger', retail_price: 900 }];
+  const CATEGORIES = [{ id: 'c1', name: 'Piwo' }];
+
+  function makeCatalog(overrides: Record<string, any> = {}) {
+    return {
+      getAll: vi.fn(async () => PRODUCTS),
+      search: vi.fn(async () => PRODUCTS),
+      getByCategory: vi.fn(async () => PRODUCTS),
+      getCategories: vi.fn(async () => CATEGORIES),
+      ...overrides,
+    };
+  }
+
+  it('no args → getAll; categoryId → getByCategory; search wins over categoryId', async () => {
+    const request = makeRequest({});
+    const catalog = makeCatalog();
+    const t = createBilliardTransport({ request, catalog });
+
+    await expect(t.billiardGetFnbProducts()).resolves.toEqual(PRODUCTS);
+    expect(catalog.getAll).toHaveBeenCalledTimes(1);
+
+    await expect(t.billiardGetFnbProducts(undefined, 'c1')).resolves.toEqual(PRODUCTS);
+    expect(catalog.getByCategory).toHaveBeenCalledWith('c1');
+
+    // Windows precedence: `if (search) return search(...)` comes FIRST, and the
+    // category narrows the search rather than being ignored.
+    await expect(t.billiardGetFnbProducts('tig', 'c1')).resolves.toEqual(PRODUCTS);
+    expect(catalog.search).toHaveBeenCalledWith('tig', 'c1');
+    expect(catalog.getByCategory).toHaveBeenCalledTimes(1); // not called again
+
+    await expect(t.billiardGetFnbCategories()).resolves.toEqual(CATEGORIES);
+    expect(catalog.getCategories).toHaveBeenCalledTimes(1);
+
+    // Local reads only — the modal must never issue HTTP for this.
+    expect(request).not.toHaveBeenCalled();
+    t.dispose();
+  });
+
+  it('blank/whitespace args fall back to the full list, not an empty search', async () => {
+    const catalog = makeCatalog();
+    const t = createBilliardTransport({ request: makeRequest({}), catalog });
+    await expect(t.billiardGetFnbProducts('   ', '  ')).resolves.toEqual(PRODUCTS);
+    expect(catalog.search).not.toHaveBeenCalled();
+    expect(catalog.getAll).toHaveBeenCalledTimes(1);
+    t.dispose();
+  });
+
+  it('a catalog read that throws degrades to [] and never breaks the modal', async () => {
+    const catalog = makeCatalog({ getAll: vi.fn(async () => { throw new Error('db gone'); }) });
+    const t = createBilliardTransport({ request: makeRequest({}), catalog });
+    await expect(t.billiardGetFnbProducts()).resolves.toEqual([]);
+    t.dispose();
+  });
+
+  it('a transport built without a catalog still returns [] (synthetic S2 default)', async () => {
+    const t = createBilliardTransport({ request: makeRequest({}) });
+    await expect(t.billiardGetFnbProducts()).resolves.toEqual([]);
+    await expect(t.billiardGetFnbCategories()).resolves.toEqual([]);
+    t.dispose();
+  });
+
+  it('a failing F&B read does not flip the REST-reachability signal', async () => {
+    const catalog = makeCatalog({ getCategories: vi.fn(async () => { throw new Error('db gone'); }) });
+    const t = createBilliardTransport({ request: makeRequest({}), catalog });
+    const before = (await t.billiardSyncStatus()).apiReachable;
+    await t.billiardGetFnbCategories();
+    expect((await t.billiardSyncStatus()).apiReachable).toBe(before);
+    t.dispose();
+  });
+});
