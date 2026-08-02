@@ -145,10 +145,14 @@ describe('android shim catalog DB (S5)', () => {
       expect(tables).toContain('product_variants');
       expect(tables).toContain('categories');
       expect(tables).toContain('sync_meta');
+      expect(tables).toContain('pos_billiard_handoffs');
+      expect(tables).toContain('pos_hold_orders');
 
       // user_version stamped at schema apply time.
       const version = db.getRawHandle().exec('PRAGMA user_version')[0].values[0][0];
-      expect(version).toBe(4); // v4 = orders.refund_* (E1b); v3 = track_inventory
+      // v5 = pos_billiard_handoffs + pos_hold_orders (billiard POS-handoff);
+      // v4 = orders.refund_* (E1b); v3 = track_inventory
+      expect(version).toBe(5);
     });
 
     test('is idempotent — re-init over a persisted image keeps the schema', async () => {

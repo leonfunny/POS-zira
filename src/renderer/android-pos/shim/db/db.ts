@@ -288,6 +288,10 @@ export class AndroidDatabase {
       for (const table of [
         'product_variants', 'categories', 'orders', 'order_items',
         'shifts', 'staff', 'sequence_counters', 'sync_meta',
+        // v5: a frozen billiard checkout and any parked cart belong to the
+        // PREVIOUS salon's register — they must never survive into salon B
+        // (they carry cart lines, money totals and a salon-scoped order id).
+        'pos_billiard_handoffs', 'pos_hold_orders',
       ]) {
         this.db.run(`DELETE FROM ${table}`);
       }

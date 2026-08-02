@@ -164,6 +164,45 @@ export const ANDROID_SCHEMA_DDL = `
     name TEXT PRIMARY KEY,
     current_value INTEGER DEFAULT 0
   );
+
+  -- ── Billiard POS-handoff journal (v5) ──────────────────────────────────────
+  -- Durable record of a frozen billiard checkout while the cashier tenders it
+  -- in POS. Column set + CHECK are the FINAL Windows shape (migrations.ts:1761-
+  -- 1791, the v61 tender-boundary rebuild) — Android starts there, so the
+  -- SQLite table-rebuild migration chain Windows needed is not replayed here.
+  CREATE TABLE IF NOT EXISTS pos_billiard_handoffs (
+    checkout_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    order_id TEXT NOT NULL UNIQUE,
+    client_attempt_id TEXT NOT NULL UNIQUE,
+    salon_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    register_id TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('POS_READY', 'POS_PAYMENT_OPEN', 'POS_TENDER_COMMITTING', 'POS_TENDER_UNCERTAIN', 'POS_PAID_SYNC_PENDING', 'SETTLED')),
+    snapshot_json TEXT NOT NULL,
+    interrupted_hold_id TEXT,
+    auto_open_consumed INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_pos_billiard_handoffs_recovery
+    ON pos_billiard_handoffs(salon_id, user_id, register_id, state, updated_at);
+  CREATE INDEX IF NOT EXISTS idx_pos_billiard_handoffs_session
+    ON pos_billiard_handoffs(session_id, created_at);
+
+  -- ── Held carts (v5) ───────────────────────────────────────────────────────
+  -- The handoff parks an in-progress ordinary cart in a PROTECTED hold before
+  -- it freezes the billiard cart, and restores it after the session is paid.
+  -- Windows shape: migrations.ts:445-453.
+  CREATE TABLE IF NOT EXISTS pos_hold_orders (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    payload TEXT NOT NULL DEFAULT '{}',
+    items_count INTEGER DEFAULT 0,
+    total INTEGER DEFAULT 0,
+    staff_name TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
 `;
 
 /**
@@ -212,5 +251,6 @@ export function applyAndroidSchema(db: SqlJsDatabase): void {
 }
 
 /** v3 = product_variants.track_inventory (stock-guard parity).
- *  v4 = orders.{refund_amount,refund_reason,refunded_at,refund_lines} (E1b refund). */
-export const ANDROID_SCHEMA_VERSION = 4;
+ *  v4 = orders.{refund_amount,refund_reason,refunded_at,refund_lines} (E1b refund).
+ *  v5 = pos_billiard_handoffs + pos_hold_orders (billiard POS-handoff port). */
+export const ANDROID_SCHEMA_VERSION = 5;
