@@ -49,6 +49,7 @@ jobs:
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
       - run: npm run android:build:verify
       - run: npm run test:android:manifests
+      - run: npm run test:android:parity
       - run: node scripts/verify-build-only-ci.mjs --require-built-assets
       - run: npm run test:boundaries
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

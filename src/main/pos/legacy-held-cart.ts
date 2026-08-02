@@ -13,7 +13,7 @@ import type { CartItem, PosState } from './pos-store';
 import {
   capturePosCheckoutSnapshot,
   type PosSnapshotScope,
-} from './billiard-pos-handoff';
+} from '../../shared/pos/billiard-pos-handoff';
 
 export interface LegacyHeldCartRow {
   id?: unknown;

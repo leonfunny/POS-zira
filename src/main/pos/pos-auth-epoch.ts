@@ -1,4 +1,4 @@
-import type { PosSnapshotScope } from './billiard-pos-handoff';
+import type { PosSnapshotScope } from '../../shared/pos/billiard-pos-handoff';
 
 export interface PosAuthContext {
   epoch: number;

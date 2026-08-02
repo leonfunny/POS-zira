@@ -1,4 +1,4 @@
-import type { AgentConfig } from '../../shared/types';
+import type { AgentConfig } from '../types';
 import {
   POS_CHECKOUT_SNAPSHOT_VERSION,
   type BilliardPosCheckoutBundle,
@@ -6,8 +6,8 @@ import {
   type PosCheckoutSnapshot,
   type RestoredCartCheckoutJournal,
   type RestoredInterruptionContext,
-} from '../../shared/billiard-pos-handoff';
-import type { CartItem, PosState } from './pos-store';
+} from '../billiard-pos-handoff';
+import type { CartItem, PosState } from './pos-state';
 
 type HandoffSnapshotRecord = {
   checkoutId: string;

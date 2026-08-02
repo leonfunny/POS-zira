@@ -18,7 +18,7 @@ import {
   assertBilliardCheckoutSnapshotIntegrity,
   buildBilliardCheckoutSnapshot,
   isActiveBilliardCheckoutSnapshot,
-} from '../src/main/pos/billiard-pos-handoff';
+} from '../src/shared/pos/billiard-pos-handoff';
 import { restoreCheckoutSnapshotCart, type PosState } from '../src/main/pos/pos-store';
 import {
   normalizeBilliardPosCheckout,

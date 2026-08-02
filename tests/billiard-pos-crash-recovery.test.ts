@@ -6,7 +6,7 @@ import {
   withRestoredInterruptionMarker,
   withoutRestoredInterruptionMarker,
   restoredCartRecoveryDisposition,
-} from '../src/main/pos/billiard-pos-handoff';
+} from '../src/shared/pos/billiard-pos-handoff';
 import { requiresBilliardTenderReconciliation } from '../src/shared/billiard-pos-handoff';
 import { buildLegacyHeldCartImport } from '../src/main/pos/legacy-held-cart';
 import type { PosState } from '../src/main/pos/pos-store';

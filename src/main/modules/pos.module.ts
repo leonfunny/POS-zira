@@ -137,7 +137,7 @@ import {
   withRestoredInterruptionMarker,
   withoutRestoredInterruptionMarker,
   type PosSnapshotScope,
-} from '../pos/billiard-pos-handoff';
+} from '../../shared/pos/billiard-pos-handoff';
 import { PosAuthEpochGuard, type PosAuthContext } from '../pos/pos-auth-epoch';
 import {
   isBilliardCorrectionSourceForOwner,

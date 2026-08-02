@@ -17,7 +17,7 @@ import {
   samePosSalonRegister,
   samePosSnapshotScope,
   withRestoredInterruptionMarker,
-} from '../src/main/pos/billiard-pos-handoff';
+} from '../src/shared/pos/billiard-pos-handoff';
 import {
   isBilliardCorrectionSourceForOwner,
   resolveBilliardCorrectionCommand,
