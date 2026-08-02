@@ -143,6 +143,7 @@ export function analyzeBuildOnlyPolicy(root, workflowPath = DEFAULT_WORKFLOW, op
     'windows-latest',
     'npm run android:build:verify',
     'npm run test:android:manifests',
+    'npm run test:android:parity',
     'npm run build',
     'npm test',
     'npm run test:boundaries',

@@ -130,6 +130,9 @@ jobs:
       - name: Generate and verify merged Android manifests
         run: npm run test:android:manifests
 
+      - name: Verify Windows/Android parity guards
+        run: npm run test:android:parity
+
       - name: Verify generated and copied Android web security policy
         run: node scripts/verify-build-only-ci.mjs --require-built-assets
 
