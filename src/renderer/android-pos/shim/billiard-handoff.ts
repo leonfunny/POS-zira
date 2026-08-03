@@ -24,12 +24,14 @@ import {
   TABLET_NOT_PAIRED_MESSAGE,
 } from '../../../shared/pos/billiard-fiscal-gate';
 import {
+  adoptPosCheckoutSnapshotScope,
   assertBilliardCheckoutSnapshotIntegrity,
   buildBilliardCheckoutSnapshot,
   buildBilliardInterruptionHoldPayload,
   capturePosCheckoutSnapshot,
   currentPosSnapshotScope,
   isActiveBilliardCheckoutSnapshot,
+  samePosSalonRegister,
   samePosSnapshotScope,
   withoutRestoredInterruptionMarker,
   type PosSnapshotScope,
@@ -820,6 +822,179 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
           };
         }
         return { success: true, intent: intentOf(record, true) };
+      } catch (error: any) {
+        return { success: false, error: error?.message || String(error) };
+      }
+    },
+
+    /**
+     * The way OUT of an uncertain tender. Windows:
+     * pos:billiard:resolve-uncertain-tender (BILLIARD target).
+     *
+     * `recover()` can leave a checkout in POS_TENDER_UNCERTAIN, which is
+     * deliberately a dead end for a cashier: nobody at the till can know
+     * whether the customer's card was charged. Only an OWNER who has physically
+     * checked the terminal may declare "no payment remains", and that
+     * declaration is written into the journal as an append-only audit before
+     * the checkout is reopened for payment.
+     *
+     * Every precondition is a refusal, not a warning.
+     */
+    async resolveUncertainTender(input: {
+      target?: { type?: string; checkoutId?: string; holdId?: string };
+      reason?: string;
+      confirmedNoPaymentRemains?: boolean;
+    }): Promise<{
+      success: boolean;
+      code?: string;
+      resolved?: boolean;
+      targetType?: string;
+      audit?: unknown;
+      intent?: BilliardPaymentIntent;
+      paymentCommitted?: boolean;
+      error?: string;
+      rollbackDurabilityError?: string;
+    }> {
+      try {
+        const config = deps.configStore.getRawConfig();
+        if (String(config.authUser?.role || '').toUpperCase() !== 'OWNER') {
+          return {
+            success: false,
+            code: 'OWNER_REQUIRED',
+            error: 'Only the salon owner can resolve an uncertain payment outcome.',
+          };
+        }
+        const ownerUserId = String(config.authUser?.id || '').trim();
+        if (!ownerUserId) return { success: false, error: 'Owner identity is unavailable.' };
+
+        // The reason is the audit trail. A blank or essay-length one is refused
+        // so the record stays meaningful to whoever reads it months later.
+        const reason = String(input?.reason || '').trim();
+        if (reason.length < 3 || reason.length > 500) {
+          return { success: false, error: 'Resolution reason must contain 3 to 500 characters.' };
+        }
+        if (input?.confirmedNoPaymentRemains !== true) {
+          return {
+            success: false,
+            error: 'Explicit confirmation that no cash/card payment remains is required.',
+          };
+        }
+
+        if (input?.target?.type !== 'BILLIARD') {
+          // The RESTORED_CART lane needs the restored-cart journal, which is not
+          // ported yet. Say so instead of silently doing nothing.
+          return {
+            success: false,
+            error: 'Only a Billiard tender can be resolved on the tablet. Use the Windows counter for a restored cart.',
+          };
+        }
+
+        const scope = resolveTabletScope(config);
+        const authContext = captureAuthContext(scope);
+        const database = await deps.db();
+        const journal = createBilliardHandoffRepo(database);
+        const holds = createHoldOrderRepo(database);
+        const orders = createOrderRepo(database);
+
+        const checkoutId = String(input.target.checkoutId || '').trim();
+        const record = journal.get(checkoutId);
+        // Scoped by salon+register, NOT by user: the owner resolving this is
+        // usually not the cashier who left it uncertain.
+        if (!record || record.salonId !== scope.salonId || record.registerId !== scope.registerId) {
+          return { success: false, error: 'Uncertain Billiard checkout was not found for this owner/register.' };
+        }
+        if (record.state !== 'POS_TENDER_UNCERTAIN') {
+          return { success: false, error: `Billiard tender cannot be resolved from state ${record.state}.` };
+        }
+        if (orders.getById(record.orderId)) {
+          return {
+            success: false,
+            paymentCommitted: true,
+            error: 'A local paid order exists. Reconcile it instead of resetting tender.',
+          };
+        }
+
+        const live = deps.posStore.getState();
+        if (live.cart.items.length > 0 && !isActiveBilliardCheckoutSnapshot(live, record.checkoutSnapshot)) {
+          return { success: false, error: 'Another POS cart is active. Hold it before resolving this tender.' };
+        }
+
+        // The parked cart moves to the OWNER's scope along with the checkout,
+        // but only if it is still exactly the protected hold we wrote.
+        const interruptionBefore = record.interruptedHoldId ? holds.get(record.interruptedHoldId) : null;
+        if (record.interruptedHoldId && (
+          !interruptionBefore
+          || interruptionBefore.payload?.protected !== true
+          || interruptionBefore.payload?.holdReason !== 'BILLIARD_INTERRUPTION'
+          || interruptionBefore.payload?.autoRestoreForCheckoutId !== record.checkoutId
+          || !samePosSalonRegister(interruptionBefore.payload.snapshot, scope)
+        )) {
+          return { success: false, error: 'The protected interrupted cart cannot be safely adopted on this owner/register.' };
+        }
+
+        const audit = {
+          ownerUserId,
+          reason,
+          confirmedAt: new Date().toISOString(),
+          action: 'NO_PAYMENT_REMAINS' as const,
+        };
+
+        let resolved = false;
+        database.transaction(() => {
+          resolved = journal.resolveUncertainTenderAsNoPayment(checkoutId, audit, scope);
+          if (resolved && interruptionBefore) {
+            holds.replaceProtected(interruptionBefore.id, interruptionBefore.title, {
+              ...interruptionBefore.payload,
+              snapshot: adoptPosCheckoutSnapshotScope(interruptionBefore.payload.snapshot, scope),
+            });
+          }
+        });
+        if (!resolved) {
+          return { success: false, error: 'The uncertain Billiard journal changed before it could be resolved.' };
+        }
+
+        try {
+          await database.flush();
+        } catch (flushError: any) {
+          // Undo BOTH halves — an audit that is not on disk did not happen.
+          database.transaction(() => {
+            journal.rollbackNoPaymentResolution(checkoutId, audit, record);
+            if (interruptionBefore) {
+              holds.replaceProtected(interruptionBefore.id, interruptionBefore.title, interruptionBefore.payload);
+            }
+          });
+          let rollbackDurabilityError: string | undefined;
+          try { await database.flush(); } catch (e: any) { rollbackDurabilityError = e?.message || String(e); }
+          return {
+            success: false,
+            error: flushError?.message || 'Owner resolution was not made durable.',
+            rollbackDurabilityError,
+          };
+        }
+
+        if (!isAuthContextCurrent(authContext)) {
+          return {
+            success: false,
+            resolved: true,
+            error: 'The owner resolution was saved, but the POS user changed. '
+              + 'Sign in as the original owner to recover the cart.',
+          };
+        }
+
+        const updated = journal.get(checkoutId);
+        if (!updated || updated.state !== 'POS_PAYMENT_OPEN') {
+          return { success: false, resolved: true, error: 'The owner resolution was saved but could not be reloaded.' };
+        }
+        if (deps.posStore.getState().cart.items.length === 0) {
+          activateSnapshot(updated, scope);
+        }
+        return {
+          success: true,
+          resolved: true,
+          targetType: 'BILLIARD',
+          audit,
+          intent: intentOf(updated, true),
+        };
       } catch (error: any) {
         return { success: false, error: error?.message || String(error) };
       }

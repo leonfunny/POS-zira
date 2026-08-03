@@ -969,3 +969,153 @@ describe('recover — picking the journal back up after the app was killed', () 
     expect(restarted.posStore.getState().cart.items).toHaveLength(1);
   });
 });
+
+// ── resolveUncertainTender ──────────────────────────────────────────────────
+
+describe('resolveUncertainTender — the OWNER lane out of a dead end', () => {
+  /** Drive a checkout into POS_TENDER_UNCERTAIN the way it really happens:
+   *  tender starts, the process dies, recovery locks the outcome. */
+  async function uncertain() {
+    const h = await makeHarness();
+    await h.handoff.prepare({ posCheckout: bundle() });
+    const opened = await h.handoff.markPaymentOpened('checkout-1');
+    await h.handoff.beginTender('checkout-1', opened.token!);
+    const restartedStore = new ShimPosStore();
+    restartedStore.dispatch({
+      type: 'session/open',
+      payload: { shiftId: SHIFT.id, staffId: SHIFT.staffId, staffName: SHIFT.staffName, openedAt: 'now' },
+    });
+    const afterCrash = createBilliardHandoff({
+      configStore: h.configStore,
+      posStore: restartedStore,
+      db: async () => h.database,
+      isFiscalPrinterAssigned: async () => false,
+      isPrintAgentConnected: () => false,
+    });
+    await afterCrash.recover();
+    expect(h.database.get<{ state: string }>(
+      'SELECT state FROM pos_billiard_handoffs WHERE checkout_id = ?', ['checkout-1'],
+    )?.state).toBe('POS_TENDER_UNCERTAIN');
+    return { ...h, posStore: restartedStore, handoff: afterCrash };
+  }
+
+  function asOwner(h: { configStore: ShimConfigStore }) {
+    h.configStore.setConfig({
+      authUser: { ...(h.configStore.getRawConfig().authUser as any), role: 'OWNER' },
+    } as any);
+  }
+
+  const GOOD = { target: { type: 'BILLIARD', checkoutId: 'checkout-1' }, reason: 'Terminal shows no charge', confirmedNoPaymentRemains: true };
+
+  test('a cashier cannot resolve it', async () => {
+    const h = await uncertain();
+    const result = await h.handoff.resolveUncertainTender(GOOD);
+    expect(result.success).toBe(false);
+    expect(result.code).toBe('OWNER_REQUIRED');
+  });
+
+  test('an owner must give a real reason and an explicit confirmation', async () => {
+    const h = await uncertain();
+    asOwner(h);
+
+    await expect(h.handoff.resolveUncertainTender({ ...GOOD, reason: 'no' }))
+      .resolves.toMatchObject({ success: false, error: expect.stringMatching(/3 to 500 characters/) });
+    await expect(h.handoff.resolveUncertainTender({ ...GOOD, reason: 'x'.repeat(501) }))
+      .resolves.toMatchObject({ success: false, error: expect.stringMatching(/3 to 500 characters/) });
+    await expect(h.handoff.resolveUncertainTender({ ...GOOD, confirmedNoPaymentRemains: false }))
+      .resolves.toMatchObject({ success: false, error: expect.stringMatching(/Explicit confirmation/) });
+
+    // None of the refusals touched the journal.
+    expect(h.database.get<{ state: string }>(
+      'SELECT state FROM pos_billiard_handoffs WHERE checkout_id = ?', ['checkout-1'],
+    )?.state).toBe('POS_TENDER_UNCERTAIN');
+  });
+
+  test('a restored cart is refused with a pointer to the counter', async () => {
+    const h = await uncertain();
+    asOwner(h);
+    const result = await h.handoff.resolveUncertainTender({
+      ...GOOD, target: { type: 'RESTORED_CART', holdId: 'h1' },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/Windows counter/i);
+  });
+
+  test('a checkout on another register is not found', async () => {
+    const h = await uncertain();
+    asOwner(h);
+    h.configStore.setConfig({ agentId: 'agent-OTHER' } as any);
+    const result = await h.handoff.resolveUncertainTender(GOOD);
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/not found for this owner\/register/i);
+  });
+
+  test('a checkout that is NOT uncertain cannot be reset', async () => {
+    const h = await makeHarness();
+    await h.handoff.prepare({ posCheckout: bundle() });
+    asOwner(h);
+    const result = await h.handoff.resolveUncertainTender(GOOD);
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/cannot be resolved from state POS_READY/);
+  });
+
+  test('a paid local order means reconcile, not reset', async () => {
+    const h = await uncertain();
+    asOwner(h);
+    const row = h.database.get<{ order_id: string }>(
+      'SELECT order_id FROM pos_billiard_handoffs WHERE checkout_id = ?', ['checkout-1'],
+    )!;
+    h.database.run('INSERT INTO orders (id, total) VALUES (?, ?)', [row.order_id, 17000]);
+
+    const result = await h.handoff.resolveUncertainTender(GOOD);
+    expect(result.success).toBe(false);
+    expect(result.paymentCommitted).toBe(true);
+    expect(result.error).toMatch(/Reconcile it instead/i);
+  });
+
+  test('the owner resolution reopens payment, records the audit and restores the cart', async () => {
+    const h = await uncertain();
+    asOwner(h);
+    const result = await h.handoff.resolveUncertainTender(GOOD);
+
+    expect(result.success).toBe(true);
+    expect(result.resolved).toBe(true);
+    expect(result.targetType).toBe('BILLIARD');
+    expect(result.audit).toMatchObject({ reason: 'Terminal shows no charge', action: 'NO_PAYMENT_REMAINS' });
+    expect((result.audit as any).ownerUserId).toBe('u1');
+    expect(result.intent?.tenderOutcomeUncertain).toBeUndefined();
+
+    expect(h.database.get<{ state: string }>(
+      'SELECT state FROM pos_billiard_handoffs WHERE checkout_id = ?', ['checkout-1'],
+    )?.state).toBe('POS_PAYMENT_OPEN');
+    // The audit is append-only evidence, stored with the journal.
+    const stored = JSON.parse(h.database.get<{ snapshot_json: string }>(
+      'SELECT snapshot_json FROM pos_billiard_handoffs WHERE checkout_id = ?', ['checkout-1'],
+    )!.snapshot_json);
+    expect(stored.tenderResolutionAudits).toHaveLength(1);
+    // …and the frozen bill is back on screen for the owner to take payment.
+    expect(h.posStore.getState().cart.items).toHaveLength(2);
+  });
+
+  test('a failed durability barrier undoes the resolution — an audit off disk did not happen', async () => {
+    const h = await uncertain();
+    asOwner(h);
+    const realFlush = h.database.flush.bind(h.database);
+    let fail = true;
+    (h.database as any).flush = async () => {
+      if (fail) { fail = false; throw new Error('quota exceeded'); }
+      return realFlush();
+    };
+
+    const result = await h.handoff.resolveUncertainTender(GOOD);
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/quota exceeded/);
+    expect(h.database.get<{ state: string }>(
+      'SELECT state FROM pos_billiard_handoffs WHERE checkout_id = ?', ['checkout-1'],
+    )?.state).toBe('POS_TENDER_UNCERTAIN');
+    const stored = JSON.parse(h.database.get<{ snapshot_json: string }>(
+      'SELECT snapshot_json FROM pos_billiard_handoffs WHERE checkout_id = ?', ['checkout-1'],
+    )!.snapshot_json);
+    expect(stored.tenderResolutionAudits ?? []).toHaveLength(0);
+  });
+});
