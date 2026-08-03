@@ -100,6 +100,12 @@ export function installShim(options: InstallShimOptions = {}): InstalledShim {
       return Promise.resolve();
     },
     onStateChanged: (cb: (state: PosState) => void): (() => void) => posStore.onStateChanged(cb),
+    // Android-only crash/back-press survival for the in-progress cart.
+    snapshot: {
+      save: (json: string): Promise<void> => Promise.resolve(transport.posSnapshotSave?.(json) ?? undefined),
+      load: (): Promise<string | null> => Promise.resolve(transport.posSnapshotLoad?.() ?? null),
+      clear: (): Promise<void> => Promise.resolve(transport.posSnapshotClear?.() ?? undefined),
+    },
     billiardCheckout: {
       preflight: async () => ({ success: false, error: 'Billiard checkout handoff requires the desktop POS.' }),
       prepare: async () => ({ success: false, error: 'Billiard checkout handoff requires the desktop POS.' }),

@@ -262,6 +262,13 @@ export interface ShimTransport {
   syncProducts?(): Promise<{ success: boolean; productsCount?: number; error?: string }>;
   syncOrders?(): Promise<void>;
 
+  /** Persist the serialized in-progress cart (Android crash/back-press survival). */
+  posSnapshotSave?(json: string): Promise<void>;
+  /** Read the persisted cart snapshot, or null when there is none. */
+  posSnapshotLoad?(): Promise<string | null>;
+  /** Drop the persisted cart snapshot (checkout done, logout, tenant switch). */
+  posSnapshotClear?(): Promise<void>;
+
   /** Shift open/close — POST /api/v1/pos/shifts/* (S9). */
   openShift?(data: { staffId: string; staffName: string; openingCash: number }): Promise<{ success: boolean; shiftId?: string; error?: string }>;
   closeShift?(data: { shiftId: string; closingCash: number; fiscalOnly?: boolean }): Promise<{ success: boolean; report?: any; error?: string }>;

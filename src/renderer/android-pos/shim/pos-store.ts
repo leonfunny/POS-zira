@@ -64,6 +64,19 @@ import type {
 } from '../../../shared/pos/pos-state';
 import type { PosCheckoutSnapshot } from '../../../shared/billiard-pos-handoff';
 
+/**
+ * The slice of PosState restored after a process death / back-press exit.
+ * Deliberately EXCLUDES `session`: the shift is restored from the local shifts
+ * table by AndroidBootApp, and two writers for one field is how they diverge.
+ */
+export interface CartHydration {
+  cart: CartState;
+  checkoutDraft: CheckoutDraftState;
+  activeTable: string | null;
+  activeCustomer: PosState['activeCustomer'];
+  tip: number;
+}
+
 // ── Actions (mirror src/main/pos/pos-store.ts) ──────────────────────────────
 
 export type PosAction =
@@ -76,6 +89,10 @@ export type PosAction =
   // through to `default: return state` and the cart stayed on screen after a
   // completed sale.
   | { type: 'cart/completeCheckout' }
+  // Android-only: restore an ORDINARY cart abandoned by a back-press exit or an
+  // OS kill. A frozen billiard checkout is never restored through here — it is
+  // owned by the durable handoff journal and its recover() path.
+  | { type: 'cart/hydrate'; payload: CartHydration }
   | { type: 'cart/applyDiscount'; payload: { amount: number; discountType?: 'fixed' | 'percentage' } }
   | { type: 'cart/clearDiscount' }
   | { type: 'cart/setItemNotes'; payload: { id: string; notes: string } }
@@ -227,6 +244,30 @@ export function posReducer(
       if (state.checkoutDraft.billiard) return state;
       const display = state.display?.mode === 'cart' ? { ...state.display, mode: 'idle' as const } : state.display;
       return { ...state, cart: createInitialState().cart, checkoutDraft: createInitialState().checkoutDraft, tip: 0, display };
+    }
+
+    case 'cart/hydrate': {
+      // A frozen billiard checkout belongs to the handoff journal, which has
+      // its own crash recovery. Letting a snapshot write one — or overwrite an
+      // active one — would put a second, unverified source of truth in front of
+      // the cashier, so both directions are refused.
+      if (state.checkoutDraft.billiard || action.payload.checkoutDraft?.billiard) return state;
+      // Totals are RECOMPUTED, never trusted from storage: a snapshot written by
+      // an older build (or a partially-flushed image) must not be able to put a
+      // wrong total in front of a cashier.
+      const cart = recalcCart({ ...action.payload.cart });
+      return {
+        ...state,
+        cart,
+        checkoutDraft: action.payload.checkoutDraft,
+        activeTable: action.payload.activeTable,
+        activeCustomer: action.payload.activeCustomer,
+        tip: action.payload.tip,
+        display: {
+          ...state.display,
+          mode: cart.items.length > 0 ? 'cart' : state.display.mode,
+        },
+      };
     }
 
     case 'cart/completeCheckout': {

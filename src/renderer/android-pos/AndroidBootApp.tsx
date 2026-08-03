@@ -83,6 +83,9 @@ export default function AndroidBootApp() {
   useEffect(() => {
     if (state !== 'pos') return;
     const api = (window as any).electronAPI;
+    let cancelledSnapshot = false;
+    let unsubscribeSnapshot: (() => void) | null = null;
+    let snapshotTimer: ReturnType<typeof setTimeout> | null = null;
     // Restore the open-shift session after a restart: the local shift row
     // survives but the in-memory POS store starts empty, so re-dispatch
     // session/open (the Windows main process does this at boot). Without it the
@@ -106,7 +109,59 @@ export default function AndroidBootApp() {
     // Fire-and-forget catalog sync after an authenticated mount (S1 §2.E). The
     // sync worker no-ops with {success:false, error:'no-auth'} when tokens are
     // missing, so this is safe on every entry into the POS state.
+    // Restore a cart abandoned by a back-press exit or an OS kill, THEN start
+    // writing snapshots. The order matters: arming the writer first would let
+    // the shift restore's `session/open` broadcast persist an empty cart over
+    // the saved one before it had been read.
+    void (async () => {
+      try {
+        const json = await api.pos.snapshot.load();
+        const parsed = json ? JSON.parse(json) : null;
+        const current = await api.pos.getState();
+        // A cart already in memory wins — never clobber live work with a snapshot.
+        if (parsed?.cart?.items?.length && !current?.cart?.items?.length) {
+          await api.pos.dispatch({
+            type: 'cart/hydrate',
+            payload: {
+              cart: parsed.cart,
+              checkoutDraft: parsed.checkoutDraft ?? {},
+              activeTable: parsed.activeTable ?? null,
+              activeCustomer: parsed.activeCustomer ?? null,
+              tip: parsed.tip ?? 0,
+            },
+          });
+        }
+      } catch { /* a corrupt snapshot must not block boot */ }
+
+      if (cancelledSnapshot) return;
+      // Debounced 400ms so a burst of quantity taps writes once. The transport
+      // flushes the SQLite image on each write, so the cart survives a
+      // back-press exit or an OS background kill.
+      //
+      // A frozen billiard checkout is NOT snapshotted: it is owned by the
+      // durable handoff journal and restored by its own recover() path.
+      unsubscribeSnapshot = api.pos.onStateChanged((next: any) => {
+        if (next?.checkoutDraft?.billiard) return;
+        if (snapshotTimer) clearTimeout(snapshotTimer);
+        snapshotTimer = setTimeout(() => {
+          snapshotTimer = null;
+          void api.pos.snapshot.save(JSON.stringify({
+            cart: next.cart,
+            checkoutDraft: next.checkoutDraft,
+            activeTable: next.activeTable ?? null,
+            activeCustomer: next.activeCustomer ?? null,
+            tip: next.tip ?? 0,
+          }));
+        }, 400);
+      });
+    })();
+
     Promise.resolve(api.pos.sync.products()).catch(() => { /* offline boot is fine */ });
+    return () => {
+      cancelledSnapshot = true;
+      if (snapshotTimer) clearTimeout(snapshotTimer);
+      unsubscribeSnapshot?.();
+    };
   }, [state]);
 
   // Resolve the billiard entitlement + POS language once we reach the POS

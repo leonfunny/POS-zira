@@ -53,6 +53,7 @@ import { initAndroidDb, type AndroidDatabase, type AndroidDbInitOptions } from '
 import { createProductRepo, type AndroidProductRow } from './db/product-repo';
 import { createCategoryRepo, type AndroidCategoryRow } from './db/category-repo';
 import { createSyncMeta } from './db/sync-meta';
+import { POS_SNAPSHOT_CART_KEY, createPosSnapshotRepo } from './db/pos-snapshot-repo';
 import { createRemotePrintCoordinator } from './remote-print';
 import { createAgentConnection, type AgentConnection } from './agent-connect';
 import { createProductAdminSurface } from './product-admin';
@@ -1189,6 +1190,31 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         await database.flush().catch(() => { /* debounced flush still pending */ });
       })().finally(() => { orderSyncInFlight = null; });
       return orderSyncInFlight;
+    },
+
+    /** Android-only: the in-progress cart, persisted beside orders so ONE
+     *  durability barrier covers both. Failures are swallowed — a snapshot that
+     *  cannot be written must never break a sale in progress. */
+    async posSnapshotSave(json: string): Promise<void> {
+      try {
+        const database = await db();
+        createPosSnapshotRepo(database).save(POS_SNAPSHOT_CART_KEY, json);
+        await database.flush();
+      } catch { /* snapshotting is best-effort */ }
+    },
+    async posSnapshotLoad(): Promise<string | null> {
+      try {
+        return createPosSnapshotRepo(await db()).load(POS_SNAPSHOT_CART_KEY);
+      } catch {
+        return null;
+      }
+    },
+    async posSnapshotClear(): Promise<void> {
+      try {
+        const database = await db();
+        createPosSnapshotRepo(database).clear(POS_SNAPSHOT_CART_KEY);
+        await database.flush();
+      } catch { /* best-effort */ }
     },
 
     async getOrderHistory(filters: any): Promise<{ orders: any[]; total: number; page: number; limit: number }> {
