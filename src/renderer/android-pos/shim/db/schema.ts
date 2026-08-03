@@ -139,8 +139,10 @@ export const ANDROID_SCHEMA_DDL = `
   );
   CREATE INDEX IF NOT EXISTS idx_orders_shift ON orders(shift_id);
   CREATE INDEX IF NOT EXISTS idx_orders_synced ON orders(synced);
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_client_attempt_id
-    ON orders(client_attempt_id) WHERE client_attempt_id IS NOT NULL;
+  -- NB the unique index on client_attempt_id is NOT here: this block runs
+  -- BEFORE the additive ALTERs, so on an already-installed database the column
+  -- would not exist yet and the whole schema apply would throw at boot. It is
+  -- created in the migration section below, after the column is added.
 
   CREATE TABLE IF NOT EXISTS order_items (
     id TEXT PRIMARY KEY,
