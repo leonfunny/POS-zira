@@ -27,6 +27,10 @@ const manifests = [
 const allowedProviders = new Set(['androidx.startup.InitializationProvider']);
 const allowedUsedPermissions = new Set([
   'com.ziraai.posdiagnostics.dev.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION',
+  // The staff-JWT fetch client (S3) and the print-agent socket (E-PARITY-1)
+  // both live in the app process; without INTERNET every request dies as a
+  // bare "Failed to fetch". Required below — everything else stays denied.
+  'android.permission.INTERNET',
 ]);
 const allowedDeclaredPermissions = new Map([
   ['com.ziraai.posdiagnostics.dev.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION', 'signature'],
@@ -50,7 +54,14 @@ function verifyManifest(variant, relativePath) {
     failures.push(`${variant}: versionCode does not match Android build number ${EXPECTED_BUILD_NUMBER}`);
   }
 
-  if (/android\.permission\.INTERNET/.test(manifest)) failures.push(`${variant}: INTERNET permission present`);
+  // Flipped 2026-08-03: the diagnostics-era app was deliberately offline and
+  // this line FORBADE the permission. The POS app has been network-dependent
+  // since packet S3 (CSP allows api.enail.pro, the boundary verifier allows
+  // fetch, the backend allowlists the WebView origin) — the manifest was the
+  // one layer never updated, and no gate ran the APK with networking, so the
+  // first real device run failed on every request. INTERNET is now REQUIRED;
+  // every other permission remains deny-by-default via the allowlist below.
+  if (!/android\.permission\.INTERNET/.test(manifest)) failures.push(`${variant}: INTERNET permission missing — every backend call fails without it`);
   if (attribute(application, 'allowBackup') !== 'false') failures.push(`${variant}: allowBackup is not false`);
   if (attribute(application, 'fullBackupContent') !== '@xml/backup_rules') failures.push(`${variant}: legacy backup exclusions are missing`);
   if (attribute(application, 'dataExtractionRules') !== '@xml/data_extraction_rules') failures.push(`${variant}: Android 12+ extraction rules are missing`);

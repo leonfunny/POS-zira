@@ -133,6 +133,70 @@ describe('salon catalog + staff (E2a)', () => {
     const { transport } = build();
     expect(await transport.syncStaff!()).toEqual({ success: false, error: 'no-auth' });
   });
+
+  test('syncStaff maps the REAL production /staff shape (items + nested user)', async () => {
+    // Captured from the live backend on 2026-08-03 (first device run). The
+    // person lives under `user`, there are NO flat name fields, and the old
+    // mapper normalized every row to null — bulkUpsertStaff([]) then wiped the
+    // whole table, login seed included, and the open-shift dialog reported
+    // "no active staff". The flat-shape test above is what let that survive.
+    const { transport } = await loggedIn();
+    fetchMock.mockImplementation(async (url: unknown) => {
+      if (String(url).includes('/api/v1/staff')) {
+        return jsonResponse({
+          items: [
+            {
+              id: 'profile-1', isBookable: true, displayColor: '#aaa',
+              commissionRate: 40, status: 'ACTIVE', staffNumber: 1,
+              user: { id: 'user-1', role: 'STAFF', full_name: 'Piotr Nowak', email: 'piotr@demo.pl', is_active: true },
+            },
+            {
+              // Deactivated USER: row must import as inactive, not vanish.
+              id: 'profile-2', commissionRate: 0, status: 'ACTIVE',
+              user: { id: 'user-2', role: 'STAFF', full_name: 'Ewa Kowalska', is_active: false },
+            },
+            {
+              // INACTIVE profile status: same.
+              id: 'profile-3', status: 'INACTIVE',
+              user: { id: 'user-3', role: 'MANAGER', full_name: 'Jan Wiśniewski', is_active: true },
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    const result = await transport.syncStaff!();
+    expect(result).toMatchObject({ success: true, count: 3 });
+
+    // getStaff() returns is_active=1 rows only.
+    const active = new Map((await transport.getStaff!()).map((s: any) => [s.id, s]));
+    expect(active.get('profile-1')).toMatchObject({
+      name: 'Piotr Nowak', user_id: 'user-1', role: 'STAFF', commission_rate: 40,
+    });
+    expect(active.has('profile-2')).toBe(false); // user deactivated
+    expect(active.has('profile-3')).toBe(false); // profile INACTIVE
+  });
+
+  test('a pull with zero usable rows never wipes the roster (Windows guard)', async () => {
+    const { transport } = await loggedIn();
+    // The login-seeded cashier is in the table.
+    expect((await transport.getStaff!()).length).toBeGreaterThan(0);
+
+    fetchMock.mockImplementation(async (url: unknown) => {
+      if (String(url).includes('/api/v1/staff')) {
+        // Rows that all normalize to null (no id / no resolvable name).
+        return jsonResponse({ items: [{ id: '', user: {} }, { id: 'x', user: { full_name: '  ' } }] });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    const result = await transport.syncStaff!();
+    expect(result).toEqual({ success: false, error: 'no-usable-staff-rows' });
+    // bulkUpsertStaff is DELETE-ALL + insert; with [] it would have erased the
+    // cashier and locked the shift dialog. The seed must still be there.
+    expect((await transport.getStaff!()).length).toBeGreaterThan(0);
+  });
 });
 
 describe('schedule / nail-turn board dark-launch (E2a)', () => {

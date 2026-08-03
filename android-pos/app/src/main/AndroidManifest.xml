@@ -2,6 +2,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- The ONE network permission. Absent since the diagnostics era, and every
+         fetch/socket in the app failed with a bare "Failed to fetch" the first
+         time the APK ever ran against a real backend (first device run,
+         2026-08-03 — no gate had ever exercised the APK with networking).
+         The merged-manifest policy now REQUIRES this permission and still
+         denies every other one. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"

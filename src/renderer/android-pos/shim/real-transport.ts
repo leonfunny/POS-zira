@@ -323,23 +323,37 @@ function normalizeStaffRow(raw: any): {
   if (!raw) return null;
   const id = raw.id ?? raw.staffProfileId ?? raw.staff_profile_id ?? raw.userId ?? raw.user_id;
   if (!id) return null;
-  const firstName = raw.firstName ?? raw.first_name ?? '';
-  const lastName = raw.lastName ?? raw.last_name ?? '';
+  // The REAL /staff response nests the person under `user`
+  // ({ items: [{ id, user: { full_name, is_active, role, ... }, status, ... }] });
+  // the old mapper read only flat fields, so EVERY row normalized to null,
+  // bulkUpsertStaff([]) wiped the table (login seed included), and the
+  // open-shift dialog showed "no active staff" on the first device run.
+  // This is now a faithful port of the Windows mapBackendStaff
+  // (staff-sync.ts) — || semantics on the name chain, because an empty
+  // joined string must FALL THROUGH, which `??` does not do.
+  const user = raw.user || {};
   const name = String(
-    raw.name ?? raw.fullName ?? raw.full_name
-    ?? [firstName, lastName].filter(Boolean).join(' ').trim()
-    ?? raw.email ?? '',
+    raw.name || raw.fullName || raw.full_name || user.full_name
+    || `${raw.firstName || raw.first_name || ''} ${raw.lastName || raw.last_name || ''}`.trim()
+    || raw.email || user.email || '',
   ).trim();
   if (!name) return null;
   const commission = Number(raw.commissionRate ?? raw.commission_rate ?? raw.commissionPercent ?? raw.commission_percent ?? 0);
-  const isActive = raw.isActive ?? raw.is_active;
+  // Windows: an explicit isActive wins; otherwise the row is active only while
+  // the linked user is not deactivated AND the profile status is ACTIVE.
+  const status = String(raw.status || 'ACTIVE').toUpperCase();
+  const userActive = user.is_active !== false;
+  const explicit = raw.isActive ?? raw.is_active;
+  const rowActive = explicit !== undefined && explicit !== null
+    ? !(explicit === false || explicit === 0 || explicit === '0')
+    : userActive && status === 'ACTIVE';
   return {
     id: String(id),
-    user_id: raw.userId ?? raw.user_id ?? raw.user?.id ?? null,
+    user_id: raw.userId ?? raw.user_id ?? user.id ?? null,
     name,
     commission_rate: Number.isFinite(commission) ? commission : 0,
-    is_active: isActive === false || isActive === 0 || isActive === '0' ? 0 : 1,
-    role: raw.role ?? null,
+    is_active: rowActive ? 1 : 0,
+    role: raw.role ?? user.role ?? null,
   };
 }
 
@@ -1554,6 +1568,13 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
       const rows = (Array.isArray(profiles) ? profiles : [])
         .map((p: any) => normalizeStaffRow(p))
         .filter((r): r is NonNullable<typeof r> => r !== null);
+      // Windows guard (staff-sync.ts "No usable staff rows returned"): zero
+      // usable rows must NOT touch the table. bulkUpsertStaff is DELETE-ALL +
+      // insert, so replacing with [] would wipe the roster — including the
+      // login-seeded cashier — and lock the shift dialog on "no active staff".
+      if (rows.length === 0) {
+        return { success: false, error: 'no-usable-staff-rows' };
+      }
       const database = await db();
       createOrderRepo(database).bulkUpsertStaff(rows);
       await database.flush().catch(() => { /* debounced flush still pending */ });

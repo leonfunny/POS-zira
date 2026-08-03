@@ -97,7 +97,12 @@ describe('Android Stage 1 native policy', () => {
     expect(manifest).toContain('android:dataExtractionRules="@xml/data_extraction_rules"');
     expect(manifest).toContain('android:usesCleartextTraffic="false"');
     expect(manifest).toContain('android:networkSecurityConfig="@xml/network_security_config"');
-    expect(manifest).not.toContain('android.permission.INTERNET');
+    // Flipped 2026-08-03 (with scripts/verify-android-manifests.mjs): the
+    // diagnostics-era app was deliberately offline; the POS app has been
+    // network-dependent since S3, and the missing permission killed every
+    // request with a bare "Failed to fetch" on the first real device run.
+    // INTERNET is REQUIRED; everything else stays deny-by-default.
+    expect(manifest).toContain('android.permission.INTERNET');
     expect(manifest).not.toContain('androidx.core.content.FileProvider');
     expect(manifest).not.toContain('android.support.FILE_PROVIDER_PATHS');
     expect(networkPolicy).toContain('cleartextTrafficPermitted="false"');
