@@ -262,6 +262,28 @@ export interface ShimTransport {
   syncProducts?(): Promise<{ success: boolean; productsCount?: number; error?: string }>;
   syncOrders?(): Promise<void>;
 
+  // ── Billiard POS-handoff (L5). Present only on the real transport; the
+  //    shim falls back to its desktop-only refusals when they are absent.
+  /** Everything that must hold BEFORE the server session is ended. */
+  billiardPreflight?(): Promise<{ success: boolean; error?: string }>;
+  /** Freeze the server's bill into the POS cart. */
+  billiardPrepare?(input: { posCheckout?: unknown; tableName?: string | null }): Promise<any>;
+  /** Pick the journal back up after the app was killed. */
+  billiardRecover?(): Promise<any>;
+  /** The cashier opened the payment modal on a frozen bill. */
+  billiardMarkPaymentOpened?(checkoutId: string): Promise<any>;
+  /** The last gate before money is collected. */
+  billiardBeginTender?(checkoutId: string, paymentPreflightToken: string): Promise<any>;
+  /** Settle the handoff once the order is committed locally. */
+  billiardComplete?(checkoutId: string, orderId: string): Promise<any>;
+  /** OWNER-only exit from an uncertain tender outcome. */
+  billiardResolveUncertainTender?(input: unknown): Promise<any>;
+  /** Abandon in-flight handoff work when the session ends. */
+  billiardInvalidateAuth?(): void;
+  /** installShim hands over the POS store it owns; the handoff needs both it
+   *  and the transport's platform signals. */
+  attachPosStore?(posStore: unknown): void;
+
   /** Persist the serialized in-progress cart (Android crash/back-press survival). */
   posSnapshotSave?(json: string): Promise<void>;
   /** Read the persisted cart snapshot, or null when there is none. */

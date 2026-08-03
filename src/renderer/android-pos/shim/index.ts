@@ -89,6 +89,12 @@ export function installShim(options: InstallShimOptions = {}): InstalledShim {
   const configStore = options.configStore ?? new ShimConfigStore({ seed: options.config });
   const posStore = new ShimPosStore();
 
+  // The handoff orchestration needs BOTH the transport's platform signals (db,
+  // fiscal assignment, print-agent liveness) and this posStore, which is created
+  // here. The transport takes the store and builds the handoff lazily on first
+  // use — see docs/android-pos/2026-08-03-android-pos-next-steps-plan.md §3.3.
+  transport.attachPosStore?.(posStore);
+
   const stubDeps = { configStore, transport, posStore };
 
   // The `pos` namespace = authoritative store (S1 §2.C) + catalog/orders/shift/
@@ -106,15 +112,36 @@ export function installShim(options: InstallShimOptions = {}): InstalledShim {
       load: (): Promise<string | null> => Promise.resolve(transport.posSnapshotLoad?.() ?? null),
       clear: (): Promise<void> => Promise.resolve(transport.posSnapshotClear?.() ?? undefined),
     },
+    // The billiard POS-handoff. A real transport carries the ported
+    // orchestration (shim/billiard-handoff.ts); the synthetic one does not, and
+    // its refusals below stay the fallback. `beginRestoredTender` has no
+    // Android implementation yet, so it refuses on BOTH transports.
     billiardCheckout: {
-      preflight: async () => ({ success: false, error: 'Billiard checkout handoff requires the desktop POS.' }),
-      prepare: async () => ({ success: false, error: 'Billiard checkout handoff requires the desktop POS.' }),
-      recover: async () => ({ success: true, intent: null }),
-      markPaymentOpened: async () => ({ success: false, error: 'desktop-only' }),
-      beginTender: async () => ({ success: false, error: 'desktop-only' }),
-      beginRestoredTender: async () => ({ success: false, error: 'desktop-only' }),
-      resolveUncertainTender: async () => ({ success: false, error: 'desktop-only' }),
-      complete: async () => ({ success: false, error: 'desktop-only' }),
+      preflight: async () => (transport.billiardPreflight
+        ? transport.billiardPreflight()
+        : { success: false, error: 'Billiard checkout handoff requires the desktop POS.' }),
+      prepare: async (input: any) => (transport.billiardPrepare
+        ? transport.billiardPrepare(input)
+        : { success: false, error: 'Billiard checkout handoff requires the desktop POS.' }),
+      recover: async () => (transport.billiardRecover
+        ? transport.billiardRecover()
+        : { success: true, intent: null }),
+      markPaymentOpened: async (checkoutId: string) => (transport.billiardMarkPaymentOpened
+        ? transport.billiardMarkPaymentOpened(checkoutId)
+        : { success: false, error: 'desktop-only' }),
+      beginTender: async (checkoutId: string, token: string) => (transport.billiardBeginTender
+        ? transport.billiardBeginTender(checkoutId, token)
+        : { success: false, error: 'desktop-only' }),
+      beginRestoredTender: async () => ({
+        success: false,
+        error: 'Restored-cart tender is available on the Windows counter.',
+      }),
+      resolveUncertainTender: async (input: any) => (transport.billiardResolveUncertainTender
+        ? transport.billiardResolveUncertainTender(input)
+        : { success: false, error: 'desktop-only' }),
+      complete: async (checkoutId: string, orderId: string) => (transport.billiardComplete
+        ? transport.billiardComplete(checkoutId, orderId)
+        : { success: false, error: 'desktop-only' }),
     },
     products: buildProductsNamespace(stubDeps),
     categories: buildCategoriesNamespace(stubDeps),

@@ -49,6 +49,7 @@ import type {
 } from './transport';
 import type { ShimConfigStore } from './config-store';
 import type { TokenStore } from './token-store';
+import type { ShimPosStore } from './pos-store';
 import { initAndroidDb, type AndroidDatabase, type AndroidDbInitOptions } from './db/db';
 import { createProductRepo, type AndroidProductRow } from './db/product-repo';
 import { createCategoryRepo, type AndroidCategoryRow } from './db/category-repo';
@@ -58,6 +59,7 @@ import { createRemotePrintCoordinator } from './remote-print';
 import { createAgentConnection, type AgentConnection } from './agent-connect';
 import { createProductAdminSurface } from './product-admin';
 import { createBilliardTransport } from './billiard-transport';
+import { createBilliardHandoff, type AndroidBilliardHandoff } from './billiard-handoff';
 import { createEntitlementsController } from './entitlements';
 import {
   buildBackendOrderItem,
@@ -636,6 +638,9 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         // which re-arms the timer (polling is listener-gated since 917cb6a — a
         // bare read alone no longer restarts it).
         billiard.dispose();
+        // Any in-flight handoff work belongs to the dead session — abandon it
+        // so a late resolve cannot land under the next cashier.
+        handoff?.invalidateAuth();
         // Tenant boundary: drop the cached plan too, so the next login cannot
         // inherit the dead session's feature flags (and its persisted record is
         // removed from storage).
@@ -692,6 +697,33 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
     }
     return printCoordinatorPromise;
   };
+
+  // ── Billiard POS-handoff (L5) ────────────────────────────────────────────
+  // Needs the POS store, which installShim owns, so it is built lazily the
+  // first time a handoff method runs after attachPosStore(). Before that every
+  // method refuses rather than pretending — the shim's own desktop-only
+  // fallbacks would have been indistinguishable from a real refusal.
+  let attachedPosStore: ShimPosStore | null = null;
+  let handoff: AndroidBilliardHandoff | null = null;
+  const billiardHandoff = (): AndroidBilliardHandoff | null => {
+    if (!attachedPosStore) return null;
+    if (!handoff) {
+      handoff = createBilliardHandoff({
+        configStore,
+        posStore: attachedPosStore,
+        db,
+        // D1: a fiscal printer ASSIGNED to this salon, and a LIVE print-agent
+        // socket — the tablet owns no printer, so that socket is the fiscal path.
+        isFiscalPrinterAssigned: async () => {
+          const status = await printCoordinator().getFiscalPrinterStatus();
+          return !!status?.assigned;
+        },
+        isPrintAgentConnected: () => agentConnection.isConnected(),
+      });
+    }
+    return handoff;
+  };
+  const NO_HANDOFF = { success: false, error: 'POS is not ready.' };
 
   /** Emit pos:nail-turns-updated (E2a §2.D) — fires after a salon checkout
    *  closes at least one technician's turn so SalonTemplate reloads the board. */
@@ -778,6 +810,17 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
 
     // ── Product/stock/category admin (E-PARITY-3, owner-only) ──────────────
     productAdmin: createProductAdminSurface({ client, configStore }),
+
+    // ── Billiard POS-handoff (L5) — delegated to the orchestration ─────────
+    attachPosStore(posStore: unknown) { attachedPosStore = posStore as ShimPosStore; },
+    billiardPreflight: async () => billiardHandoff()?.preflight() ?? NO_HANDOFF,
+    billiardPrepare: async (input) => billiardHandoff()?.prepare(input) ?? NO_HANDOFF,
+    billiardRecover: async () => billiardHandoff()?.recover() ?? NO_HANDOFF,
+    billiardMarkPaymentOpened: async (checkoutId) => billiardHandoff()?.markPaymentOpened(checkoutId) ?? NO_HANDOFF,
+    billiardBeginTender: async (checkoutId, token) => billiardHandoff()?.beginTender(checkoutId, token) ?? NO_HANDOFF,
+    billiardComplete: async (checkoutId, orderId) => billiardHandoff()?.complete(checkoutId, orderId) ?? NO_HANDOFF,
+    billiardResolveUncertainTender: async (input) => billiardHandoff()?.resolveUncertainTender(input as any) ?? NO_HANDOFF,
+    billiardInvalidateAuth: () => { handoff?.invalidateAuth(); },
 
     // ── Auth (S1 §2.B) ─────────────────────────────────────────────────────
     async loginWithEmail(email, password): Promise<ShimLoginResult> {
@@ -911,6 +954,7 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
       // teardown path (T4) — the 10s background refresh must not outlive the
       // session.
       billiard.dispose();
+      handoff?.invalidateAuth();
       // Drop the cached plan: the next login may be a different salon, and its
       // tabs must be decided by ITS entitlements, never the previous session's.
       entitlements.clear();
