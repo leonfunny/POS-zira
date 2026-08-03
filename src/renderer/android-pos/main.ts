@@ -28,6 +28,7 @@ import { ShimConfigStore, resolvePosMode } from './shim/config-store';
 import { TokenStore } from './shim/token-store';
 import { createRealTransport } from './shim/real-transport';
 import { initStorageDurability } from './shim/storage-durability';
+import { installBackGuard, nativeExitApp } from './shim/back-guard';
 import AndroidBootApp from './AndroidBootApp';
 
 const configStore = new ShimConfigStore();
@@ -37,7 +38,7 @@ const transport = createRealTransport({ configStore, tokenStore });
 // Install the electronAPI surface BEFORE the renderer mounts. This is the
 // single allowed module-load side effect of the entry — the boundary verifier
 // permits it because the shim installer is in this graph.
-installShim({ transport, configStore });
+const shim = installShim({ transport, configStore });
 
 // Ask Android to stop treating our IndexedDB as disposable BEFORE the first
 // write. Everything the money path depends on lives in that one blob — the
@@ -45,6 +46,16 @@ installShim({ transport, configStore });
 // `allowBackup="false"` means there is no second copy. The answer is cached in
 // the module; AndroidBootApp reads it to warn the cashier when it was refused.
 void initStorageDurability();
+
+// Own the back button: MainActivity fires `ziraBackPressed` and never finishes
+// on its own, so an accidental press can no longer end the app mid-sale without
+// a word. The cart itself is already snapshotted, so this is about not
+// surprising the cashier — not about losing the money.
+installBackGuard(window, {
+  getCartItemCount: () => shim.posStore.getState().cart.items.length,
+  confirm: (message) => window.confirm(message),
+  exitApp: nativeExitApp,
+});
 
 // E2a (salon mode): materialize the resolved POS mode into config so the
 // unmodified Windows POSLayout (`posMode === 'salon'` → SalonTemplate,
