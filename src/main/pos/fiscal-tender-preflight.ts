@@ -15,34 +15,15 @@ export interface TenderFiscalCompatibilityOptions {
   checkoutDiscountGrosze?: number;
 }
 
-export function requiresBilliardFiscalPrinterReadiness(input: {
-  allowRealFiscalPrint?: boolean;
-  fiscalOnCashSale?: string;
-  localFiscalEnabled?: boolean;
-  detectedFiscalConfigured?: boolean;
-}): boolean {
-  return input.allowRealFiscalPrint === true
-    || input.fiscalOnCashSale === 'always'
-    || input.localFiscalEnabled === true
-    || input.detectedFiscalConfigured === true;
-}
-
-export function assertBilliardRealFiscalGate(input: {
-  allowRealFiscalPrint?: boolean;
-  fiscalOnCashSale?: string;
-  localFiscalEnabled?: boolean;
-  detectedFiscalConfigured?: boolean;
-}): void {
-  const fiscalRouteExpected = input.fiscalOnCashSale === 'always'
-    || input.localFiscalEnabled === true
-    || input.detectedFiscalConfigured === true;
-  if (fiscalRouteExpected && input.allowRealFiscalPrint !== true) {
-    throw new Error(
-      'REAL_FISCAL_PRINT_DISABLED: the configured fiscal route is disabled by the production safety gate. '
-      + 'Enable allowRealFiscalPrint only during controlled production go-live.',
-    );
-  }
-}
+// The two billiard settle gates moved to src/shared/pos/billiard-fiscal-gate.ts
+// so the Android shim enforces the SAME rule (a gate only one platform applies
+// is not a gate). Re-exported so every existing Windows importer is unchanged.
+export {
+  requiresBilliardFiscalPrinterReadiness,
+  assertBilliardRealFiscalGate,
+  assertBilliardFiscalPrinterReady,
+  TABLET_NOT_PAIRED_MESSAGE,
+} from '../../shared/pos/billiard-fiscal-gate';
 
 function allocatedBilliardDiscount(line: TenderFiscalLine): number {
   let jsonDiscount = 0;

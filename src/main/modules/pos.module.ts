@@ -19,9 +19,9 @@ import { PosStore } from '../pos/pos-store';
 import { PaymentController, FiscalReceiptJournalInput, ReceiptPrintJournalInput } from '../pos/payment-controller';
 import {
   assertBilliardRealFiscalGate,
+  assertBilliardFiscalPrinterReady,
   assertTenderFiscalCompatibilityForProtocol,
   hasTenderFiscalDiscount,
-  requiresBilliardFiscalPrinterReadiness,
   type TenderFiscalLine,
 } from '../pos/fiscal-tender-preflight';
 import { buildBackendOrderItem, getLineSaleQuantity, getLineSaleUnit, getLineSellBy, getLineTotalGrosze, shouldDecrementStockAtCheckout } from '../pos/order-line-contract';
@@ -1997,10 +1997,12 @@ export class PosModule extends BaseModule {
       detectedFiscalConfigured: fiscal.configured,
     };
     assertBilliardRealFiscalGate(fiscalPreflight);
-    const fiscalRequired = requiresBilliardFiscalPrinterReadiness(fiscalPreflight);
-    if (fiscalRequired && (!fiscal.configured || !fiscal.connected)) {
-      throw new Error('The fiscal printer is not ready. Connect it before ending this Billiard session.');
-    }
+    // Same rule, same message on both platforms — the tablet passes its own
+    // channel signal (the print-agent socket) into fiscalChannelConnected.
+    assertBilliardFiscalPrinterReady({
+      ...fiscalPreflight,
+      fiscalChannelConnected: fiscal.configured === true && fiscal.connected === true,
+    });
 
     // Force a no-op durability barrier while the table is still running.
     // If sql.js cannot atomically persist the current cart/shift state, the

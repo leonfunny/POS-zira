@@ -84,23 +84,54 @@ fork. Port guard-by-guard against `src/main/pos/pos-store.ts` rather than
 "port what the happy path needs" — every one of those guards exists because a
 frozen billiard cart must not be edited, cleared, discounted, or overwritten.
 
-## 5. OPEN — needs Paul before L5 lands
+## 5. DECIDED 2026-08-03 (owner delegated the call after review)
 
-**D1 — fiscal gate on a tablet.** `preflightBilliardHandoff`
-(`pos.module.ts:1999-2003`) refuses to end a session when the fiscal printer is
-not ready. The tablet has no local fiscal printer; it prints fiscal remotely
-through the print-agent (E-FISCAL). Proposal: treat
-`getFiscalPrinterStatus().assigned` (already implemented in the Android print
-coordinator) as `configured+connected`, and keep the refusal otherwise — i.e.
-a salon whose fiscal printer is bound may settle from the tablet, one with no
-fiscal printer bound cannot when `allowRealFiscalPrint` demands it.
+**D1 — fiscal readiness on a tablet: require ASSIGNED + a live print-agent link.**
 
-**D2 — salons with no `pa_` print-agent key.** `currentPosSnapshotScope`
-requires `registerCode || machineId || agentId`; on Android only `agentId`
-exists, and only after a successful `/print-agent/connect`. Windows' `machineId`
-is **server-assigned** (`auth.module.ts:241`), so inventing a local UUID would
-diverge from the server's agent registry. Proposal: fail closed with
-*"pair this tablet with the salon's print-agent before settling"*.
+`requiresBilliardFiscalPrinterReadiness` (fiscal-tender-preflight.ts:18-28) turns
+the gate on when any of `allowRealFiscalPrint`, `fiscalOnCashSale === 'always'`,
+`localFiscalEnabled`, `detectedFiscalConfigured` holds, and Windows then demands
+`configured && connected` from the local device.
+
+On Android `hasFiscalPrinter()` returns `configured = connected = !!assigned`
+(stubs.ts:252) — the assignment endpoint does not expose live state, so
+`connected` there is not a real signal. The tablet therefore requires:
+
+- the salon has a fiscal printer ASSIGNED (`getFiscalPrinterStatus().assigned`), **and**
+- the print-agent socket is currently connected (`agentConnection.isConnected()`),
+
+because that socket is the only path the fiscal document can travel. This is the
+closest honest analogue of "configured && connected" available on a device that
+owns no printer. Additionally `localFiscalEnabled` is hard-coded **false** on
+Android: a tablet has no directly attached fiscal device, and claiming one would
+distort the `allowRealFiscalPrint` production safety gate.
+
+`assertBilliardRealFiscalGate` is run unchanged on both platforms — it is pure
+and the tablet must not be able to bypass the go-live gate.
+
+**D2 — a salon with no `pa_` print-agent key cannot settle from the tablet (fail closed).**
+
+`currentPosSnapshotScope` needs `registerCode || machineId || agentId`. On Android
+only `agentId` exists, written by agent-connect from the `/print-agent/connect`
+response; Windows' `machineId` is server-assigned (auth.module.ts:241) so minting
+a local UUID would put an identity in the journal that the server's agent
+registry has never seen — and two tablets could then collide on one register id,
+letting them see each other's frozen checkouts.
+
+The two decisions collapse into ONE operational rule: **a tablet may settle only
+while it is paired with the salon's print-agent.** That is not a hardship — an
+unpaired tablet cannot issue the fiscal receipt for the bill either.
+
+Refusal message must name the fix ("pair this tablet with the salon's
+print-agent"), never a bare "register not ready".
+
+**Deliberately still open (flagged, not faked):**
+`assertTenderFiscalCompatibilityForProtocol` refuses a discounted checkout on an
+ELZAB_STX printer (the Che Saigon incident). The tablet does not know the REMOTE
+printer's protocol today, so it cannot run that check. Until the assignment
+lookup exposes the protocol, a discounted billiard bill tendered from a tablet
+onto an ELZAB fiscal printer will fail at PRINT time rather than being refused
+before the tender boundary. Tracked here rather than guessed.
 
 ## 6. File impact map
 
