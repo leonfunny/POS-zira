@@ -138,7 +138,7 @@ import {
   withoutRestoredInterruptionMarker,
   type PosSnapshotScope,
 } from '../../shared/pos/billiard-pos-handoff';
-import { PosAuthEpochGuard, type PosAuthContext } from '../pos/pos-auth-epoch';
+import { PosAuthEpochGuard, type PosAuthContext } from '../../shared/pos/pos-auth-epoch';
 import {
   isBilliardCorrectionSourceForOwner,
   resolveBilliardCorrectionCommand,
@@ -246,7 +246,7 @@ import {
   assertLocalOpenShiftMatchesSession,
   getVerifiedServerShiftMismatch,
   recoverOpenShiftFromLocal,
-} from '../pos/open-shift-recovery';
+} from '../../shared/pos/open-shift-recovery';
 
 type BilliardHandoffRecord = NonNullable<ReturnType<typeof billiardPosHandoffRepo.get>>;
 

@@ -6,7 +6,7 @@ import {
   getVerifiedServerShiftMismatch,
   recoverOpenShiftFromLocal,
   type LocalOpenShift,
-} from '../src/main/pos/open-shift-recovery';
+} from '../src/shared/pos/open-shift-recovery';
 
 function fakeStore() {
   let session = {

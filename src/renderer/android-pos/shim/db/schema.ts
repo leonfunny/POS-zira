@@ -148,7 +148,11 @@ export const ANDROID_SCHEMA_DDL = `
     opening_cash INTEGER DEFAULT 0,
     closing_cash INTEGER,
     opened_at TEXT DEFAULT (datetime('now')),
-    closed_at TEXT
+    closed_at TEXT,
+    -- v6: the server's shift id. The shared open-shift assertion selects it
+    -- (open-shift-recovery.ts getSingleLocalOpenShift), and the tablet's
+    -- best-effort backend shift sync has somewhere to record it.
+    backend_id TEXT
   );
 
   CREATE TABLE IF NOT EXISTS staff (
@@ -247,10 +251,18 @@ export function applyAndroidSchema(db: SqlJsDatabase): void {
   if (!orderColumns.has('refund_lines')) {
     db.run('ALTER TABLE orders ADD COLUMN refund_lines TEXT');
   }
+  // v6: shifts.backend_id (the shared open-shift assertion selects it).
+  const shiftColumns = new Set<string>();
+  const shiftInfo = db.exec('PRAGMA table_info(shifts)');
+  for (const row of shiftInfo[0]?.values ?? []) shiftColumns.add(String(row[1]));
+  if (!shiftColumns.has('backend_id')) {
+    db.run('ALTER TABLE shifts ADD COLUMN backend_id TEXT');
+  }
   db.run(`PRAGMA user_version = ${ANDROID_SCHEMA_VERSION}`);
 }
 
 /** v3 = product_variants.track_inventory (stock-guard parity).
  *  v4 = orders.{refund_amount,refund_reason,refunded_at,refund_lines} (E1b refund).
- *  v5 = pos_billiard_handoffs + pos_hold_orders (billiard POS-handoff port). */
-export const ANDROID_SCHEMA_VERSION = 5;
+ *  v5 = pos_billiard_handoffs + pos_hold_orders (billiard POS-handoff port).
+ *  v6 = shifts.backend_id (shared open-shift assertion + backend shift sync). */
+export const ANDROID_SCHEMA_VERSION = 6;
