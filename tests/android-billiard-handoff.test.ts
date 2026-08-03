@@ -16,6 +16,7 @@ import { initAndroidDb, type AndroidDatabase } from '../src/renderer/android-pos
 import { ShimConfigStore } from '../src/renderer/android-pos/shim/config-store';
 import { ShimPosStore } from '../src/renderer/android-pos/shim/pos-store';
 import { createBilliardHandoff } from '../src/renderer/android-pos/shim/billiard-handoff';
+import { createBilliardHandoffRepo } from '../src/renderer/android-pos/shim/db/billiard-handoff-repo';
 
 const NODE_LOCATE_FILE = null;
 
@@ -246,5 +247,198 @@ describe('preflight — durability and identity', () => {
     const result = await handoff.preflight();
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/POS user changed/i);
+  });
+});
+
+// ── prepare ─────────────────────────────────────────────────────────────────
+
+/** The exact frozen allocation shape the server sends (same fixture the Windows
+ *  handoff tests use, so a drift in the contract fails on both platforms). */
+function bundle(overrides: Record<string, any> = {}) {
+  return {
+    schemaVersion: 1,
+    sessionId: 'session-1',
+    checkoutId: 'checkout-1',
+    discountGrosze: 3300,
+    totalGrosze: 17000,
+    lines: [
+      {
+        lineKey: 'time-1', kind: 'TIME', variantId: 'billiard-service', displayName: 'Playing time',
+        quantity: 1, sellBy: 'PIECE', saleUnit: 'min',
+        unitPriceGrosze: 12300, grossTotalGrosze: 12300, allocatedDiscountGrosze: 2300, payableGrosze: 10000,
+        vatRate: 23, durationMinutes: 60, inventoryPolicy: 'NONE', refundPolicy: 'FORBIDDEN',
+      },
+      {
+        lineKey: 'fnb-1', kind: 'FNB', sessionItemId: 'session-item-1', variantId: 'cola-variant', displayName: 'Cola',
+        quantity: 1, sellBy: 'PIECE', saleUnit: 'szt',
+        unitPriceGrosze: 8000, grossTotalGrosze: 8000, allocatedDiscountGrosze: 1000, payableGrosze: 7000,
+        vatRate: 8, inventoryPolicy: 'ALREADY_CONSUMED', refundPolicy: 'ALLOWED_NO_RESTOCK',
+      },
+    ],
+    ...overrides,
+  };
+}
+
+function ordinaryLine() {
+  return {
+    id: 'own-1', variantId: 'v9', name: 'Piwo', sku: 'P1',
+    price: 900, quantity: 1, total: 900, vatRate: 23,
+  };
+}
+
+describe('prepare — freezing the bill', () => {
+  test('an empty cart gets the frozen bill, journalled READY, with an auto-open intent', async () => {
+    const { handoff, database, posStore } = await makeHarness();
+    const result = await handoff.prepare({ posCheckout: bundle(), tableName: 'Stół #1' });
+
+    expect(result.success).toBe(true);
+    expect(result.intent).toMatchObject({
+      checkoutId: 'checkout-1',
+      sessionId: 'session-1',
+      clientAttemptId: 'billiard:checkout-1',
+      shouldAutoOpen: true,
+    });
+
+    const row = database.get<{ state: string; interrupted_hold_id: string | null }>(
+      'SELECT state, interrupted_hold_id FROM pos_billiard_handoffs WHERE checkout_id = ?', ['checkout-1'],
+    );
+    expect(row?.state).toBe('POS_READY');
+    expect(row?.interrupted_hold_id).toBeNull();
+
+    // The cart on screen IS the server's allocation: locked lines, its total.
+    const state = posStore.getState();
+    expect(state.cart.items).toHaveLength(2);
+    expect(state.cart.items.every((i) => i.locked)).toBe(true);
+    expect(state.cart.total).toBe(17000);
+    expect(state.checkoutDraft.billiard?.origin.checkoutId).toBe('checkout-1');
+    expect(state.checkoutDraft.billiard?.tableName).toBe('Stół #1');
+    expect(state.checkoutDraft.billiard?.orderCommitted).toBe(false);
+  });
+
+  test("a cashier's in-progress cart is parked in a PROTECTED hold, never discarded", async () => {
+    const { handoff, database, posStore } = await makeHarness();
+    posStore.dispatch({ type: 'cart/addItem', payload: ordinaryLine() as any });
+    expect(posStore.getState().cart.items).toHaveLength(1);
+
+    const result = await handoff.prepare({ posCheckout: bundle() });
+    expect(result.success).toBe(true);
+
+    const holds = database.all<{ id: string; payload: string }>('SELECT id, payload FROM pos_hold_orders');
+    expect(holds).toHaveLength(1);
+    expect(holds[0].id).toBe('billiard-interruption:checkout-1');
+    const payload = JSON.parse(holds[0].payload);
+    expect(payload.protected).toBe(true);
+    expect(payload.holdReason).toBe('BILLIARD_INTERRUPTION');
+    expect(payload.snapshot.state.cart.items).toHaveLength(1);
+    expect(payload.autoRestoreForCheckoutId).toBe('checkout-1');
+
+    // Screen now shows the billiard bill, not the parked cart.
+    expect(posStore.getState().cart.items.map((i) => i.name)).toEqual(['Playing time', 'Cola']);
+  });
+
+  test('a failed durability barrier leaves NO journal row, NO hold, and the live cart intact', async () => {
+    const database = await initAndroidDb({ locateFile: NODE_LOCATE_FILE });
+    const { configStore, posStore } = await makeHarness({ db: database });
+    posStore.dispatch({ type: 'cart/addItem', payload: ordinaryLine() as any });
+    const realFlush = database.flush.bind(database);
+    let failNext = true;
+    (database as any).flush = async () => {
+      if (failNext) { failNext = false; throw new Error('quota exceeded'); }
+      return realFlush();
+    };
+    const handoff = createBilliardHandoff({
+      configStore, posStore, db: async () => database,
+      isFiscalPrinterAssigned: async () => false,
+      isPrintAgentConnected: () => false,
+    });
+
+    const result = await handoff.prepare({ posCheckout: bundle() });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/Could not safely hold the current POS cart/);
+    expect(result.error).toMatch(/quota exceeded/);
+
+    expect(database.all('SELECT 1 FROM pos_billiard_handoffs')).toHaveLength(0);
+    expect(database.all('SELECT 1 FROM pos_hold_orders')).toHaveLength(0);
+    // The cashier still owns their cart — nothing was frozen.
+    expect(posStore.getState().cart.items).toHaveLength(1);
+    expect(posStore.getState().checkoutDraft.billiard).toBeUndefined();
+  });
+
+  test('two concurrent prepares for the same checkout share ONE attempt', async () => {
+    const { handoff, database } = await makeHarness();
+    const first = handoff.prepare({ posCheckout: bundle() });
+    const second = handoff.prepare({ posCheckout: bundle() });
+    const [a, b] = await Promise.all([first, second]);
+    // Identity, not just equality: the second call joined the SAME attempt
+    // instead of racing a second freeze.
+    expect(a).toBe(b);
+    expect(a.success).toBe(true);
+    expect(database.all('SELECT 1 FROM pos_billiard_handoffs')).toHaveLength(1);
+  });
+
+  test('a malformed checkout is refused before anything is written', async () => {
+    const { handoff, database } = await makeHarness();
+    const result = await handoff.prepare({ posCheckout: bundle({ totalGrosze: 999 }) });
+    expect(result.success).toBe(false);
+    expect(database.all('SELECT 1 FROM pos_billiard_handoffs')).toHaveLength(0);
+  });
+});
+
+describe('prepare — resuming an already frozen checkout', () => {
+  test('the same bundle re-activates the cart without a second journal row', async () => {
+    const { handoff, database, posStore } = await makeHarness();
+    await handoff.prepare({ posCheckout: bundle() });
+    posStore.dispatch({ type: 'display/setMode', payload: { mode: 'idle' } as any });
+
+    const again = await handoff.prepare({ posCheckout: bundle() });
+    expect(again.success).toBe(true);
+    expect(again.intent?.recovered).toBe(true);
+    expect(database.all('SELECT 1 FROM pos_billiard_handoffs')).toHaveLength(1);
+    expect(posStore.getState().checkoutDraft.billiard?.origin.checkoutId).toBe('checkout-1');
+  });
+
+  test('a DIFFERENT bundle under the same checkout id is refused', async () => {
+    const { handoff } = await makeHarness();
+    await handoff.prepare({ posCheckout: bundle() });
+    // Valid on its own (totals still reconcile) but NOT the bundle that was
+    // frozen — only the stored-snapshot comparison can catch this.
+    const relabelled = bundle();
+    relabelled.lines[1].displayName = 'Cola Zero';
+    const tampered = await handoff.prepare({ posCheckout: relabelled });
+    expect(tampered.success).toBe(false);
+    expect(tampered.error).toMatch(/already has a different frozen snapshot/i);
+  });
+
+  test('an ambiguous tender outcome returns outcomeUncertain and never reopens payment', async () => {
+    const { handoff, database } = await makeHarness();
+    await handoff.prepare({ posCheckout: bundle() });
+    const journal = createBilliardHandoffRepo(database);
+    journal.markPaymentOpened('checkout-1');
+    journal.markTenderCommitting('checkout-1');
+    journal.markTenderUncertain('checkout-1');
+
+    const result = await handoff.prepare({ posCheckout: bundle() });
+    expect(result.success).toBe(true);
+    expect(result.outcomeUncertain).toBe(true);
+    expect(result.intent?.shouldAutoOpen).toBe(false);
+    expect(result.intent?.tenderOutcomeUncertain).toBe(true);
+  });
+
+  test('a second, unrelated checkout is refused while one is unresolved', async () => {
+    const { handoff, database } = await makeHarness();
+    await handoff.prepare({ posCheckout: bundle() });
+    const other = await handoff.prepare({
+      posCheckout: bundle({ checkoutId: 'checkout-2', sessionId: 'session-2' }),
+    });
+    expect(other.success).toBe(false);
+    expect(other.error).toMatch(/still unresolved on this register|already active/i);
+    expect(database.all('SELECT 1 FROM pos_billiard_handoffs')).toHaveLength(1);
+  });
+
+  test('an unpaired tablet cannot prepare either', async () => {
+    const { handoff } = await makeHarness({ paired: false });
+    const result = await handoff.prepare({ posCheckout: bundle() });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/pair/i);
   });
 });
