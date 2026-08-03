@@ -9,6 +9,7 @@ import {
 import { createProductRepo, type AndroidProductRow } from '../src/renderer/android-pos/shim/db/product-repo';
 import { createCategoryRepo, type AndroidCategoryRow } from '../src/renderer/android-pos/shim/db/category-repo';
 import { createSyncMeta, PRODUCTS_SYNC_CURSOR_KEY } from '../src/renderer/android-pos/shim/db/sync-meta';
+import { ANDROID_SCHEMA_DDL } from '../src/renderer/android-pos/shim/db/schema';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -135,6 +136,27 @@ describe('android shim catalog DB (S5)', () => {
   beforeEach(() => { clearIndexedDB(); });
   afterEach(() => { clearIndexedDB(); vi.useRealTimers(); });
 
+  describe('DDL integrity', () => {
+    // The schema block is executed by splitting it on the semicolon character,
+    // so ONE semicolon inside a comment silently cuts a table definition in
+    // half and surfaces only as a cryptic sql.js "near ... syntax error".
+    // That trap has bitten three times; this turns it into a named failure.
+    test('every statement is a real DDL statement (no comment splits it)', () => {
+      const statements = ANDROID_SCHEMA_DDL
+        .split(';')
+        .map((sql) => sql.trim())
+        .filter((sql) => sql.length > 0);
+      const malformed = statements.filter((sql) => {
+        const body = sql.replace(/^\s*--[^\n]*\n/gm, '').trim();
+        return !/^(CREATE|ALTER|PRAGMA)\b/i.test(body);
+      });
+      expect(
+        malformed,
+        `A semicolon inside a comment split these:\n${malformed.map((s) => s.slice(0, 120)).join('\n---\n')}`,
+      ).toEqual([]);
+    });
+  });
+
   describe('initialization + schema', () => {
     test('boots sql.js in node and creates the v1 schema', async () => {
       const db = await initAndroidDb({ locateFile: NODE_LOCATE_FILE });
@@ -150,10 +172,10 @@ describe('android shim catalog DB (S5)', () => {
 
       // user_version stamped at schema apply time.
       const version = db.getRawHandle().exec('PRAGMA user_version')[0].values[0][0];
-      // v7 = billiard identity columns on orders/order_items; v6 =
-      // shifts.backend_id; v5 = pos_billiard_handoffs + pos_hold_orders
+      // v8 = pos_snapshot; v7 = billiard identity columns on orders/order_items;
+      // v6 = shifts.backend_id; v5 = pos_billiard_handoffs + pos_hold_orders
       // (billiard POS-handoff); v4 = orders.refund_* (E1b); v3 = track_inventory
-      expect(version).toBe(7);
+      expect(version).toBe(8);
     });
 
     test('is idempotent — re-init over a persisted image keeps the schema', async () => {

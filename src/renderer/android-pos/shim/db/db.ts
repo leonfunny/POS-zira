@@ -292,6 +292,9 @@ export class AndroidDatabase {
         // PREVIOUS salon's register — they must never survive into salon B
         // (they carry cart lines, money totals and a salon-scoped order id).
         'pos_billiard_handoffs', 'pos_hold_orders',
+        // v8: the in-progress cart snapshot belongs to the salon that was
+        // signed in when it was written.
+        'pos_snapshot',
       ]) {
         this.db.run(`DELETE FROM ${table}`);
       }

@@ -76,6 +76,17 @@ export const ANDROID_SCHEMA_DDL = `
     updated_at TEXT
   );
 
+  -- v8: crash/kill survival for the in-progress cart. The Windows till has no
+  -- equivalent because Electron has no back button and no OS task-kill. On
+  -- Android a stray back-press or a background kill would otherwise discard a
+  -- cart the cashier has been building. One row per logical snapshot key.
+  -- Wiped by clearSalonData() so a cart can never survive a tenant switch.
+  CREATE TABLE IF NOT EXISTS pos_snapshot (
+    key TEXT PRIMARY KEY,
+    value TEXT,
+    updated_at TEXT
+  );
+
   -- S8+S9: order/shift tables — column set ported from the Windows INSERTs
   -- (order-repo.ts:218-243) plus the sync/backend columns the sync loop and
   -- history read (synced tri-state 0/1/2/-1, sync_attempts, sync_error,
@@ -302,5 +313,6 @@ export function applyAndroidSchema(db: SqlJsDatabase): void {
  *  v7 = orders.{client_attempt_id,billiard_origin_json} +
  *       order_items.{billiard_json,inventory_policy,refund_policy,
  *       allocated_discount,payable_total} — the billiard identity the shared
- *       PaymentModal already sends and Android used to drop. */
-export const ANDROID_SCHEMA_VERSION = 7;
+ *       PaymentModal already sends and Android used to drop.
+ *  v8 = pos_snapshot (crash-survivable in-progress cart). */
+export const ANDROID_SCHEMA_VERSION = 8;
