@@ -19,9 +19,9 @@ async function source(path: string) {
 }
 
 // Packet S2 replaced the static Stage-2 synthetic catalog with the REAL Windows
-// POS renderer (src/renderer/windows/pos/POSApp) mounted behind the typed
+// POS renderer (src/renderer/components/pos/POSLayout) mounted behind the typed
 // `window.electronAPI` shim. These assertions pin that contract: the entry
-// installs the shim before mounting POSApp, the shim module exists, and the
+// installs the shim before mounting the layout, the shim module exists, and the
 // shim's synthetic surface lands in the built Android web bundle.
 describe('Android Stage 2 — real POS renderer behind the electronAPI shim', () => {
   test('the entry installs the shim with the real transport before mounting the boot app', async () => {
@@ -37,14 +37,19 @@ describe('Android Stage 2 — real POS renderer behind the electronAPI shim', ()
     expect(main).toContain("from './AndroidBootApp'");
     expect(main).toMatch(/createRoot/);
     // Source order: the installShim() call precedes the React mount call. (ES
-    // module imports are hoisted, but POSApp's module is side-effect-free re:
+    // module imports are hoisted, but the layout's module is side-effect-free re:
     // electronAPI — the renderer only touches window.electronAPI at render
     // time, which follows installShim().)
     expect(main.indexOf('installShim(')).toBeLessThan(main.indexOf('createRoot('));
 
     // The boot app mounts the REAL Windows POS renderer after auth.
     const bootApp = await source('src/renderer/android-pos/AndroidBootApp.tsx');
-    expect(bootApp).toContain("from '../windows/pos/POSApp'");
+    // The REAL shared Windows renderer, mounted one level lower than before:
+    // AndroidBootApp went from POSApp (a props-less wrapper, also used by the
+    // Windows shell) to POSLayout directly, because the billiard payment intent
+    // has to be handed to the layout the way App.tsx does it. Still the shared
+    // renderer — still not a fork.
+    expect(bootApp).toContain("from '../components/pos/POSLayout'");
     expect(bootApp).toContain('LoginScreen');
     expect(bootApp).toContain('auth.onExpired');
   });

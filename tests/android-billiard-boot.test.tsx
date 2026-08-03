@@ -21,12 +21,21 @@ import { createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
 
+/** Props the Android shell handed to the shared POSLayout. */
+const capturedPos = vi.hoisted(() => ({ props: null as Record<string, unknown> | null }));
+
 // Mock the heavy Windows renderer children. The real POSApp → POSLayout and
 // BilliardFloorPlan pull enormous subtrees (and read window.electronAPI at
 // render); stubs keep this test focused on the boot gating.
-vi.mock('../src/renderer/windows/pos/POSApp', () => ({
+// AndroidBootApp mounts POSLayout DIRECTLY (POSApp takes no props and is shared
+// with the Windows shell), so the mock has to follow the real import — the real
+// POSLayout reads window.electronAPI at render and pulls the whole POS tree.
+vi.mock('../src/renderer/components/pos/POSLayout', () => ({
   __esModule: true,
-  default: () => createElement('div', { 'data-testid': 'pos-app' }, 'POS-APP'),
+  default: (props: Record<string, unknown>) => {
+    capturedPos.props = props;
+    return createElement('div', { 'data-testid': 'pos-app' }, 'POS-APP');
+  },
 }));
 vi.mock('../src/renderer/components/billiard/BilliardFloorPlan', () => ({
   __esModule: true,
@@ -63,6 +72,10 @@ function makeApi(opts: { billiardEnabled: boolean; language?: string }) {
       onStateChanged: () => () => {},
       shift: { getActive: () => Promise.resolve({ success: false }) },
       sync: { products: () => Promise.resolve() },
+      snapshot: { load: () => Promise.resolve(null), save: () => Promise.resolve(), clear: () => Promise.resolve() },
+      // The real shim always carries this namespace; the boot effect calls
+      // recover() to pick up a journal left by a killed process.
+      billiardCheckout: { recover: () => Promise.resolve({ success: true, intent: null }) },
     },
   };
 }

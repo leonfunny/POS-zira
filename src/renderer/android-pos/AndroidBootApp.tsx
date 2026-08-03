@@ -1,6 +1,6 @@
 /**
  * Android boot component (packet S6+S7): decides between LoginScreen and the
- * real POSApp based on the shim session, mirrors the Windows main-window boot
+ * real shared POSLayout based on the shim session, mirrors the Windows boot
  * verify (auth.getUser on start), drops back to login on auth.onExpired, and
  * fires a catalog sync after an authenticated mount.
  *
@@ -9,15 +9,23 @@
  * mode-tab nav; selecting Bi-a renders the unmodified BilliardFloorPlan, just
  * like App.tsx:517-518 does on Windows. Mode persists in localStorage.
  *
- * POSApp and BilliardFloorPlan are the UNMODIFIED Windows renderers — never
- * edit them from here.
+ * POSLayout and BilliardFloorPlan are the UNMODIFIED shared renderers — never
+ * edit them from here. This shell supplies the same props App.tsx does, which
+ * is what lets the tablet end and settle a billiard session (L6).
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import LoginScreen from './LoginScreen';
-import POSApp from '../windows/pos/POSApp';
+// POSLayout directly, NOT the POSApp wrapper: POSApp takes no props and is
+// shared with the Windows shell, so the billiard intent has to be handed to the
+// layout the same way App.tsx does it.
+import POSLayout from '../components/pos/POSLayout';
 import BilliardFloorPlan from '../components/billiard/BilliardFloorPlan';
 import type { Language } from '../i18n/translations';
+import type {
+  BilliardPaymentIntent,
+  RestoredCartReconciliation,
+} from '../../shared/billiard-pos-handoff';
 import { STORAGE_AT_RISK_MESSAGE, getStorageDurability } from './shim/storage-durability';
 
 type BootState = 'checking' | 'login' | 'pos';
@@ -48,6 +56,17 @@ export default function AndroidBootApp() {
   const [billiardEnabled, setBilliardEnabled] = useState(false);
   const [language, setLanguage] = useState<Language>('en');
   const [storageAtRisk, setStorageAtRisk] = useState(false);
+  // Mount each tab on first visit, then keep it mounted and hidden. Unmounting
+  // rebuilt the whole tree on every switch; the Windows shell stopped doing
+  // that in 3c2f020 for the same reason. POS is the landing tab, so only Bi-a
+  // needs a first-visit flag.
+  const [billiardVisited, setBilliardVisited] = useState(false);
+  const [billiardPaymentIntent, setBilliardPaymentIntent] = useState<BilliardPaymentIntent | null>(null);
+  const [restoredCartReconciliation, setRestoredCartReconciliation] = useState<RestoredCartReconciliation | null>(null);
+  const [isOwner, setIsOwner] = useState(false);
+  // Guards every async handoff result: a response that belongs to a previous
+  // cashier must not land in this one's screen.
+  const billiardGenerationRef = useRef(0);
 
   useEffect(() => {
     const api = (window as any).electronAPI;
@@ -212,6 +231,70 @@ export default function AndroidBootApp() {
     };
   }, [state]);
 
+  useEffect(() => {
+    if (mode === 'billiard') setBilliardVisited(true);
+  }, [mode]);
+
+  // Only an OWNER may resolve an uncertain tender (App.tsx:515).
+  useEffect(() => {
+    if (state !== 'pos') { setIsOwner(false); return; }
+    let cancelled = false;
+    void (window as any).electronAPI.getConfig()
+      .then((c: any) => {
+        if (!cancelled) setIsOwner(String(c?.authUser?.role || '').toUpperCase() === 'OWNER');
+      })
+      .catch(() => { /* not an owner until proven otherwise */ });
+    return () => { cancelled = true; };
+  }, [state]);
+
+  // Crash/login recovery. The handoff only returns an intent once it has
+  // activated the exact frozen cart (or verified its order is committed), so
+  // this just puts the answer on screen. Mirrors App.tsx:189-224.
+  useEffect(() => {
+    if (state !== 'pos') return;
+    const api = (window as any).electronAPI;
+    const generation = ++billiardGenerationRef.current;
+    let cancelled = false;
+    // Optional-chained on purpose: a boot effect must not be able to white-screen
+    // the app because one namespace is absent. The shim always provides it.
+    const recovering = api.pos.billiardCheckout?.recover?.();
+    if (!recovering) return;
+    void recovering.then((result: any) => {
+      if (cancelled || generation !== billiardGenerationRef.current) return;
+      setRestoredCartReconciliation(result?.restoredCartReconciliation ?? null);
+      if (result?.restoredCartReconciliation) switchMode('pos');
+      if (!result?.success) return;
+      setBilliardPaymentIntent(result.intent ? (result.intent as BilliardPaymentIntent) : null);
+      if (result.intent) switchMode('pos');
+    }).catch(() => { /* recovery is best-effort; the journal survives */ });
+    return () => {
+      cancelled = true;
+      if (generation === billiardGenerationRef.current) billiardGenerationRef.current += 1;
+    };
+  }, [state]);
+
+  // ── The two handoff callbacks PaymentDialog drives ────────────────────────
+  const handlePreflightPos = useCallback(async () => {
+    const result = await (window as any).electronAPI.pos.billiardCheckout.preflight();
+    if (!result?.success) {
+      throw new Error(result?.error || 'POS cannot safely accept this Billiard payment yet.');
+    }
+  }, []);
+
+  const handlePayInPos = useCallback(async (input: { posCheckout: any; tableName?: string | null }) => {
+    const generation = ++billiardGenerationRef.current;
+    const result = await (window as any).electronAPI.pos.billiardCheckout.prepare(input);
+    if (generation !== billiardGenerationRef.current) {
+      throw new Error('The signed-in POS user changed while the Billiard checkout was being prepared.');
+    }
+    if (!result?.success || !result.intent) {
+      throw new Error(result?.error || result?.durabilityError || 'Could not prepare the frozen Billiard cart in POS.');
+    }
+    setBilliardPaymentIntent(result.intent as BilliardPaymentIntent);
+    // The frozen bill is tendered in POS, so go there.
+    switchMode('pos');
+  }, []);
+
   const switchMode = (next: PosMode) => {
     try { localStorage.setItem(MODE_STORAGE_KEY, next); } catch { /* storage unavailable */ }
     setMode(next);
@@ -258,9 +341,34 @@ export default function AndroidBootApp() {
         </nav>
       )}
       <div className="flex-1 min-h-0">
-        {billiardEnabled && mode === 'billiard'
-          ? <BilliardFloorPlan language={language} />
-          : <POSApp />}
+        {/* Both tabs stay mounted after first visit and are hidden with
+            `hidden`, so a switch no longer destroys and rebuilds the tree.
+            BilliardFloorPlan pauses its polls when `active` is false (3c2f020). */}
+        <div className={billiardEnabled && mode === 'billiard' ? 'hidden' : 'h-full'}>
+          <POSLayout
+            billiardPaymentIntent={billiardPaymentIntent}
+            restoredCartReconciliation={restoredCartReconciliation}
+            canResolveUncertainTender={isOwner}
+            onBilliardTenderResolved={(intent) => {
+              setBilliardPaymentIntent(intent);
+              setRestoredCartReconciliation(null);
+            }}
+            onRestoredTenderResolved={() => setRestoredCartReconciliation(null)}
+            onBilliardPaymentIntentConsumed={(nonce) => {
+              setBilliardPaymentIntent((current) => (current?.nonce === nonce ? null : current));
+            }}
+          />
+        </div>
+        {billiardEnabled && billiardVisited && (
+          <div className={mode === 'billiard' ? 'h-full' : 'hidden'}>
+            <BilliardFloorPlan
+              active={mode === 'billiard'}
+              language={language}
+              onPreflightPos={handlePreflightPos}
+              onPayInPos={handlePayInPos}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

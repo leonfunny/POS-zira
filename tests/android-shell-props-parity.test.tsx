@@ -28,10 +28,18 @@ import { act } from 'react';
 
 /** Props the Android shell handed to the shared BilliardFloorPlan. */
 const captured = vi.hoisted(() => ({ billiardProps: null as Record<string, unknown> | null }));
+/** Props the Android shell handed to the shared POSLayout. */
+const capturedPos = vi.hoisted(() => ({ props: null as Record<string, unknown> | null }));
 
-vi.mock('../src/renderer/windows/pos/POSApp', () => ({
+// AndroidBootApp mounts POSLayout DIRECTLY (POSApp takes no props and is shared
+// with the Windows shell), so the mock has to follow the real import — the real
+// POSLayout reads window.electronAPI at render and pulls the whole POS tree.
+vi.mock('../src/renderer/components/pos/POSLayout', () => ({
   __esModule: true,
-  default: () => createElement('div', { 'data-testid': 'pos-app' }, 'POS-APP'),
+  default: (props: Record<string, unknown>) => {
+    capturedPos.props = props;
+    return createElement('div', { 'data-testid': 'pos-app' }, 'POS-APP');
+  },
 }));
 vi.mock('../src/renderer/components/billiard/BilliardFloorPlan', () => ({
   __esModule: true,
@@ -60,11 +68,11 @@ const BILLIARD_SETTLE_PROPS = ['onPreflightPos', 'onPayInPos'] as const;
  * Registered gaps. An entry means "known missing, tracked" — NOT "ignore".
  * Delete the entry in the same commit that supplies the prop; the stale-entry
  * test below fails until you do.
+ *
+ * Empty since L6 landed: `onPreflightPos` and `onPayInPos` are both supplied
+ * now, and the stale-entry test is what forced their removal.
  */
-const KNOWN_SHELL_PROP_GAPS: Record<string, string> = {
-  onPreflightPos: 'L6 of docs/android-pos/2026-08-02-billiard-pos-handoff-port-plan.md — needs the ported pos.billiardCheckout orchestration first.',
-  onPayInPos: 'L6 of docs/android-pos/2026-08-02-billiard-pos-handoff-port-plan.md — needs the ported pos.billiardCheckout orchestration first.',
-};
+const KNOWN_SHELL_PROP_GAPS: Record<string, string> = {};
 
 // ── Harness (mirrors tests/android-billiard-boot.test.tsx) ──────────────────
 
@@ -84,6 +92,10 @@ function makeApi() {
       onStateChanged: () => () => {},
       shift: { getActive: () => Promise.resolve({ success: false }) },
       sync: { products: () => Promise.resolve() },
+      snapshot: { load: () => Promise.resolve(null), save: () => Promise.resolve(), clear: () => Promise.resolve() },
+      // The real shim always carries this namespace; the boot effect calls
+      // recover() to pick up a journal left by a killed process.
+      billiardCheckout: { recover: () => Promise.resolve({ success: true, intent: null }) },
     },
   };
 }
@@ -161,5 +173,29 @@ describe('Android shell ↔ shared renderer prop parity', () => {
     // Non-regression on what DOES work today, so a refactor of the mount cannot
     // quietly drop the language the F&B/receipt naming depends on.
     expect(captured.billiardProps!.language).toBe('pl');
+  });
+
+  it('hands POSLayout the billiard intent props, so a frozen bill can be tendered', async () => {
+    // The other half of the settle path: BilliardFloorPlan freezes the bill and
+    // POSLayout takes the money. Dropping these would leave a cashier holding a
+    // frozen cart with no way to complete it.
+    await bootIntoBilliard();
+    const props = capturedPos.props!;
+    for (const name of ['onBilliardPaymentIntentConsumed', 'onBilliardTenderResolved', 'onRestoredTenderResolved']) {
+      expect(typeof props[name], `POSLayout is missing ${name}`).toBe('function');
+    }
+    expect(props).toHaveProperty('billiardPaymentIntent');
+    expect(props).toHaveProperty('restoredCartReconciliation');
+    expect(props).toHaveProperty('canResolveUncertainTender');
+  });
+
+  it('keeps BOTH tabs mounted across a switch (3c2f020 parity)', async () => {
+    await bootIntoBilliard();
+    // POS is hidden, not destroyed — unmounting rebuilt the whole tree on every
+    // switch, which is what the Windows shell stopped doing in 3c2f020.
+    const pos = container.querySelector('[data-testid="pos-app"]');
+    expect(pos, 'POSLayout was unmounted on the tab switch').not.toBeNull();
+    expect(pos!.parentElement!.className).toContain('hidden');
+    expect(captured.billiardProps!.active).toBe(true);
   });
 });
