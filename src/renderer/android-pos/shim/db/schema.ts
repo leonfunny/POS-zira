@@ -116,10 +116,20 @@ export const ANDROID_SCHEMA_DDL = `
     refund_amount INTEGER DEFAULT 0,
     refund_reason TEXT,
     refunded_at TEXT,
-    refund_lines TEXT
+    refund_lines TEXT,
+    -- v7: the shared PaymentModal already sends both of these on every create
+    -- (PaymentModal.tsx:673-677) and Android used to drop them silently.
+    -- client_attempt_id is the payment-attempt identity the billiard journal is
+    -- verified against. NB this DDL block is split statement-by-statement on the
+    -- semicolon character, so never write one inside a comment here — it cuts
+    -- the surrounding statement in half.
+    client_attempt_id TEXT,
+    billiard_origin_json TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_orders_shift ON orders(shift_id);
   CREATE INDEX IF NOT EXISTS idx_orders_synced ON orders(synced);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_client_attempt_id
+    ON orders(client_attempt_id) WHERE client_attempt_id IS NOT NULL;
 
   CREATE TABLE IF NOT EXISTS order_items (
     id TEXT PRIMARY KEY,
@@ -137,7 +147,13 @@ export const ANDROID_SCHEMA_DDL = `
     staff_id TEXT,
     staff_name TEXT,
     notes TEXT,
-    course INTEGER DEFAULT 1
+    course INTEGER DEFAULT 1,
+    -- v7: frozen billiard line metadata, sent by PaymentModal.tsx:701-705.
+    billiard_json TEXT,
+    inventory_policy TEXT,
+    refund_policy TEXT,
+    allocated_discount INTEGER NOT NULL DEFAULT 0,
+    payable_total INTEGER
   );
   CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
 
@@ -251,6 +267,24 @@ export function applyAndroidSchema(db: SqlJsDatabase): void {
   if (!orderColumns.has('refund_lines')) {
     db.run('ALTER TABLE orders ADD COLUMN refund_lines TEXT');
   }
+  // v7: billiard identity/metadata columns on orders + order_items.
+  for (const [table, column, ddl] of [
+    ['orders', 'client_attempt_id', 'ALTER TABLE orders ADD COLUMN client_attempt_id TEXT'],
+    ['orders', 'billiard_origin_json', 'ALTER TABLE orders ADD COLUMN billiard_origin_json TEXT'],
+    ['order_items', 'billiard_json', 'ALTER TABLE order_items ADD COLUMN billiard_json TEXT'],
+    ['order_items', 'inventory_policy', 'ALTER TABLE order_items ADD COLUMN inventory_policy TEXT'],
+    ['order_items', 'refund_policy', 'ALTER TABLE order_items ADD COLUMN refund_policy TEXT'],
+    ['order_items', 'allocated_discount', 'ALTER TABLE order_items ADD COLUMN allocated_discount INTEGER NOT NULL DEFAULT 0'],
+    ['order_items', 'payable_total', 'ALTER TABLE order_items ADD COLUMN payable_total INTEGER'],
+  ] as const) {
+    const existing = new Set<string>();
+    for (const row of db.exec(`PRAGMA table_info(${table})`)[0]?.values ?? []) existing.add(String(row[1]));
+    if (!existing.has(column)) db.run(ddl);
+  }
+  db.run(
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_client_attempt_id ON orders(client_attempt_id) WHERE client_attempt_id IS NOT NULL',
+  );
+
   // v6: shifts.backend_id (the shared open-shift assertion selects it).
   const shiftColumns = new Set<string>();
   const shiftInfo = db.exec('PRAGMA table_info(shifts)');
@@ -264,5 +298,9 @@ export function applyAndroidSchema(db: SqlJsDatabase): void {
 /** v3 = product_variants.track_inventory (stock-guard parity).
  *  v4 = orders.{refund_amount,refund_reason,refunded_at,refund_lines} (E1b refund).
  *  v5 = pos_billiard_handoffs + pos_hold_orders (billiard POS-handoff port).
- *  v6 = shifts.backend_id (shared open-shift assertion + backend shift sync). */
-export const ANDROID_SCHEMA_VERSION = 6;
+ *  v6 = shifts.backend_id (shared open-shift assertion + backend shift sync).
+ *  v7 = orders.{client_attempt_id,billiard_origin_json} +
+ *       order_items.{billiard_json,inventory_policy,refund_policy,
+ *       allocated_discount,payable_total} — the billiard identity the shared
+ *       PaymentModal already sends and Android used to drop. */
+export const ANDROID_SCHEMA_VERSION = 7;

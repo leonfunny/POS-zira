@@ -150,9 +150,10 @@ describe('android shim catalog DB (S5)', () => {
 
       // user_version stamped at schema apply time.
       const version = db.getRawHandle().exec('PRAGMA user_version')[0].values[0][0];
-      // v6 = shifts.backend_id; v5 = pos_billiard_handoffs + pos_hold_orders
+      // v7 = billiard identity columns on orders/order_items; v6 =
+      // shifts.backend_id; v5 = pos_billiard_handoffs + pos_hold_orders
       // (billiard POS-handoff); v4 = orders.refund_* (E1b); v3 = track_inventory
-      expect(version).toBe(6);
+      expect(version).toBe(7);
     });
 
     test('is idempotent — re-init over a persisted image keeps the schema', async () => {

@@ -110,8 +110,8 @@ export function createOrderRepo(database: AndroidDatabase) {
           ? order.order_number
           : generateOrderNumber(order.number_series === 'ORDER' ? 'ORDER' : 'FISCAL');
         database.run(
-          `INSERT INTO orders (id, order_number, status, subtotal, discount, tax, total, payment_method, payment_amount, change_amount, staff_id, staff_name, customer_id, customer_name, customer_nip, shift_id, source, table_id, covers, order_type, tip, mode, payment_tenders, kitchen_number)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO orders (id, order_number, status, subtotal, discount, tax, total, payment_method, payment_amount, change_amount, staff_id, staff_name, customer_id, customer_name, customer_nip, shift_id, source, table_id, covers, order_type, tip, mode, payment_tenders, kitchen_number, client_attempt_id, billiard_origin_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             order.id, finalOrderNumber, order.status ?? 'COMPLETED', order.subtotal ?? 0,
             order.discount ?? 0, order.tax ?? 0, order.total ?? 0,
@@ -123,17 +123,28 @@ export function createOrderRepo(database: AndroidDatabase) {
             order.table_id ?? null, order.covers ?? null,
             order.order_type ?? 'standard', order.tip ?? 0, order.mode ?? 'retail',
             order.payment_tenders ?? null, order.kitchen_number ?? null,
+            // v7: the payment-attempt identity + frozen billiard origin. The
+            // shared PaymentModal sends both on every create
+            // (PaymentModal.tsx:673-677) and they used to be dropped here, so
+            // a committed billiard order could not be verified against its
+            // journal at all.
+            order.client_attempt_id ?? null, order.billiard_origin_json ?? null,
           ],
         );
         for (const item of items) {
           database.run(
-            `INSERT INTO order_items (id, order_id, variant_id, name, sku, price, quantity, sale_quantity, sale_unit, sell_by, total, vat_rate, staff_id, staff_name, notes, course)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO order_items (id, order_id, variant_id, name, sku, price, quantity, sale_quantity, sale_unit, sell_by, total, vat_rate, staff_id, staff_name, notes, course, billiard_json, inventory_policy, refund_policy, allocated_discount, payable_total)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               item.id, item.order_id, item.variant_id ?? null, item.name, item.sku ?? null,
               item.price, item.quantity, getLineSaleQuantity(item), getLineSaleUnit(item), getLineSellBy(item),
               item.total, item.vat_rate ?? 23,
               item.staff_id ?? null, item.staff_name ?? null, item.notes ?? null, item.course ?? 1,
+              // v7: frozen billiard line metadata (PaymentModal.tsx:701-705).
+              // `payable_total` falls back to the line total exactly like the
+              // renderer does, so ordinary lines stay consistent.
+              item.billiard_json ?? null, item.inventory_policy ?? null, item.refund_policy ?? null,
+              item.allocated_discount ?? 0, item.payable_total ?? item.total ?? null,
             ],
           );
         }

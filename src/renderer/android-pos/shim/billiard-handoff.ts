@@ -77,11 +77,28 @@ export interface BilliardPrepareResult {
   error?: string;
 }
 
+export interface BilliardBoundaryResult {
+  success: boolean;
+  /** Payment must NOT be reopened — an owner has to reconcile the outcome. */
+  outcomeUncertain?: boolean;
+  /** The money is already recorded locally; charging again would double-bill. */
+  paymentCommitted?: boolean;
+  orderId?: string;
+  token?: string;
+  expiresAt?: number;
+  error?: string;
+  rollbackDurabilityError?: string;
+  durabilityError?: string;
+}
+
 /** `crypto.randomUUID` in the WebView; the fallback keeps unit tests portable. */
 function newId(): string {
   return globalThis.crypto?.randomUUID?.()
     ?? `id-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
+
+/** How long a payment preflight token stays usable (Windows: POS_PAYMENT_PREFLIGHT_TTL_MS). */
+const PAYMENT_PREFLIGHT_TTL_MS = 5 * 60 * 1000;
 
 /**
  * Resolve the register identity, refusing with the actionable message when the
@@ -105,6 +122,26 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
   const inFlight = new Map<string, Promise<BilliardPrepareResult>>();
 
   const posMode = (): string => resolvePosMode(deps.configStore.getRawConfig());
+  /**
+   * Issued by markPaymentOpened, spent by beginTender. It binds the tender to
+   * ONE order, ONE shift and ONE signed-in cashier, so a payment modal left
+   * open across a shift change or a re-login cannot still collect money.
+   */
+  const paymentPreflights = new Map<string, {
+    orderId: string;
+    shiftId: string;
+    authContext: PosAuthContext;
+    expiresAt: number;
+  }>();
+  /** One tender boundary at a time per checkout — never charge twice. */
+  const tenderBoundaryInFlight = new Set<string>();
+
+  const prunePreflights = (): void => {
+    const now = Date.now();
+    for (const [token, entry] of paymentPreflights) {
+      if (entry.expiresAt <= now) paymentPreflights.delete(token);
+    }
+  };
 
   const intentOf = (record: BilliardPosHandoffRecord, recovered = false): BilliardPaymentIntent => {
     const tenderOutcomeUncertain = requiresBilliardTenderReconciliation(record.state);
@@ -409,6 +446,197 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
 
       inFlight.set(bundle.checkoutId, work);
       return work;
+    },
+
+    /**
+     * The cashier opened the payment modal on a frozen bill. Windows:
+     * pos:billiard:mark-payment-opened.
+     *
+     * Crossing POS_READY → POS_PAYMENT_OPEN is a durable step: if it cannot be
+     * persisted it is rolled back, because a payment modal open over an
+     * unpersisted boundary is exactly how a charge goes missing after a crash.
+     */
+    async markPaymentOpened(checkoutId: string): Promise<BilliardBoundaryResult> {
+      try {
+        const scope = resolveTabletScope(deps.configStore.getRawConfig());
+        const authContext = captureAuthContext(scope);
+        const database = await deps.db();
+        const journal = createBilliardHandoffRepo(database);
+
+        const record = journal.get(String(checkoutId || '').trim());
+        if (
+          !record
+          || record.salonId !== scope.salonId
+          || record.userId !== scope.userId
+          || record.registerId !== scope.registerId
+        ) {
+          return { success: false, error: 'Billiard checkout not found on this register.' };
+        }
+
+        // Payment preflight: a live, complete, single open shift — re-verified
+        // rather than trusted from prepare time.
+        const openShift = assertLocalOpenShiftMatchesSession(database, deps.posStore);
+        if (!isAuthContextCurrent(authContext)) {
+          return { success: false, error: 'POS user changed while payment safety was being verified.' };
+        }
+        if (!isActiveBilliardCheckoutSnapshot(deps.posStore.getState(), record.checkoutSnapshot)) {
+          return { success: false, error: 'The active POS cart does not match this frozen Billiard checkout.' };
+        }
+
+        if (!journal.markPaymentOpened(record.checkoutId)) {
+          return { success: false, error: `Billiard checkout cannot open payment from state ${record.state}.` };
+        }
+        try {
+          await database.flush();
+        } catch (flushError: any) {
+          journal.rollbackPaymentOpenedBeforeTender(record.checkoutId);
+          let rollbackDurabilityError: string | undefined;
+          try { await database.flush(); } catch (e: any) { rollbackDurabilityError = e?.message || String(e); }
+          return {
+            success: false,
+            error: flushError?.message || 'Could not persist the Billiard payment-open boundary.',
+            rollbackDurabilityError,
+          };
+        }
+        if (!isAuthContextCurrent(authContext)) {
+          return { success: false, error: 'POS user changed while Billiard payment was opening.' };
+        }
+
+        prunePreflights();
+        const token = newId();
+        const expiresAt = Date.now() + PAYMENT_PREFLIGHT_TTL_MS;
+        paymentPreflights.set(token, {
+          orderId: record.orderId,
+          shiftId: openShift.id,
+          authContext,
+          expiresAt,
+        });
+        return { success: true, token, expiresAt };
+      } catch (error: any) {
+        return { success: false, error: error?.message || String(error) };
+      }
+    },
+
+    /**
+     * The last gate before money is collected. Windows:
+     * pos:billiard:begin-tender.
+     *
+     * Everything here is about NOT charging twice: a boundary already in
+     * flight, an order already committed, a state that has already crossed the
+     * boundary — each returns without authorizing a charge. The only automatic
+     * backward transition is the one made while the renderer has NOT yet been
+     * released past the boundary; once that is uncertain, an owner must
+     * reconcile.
+     */
+    async beginTender(checkoutId: string, paymentPreflightToken: string): Promise<BilliardBoundaryResult> {
+      const id = String(checkoutId || '').trim();
+      if (tenderBoundaryInFlight.has(id)) {
+        return {
+          success: false,
+          outcomeUncertain: true,
+          error: 'This Billiard tender boundary is already being prepared. Do not collect payment twice.',
+        };
+      }
+      tenderBoundaryInFlight.add(id);
+      try {
+        const scope = resolveTabletScope(deps.configStore.getRawConfig());
+        const authContext = captureAuthContext(scope);
+        const database = await deps.db();
+        const journal = createBilliardHandoffRepo(database);
+        const orders = createOrderRepo(database);
+
+        const record = journal.get(id);
+        if (
+          !record
+          || record.salonId !== scope.salonId
+          || record.userId !== scope.userId
+          || record.registerId !== scope.registerId
+        ) {
+          return { success: false, error: 'Billiard checkout not found on this register.' };
+        }
+        if (orders.getById(record.orderId)) {
+          return {
+            success: false,
+            paymentCommitted: true,
+            orderId: record.orderId,
+            error: 'Payment is already recorded locally. Do not charge again.',
+          };
+        }
+
+        // Spend the preflight token issued by markPaymentOpened.
+        prunePreflights();
+        const entry = paymentPreflights.get(String(paymentPreflightToken || '').trim());
+        if (!entry) {
+          return { success: false, error: 'POS payment preflight is missing or expired. Reopen payment before collecting money.' };
+        }
+        if (entry.orderId !== record.orderId) {
+          return { success: false, error: 'POS payment preflight belongs to a different order.' };
+        }
+        if (entry.authContext.epoch !== authContext.epoch || !isAuthContextCurrent(entry.authContext)) {
+          return { success: false, error: 'POS user changed after payment preflight. Reopen payment.' };
+        }
+        const openShift = assertLocalOpenShiftMatchesSession(database, deps.posStore);
+        if (openShift.id !== entry.shiftId) {
+          return { success: false, error: 'The POS shift changed after payment preflight. Reopen payment.' };
+        }
+
+        if (!isActiveBilliardCheckoutSnapshot(deps.posStore.getState(), record.checkoutSnapshot)) {
+          return { success: false, error: 'The active POS cart does not match this frozen Billiard checkout.' };
+        }
+        if (record.state === 'POS_TENDER_COMMITTING') {
+          return {
+            success: false,
+            outcomeUncertain: true,
+            error: 'This Billiard tender was started by an earlier process or request. Do not charge again; reconcile it.',
+          };
+        }
+        if (!journal.markTenderCommitting(record.checkoutId)) {
+          const latestState = journal.get(record.checkoutId)?.state || record.state;
+          return {
+            success: false,
+            outcomeUncertain: requiresBilliardTenderReconciliation(latestState),
+            error: `Billiard tender cannot start from state ${latestState}.`,
+          };
+        }
+
+        try {
+          await database.flush();
+        } catch (flushError: any) {
+          // Safe: the renderer was never released past the boundary.
+          journal.rollbackTenderBeforeCharge(record.checkoutId, true);
+          let rollbackDurabilityError: string | undefined;
+          try { await database.flush(); } catch (e: any) { rollbackDurabilityError = e?.message || String(e); }
+          return {
+            success: false,
+            error: flushError?.message || 'Could not persist the Billiard tender boundary.',
+            rollbackDurabilityError,
+          };
+        }
+
+        if (!isAuthContextCurrent(authContext)) {
+          const rolledBack = journal.rollbackTenderBeforeCharge(record.checkoutId, true);
+          let rollbackOk = true;
+          try { await database.flush(); } catch { rollbackOk = false; }
+          if (!rolledBack || !rollbackOk) {
+            journal.markTenderUncertainAfterRollbackFailure(record.checkoutId);
+            let durabilityError: string | undefined;
+            try { await database.flush(); } catch (e: any) { durabilityError = e?.message || String(e); }
+            return {
+              success: false,
+              outcomeUncertain: true,
+              error: 'POS user changed after the tender boundary was saved and its safe rollback could not be confirmed. '
+                + 'Do not charge; owner reconciliation is required.',
+              durabilityError,
+            };
+          }
+          return { success: false, error: 'POS user changed before tender collection. No payment was authorized.' };
+        }
+        return { success: true };
+      } catch (error: any) {
+        return { success: false, error: error?.message || String(error) };
+      } finally {
+        tenderBoundaryInFlight.delete(id);
+      }
     },
   };
 }

@@ -442,3 +442,207 @@ describe('prepare — resuming an already frozen checkout', () => {
     expect(result.error).toMatch(/pair/i);
   });
 });
+
+// ── the payment boundary ────────────────────────────────────────────────────
+
+describe('markPaymentOpened / beginTender — not charging twice', () => {
+  async function frozen(opts: Parameters<typeof makeHarness>[0] = {}) {
+    const h = await makeHarness(opts);
+    const prepared = await h.handoff.prepare({ posCheckout: bundle() });
+    expect(prepared.success).toBe(true);
+    return h;
+  }
+
+  test('opening payment moves the journal to POS_PAYMENT_OPEN and issues a token', async () => {
+    const { handoff, database } = await frozen();
+    const opened = await handoff.markPaymentOpened('checkout-1');
+    expect(opened.success).toBe(true);
+    expect(opened.token).toBeTruthy();
+    expect(opened.expiresAt).toBeGreaterThan(Date.now());
+    expect(database.get<{ state: string }>(
+      'SELECT state FROM pos_billiard_handoffs WHERE checkout_id = ?', ['checkout-1'],
+    )?.state).toBe('POS_PAYMENT_OPEN');
+  });
+
+  test('a checkout from another register is not found', async () => {
+    const { handoff, configStore } = await frozen();
+    configStore.setConfig({ agentId: 'agent-OTHER' } as any);
+    const opened = await handoff.markPaymentOpened('checkout-1');
+    expect(opened.success).toBe(false);
+    expect(opened.error).toMatch(/not found on this register/i);
+  });
+
+  test('a cart that does not match the frozen snapshot blocks payment', async () => {
+    // The realistic drift on a tablet: the app was killed, the in-memory cart
+    // is gone, but the journal survived on disk. The bill must not be charged
+    // against a cart this process cannot verify.
+    // (Note the L4 reducer already refuses to overwrite an active frozen
+    // checkout, so drifting the cart by dispatch is not even possible.)
+    const database = await initAndroidDb({ locateFile: NODE_LOCATE_FILE });
+    const { configStore } = await frozen({ db: database });
+    const restartedStore = new ShimPosStore();
+    restartedStore.dispatch({
+      type: 'session/open',
+      payload: { shiftId: SHIFT.id, staffId: SHIFT.staffId, staffName: SHIFT.staffName, openedAt: 'now' },
+    });
+    const afterRestart = createBilliardHandoff({
+      configStore,
+      posStore: restartedStore,
+      db: async () => database,
+      isFiscalPrinterAssigned: async () => false,
+      isPrintAgentConnected: () => false,
+    });
+
+    const opened = await afterRestart.markPaymentOpened('checkout-1');
+    expect(opened.success).toBe(false);
+    expect(opened.error).toMatch(/does not match this frozen Billiard checkout/i);
+    // And the journal was not advanced.
+    expect(database.get<{ state: string }>(
+      'SELECT state FROM pos_billiard_handoffs WHERE checkout_id = ?', ['checkout-1'],
+    )?.state).toBe('POS_READY');
+  });
+
+  test('a failed durability barrier rolls the payment-open boundary back', async () => {
+    const database = await initAndroidDb({ locateFile: NODE_LOCATE_FILE });
+    const { handoff } = await frozen({ db: database });
+    const realFlush = database.flush.bind(database);
+    (database as any).flush = async () => { throw new Error('quota exceeded'); };
+
+    const opened = await handoff.markPaymentOpened('checkout-1');
+    expect(opened.success).toBe(false);
+    expect(opened.error).toMatch(/quota exceeded/);
+    // Back to READY: a payment modal must not open over an unpersisted boundary.
+    expect(database.get<{ state: string; auto_open_consumed: number }>(
+      'SELECT state, auto_open_consumed FROM pos_billiard_handoffs WHERE checkout_id = ?', ['checkout-1'],
+    )).toMatchObject({ state: 'POS_READY', auto_open_consumed: 0 });
+    (database as any).flush = realFlush;
+  });
+
+  test('the happy path: open → tender crosses to POS_TENDER_COMMITTING', async () => {
+    const { handoff, database } = await frozen();
+    const opened = await handoff.markPaymentOpened('checkout-1');
+    const tender = await handoff.beginTender('checkout-1', opened.token!);
+    expect(tender.success).toBe(true);
+    expect(database.get<{ state: string }>(
+      'SELECT state FROM pos_billiard_handoffs WHERE checkout_id = ?', ['checkout-1'],
+    )?.state).toBe('POS_TENDER_COMMITTING');
+  });
+
+  test('tender without a token, or with a stale one, is refused', async () => {
+    const { handoff } = await frozen();
+    const noToken = await handoff.beginTender('checkout-1', '');
+    expect(noToken.success).toBe(false);
+    expect(noToken.error).toMatch(/preflight is missing or expired/i);
+
+    const opened = await handoff.markPaymentOpened('checkout-1');
+    // A logout between opening payment and collecting it invalidates the token.
+    handoff.invalidateAuth();
+    const stale = await handoff.beginTender('checkout-1', opened.token!);
+    expect(stale.success).toBe(false);
+    expect(stale.error).toMatch(/POS user changed after payment preflight/i);
+  });
+
+  test('a shift change between opening payment and tendering is refused', async () => {
+    const { handoff, database, posStore } = await frozen();
+    const opened = await handoff.markPaymentOpened('checkout-1');
+    // Cashier closed and reopened the shift while the modal sat open.
+    database.run("UPDATE shifts SET closed_at = datetime('now') WHERE id = ?", [SHIFT.id]);
+    database.run('INSERT INTO shifts (id, staff_id, staff_name, opening_cash) VALUES (?, ?, ?, ?)', ['shift-2', 'u1', 'Anna', 0]);
+    posStore.dispatch({
+      type: 'session/open',
+      payload: { shiftId: 'shift-2', staffId: 'u1', staffName: 'Anna', openedAt: 'now' },
+    });
+    const tender = await handoff.beginTender('checkout-1', opened.token!);
+    expect(tender.success).toBe(false);
+    expect(tender.error).toMatch(/shift changed after payment preflight/i);
+  });
+
+  test('a second tender on a boundary already crossed is uncertain, never a re-charge', async () => {
+    const { handoff } = await frozen();
+    const opened = await handoff.markPaymentOpened('checkout-1');
+    await handoff.beginTender('checkout-1', opened.token!);
+
+    const again = await handoff.beginTender('checkout-1', opened.token!);
+    expect(again.success).toBe(false);
+    expect(again.outcomeUncertain).toBe(true);
+    expect(again.error).toMatch(/Do not charge again/i);
+  });
+
+  test('an order already committed locally reports paymentCommitted instead of charging', async () => {
+    const { handoff, database } = await frozen();
+    const opened = await handoff.markPaymentOpened('checkout-1');
+    const orderId = database.get<{ order_id: string }>(
+      'SELECT order_id FROM pos_billiard_handoffs WHERE checkout_id = ?', ['checkout-1'],
+    )!.order_id;
+    database.run('INSERT INTO orders (id, total) VALUES (?, ?)', [orderId, 17000]);
+
+    const tender = await handoff.beginTender('checkout-1', opened.token!);
+    expect(tender.success).toBe(false);
+    expect(tender.paymentCommitted).toBe(true);
+    expect(tender.orderId).toBe(orderId);
+    expect(tender.error).toMatch(/already recorded locally/i);
+  });
+
+  test('a failed tender-boundary flush rolls back to POS_PAYMENT_OPEN', async () => {
+    const database = await initAndroidDb({ locateFile: NODE_LOCATE_FILE });
+    const { handoff } = await frozen({ db: database });
+    const opened = await handoff.markPaymentOpened('checkout-1');
+    const realFlush = database.flush.bind(database);
+    (database as any).flush = async () => { throw new Error('disk gone'); };
+
+    const tender = await handoff.beginTender('checkout-1', opened.token!);
+    expect(tender.success).toBe(false);
+    expect(tender.error).toMatch(/disk gone/);
+    // The renderer was never released past the boundary, so this rollback is safe.
+    expect(database.get<{ state: string }>(
+      'SELECT state FROM pos_billiard_handoffs WHERE checkout_id = ?', ['checkout-1'],
+    )?.state).toBe('POS_PAYMENT_OPEN');
+    (database as any).flush = realFlush;
+  });
+});
+
+describe('order-repo keeps the billiard identity the renderer sends (schema v7)', () => {
+  test('client_attempt_id, origin and per-line metadata survive a create', async () => {
+    const database = await initAndroidDb({ locateFile: NODE_LOCATE_FILE });
+    const { createOrderRepo } = await import('../src/renderer/android-pos/shim/db/order-repo');
+    const repo = createOrderRepo(database);
+    repo.create(
+      {
+        id: 'order-1', total: 17000, subtotal: 20300, discount: 3300, tax: 3000,
+        client_attempt_id: 'billiard:checkout-1',
+        billiard_origin_json: JSON.stringify({ type: 'BILLIARD_SESSION', sessionId: 'session-1', checkoutId: 'checkout-1', snapshotVersion: 1 }),
+      },
+      [{
+        id: 'order-1:time-1', order_id: 'order-1', variant_id: 'billiard-service', name: 'Playing time',
+        price: 12300, quantity: 1, total: 12300, vat_rate: 23,
+        billiard_json: JSON.stringify({ lineKey: 'time-1', kind: 'TIME' }),
+        inventory_policy: 'NONE', refund_policy: 'FORBIDDEN',
+        allocated_discount: 2300, payable_total: 10000,
+      }],
+    );
+
+    const order = repo.getById('order-1');
+    expect(order.client_attempt_id).toBe('billiard:checkout-1');
+    expect(JSON.parse(order.billiard_origin_json).checkoutId).toBe('checkout-1');
+
+    const [line] = repo.getItemsByOrderId('order-1');
+    expect(JSON.parse(line.billiard_json).lineKey).toBe('time-1');
+    expect(line.inventory_policy).toBe('NONE');
+    expect(line.refund_policy).toBe('FORBIDDEN');
+    expect(line.allocated_discount).toBe(2300);
+    expect(line.payable_total).toBe(10000);
+  });
+
+  test('an ordinary line defaults payable_total to its own total', async () => {
+    const database = await initAndroidDb({ locateFile: NODE_LOCATE_FILE });
+    const { createOrderRepo } = await import('../src/renderer/android-pos/shim/db/order-repo');
+    const repo = createOrderRepo(database);
+    repo.create({ id: 'order-2', total: 900 }, [
+      { id: 'i1', order_id: 'order-2', variant_id: 'v9', name: 'Piwo', price: 900, quantity: 1, total: 900, vat_rate: 23 },
+    ]);
+    const [line] = repo.getItemsByOrderId('order-2');
+    expect(line.payable_total).toBe(900);
+    expect(line.allocated_discount).toBe(0);
+    expect(line.billiard_json).toBeNull();
+  });
+});
