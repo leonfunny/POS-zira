@@ -721,6 +721,109 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
         return { success: false, error: error?.message || String(error) };
       }
     },
+
+    /**
+     * Pick the journal back up after the app died. Windows:
+     * pos:billiard:recover-handoff.
+     *
+     * This is the method that makes a tablet safe to settle on at all. An
+     * Android process is killed routinely — mid-payment, mid-tender — and the
+     * journal outlives the cart. The single most important rule here is the
+     * TENDER_COMMITTING branch: a process that died while committing a tender
+     * leaves an outcome nobody can know, so recovery marks it UNCERTAIN and
+     * payment is never reopened. Guessing "probably not charged" is how a
+     * customer pays twice.
+     *
+     * An OWNER additionally sees an already-uncertain checkout, so the person
+     * who can reconcile it can find it.
+     */
+    async recover(): Promise<{
+      success: boolean;
+      intent?: BilliardPaymentIntent | null;
+      outcomeUncertain?: boolean;
+      paymentCommitted?: boolean;
+      durabilityError?: string;
+      error?: string;
+    }> {
+      try {
+        const config = deps.configStore.getRawConfig();
+        const scope = resolveTabletScope(config);
+        const authContext = captureAuthContext(scope);
+        const database = await deps.db();
+        const journal = createBilliardHandoffRepo(database);
+        const orders = createOrderRepo(database);
+        const isOwner = String(config.authUser?.role || '').toUpperCase() === 'OWNER';
+
+        const record = journal.getRecoverable(scope)
+          ?? (isOwner ? journal.getUncertainForOwner({ salonId: scope.salonId, registerId: scope.registerId }) : null);
+        if (!record) {
+          // Nothing of ours to resume. (Restored-cart discovery — the parked
+          // ordinary cart — lands with the restored-cart journal slice; until
+          // then a parked cart simply waits in Holds for manual recall.)
+          return { success: true, intent: null };
+        }
+
+        assertBilliardCheckoutSnapshotIntegrity(record);
+
+        // The money already landed locally before the crash.
+        const committed = orders.getById(record.orderId);
+        if (committed) {
+          assertCommittedBilliardOrder(record, committed, orders.getItemsByOrderId(record.orderId));
+          if (record.state !== 'SETTLED') {
+            journal.markState(record.checkoutId, 'POS_PAID_SYNC_PENDING');
+          }
+          deps.posStore.markBilliardOrderCommitted(record.checkoutId, record.orderId);
+          let durabilityError: string | undefined;
+          try { await database.flush(); } catch (e: any) { durabilityError = e?.message || String(e); }
+          if (!isAuthContextCurrent(authContext)) {
+            return { success: false, intent: null, paymentCommitted: true, error: 'POS user changed during Billiard recovery.' };
+          }
+          return {
+            success: true,
+            paymentCommitted: true,
+            durabilityError,
+            intent: intentOf({ ...record, state: 'POS_PAID_SYNC_PENDING' }, true),
+          };
+        }
+
+        // Died mid-tender: the outcome is unknowable from here.
+        if (record.state === 'POS_TENDER_COMMITTING') {
+          if (!journal.markTenderUncertain(record.checkoutId)) {
+            return { success: false, intent: null, error: 'Could not lock the interrupted Billiard tender for reconciliation.' };
+          }
+          let durabilityError: string | undefined;
+          try { await database.flush(); } catch (e: any) { durabilityError = e?.message || String(e); }
+          if (!isAuthContextCurrent(authContext)) {
+            return { success: false, intent: null, outcomeUncertain: true, error: 'POS user changed during tender recovery.' };
+          }
+          const uncertain = journal.get(record.checkoutId) ?? { ...record, state: 'POS_TENDER_UNCERTAIN' as const };
+          return { success: true, outcomeUncertain: true, durabilityError, intent: intentOf(uncertain, true) };
+        }
+        if (record.state === 'POS_TENDER_UNCERTAIN') {
+          return { success: true, outcomeUncertain: true, intent: intentOf(record, true) };
+        }
+
+        // READY / PAYMENT_OPEN: put the frozen bill back on screen, unless the
+        // cashier has started something else that we must not overwrite.
+        const current = deps.posStore.getState();
+        const liveCheckout = current.checkoutDraft.billiard?.origin.checkoutId;
+        if (current.cart.items.length === 0) {
+          activateSnapshot(record, scope);
+        } else if (
+          liveCheckout !== record.checkoutId
+          || !isActiveBilliardCheckoutSnapshot(current, record.checkoutSnapshot)
+        ) {
+          return {
+            success: false,
+            intent: null,
+            error: 'Another POS cart is active. Hold it before resuming this Billiard checkout.',
+          };
+        }
+        return { success: true, intent: intentOf(record, true) };
+      } catch (error: any) {
+        return { success: false, error: error?.message || String(error) };
+      }
+    },
   };
 }
 

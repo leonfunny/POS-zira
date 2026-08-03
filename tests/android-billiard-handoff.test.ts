@@ -819,3 +819,153 @@ describe('complete — settling after the money is in', () => {
       .resolves.toMatchObject({ success: false, error: expect.stringMatching(/could not be verified/i) });
   });
 });
+
+// ── recover ─────────────────────────────────────────────────────────────────
+
+describe('recover — picking the journal back up after the app was killed', () => {
+  /** A tablet restart: same database, brand-new (empty) in-memory POS store. */
+  async function afterRestart(h: Harness, opts: { role?: string } = {}) {
+    if (opts.role) h.configStore.setConfig({ authUser: { ...(h.configStore.getRawConfig().authUser as any), role: opts.role } } as any);
+    const posStore = new ShimPosStore();
+    posStore.dispatch({
+      type: 'session/open',
+      payload: { shiftId: SHIFT.id, staffId: SHIFT.staffId, staffName: SHIFT.staffName, openedAt: 'now' },
+    });
+    return {
+      posStore,
+      handoff: createBilliardHandoff({
+        configStore: h.configStore,
+        posStore,
+        db: async () => h.database,
+        isFiscalPrinterAssigned: async () => false,
+        isPrintAgentConnected: () => false,
+      }),
+    };
+  }
+
+  test('nothing to resume returns a null intent, not an error', async () => {
+    const { handoff } = await makeHarness();
+    await expect(handoff.recover()).resolves.toEqual({ success: true, intent: null });
+  });
+
+  test('a frozen-but-unpaid bill is put back on the screen', async () => {
+    const h = await makeHarness();
+    await h.handoff.prepare({ posCheckout: bundle() });
+    const restarted = await afterRestart(h);
+
+    const result = await restarted.handoff.recover();
+    expect(result.success).toBe(true);
+    expect(result.intent).toMatchObject({ checkoutId: 'checkout-1', recovered: true });
+    expect(restarted.posStore.getState().cart.items).toHaveLength(2);
+    expect(restarted.posStore.getState().checkoutDraft.billiard?.origin.checkoutId).toBe('checkout-1');
+  });
+
+  test('DYING MID-TENDER marks the outcome UNCERTAIN — payment is never reopened', async () => {
+    const h = await makeHarness();
+    await h.handoff.prepare({ posCheckout: bundle() });
+    const opened = await h.handoff.markPaymentOpened('checkout-1');
+    await h.handoff.beginTender('checkout-1', opened.token!);
+    // …and the process dies right here, with the charge in an unknown state.
+    const restarted = await afterRestart(h);
+
+    const result = await restarted.handoff.recover();
+    expect(result.success).toBe(true);
+    expect(result.outcomeUncertain).toBe(true);
+    expect(result.intent?.tenderOutcomeUncertain).toBe(true);
+    expect(result.intent?.shouldAutoOpen).toBe(false);
+    expect(h.database.get<{ state: string }>(
+      'SELECT state FROM pos_billiard_handoffs WHERE checkout_id = ?', ['checkout-1'],
+    )?.state).toBe('POS_TENDER_UNCERTAIN');
+    // The cart is NOT reactivated for a fresh charge.
+    expect(restarted.posStore.getState().cart.items).toHaveLength(0);
+  });
+
+  test('an already-uncertain checkout stays uncertain and is not re-locked', async () => {
+    const h = await makeHarness();
+    await h.handoff.prepare({ posCheckout: bundle() });
+    const opened = await h.handoff.markPaymentOpened('checkout-1');
+    await h.handoff.beginTender('checkout-1', opened.token!);
+    const restarted = await afterRestart(h);
+    await restarted.handoff.recover();
+
+    const second = await (await afterRestart(h)).handoff.recover();
+    expect(second.success).toBe(true);
+    expect(second.outcomeUncertain).toBe(true);
+  });
+
+  test('a cashier does not see another cashier\'s uncertain checkout, an OWNER does', async () => {
+    const h = await makeHarness();
+    await h.handoff.prepare({ posCheckout: bundle() });
+    const opened = await h.handoff.markPaymentOpened('checkout-1');
+    await h.handoff.beginTender('checkout-1', opened.token!);
+    await (await afterRestart(h)).handoff.recover(); // → UNCERTAIN
+
+    // Another cashier signs in on the same register.
+    h.configStore.setConfig({ authUser: { ...(h.configStore.getRawConfig().authUser as any), id: 'u2', role: 'STAFF' } } as any);
+    const staff = await afterRestart(h);
+    await expect(staff.handoff.recover()).resolves.toEqual({ success: true, intent: null });
+
+    // The owner can find it — they are the one who can reconcile it.
+    const owner = await afterRestart(h, { role: 'OWNER' });
+    const found = await owner.handoff.recover();
+    expect(found.success).toBe(true);
+    expect(found.outcomeUncertain).toBe(true);
+    expect(found.intent?.checkoutId).toBe('checkout-1');
+  });
+
+  test('a commit that landed before the crash is recognised, not charged again', async () => {
+    const h = await makeHarness();
+    await h.handoff.prepare({ posCheckout: bundle() });
+    const opened = await h.handoff.markPaymentOpened('checkout-1');
+    await h.handoff.beginTender('checkout-1', opened.token!);
+    const row = h.database.get<{ order_id: string; client_attempt_id: string }>(
+      'SELECT order_id, client_attempt_id FROM pos_billiard_handoffs WHERE checkout_id = ?', ['checkout-1'],
+    )!;
+    const { createOrderRepo } = await import('../src/renderer/android-pos/shim/db/order-repo');
+    const { order, items } = committedOrderFrom({
+      orderId: row.order_id, clientAttemptId: row.client_attempt_id,
+      sessionId: 'session-1', checkoutId: 'checkout-1',
+    });
+    createOrderRepo(h.database).create(order, items);
+    const restarted = await afterRestart(h);
+
+    const result = await restarted.handoff.recover();
+    expect(result.success).toBe(true);
+    expect(result.paymentCommitted).toBe(true);
+    expect(result.outcomeUncertain).toBeUndefined();
+    expect(h.database.get<{ state: string }>(
+      'SELECT state FROM pos_billiard_handoffs WHERE checkout_id = ?', ['checkout-1'],
+    )?.state).toBe('POS_PAID_SYNC_PENDING');
+  });
+
+  test('a committed order that does NOT match the frozen bill refuses recovery', async () => {
+    const h = await makeHarness();
+    await h.handoff.prepare({ posCheckout: bundle() });
+    const row = h.database.get<{ order_id: string; client_attempt_id: string }>(
+      'SELECT order_id, client_attempt_id FROM pos_billiard_handoffs WHERE checkout_id = ?', ['checkout-1'],
+    )!;
+    const { createOrderRepo } = await import('../src/renderer/android-pos/shim/db/order-repo');
+    const { order, items } = committedOrderFrom({
+      orderId: row.order_id, clientAttemptId: row.client_attempt_id,
+      sessionId: 'session-1', checkoutId: 'checkout-1',
+    });
+    createOrderRepo(h.database).create({ ...order, total: order.total + 500 }, items);
+
+    const result = await (await afterRestart(h)).handoff.recover();
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/totals or identity do not match/i);
+  });
+
+  test('recovery refuses to overwrite a different cart the cashier already started', async () => {
+    const h = await makeHarness();
+    await h.handoff.prepare({ posCheckout: bundle() });
+    const restarted = await afterRestart(h);
+    restarted.posStore.dispatch({ type: 'cart/addItem', payload: ordinaryLine() as any });
+
+    const result = await restarted.handoff.recover();
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/Another POS cart is active/i);
+    // Their cart is untouched.
+    expect(restarted.posStore.getState().cart.items).toHaveLength(1);
+  });
+});
