@@ -18,6 +18,7 @@ import LoginScreen from './LoginScreen';
 import POSApp from '../windows/pos/POSApp';
 import BilliardFloorPlan from '../components/billiard/BilliardFloorPlan';
 import type { Language } from '../i18n/translations';
+import { STORAGE_AT_RISK_MESSAGE, getStorageDurability } from './shim/storage-durability';
 
 type BootState = 'checking' | 'login' | 'pos';
 type PosMode = 'pos' | 'billiard';
@@ -46,6 +47,7 @@ export default function AndroidBootApp() {
   });
   const [billiardEnabled, setBilliardEnabled] = useState(false);
   const [language, setLanguage] = useState<Language>('en');
+  const [storageAtRisk, setStorageAtRisk] = useState(false);
 
   useEffect(() => {
     const api = (window as any).electronAPI;
@@ -66,6 +68,16 @@ export default function AndroidBootApp() {
       cancelled = true;
       unsubscribe();
     };
+  }, []);
+
+  // Await the single persistence request main.ts kicked off. A refused request
+  // is a standing condition the cashier must see, not a transient.
+  useEffect(() => {
+    let cancelled = false;
+    void getStorageDurability().then((durability) => {
+      if (!cancelled) setStorageAtRisk(durability.persisted !== true);
+    });
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -164,6 +176,14 @@ export default function AndroidBootApp() {
   // otherwise render the plain POSApp exactly as before.
   return (
     <div className="h-screen flex flex-col">
+      {storageAtRisk && (
+        <div
+          role="status"
+          className="shrink-0 bg-amber-500 px-3 py-2 text-center text-xs font-semibold text-amber-950"
+        >
+          {STORAGE_AT_RISK_MESSAGE}
+        </div>
+      )}
       {billiardEnabled && (
         <nav className="flex shrink-0 border-b bg-white" aria-label="POS mode">
           <button

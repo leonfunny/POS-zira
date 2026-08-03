@@ -39,6 +39,11 @@ vi.mock('../src/renderer/android-pos/LoginScreen', () => ({
 }));
 
 import AndroidBootApp from '../src/renderer/android-pos/AndroidBootApp';
+import {
+  STORAGE_AT_RISK_MESSAGE,
+  __resetStorageDurabilityForTest,
+  initStorageDurability,
+} from '../src/renderer/android-pos/shim/storage-durability';
 
 /** Build a window.electronAPI mock that boots straight into the POS state. */
 function makeApi(opts: { billiardEnabled: boolean; language?: string }) {
@@ -130,5 +135,62 @@ describe('AndroidBootApp — entitlement-gated POS/Bi-a mode tabs', () => {
     expect(fp).not.toBeNull();
     expect(fp!.textContent).toContain('BILLIARD:pl');
     expect(localStorage.getItem('android.pos.mode')).toBe('billiard');
+  });
+});
+
+/**
+ * Task 3 — the at-risk banner. The module-level request is tested in
+ * tests/android-storage-durability.test.ts; what matters here is that a
+ * REFUSED request actually reaches the cashier's screen, because a warning
+ * nobody sees is the same as no warning.
+ */
+describe('AndroidBootApp — storage at-risk banner', () => {
+  let container: HTMLDivElement;
+  let root: Root;
+  const previousElectronAPI = (globalThis as any).electronAPI;
+
+  beforeEach(() => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    localStorage.clear();
+    (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+    __resetStorageDurabilityForTest();
+  });
+
+  afterEach(() => {
+    act(() => { root.unmount(); });
+    container.remove();
+    (globalThis as any).electronAPI = previousElectronAPI;
+    __resetStorageDurabilityForTest();
+  });
+
+  async function bootWith(storage: unknown) {
+    initStorageDurability(storage === undefined ? {} : { navigator: { storage } });
+    (globalThis as any).electronAPI = makeApi({ billiardEnabled: false });
+    (globalThis as any).window = globalThis;
+    await act(async () => {
+      root = createRoot(container);
+      root.render(createElement(AndroidBootApp));
+    });
+    await settle();
+  }
+
+  it('warns when the OS refused to make our storage persistent', async () => {
+    await bootWith({ persisted: async () => false, persist: async () => false });
+    const banner = container.querySelector('[role="status"]');
+    expect(banner).not.toBeNull();
+    expect(banner!.textContent).toBe(STORAGE_AT_RISK_MESSAGE);
+  });
+
+  it('warns on an engine with no persistence API at all', async () => {
+    await bootWith(undefined);
+    expect(container.querySelector('[role="status"]')).not.toBeNull();
+  });
+
+  it('stays out of the way once storage IS persistent', async () => {
+    await bootWith({ persisted: async () => true, persist: async () => true });
+    expect(container.querySelector('[role="status"]')).toBeNull();
+    // …and the POS is still the thing on screen.
+    expect(container.querySelector('[data-testid="pos-app"]')).not.toBeNull();
   });
 });

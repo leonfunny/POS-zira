@@ -27,6 +27,7 @@ import { installShim } from './shim';
 import { ShimConfigStore, resolvePosMode } from './shim/config-store';
 import { TokenStore } from './shim/token-store';
 import { createRealTransport } from './shim/real-transport';
+import { initStorageDurability } from './shim/storage-durability';
 import AndroidBootApp from './AndroidBootApp';
 
 const configStore = new ShimConfigStore();
@@ -37,6 +38,13 @@ const transport = createRealTransport({ configStore, tokenStore });
 // single allowed module-load side effect of the entry — the boundary verifier
 // permits it because the shim installer is in this graph.
 installShim({ transport, configStore });
+
+// Ask Android to stop treating our IndexedDB as disposable BEFORE the first
+// write. Everything the money path depends on lives in that one blob — the
+// handoff journal, the protected held carts, paid-but-unsynced orders — and
+// `allowBackup="false"` means there is no second copy. The answer is cached in
+// the module; AndroidBootApp reads it to warn the cashier when it was refused.
+void initStorageDurability();
 
 // E2a (salon mode): materialize the resolved POS mode into config so the
 // unmodified Windows POSLayout (`posMode === 'salon'` → SalonTemplate,
