@@ -34,6 +34,7 @@ import {
   withoutRestoredInterruptionMarker,
   type PosSnapshotScope,
 } from '../../../shared/pos/billiard-pos-handoff';
+import { assertCommittedBilliardOrder } from '../../../shared/pos/billiard-order-verification';
 import {
   normalizeBilliardPosCheckout,
   requiresBilliardTenderReconciliation,
@@ -636,6 +637,88 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
         return { success: false, error: error?.message || String(error) };
       } finally {
         tenderBoundaryInFlight.delete(id);
+      }
+    },
+
+    /**
+     * The order is committed locally — settle the handoff and give the cashier
+     * their screen back. Windows: pos:billiard:complete-handoff.
+     *
+     * By the time this runs the money is already collected, so the cart is
+     * cleared ONLY after the committed order has been proved, field by field,
+     * to be the frozen allocation (shared assertCommittedBilliardOrder). If it
+     * is not, this throws and the cashier keeps a cart to reconcile from —
+     * clearing would destroy the last local evidence of what was owed.
+     */
+    async complete(checkoutId: string, orderId: string): Promise<{
+      success: boolean;
+      restored?: boolean;
+      restoredHoldId?: string | null;
+      durabilityError?: string;
+      error?: string;
+    }> {
+      try {
+        const scope = resolveTabletScope(deps.configStore.getRawConfig());
+        const database = await deps.db();
+        const journal = createBilliardHandoffRepo(database);
+        const orders = createOrderRepo(database);
+
+        const record = journal.get(String(checkoutId || '').trim());
+        const order = record ? orders.getById(record.orderId) : null;
+        if (
+          !record
+          || record.orderId !== orderId
+          || record.salonId !== scope.salonId
+          || record.userId !== scope.userId
+          || record.registerId !== scope.registerId
+          || !order
+        ) {
+          return { success: false, error: 'Committed Billiard order could not be verified.' };
+        }
+
+        assertBilliardCheckoutSnapshotIntegrity(record);
+        assertCommittedBilliardOrder(record, order, orders.getItemsByOrderId(record.orderId));
+
+        if (record.state !== 'SETTLED') {
+          journal.markState(record.checkoutId, 'POS_PAID_SYNC_PENDING');
+        }
+
+        // Clear the frozen cart — but only the one that matches this record,
+        // and only after the store itself authorises it (L4's exact-identity
+        // unlock, which is what `cart/completeCheckout` requires).
+        const state = deps.posStore.getState();
+        const liveCheckoutId = state.checkoutDraft.billiard?.origin.checkoutId;
+        if (liveCheckoutId) {
+          if (
+            liveCheckoutId !== record.checkoutId
+            || !isActiveBilliardCheckoutSnapshot(state, record.checkoutSnapshot)
+          ) {
+            throw new Error('Refused to clear a POS cart that differs from the committed Billiard checkout.');
+          }
+          if (!deps.posStore.markBilliardOrderCommitted(record.checkoutId, record.orderId)) {
+            throw new Error('Could not authorize clearing the committed Billiard cart.');
+          }
+          deps.posStore.dispatch({ type: 'cart/completeCheckout' });
+        }
+
+        // The parked cart stays in Holds for the cashier to recall. Automatic
+        // restore needs the restored-cart journal machinery (next slice), and
+        // reinstating a cart without it would hand back an unprotected cart —
+        // so it is left where it is, never dropped.
+        let durabilityError: string | undefined;
+        try {
+          await database.flush();
+        } catch (e: any) {
+          durabilityError = e?.message || String(e);
+        }
+        return {
+          success: true,
+          restored: false,
+          restoredHoldId: record.interruptedHoldId,
+          durabilityError,
+        };
+      } catch (error: any) {
+        return { success: false, error: error?.message || String(error) };
       }
     },
   };

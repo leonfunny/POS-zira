@@ -646,3 +646,176 @@ describe('order-repo keeps the billiard identity the renderer sends (schema v7)'
     expect(line.billiard_json).toBeNull();
   });
 });
+
+// ── complete ────────────────────────────────────────────────────────────────
+
+/**
+ * Build the committed order + lines the way the SHARED PaymentModal does
+ * (PaymentModal.tsx:673-705). If this stops satisfying the shared verifier,
+ * the renderer contract has drifted — which is exactly what we want to hear.
+ */
+function committedOrderFrom(record: { orderId: string; clientAttemptId: string; sessionId: string; checkoutId: string }, b = bundle()) {
+  const order = {
+    id: record.orderId,
+    subtotal: b.lines.reduce((s, l) => s + l.grossTotalGrosze, 0),
+    discount: b.discountGrosze,
+    // The frozen cart's tax, as stored in the snapshot (23% on 10000 + 8% on 7000).
+    tax: Math.round(10000 - (10000 * 100) / 123) + Math.round(7000 - (7000 * 100) / 108),
+    total: b.totalGrosze,
+    payment_method: 'CASH',
+    client_attempt_id: record.clientAttemptId,
+    billiard_origin_json: JSON.stringify({
+      type: 'BILLIARD_SESSION', sessionId: record.sessionId, checkoutId: record.checkoutId, snapshotVersion: 1,
+    }),
+  };
+  const items = b.lines.map((line: any) => ({
+    id: `${record.orderId}:${line.lineKey}`,
+    order_id: record.orderId,
+    variant_id: line.variantId,
+    name: line.displayName,
+    sku: line.sku ?? '',
+    price: line.unitPriceGrosze,
+    quantity: line.quantity,
+    sale_quantity: line.quantity,
+    sale_unit: line.saleUnit,
+    sell_by: line.sellBy,
+    total: line.grossTotalGrosze,
+    vat_rate: line.vatRate,
+    billiard_json: JSON.stringify({
+      kind: line.kind, sessionItemId: line.sessionItemId, lineKey: line.lineKey,
+      durationMinutes: line.durationMinutes, displayName: line.displayName,
+      inventoryPolicy: line.inventoryPolicy, refundPolicy: line.refundPolicy,
+      sellBy: line.sellBy, saleUnit: line.saleUnit,
+      grossTotalGrosze: line.grossTotalGrosze,
+      allocatedDiscountGrosze: line.allocatedDiscountGrosze,
+      payableGrosze: line.payableGrosze,
+    }),
+    inventory_policy: line.inventoryPolicy,
+    refund_policy: line.refundPolicy,
+    allocated_discount: line.allocatedDiscountGrosze,
+    payable_total: line.payableGrosze,
+  }));
+  return { order, items };
+}
+
+describe('complete — settling after the money is in', () => {
+  async function tendered(opts: Parameters<typeof makeHarness>[0] = {}) {
+    const h = await makeHarness(opts);
+    await h.handoff.prepare({ posCheckout: bundle() });
+    const opened = await h.handoff.markPaymentOpened('checkout-1');
+    await h.handoff.beginTender('checkout-1', opened.token!);
+    const record = h.database.get<{ order_id: string; client_attempt_id: string }>(
+      'SELECT order_id, client_attempt_id FROM pos_billiard_handoffs WHERE checkout_id = ?', ['checkout-1'],
+    )!;
+    return {
+      ...h,
+      record: {
+        orderId: record.order_id,
+        clientAttemptId: record.client_attempt_id,
+        sessionId: 'session-1',
+        checkoutId: 'checkout-1',
+      },
+    };
+  }
+
+  test('a faithful committed order settles the journal and clears the cart', async () => {
+    const { handoff, database, posStore, record } = await tendered();
+    const { createOrderRepo } = await import('../src/renderer/android-pos/shim/db/order-repo');
+    const { order, items } = committedOrderFrom(record);
+    createOrderRepo(database).create(order, items);
+
+    const result = await handoff.complete('checkout-1', record.orderId);
+    expect(result.success).toBe(true);
+    expect(result.error).toBeUndefined();
+    expect(database.get<{ state: string }>(
+      'SELECT state FROM pos_billiard_handoffs WHERE checkout_id = ?', ['checkout-1'],
+    )?.state).toBe('POS_PAID_SYNC_PENDING');
+    // Cashier gets a clean screen back.
+    expect(posStore.getState().cart.items).toHaveLength(0);
+    expect(posStore.getState().checkoutDraft.billiard).toBeUndefined();
+  });
+
+  test("a cashier's parked cart survives the settle, reported for recall", async () => {
+    // Park a real cart: items on screen BEFORE the bill is frozen.
+    const h = await makeHarness();
+    h.posStore.dispatch({ type: 'cart/addItem', payload: ordinaryLine() as any });
+    await h.handoff.prepare({ posCheckout: bundle() });
+    const opened = await h.handoff.markPaymentOpened('checkout-1');
+    await h.handoff.beginTender('checkout-1', opened.token!);
+    const row = h.database.get<{ order_id: string; client_attempt_id: string; interrupted_hold_id: string }>(
+      'SELECT order_id, client_attempt_id, interrupted_hold_id FROM pos_billiard_handoffs WHERE checkout_id = ?',
+      ['checkout-1'],
+    )!;
+    expect(row.interrupted_hold_id).toBe('billiard-interruption:checkout-1');
+
+    const { createOrderRepo } = await import('../src/renderer/android-pos/shim/db/order-repo');
+    const { order, items } = committedOrderFrom({
+      orderId: row.order_id, clientAttemptId: row.client_attempt_id,
+      sessionId: 'session-1', checkoutId: 'checkout-1',
+    });
+    createOrderRepo(h.database).create(order, items);
+
+    const result = await h.handoff.complete('checkout-1', row.order_id);
+    expect(result.success).toBe(true);
+    expect(result.restoredHoldId).toBe('billiard-interruption:checkout-1');
+    // Automatic restore lands with the restored-cart journal (next slice); what
+    // matters now is that the cart is still THERE to be recalled.
+    expect(result.restored).toBe(false);
+    const held = h.database.get<{ payload: string }>(
+      'SELECT payload FROM pos_hold_orders WHERE id = ?', ['billiard-interruption:checkout-1'],
+    );
+    expect(held).toBeTruthy();
+    expect(JSON.parse(held!.payload).snapshot.state.cart.items).toHaveLength(1);
+    expect(h.posStore.getState().cart.items).toHaveLength(0);
+  });
+
+  test('an order whose TOTAL differs from the frozen bill refuses — and keeps the cart', async () => {
+    const { handoff, database, posStore, record } = await tendered();
+    const { createOrderRepo } = await import('../src/renderer/android-pos/shim/db/order-repo');
+    const { order, items } = committedOrderFrom(record);
+    createOrderRepo(database).create({ ...order, total: order.total - 100 }, items);
+
+    const result = await handoff.complete('checkout-1', record.orderId);
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/totals or identity do not match/i);
+    // The cart is the last local evidence of what was owed — it must survive.
+    expect(posStore.getState().cart.items).toHaveLength(2);
+    expect(database.get<{ state: string }>(
+      'SELECT state FROM pos_billiard_handoffs WHERE checkout_id = ?', ['checkout-1'],
+    )?.state).not.toBe('SETTLED');
+  });
+
+  test('a tampered LINE refuses even when the order totals still add up', async () => {
+    const { handoff, database, posStore, record } = await tendered();
+    const { createOrderRepo } = await import('../src/renderer/android-pos/shim/db/order-repo');
+    const { order, items } = committedOrderFrom(record);
+    // Same money on the order, but a line now claims a different payable split.
+    items[1] = { ...items[1], payable_total: items[1].payable_total - 1, allocated_discount: items[1].allocated_discount + 1 };
+    createOrderRepo(database).create(order, items);
+
+    const result = await handoff.complete('checkout-1', record.orderId);
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/differs from the frozen server snapshot/i);
+    expect(posStore.getState().cart.items).toHaveLength(2);
+  });
+
+  test('a missing billiard origin refuses', async () => {
+    const { handoff, database, record } = await tendered();
+    const { createOrderRepo } = await import('../src/renderer/android-pos/shim/db/order-repo');
+    const { order, items } = committedOrderFrom(record);
+    createOrderRepo(database).create({ ...order, billiard_origin_json: null }, items);
+
+    const result = await handoff.complete('checkout-1', record.orderId);
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/invalid origin metadata/i);
+  });
+
+  test('a wrong orderId, or no local order at all, cannot be verified', async () => {
+    const { handoff, record } = await tendered();
+    await expect(handoff.complete('checkout-1', 'some-other-order'))
+      .resolves.toMatchObject({ success: false, error: expect.stringMatching(/could not be verified/i) });
+    // Right id, but nothing was committed locally.
+    await expect(handoff.complete('checkout-1', record.orderId))
+      .resolves.toMatchObject({ success: false, error: expect.stringMatching(/could not be verified/i) });
+  });
+});
