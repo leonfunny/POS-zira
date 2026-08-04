@@ -55,8 +55,45 @@ channel override — `billiardCheckoutMode` is the only source.
 server-side and `PaymentDialog` is the shared renderer. This is a salon that is
 not configured for POS-routed billiard settlement, not a tablet defect.
 
-## To finish the checklist
+## Settle verified end to end (after the salon switch)
 
-Switch the demo salon to `billiardCheckoutMode = POS` (a production config
-write, owner decision), then re-run: settle → cart clears → table free, and the
-kill-mid-tender → OWNER-resolve path.
+Paul authorised the config write; `Klub Bilardowy Home` went `WEB` → `POS`
+(original value recorded for rollback). The run then exposed three real defects
+in a row, each only visible against a live backend:
+
+| # | Symptom on device | Root cause | Fix |
+|---|---|---|---|
+| 1 | Cash taken, cart cleared, table still "running". Session `ce99bb35` COMPLETED/**UNPAID**, `posOrderId` null; server booked a plain sale `POS260804-0001`. | Android's order DTO omitted `billiardOrigin` + `clientAttemptId`, so the backend had no session to settle. | `6caadf6` + parity guard 3/3 |
+| 2 | Every later table refused: *"Another Billiard checkout is still unresolved on this register."* No cashier action could clear it. | A handoff can sit in `POS_PAID_SYNC_PENDING` with its order already synced; sync only marks `SETTLED` while handing an order over, and a synced order is never handed over again. | `7e12768` |
+| 3 | Settle rejected by the server: *"Every Billiard POS item requires billiard metadata."* | The Android order repo held a hand copy of `buildBackendOrderItem` that had dropped the per-line `billiard` block. | `37d19fa` — contract moved to `src/shared/pos/`, copy deleted |
+
+Final run, session `e3afc6f7` (Bàn #2, 2,41 zł, cash):
+
+```
+e3afc6f7 | COMPLETED | PAID | POS | checkout 0304f5f3 | pos_order 5877f882 | settled 2026-08-04 07:12:28
+POS260804-0002 | 2.41 | DELIVERED | PAID
+```
+
+The tablet ends a table, hands the frozen bill to POS, takes the money, and the
+server records the session as settled and linked. Defect #2's fix was confirmed
+in situ: the wedged record closed itself at boot and the register came back.
+
+### Diagnosis harness worth keeping
+
+The device logs nothing useful to logcat (the app logs to the WebView console).
+What worked: forward the WebView DevTools socket
+(`adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>`), tunnel it
+to the build box, and drive `Runtime.evaluate` over CDP. That made
+`pos.orders.getHistory()` readable and surfaced defect #3's `sync_error`
+verbatim — after two rounds of guessing from the UI alone had produced nothing.
+
+## Still open
+
+- `ce99bb35` (0,97 zł) stays unlinked on the demo salon: its money IS recorded
+  (`POS260804-0001`, PAID) but the session shows as unsettled. It is the
+  artefact of defect #1 and needs a one-row link or a write-off — an owner call,
+  not a silent production write.
+- Kill mid-tender → uncertain lane → OWNER resolve, on device.
+- v4→v8 schema upgrade over a real installed image.
+- `beginRestoredTender` + auto-restore of the parked cart is still unported;
+  both transports refuse it with a pointer to the Windows counter.
