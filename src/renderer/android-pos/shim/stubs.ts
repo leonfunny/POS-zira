@@ -285,7 +285,11 @@ export function buildPaymentNamespace({ transport }: StubDeps) {
     getPrintAttempts: async () => ({ success: true, attempts: [] }),
     getLatestFiscalAttempt: async () => ({ success: true, attempt: null, printer: null }),
     getReconcilableFiscalAttempt: async () => ({ success: true, attempt: null }),
-    reconcileFiscalAttempt: async () => ({ success: true }),
+    // Android has no fiscal-attempt journal, so it cannot persist a resolution.
+    reconcileFiscalAttempt: async () => ({
+      success: false,
+      error: 'Fiscal attempt reconciliation is available on the Windows counter.',
+    }),
     openCashDrawer: async () => ({ success: false, drawerOpened: false, error: 'no-drawer' }),
     // Electronic tenders are disabled by the CASH-only hard rail (plan §1 #2).
     cardPayment: async () => ({ success: false, error: 'card-payment-disabled' }),
@@ -335,7 +339,12 @@ export function buildOrdersNamespace({ transport }: StubDeps) {
       [orderId],
       () => ({ success: false as boolean, restocked: 0 as number | undefined, error: 'delete-unavailable' as string | undefined }),
     ),
-    mutate: async () => ({ success: true, localOnly: true }),
+    // A local void/edit is not implemented. Refuse with the cashier's working
+    // alternatives instead of leaving the sale COMPLETED while claiming success.
+    mutate: async () => ({
+      success: false,
+      error: 'Order changes are unavailable on Android. Use Delete local for an unsynced order; correct a synced order at the Windows counter.',
+    }),
     mirrorFromServer: async () => ({ success: false, error: 'no-server-mirror' }),
     // Delegate to the transport so a synced order is really refunded server-side
     // + marked locally + restocked (E1b); the S2 fake-success let a refund look
@@ -634,13 +643,13 @@ export function buildExcludedPosNamespaces(deps: Pick<StubDeps, 'transport'> = {
       getNetworkInfo: async () => ({ ips: [], suggestedHost: '', defaultPort: 0, running: false, port: null }),
     },
     hold: {
-      create: async () => ({ success: true }),
+      create: async () => ({ success: false, error: 'desktop-only' }),
       createCurrent: async () => ({ success: false, error: 'desktop-only' }),
       importLegacy: async () => ({ success: false, error: 'desktop-only' }),
       list: async () => [],
       get: async () => null,
       recall: async () => ({ success: false, error: 'desktop-only' }),
-      remove: async () => ({ success: true }),
+      remove: async () => ({ success: false, error: 'desktop-only' }),
     },
     // Boot subscriptions that fire unconditionally (S1 §7.8) — STUB no-op unsubs.
     onFiscalUnknown: () => noopUnsubscribe(),

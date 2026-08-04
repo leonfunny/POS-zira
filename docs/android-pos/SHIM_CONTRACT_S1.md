@@ -168,7 +168,7 @@ Cashier taps **Complete** with `method==='CASH'`, `splitMode===false` → `Payme
 | `pos.orders.retrySync(orderId)` | `OrderHistoryModal.tsx:824` | `(orderId: string)` | `{ success; result?; summary?; error? }` | `pos.module.ts:3997` → order-sync retry | MIXED (HTTP push) | **PORT** |
 | `pos.orders.cancel(orderId)` | `OrderHistoryModal.tsx:1781` | `(orderId: string)` | `{ success; error? }` | `pos.module` | LOCAL/HTTP | **LATER**/STUB (void extra) |
 | `pos.orders.deleteLocal(orderId)` | `OrderHistoryModal.tsx:1604` | `(orderId: string)` | `{ success; restocked?; error? }` | `pos.module` | LOCAL-DB | **LATER**/STUB |
-| `pos.orders.mutate(orderId, data)` | `OrderHistoryModal.tsx:1093` | `{ type:'payment'\|'items'\|'void', reason?, paymentMethod?, paymentAmount?, changeAmount?, items?, restock? }` | `{ success; localOnly?; order?; mutation?; restocked?; error? }` | `pos.module` | LOCAL-DB | **LATER**/STUB |
+| `pos.orders.mutate(orderId, data)` | `OrderHistoryModal.tsx:1093` | `{ type:'payment'\|'items'\|'void', reason?, paymentMethod?, paymentAmount?, changeAmount?, items?, restock? }` | `{ success:false, error:'Order changes are unavailable on Android. Use Delete local for an unsynced order; correct a synced order at the Windows counter.' }` | `pos.module` | LOCAL-DB | **LATER**/STUB — refuse; use Delete local for unsynced orders, Windows for synced orders |
 | `pos.orders.mirrorFromServer(orderId, kind)` | `OrderHistoryModal.tsx:1657` | `(orderId, 'cash'\|'invoiced')` | `{ success; localOrderId?; wasSplit?; error? }` | `pos.module` | LOCAL insert from server | **LATER**/STUB |
 | `pos.orders.refund(orderId, data)` | `OrderHistoryModal.tsx:518` | `{ type:'FULL'\|'PARTIAL', refundRequestId, reason, computedRefundTotal, lines:[{variantId?,sku?,name,quantity,unit,unitPrice,refundAmount,restock,vatRate}], manualAdjustmentAmount? }` | `{ success; refundedLines?; refundAmount?; receiptPrinted?; mutationDetected?; requiresRefresh?; error? }` | `pos.module` → `POST /api/v1/b2b/pos/orders/:id/refund` | BACKEND-HTTP (staff) | **LATER**/STUB (refund/invoice extra) |
 | `pos.orders.downloadPdf(orderId, kind, invoiceType?)` | `OrderHistoryModal.tsx:919` | `(orderId, 'receipt'\|'invoice', 'VAT'\|'PROFORMA'?)` | `{ success; filePath?; error? }` | `pos.module` → `GET /api/v1/b2b/pos/orders/{cash\|invoiced}/:id/{receipt-pdf\|invoice-pdf}` | BACKEND-HTTP | **LATER**/STUB (invoice extra) |
@@ -203,7 +203,7 @@ All thermal/fiscal receipt + drawer calls create print jobs through the Windows 
 | `pos.payment.getPrintAttempts(orderId)` | `OrderHistoryModal.tsx:1558` | **LATER**; STUB `{ success:true, attempts:[] }` |
 | `pos.payment.getLatestFiscalAttempt(orderId)` | `OrderHistoryModal.tsx:1559` | **LATER**; STUB `{ success:true, attempt:null, printer:null }` |
 | `pos.payment.getReconcilableFiscalAttempt(orderId)` | `OrderHistoryModal.tsx:1542` | **LATER**; STUB `{ success:true, attempt:null }` |
-| `pos.payment.reconcileFiscalAttempt(orderId, didPrint)` | `OrderHistoryModal.tsx:1579` | **LATER**; STUB `{ success:true }` |
+| `pos.payment.reconcileFiscalAttempt(orderId, didPrint)` | `OrderHistoryModal.tsx:1579` | **LATER**; STUB `{ success:false, error:'Fiscal attempt reconciliation is available on the Windows counter.' }` |
 
 The `PrintReceiptResponse` contract consumed by `receipt-outcome.ts` is `{ success?: boolean; receiptPrinted?: boolean }`.
 

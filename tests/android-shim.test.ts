@@ -213,7 +213,10 @@ describe('android shim S1 stub defaults', () => {
     expect(await api.pos.payment.getReconcilableFiscalAttempt('o1')).toEqual({
       success: true, attempt: null,
     });
-    expect(await api.pos.payment.reconcileFiscalAttempt('o1', true)).toEqual({ success: true });
+    expect(await api.pos.payment.reconcileFiscalAttempt('o1', true)).toEqual({
+      success: false,
+      error: 'Fiscal attempt reconciliation is available on the Windows counter.',
+    });
   });
 
   test('catalog / master-catalog / admin / AI / window stubs', async () => {
