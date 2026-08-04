@@ -39,6 +39,7 @@
 
 import type { AgentConfig, AuthUser } from '../../../shared/types';
 import { shouldDecrementStockAtCheckout } from '../../../shared/pos/order-line-contract';
+import { createPeriodicOrderDrain } from '../../../shared/order-drain';
 import { resolvePosMode } from './config-store';
 import { PosApiClient, type TokenProvider } from '../../android-pos/port/api-client';
 import type {
@@ -602,6 +603,7 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
   const nailTurnsUpdatedListeners = new Set<(data: { orderId?: string; checkedOut?: number }) => void>();
   let lastRefreshOutcome: RefreshOutcome = 'none';
   let orderSyncInFlight: Promise<void> | null = null;
+  const orderDrain = createPeriodicOrderDrain(() => transport.syncOrders?.() ?? Promise.resolve());
   // Single-flight refresh (Windows auth-refresh.ts:73-91): the backend ROTATES
   // the refresh token on every success, so two concurrent 401s must NOT each
   // POST the same token — the loser would 401 and clear the just-rotated pair,
@@ -675,6 +677,7 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         // inherit the dead session's feature flags (and its persisted record is
         // removed from storage).
         entitlements.clear();
+        orderDrain.stop();
         for (const cb of [...expiredListeners]) {
           try { cb(); } catch { /* a listener throwing must not break others */ }
         }
@@ -929,6 +932,7 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         // agent, must NEVER fail or delay the cashier's login — the terminal
         // simply stays REST-only until the agent is reachable.
         void agentConnection.connect().catch(() => { /* connection is best-effort */ });
+        orderDrain.start();
         return { success: true, data: { user: authUser } };
       } catch (e: any) {
         return { success: false, error: e?.message || String(e) };
@@ -936,6 +940,16 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
     },
 
     async getUser(): Promise<ShimGetUserResult> {
+      // Every "still signed in" answer goes through here, so the drain is armed
+      // in one place instead of at each return. A restored session is the
+      // ordinary morning case (a cashier types a password once and then reopens
+      // the app for weeks), and the cached-profile branches below are the
+      // offline boot — precisely when a backlog of unsynced orders is waiting
+      // for the network to come back. start() is idempotent.
+      const authenticated = (user: AuthUser): ShimGetUserResult => {
+        orderDrain.start();
+        return { success: true, data: { isAuthenticated: true, user } };
+      };
       const token = await tokenStore.getAccessToken();
       if (!token) {
         // No persisted token → not authenticated (first install / after logout).
@@ -945,7 +959,7 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
       try {
         const raw = await client.getMe();
         const user = resolveAuthUser(raw, configStore.getRawConfig().salonName);
-        return { success: true, data: { isAuthenticated: true, user } };
+        return authenticated(user);
       } catch (err: any) {
         // Classify by HTTP status (getMe now attaches err.status), not by
         // regex-matching a message — a NestJS 401 body carries 'Unauthorized'
@@ -959,7 +973,7 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
             // (auth-get-user.ts:81-88, 103-108).
             const cached = configStore.getRawConfig().authUser;
             if (cached?.id) {
-              return { success: true, data: { isAuthenticated: true, user: cached } };
+              return authenticated(cached);
             }
           }
           // Dead session (refresh rejected / no-refresh-token / a freshly-rotated
@@ -970,7 +984,7 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         // token might still be valid; fall back to the cached profile.
         const cached = configStore.getRawConfig().authUser;
         if (cached?.id) {
-          return { success: true, data: { isAuthenticated: true, user: cached } };
+          return authenticated(cached);
         }
         return { success: true, data: { isAuthenticated: false } };
       }
@@ -988,6 +1002,7 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
       // Drop the cached plan: the next login may be a different salon, and its
       // tabs must be decided by ITS entitlements, never the previous session's.
       entitlements.clear();
+      orderDrain.stop();
       // Clear tokens + identity; KEEP the local SQL.js mirror (S1 §2.B note —
       // logout ≠ wipe; a re-login to the same salon stays healthy).
       await tokenStore.clear();
