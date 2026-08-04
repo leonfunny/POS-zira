@@ -65,6 +65,7 @@ import { createAgentConnection, type AgentConnection } from './agent-connect';
 import { createProductAdminSurface } from './product-admin';
 import { createBilliardTransport } from './billiard-transport';
 import { createBilliardHandoff, type AndroidBilliardHandoff } from './billiard-handoff';
+import { createHoldOrders, type AndroidHoldOrders } from './hold-orders';
 import { createBilliardHandoffRepo } from './db/billiard-handoff-repo';
 import { createEntitlementsController } from './entitlements';
 import {
@@ -689,6 +690,8 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         entitlements.clear();
         orderDrain.stop();
         shiftConsistency.reset();
+      holds?.invalidateAuth();
+        holds?.invalidateAuth();
         for (const cb of [...expiredListeners]) {
           try { cb(); } catch { /* a listener throwing must not break others */ }
         }
@@ -782,6 +785,14 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
 
   let attachedPosStore: ShimPosStore | null = null;
   let handoff: AndroidBilliardHandoff | null = null;
+  let holds: AndroidHoldOrders | null = null;
+  /** Same lazy seam as the billiard handoff: no pos store attached yet → refuse
+   *  rather than pretend, because a hold without the live cart is meaningless. */
+  const holdOrders = (): AndroidHoldOrders | null => {
+    if (!attachedPosStore) return null;
+    if (!holds) holds = createHoldOrders({ configStore, posStore: attachedPosStore, db });
+    return holds;
+  };
   const billiardHandoff = (): AndroidBilliardHandoff | null => {
     if (!attachedPosStore) return null;
     if (!handoff) {
@@ -942,6 +953,14 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         return { success: false, error: e?.message || String(e) };
       }
     },
+    holdCreateCurrent: async (id: string, title: string) =>
+      holdOrders()?.createCurrent(id, title) ?? { success: false, error: 'POS is not ready.' },
+    holdRecall: async (id: string) =>
+      holdOrders()?.recall(id) ?? { success: false, error: 'POS is not ready.' },
+    holdList: async () => holdOrders()?.list() ?? [],
+    holdGet: async (id: string) => holdOrders()?.get(id) ?? null,
+    holdRemove: async (id: string) =>
+      holdOrders()?.remove(id) ?? { success: false, error: 'POS is not ready.' },
     attachPosStore(posStore: unknown) { attachedPosStore = posStore as ShimPosStore; },
     billiardPreflight: async () => billiardHandoff()?.preflight() ?? NO_HANDOFF,
     billiardPrepare: async (input) => billiardHandoff()?.prepare(input) ?? NO_HANDOFF,

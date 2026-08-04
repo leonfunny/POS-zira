@@ -653,14 +653,32 @@ export function buildExcludedPosNamespaces(deps: Pick<StubDeps, 'transport'> = {
       getNetworkInfo: async () => ({ ips: [], suggestedHost: '', defaultPort: 0, running: false, port: null }),
     },
     hold: {
-      supported: false,
-      create: async () => ({ success: false, error: 'desktop-only' }),
-      createCurrent: async () => ({ success: false, error: 'desktop-only' }),
+      // Capability flag read by RetailTemplate, which hides Hold/Recall when it
+      // is false. It tracks what the TRANSPORT can do, not the platform name —
+      // the synthetic install has no durable store and must stay hidden.
+      supported: Boolean(transport?.holdCreateCurrent && transport?.holdRecall),
+      // Windows refuses this one too: createCurrent is the durable path.
+      create: async () => ({ success: false, error: 'Use createCurrent for durable Hold.' }),
+      createCurrent: (id: string, title: string) => withTransport(
+        transport?.holdCreateCurrent,
+        [id, title],
+        () => ({ success: false as boolean, error: 'desktop-only' as string | undefined }),
+      ),
+      // Importing legacy in-memory holds is a desktop-era migration; this build
+      // has never had a pre-durable hold store to import from.
       importLegacy: async () => ({ success: false, error: 'desktop-only' }),
-      list: async () => [],
-      get: async () => null,
-      recall: async () => ({ success: false, error: 'desktop-only' }),
-      remove: async () => ({ success: false, error: 'desktop-only' }),
+      list: () => withTransport(transport?.holdList, [], () => [] as any[]),
+      get: (id: string) => withTransport(transport?.holdGet, [id], () => null as any),
+      recall: (id: string) => withTransport(
+        transport?.holdRecall,
+        [id],
+        () => ({ success: false as boolean, error: 'desktop-only' as string | undefined }),
+      ),
+      remove: (id: string) => withTransport(
+        transport?.holdRemove,
+        [id],
+        () => ({ success: false as boolean, error: 'desktop-only' as string | undefined }),
+      ),
     },
     // Boot subscriptions that fire unconditionally (S1 §7.8) — STUB no-op unsubs.
     onFiscalUnknown: () => noopUnsubscribe(),

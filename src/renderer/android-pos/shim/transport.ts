@@ -273,6 +273,12 @@ export interface ShimTransport {
   /** The cashier opened the payment modal on a frozen bill. */
   billiardMarkPaymentOpened?(checkoutId: string): Promise<any>;
   /** The last gate before money is collected. */
+  /** Hold / Recall — parking a customer's basket (pos.module.ts `pos:hold:*`). */
+  holdCreateCurrent?(id: string, title: string): Promise<{ success: boolean; error?: string }>;
+  holdRecall?(id: string): Promise<{ success: boolean; error?: string; rollbackDurabilityError?: string }>;
+  holdList?(): Promise<any[]>;
+  holdGet?(id: string): Promise<any | null>;
+  holdRemove?(id: string): Promise<{ success: boolean; error?: string }>;
   /** Ordinary payment boundary — verifies the shift locally AND against the server. */
   paymentPreflight?(orderId: string): Promise<{ success: boolean; token?: string; expiresAt?: number; error?: string }>;
   billiardBeginTender?(checkoutId: string, paymentPreflightToken: string): Promise<any>;

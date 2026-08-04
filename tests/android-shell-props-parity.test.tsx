@@ -277,13 +277,13 @@ describe('retail Hold capability wiring', () => {
     return capturedRetail.quickActionsProps!;
   }
 
-  it('does not pass Hold or Recall handlers on Android', async () => {
+  it('withholds Hold/Recall handlers when the shell reports it cannot hold', async () => {
     const props = await renderRetail(false);
     expect(props.onHold).toBeUndefined();
     expect(props.onRecall).toBeUndefined();
   });
 
-  it('still passes Hold and Recall handlers on the Windows counter', async () => {
+  it('passes Hold/Recall handlers when the shell CAN hold (Windows, and Android since hold-orders landed)', async () => {
     const props = await renderRetail(true);
     expect(typeof props.onHold).toBe('function');
     expect(typeof props.onRecall).toBe('function');
