@@ -207,6 +207,16 @@ describe('Android shell ↔ shared renderer prop parity', () => {
     expect(props).toHaveProperty('canResolveUncertainTender');
   });
 
+  it('tells POSLayout it is embedded, so the pay button never lands below the fold', async () => {
+    // The shell stacks a storage banner and the POS/Bi-a tabs above POSLayout.
+    // POSLayout defaults to h-screen because on the desktop it IS the window;
+    // nested here that overflows by exactly the chrome height and pushes the
+    // pay button and the Hold/Recall toolbar off screen. Observed on device
+    // before this flag existed.
+    await bootIntoBilliard();
+    expect(capturedPos.props!.embedded, 'POSLayout will demand a full 100vh inside a shorter parent').toBe(true);
+  });
+
   it('keeps BOTH tabs mounted across a switch (3c2f020 parity)', async () => {
     await bootIntoBilliard();
     // POS is hidden, not destroyed — unmounting rebuilt the whole tree on every

@@ -269,6 +269,19 @@ interface POSLayoutProps {
   onBilliardTenderResolved?: (intent: BilliardPaymentIntent) => void;
   onRestoredTenderResolved?: () => void;
   onRestoredCartTenderOutcomeUncertain?: (reconciliation: RestoredCartReconciliation) => void;
+  /**
+   * The layout fills its PARENT instead of the viewport.
+   *
+   * On the desktop POSLayout is the whole window, so 100vh is exactly right.
+   * The Android shell owns chrome above it (the storage banner and the POS/Bi-a
+   * tabs), so a 100vh child overflows its container by precisely that much and
+   * pushes the pay button and the Hold/Recall toolbar below the fold — on a
+   * till, where the pay button must never need a scroll.
+   *
+   * Opt-in, so the desktop keeps 100vh: `#root` has no height rule of its own,
+   * and switching the shared default to h-full would collapse the window.
+   */
+  embedded?: boolean;
 }
 
 type ScanToastType = 'ok' | 'warn' | 'err';
@@ -309,6 +322,7 @@ export default function POSLayout({
   onBilliardTenderResolved,
   onRestoredTenderResolved,
   onRestoredCartTenderOutcomeUncertain,
+  embedded = false,
 }: POSLayoutProps = {}) {
   useBarcodeForwarder();
   const { state, dispatch, dispatchError, clearDispatchError } = usePosStore();
@@ -1460,7 +1474,7 @@ export default function POSLayout({
   const visiblePickups = pickupOrders.filter((o) => o.id !== activePickup?.id);
 
   return (
-    <div className="h-screen bg-slate-50 text-slate-900 flex flex-col overflow-hidden">
+    <div className={`${embedded ? 'h-full' : 'h-screen'} bg-slate-50 text-slate-900 flex flex-col overflow-hidden`}>
       {/* Hidden barcode capture input for USB HID scanners */}
       <input
         ref={barcodeRef}

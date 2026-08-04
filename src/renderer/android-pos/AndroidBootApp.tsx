@@ -346,6 +346,10 @@ export default function AndroidBootApp() {
             BilliardFloorPlan pauses its polls when `active` is false (3c2f020). */}
         <div className={billiardEnabled && mode === 'billiard' ? 'hidden' : 'h-full'}>
           <POSLayout
+            /* The shell owns the banner + tab chrome above this, so POSLayout
+               must fill what is left rather than demand a full 100vh — else the
+               pay button lands below the fold. */
+            embedded
             billiardPaymentIntent={billiardPaymentIntent}
             restoredCartReconciliation={restoredCartReconciliation}
             canResolveUncertainTender={isOwner}
