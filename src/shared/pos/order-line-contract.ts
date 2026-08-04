@@ -1,10 +1,23 @@
+/**
+ * THE order-line contract — one copy, both platforms.
+ *
+ * Lived under src/main/pos/ and was hand-copied into the Android order repo.
+ * The copy silently dropped the `billiard` block, so once the tablet started
+ * sending billiardOrigin the backend rejected every settle with "Every Billiard
+ * POS item requires billiard metadata" (device run, 2026-08-04). A partial copy
+ * of a money-path contract is worse than no copy: it typechecks, it looks
+ * complete, and it fails only against a real server.
+ *
+ * Windows keeps importing it via src/main/pos/order-line-contract.ts, which is
+ * now a re-export.
+ */
 import {
   calculateLineTotalGrosze,
   normalizeSaleUnit,
   normalizeSellBy,
   resolveSaleQuantity,
   type SellBy,
-} from '../../shared/pos-sale';
+} from '../pos-sale';
 
 export interface LocalOrderLineContract {
   id?: string | null;

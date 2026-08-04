@@ -18,67 +18,27 @@
  */
 
 import {
-  calculateLineTotalGrosze,
-  normalizeSaleUnit,
-  normalizeSellBy,
-  resolveSaleQuantity,
-  type SellBy,
-} from '../../../../shared/pos-sale';
+  buildBackendOrderItem,
+  getLineSaleQuantity,
+  getLineSaleUnit,
+  getLineSellBy,
+  getLineTotalGrosze,
+  type LocalOrderLineContract,
+} from '../../../../shared/pos/order-line-contract';
 import type { AndroidDatabase } from './db';
 
-// ─── Line contract (ported from order-line-contract.ts:20-42) ──────────────
-
-export interface LocalOrderLineContract {
-  id?: string | null;
-  variant_id?: string | null;
-  sku?: string | null;
-  price?: number | null;
-  quantity?: number | null;
-  sale_quantity?: number | null;
-  sale_unit?: string | null;
-  sell_by?: string | null;
-}
-
-export function getLineSellBy(line: LocalOrderLineContract): SellBy {
-  return normalizeSellBy(line.sell_by);
-}
-
-export function getLineSaleQuantity(line: LocalOrderLineContract): number {
-  return resolveSaleQuantity({
-    quantity: line.quantity,
-    sale_quantity: line.sale_quantity,
-    sale_unit: line.sale_unit,
-    sell_by: line.sell_by,
-  });
-}
-
-export function getLineSaleUnit(line: LocalOrderLineContract): string {
-  return normalizeSaleUnit({ sale_unit: line.sale_unit, sell_by: line.sell_by });
-}
-
-export function getLineTotalGrosze(line: LocalOrderLineContract): number {
-  return calculateLineTotalGrosze(Number(line.price) || 0, getLineSaleQuantity(line), getLineSellBy(line));
-}
-
-/** ported from order-line-contract.ts:44-67 — the backend order-item DTO. */
-export function buildBackendOrderItem(line: LocalOrderLineContract): Record<string, any> {
-  const localId = line.variant_id || line.id;
-  const sellBy = getLineSellBy(line);
-  const quantity = getLineSaleQuantity(line);
-  const payload: Record<string, any> = {
-    productId: localId ?? undefined,
-    variantId: localId ?? undefined,
-    ...(line.sku ? { variantSku: line.sku } : {}),
-    ...(typeof line.price === 'number' && Number.isFinite(line.price) ? { customPrice: line.price / 100 } : {}),
-  };
-  if (sellBy === 'WEIGHT') {
-    payload.saleQuantity = quantity;
-    payload.saleUnit = getLineSaleUnit(line);
-  } else {
-    payload.packQuantity = Math.max(1, Math.round(quantity || 1));
-  }
-  return payload;
-}
+// The line contract is IMPORTED, not re-implemented. It used to be a hand copy
+// here, and the copy had quietly dropped the per-line `billiard` block — which
+// only surfaced against a real backend, as a rejected settle. Re-export so the
+// shim's existing importers keep their paths.
+export {
+  buildBackendOrderItem,
+  getLineSaleQuantity,
+  getLineSaleUnit,
+  getLineSellBy,
+  getLineTotalGrosze,
+  type LocalOrderLineContract,
+};
 
 // ─── Repo ──────────────────────────────────────────────────────────────────
 
