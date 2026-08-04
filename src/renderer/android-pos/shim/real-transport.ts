@@ -60,6 +60,7 @@ import { createAgentConnection, type AgentConnection } from './agent-connect';
 import { createProductAdminSurface } from './product-admin';
 import { createBilliardTransport } from './billiard-transport';
 import { createBilliardHandoff, type AndroidBilliardHandoff } from './billiard-handoff';
+import { createBilliardHandoffRepo } from './db/billiard-handoff-repo';
 import { createEntitlementsController } from './entitlements';
 import {
   buildBackendOrderItem,
@@ -461,6 +462,20 @@ function buildOrderDto(order: any, items: any[]): Record<string, any> {
         dto.tenders = tenders.map((t) => ({ method: PM_MAP[t.method] || t.method, amount: t.amount / 100 }));
       }
     } catch { /* single method fallback below */ }
+  }
+  // BILLIARD IDENTITY — without these the backend has no way to know this order
+  // settles a frozen billiard checkout: it creates a plain POS order, the
+  // session stays UNPAID with posOrderId null, and the table looks unsettled
+  // forever even though the money was taken. Windows sends both
+  // (order-sync.ts:178-185); Android was dropping them, which the first real
+  // device run surfaced (session ce99bb35 on 2026-08-04).
+  if (order.billiard_origin_json) {
+    try {
+      dto.billiardOrigin = JSON.parse(order.billiard_origin_json);
+      dto.clientAttemptId = order.client_attempt_id;
+    } catch {
+      throw new Error('Invalid persisted billiard order origin');
+    }
   }
   if (order.payment_method) dto.paymentMethod = PM_MAP[order.payment_method] || 'CASH';
   if (order.staff_id) dto.staffId = order.staff_id;
@@ -1218,13 +1233,25 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
             const result = await client.createPosOrder(dto);
             const backendId = String(result.id ?? result.orderId ?? order.id);
             let backendOrderNumber = getBackendOrderNumber(result);
-            // Finalize immediately — triggers backend stock deduction
-            // (order-sync.ts:230-238). finishOrder failure is non-fatal.
-            try {
-              const finishResult = await client.finishOrder(backendId);
-              backendOrderNumber = getBackendOrderNumber(finishResult) ?? backendOrderNumber;
-            } catch { /* non-fatal, matches Windows */ }
+            if (!order.billiard_origin_json) {
+              // Finalize immediately — triggers backend stock deduction
+              // (order-sync.ts:230-238). finishOrder failure is non-fatal.
+              try {
+                const finishResult = await client.finishOrder(backendId);
+                backendOrderNumber = getBackendOrderNumber(finishResult) ?? backendOrderNumber;
+              } catch { /* non-fatal, matches Windows */ }
+            }
+            // else: the authoritative billiard create endpoint atomically
+            // creates a DELIVERED order AND settles the checkout, so calling
+            // finish again is a false failure ("already finished") —
+            // order-sync.ts:241-256.
             orderRepo.markSynced(order.id, backendId, backendOrderNumber);
+            // The frozen checkout is now settled server-side; close the local
+            // journal so recovery stops offering it (order-sync.ts:258-262).
+            const settledHandoff = createBilliardHandoffRepo(database).getByOrderId(order.id);
+            if (settledHandoff?.state === 'POS_PAID_SYNC_PENDING') {
+              createBilliardHandoffRepo(database).markState(settledHandoff.checkoutId, 'SETTLED');
+            }
             database.run('UPDATE orders SET sync_error = NULL WHERE id = ?', [order.id]);
             for (const cb of [...orderSyncedListeners]) {
               try { cb({ orderId: order.id, backendId }); } catch { /* listener isolation */ }
