@@ -771,6 +771,34 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
         const committed = orders.getById(record.orderId);
         if (committed) {
           assertCommittedBilliardOrder(record, committed, orders.getItemsByOrderId(record.orderId));
+
+          // ALREADY ON THE SERVER. `synced = 1` with a backend id is the local
+          // proof that the settle round-trip finished; only the journal write
+          // that closes it was lost (process killed between markSynced and
+          // markState, or — as on 2026-08-04 — an older build that never wrote
+          // the closing state at all). Without this the record sits in
+          // POS_PAID_SYNC_PENDING forever, and because an unresolved checkout
+          // blocks the register, the tablet can never settle another table:
+          // a wedge that no cashier action can clear. Sync cannot fix it
+          // either, since a synced order is never handed to sync again.
+          if (record.state !== 'SETTLED' && committed.synced === 1 && committed.backend_id) {
+            // Two hops on purpose: SETTLED is only reachable from
+            // POS_PAID_SYNC_PENDING (billiard-handoff-repo.ts:179-183), and the
+            // repo THROWS on an illegal jump. A record interrupted in
+            // POS_READY/POS_PAYMENT_OPEN would otherwise crash recovery — which
+            // runs at boot, so it would take the whole app down on launch.
+            journal.markState(record.checkoutId, 'POS_PAID_SYNC_PENDING');
+            journal.markState(record.checkoutId, 'SETTLED');
+            let settleDurabilityError: string | undefined;
+            try { await database.flush(); } catch (e: any) { settleDurabilityError = e?.message || String(e); }
+            if (!isAuthContextCurrent(authContext)) {
+              return { success: false, intent: null, paymentCommitted: true, error: 'POS user changed during Billiard recovery.' };
+            }
+            // Nothing for the cashier to resume: the money is in, the server
+            // knows, the register is free again.
+            return { success: true, paymentCommitted: true, durabilityError: settleDurabilityError, intent: null };
+          }
+
           if (record.state !== 'SETTLED') {
             journal.markState(record.checkoutId, 'POS_PAID_SYNC_PENDING');
           }

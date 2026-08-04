@@ -880,6 +880,93 @@ describe('recover — picking the journal back up after the app was killed', () 
     expect(restarted.posStore.getState().cart.items).toHaveLength(0);
   });
 
+  test('a settle whose order ALREADY reached the server closes the journal instead of wedging the register', async () => {
+    // The 2026-08-04 device wedge: the order synced, but the journal write that
+    // closes it never happened (older build). Because an unresolved checkout
+    // blocks the register, every later table refused with "Another Billiard
+    // checkout is still unresolved on this register" — and sync could never
+    // clear it, since a synced order is never offered to sync again.
+    const h = await makeHarness();
+    await h.handoff.prepare({ posCheckout: bundle() });
+    const opened = await h.handoff.markPaymentOpened('checkout-1');
+    await h.handoff.beginTender('checkout-1', opened.token!);
+    const row = h.database.get<{ order_id: string; client_attempt_id: string }>(
+      'SELECT order_id, client_attempt_id FROM pos_billiard_handoffs WHERE checkout_id = ?', ['checkout-1'],
+    )!;
+    const { createOrderRepo } = await import('../src/renderer/android-pos/shim/db/order-repo');
+    const { order, items } = committedOrderFrom({
+      orderId: row.order_id, clientAttemptId: row.client_attempt_id,
+      sessionId: 'session-1', checkoutId: 'checkout-1',
+    });
+    createOrderRepo(h.database).create(order, items);
+    // The server accepted it; only the closing state was lost.
+    createOrderRepo(h.database).markSynced(row.order_id, 'backend-order-1');
+
+    const restarted = await afterRestart(h);
+    const result = await restarted.handoff.recover();
+
+    expect(result.success).toBe(true);
+    expect(result.paymentCommitted).toBe(true);
+    // Nothing to resume: no banner, no cart, no blocked register.
+    expect(result.intent).toBeNull();
+    expect(h.database.get<{ state: string }>(
+      'SELECT state FROM pos_billiard_handoffs WHERE checkout_id = ?', ['checkout-1'],
+    )?.state).toBe('SETTLED');
+    expect(restarted.posStore.getState().cart.items).toHaveLength(0);
+  });
+
+  test('the reconcile survives a record interrupted BEFORE payment opened (illegal jump would throw at boot)', async () => {
+    // SETTLED is only reachable from POS_PAID_SYNC_PENDING and the repo throws
+    // on an illegal jump. recover() runs at boot, so a throw here is not a
+    // failed recovery — it is an app that will not start.
+    const h = await makeHarness();
+    await h.handoff.prepare({ posCheckout: bundle() });
+    const row = h.database.get<{ order_id: string; client_attempt_id: string; state: string }>(
+      'SELECT order_id, client_attempt_id, state FROM pos_billiard_handoffs WHERE checkout_id = ?', ['checkout-1'],
+    )!;
+    expect(row.state).toBe('POS_READY');
+    const { createOrderRepo } = await import('../src/renderer/android-pos/shim/db/order-repo');
+    const { order, items } = committedOrderFrom({
+      orderId: row.order_id, clientAttemptId: row.client_attempt_id,
+      sessionId: 'session-1', checkoutId: 'checkout-1',
+    });
+    createOrderRepo(h.database).create(order, items);
+    createOrderRepo(h.database).markSynced(row.order_id, 'backend-order-1');
+
+    const restarted = await afterRestart(h);
+    await expect(restarted.handoff.recover()).resolves.toMatchObject({ success: true, intent: null });
+    expect(h.database.get<{ state: string }>(
+      'SELECT state FROM pos_billiard_handoffs WHERE checkout_id = ?', ['checkout-1'],
+    )?.state).toBe('SETTLED');
+  });
+
+  test('an order that is committed but NOT yet synced still asks for sync — it is not closed early', async () => {
+    // The distinction that keeps the reconcile honest: local commit alone is
+    // not proof the server has the money. Only synced=1 + a backend id is.
+    const h = await makeHarness();
+    await h.handoff.prepare({ posCheckout: bundle() });
+    const opened = await h.handoff.markPaymentOpened('checkout-1');
+    await h.handoff.beginTender('checkout-1', opened.token!);
+    const row = h.database.get<{ order_id: string; client_attempt_id: string }>(
+      'SELECT order_id, client_attempt_id FROM pos_billiard_handoffs WHERE checkout_id = ?', ['checkout-1'],
+    )!;
+    const { createOrderRepo } = await import('../src/renderer/android-pos/shim/db/order-repo');
+    const { order, items } = committedOrderFrom({
+      orderId: row.order_id, clientAttemptId: row.client_attempt_id,
+      sessionId: 'session-1', checkoutId: 'checkout-1',
+    });
+    createOrderRepo(h.database).create(order, items);
+
+    const restarted = await afterRestart(h);
+    const result = await restarted.handoff.recover();
+
+    expect(result.paymentCommitted).toBe(true);
+    expect(result.intent).not.toBeNull();
+    expect(h.database.get<{ state: string }>(
+      'SELECT state FROM pos_billiard_handoffs WHERE checkout_id = ?', ['checkout-1'],
+    )?.state).toBe('POS_PAID_SYNC_PENDING');
+  });
+
   test('an already-uncertain checkout stays uncertain and is not re-locked', async () => {
     const h = await makeHarness();
     await h.handoff.prepare({ posCheckout: bundle() });
