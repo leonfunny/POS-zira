@@ -979,6 +979,38 @@ export class PosApiClient {
   }
 
   /**
+   * GET /api/v1/pos/shifts/active?machineId=. Ported from
+   * api-client.ts:3149-3170 — the register-scoped active shift the payment
+   * boundary is verified against. The backend answers `{ active: false }` when
+   * there is none (pos-shift-alias.controller.ts:53-61), which is a VALID
+   * answer meaning "no shift here", not an error; it maps to null.
+   */
+  async getActivePosShift(
+    machineIdOverride?: string | null,
+  ): Promise<{ id: string; staffId?: string; staffName?: string; openedAt?: string } | null> {
+    const token = await this.requireToken('getActivePosShift');
+    const machineId = String(machineIdOverride ?? this.machineId ?? '').trim();
+    const query = machineId ? `?machineId=${encodeURIComponent(machineId)}` : '';
+    const url = `${this.baseUrl}/api/v1/pos/shifts/active${query}`;
+
+    const response = await this.fetchWithTimeout(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || `HTTP ${response.status}`);
+    }
+
+    const body = await response.json().catch(() => null);
+    if (!body || body.active === false) return null;
+    return String(body.id || '').trim() ? body : null;
+  }
+
+  /**
    * POST /api/v1/pos/shifts/:id/close. Ported from api-client.ts:3030-3052.
    */
   async closePosShift(

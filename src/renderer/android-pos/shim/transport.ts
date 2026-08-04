@@ -273,6 +273,8 @@ export interface ShimTransport {
   /** The cashier opened the payment modal on a frozen bill. */
   billiardMarkPaymentOpened?(checkoutId: string): Promise<any>;
   /** The last gate before money is collected. */
+  /** Ordinary payment boundary — verifies the shift locally AND against the server. */
+  paymentPreflight?(orderId: string): Promise<{ success: boolean; token?: string; expiresAt?: number; error?: string }>;
   billiardBeginTender?(checkoutId: string, paymentPreflightToken: string): Promise<any>;
   /** Settle the handoff once the order is committed locally. */
   billiardComplete?(checkoutId: string, orderId: string): Promise<any>;

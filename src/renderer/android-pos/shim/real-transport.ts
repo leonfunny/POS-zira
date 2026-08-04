@@ -39,6 +39,9 @@
 
 import type { AgentConfig, AuthUser } from '../../../shared/types';
 import { shouldDecrementStockAtCheckout } from '../../../shared/pos/order-line-contract';
+import { createServerShiftConsistency } from '../../../shared/pos/server-shift-consistency';
+import { assertLocalOpenShiftMatchesSession, getVerifiedServerShiftMismatch } from '../../../shared/pos/open-shift-recovery';
+import { currentPosSnapshotScope } from '../../../shared/pos/billiard-pos-handoff';
 import { createPeriodicOrderDrain } from '../../../shared/order-drain';
 import { resolvePosMode } from './config-store';
 import { PosApiClient, type TokenProvider } from '../../android-pos/port/api-client';
@@ -604,6 +607,13 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
   let lastRefreshOutcome: RefreshOutcome = 'none';
   let orderSyncInFlight: Promise<void> | null = null;
   const orderDrain = createPeriodicOrderDrain(() => transport.syncOrders?.() ?? Promise.resolve());
+  // Server-side shift agreement for the payment boundary (Windows
+  // pos.module.ts:663-668 + 987-1097). Sticky: only a verified disagreement
+  // blocks payment, and it keeps blocking until a later verified agreement
+  // clears it — otherwise a cashier could retry into an offline window and be
+  // waved through the very check that just failed.
+  const shiftConsistency = createServerShiftConsistency();
+  let shiftVerificationInFlight: Promise<void> | null = null;
   // Single-flight refresh (Windows auth-refresh.ts:73-91): the backend ROTATES
   // the refresh token on every success, so two concurrent 401s must NOT each
   // POST the same token — the loser would 401 and clear the just-rotated pair,
@@ -678,6 +688,7 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         // removed from storage).
         entitlements.clear();
         orderDrain.stop();
+        shiftConsistency.reset();
         for (const cb of [...expiredListeners]) {
           try { cb(); } catch { /* a listener throwing must not break others */ }
         }
@@ -736,6 +747,39 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
   // first time a handoff method runs after attachPosStore(). Before that every
   // method refuses rather than pretending — the shim's own desktop-only
   // fallbacks would have been indistinguishable from a real refusal.
+  /**
+   * Verify the local open shift against the register's shift on the server.
+   * Single-flight: a second caller awaits the first rather than firing another
+   * request at the payment boundary.
+   */
+  function verifyServerShift(): Promise<void> {
+    if (shiftVerificationInFlight) return shiftVerificationInFlight;
+    let run: Promise<void>;
+    run = (async () => {
+      try {
+        const database = await db();
+        const local = createOrderRepo(database).getActiveShift();
+        const cfg = configStore.getRawConfig() as any;
+        const machineId = String(cfg.registerCode || cfg.machineId || cfg.agentId || '').trim();
+        const serverShift = await client.getActivePosShift(machineId || null);
+        shiftConsistency.recordVerified(getVerifiedServerShiftMismatch({
+          localShiftId: local?.id ?? null,
+          localBackendShiftId: local?.backend_id ?? null,
+          serverShiftId: serverShift?.id ?? null,
+        }));
+      } catch {
+        // A transport/HTTP failure is not proof of a mismatch (Windows
+        // pos.module.ts:1093-1097). Keep the last verified answer and keep
+        // selling — a shop on flaky 4G must not lose its till.
+        shiftConsistency.recordUnreachable();
+      }
+    })().finally(() => {
+      if (shiftVerificationInFlight === run) shiftVerificationInFlight = null;
+    });
+    shiftVerificationInFlight = run;
+    return run;
+  }
+
   let attachedPosStore: ShimPosStore | null = null;
   let handoff: AndroidBilliardHandoff | null = null;
   const billiardHandoff = (): AndroidBilliardHandoff | null => {
@@ -752,6 +796,10 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
           return !!status?.assigned;
         },
         isPrintAgentConnected: () => agentConnection.isConnected(),
+        assertServerShiftConsistent: async () => {
+          await verifyServerShift();
+          shiftConsistency.assertConsistent();
+        },
       });
     }
     return handoff;
@@ -845,6 +893,55 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
     productAdmin: createProductAdminSurface({ client, configStore }),
 
     // ── Billiard POS-handoff (L5) — delegated to the orchestration ─────────
+    /**
+     * The ordinary (non-billiard) payment boundary — Windows
+     * prepareOrdinaryPosPayment (pos.module.ts:681-707). The shim used to
+     * return success with a token derived from the order id and verify nothing,
+     * so the one thing this gate exists to catch — a shift the server no longer
+     * considers open — sailed straight through.
+     *
+     * The returned token is a SUCCESS SIGNAL, not a capability: PaymentModal
+     * refuses to tender without one. Nothing validates the ordinary token later
+     * (true on Windows too), so there is deliberately no write-only registry
+     * here; the billiard tender path has its own registry and does validate,
+     * in billiard-handoff.ts.
+     */
+    async paymentPreflight(orderId: string): Promise<{ success: boolean; token?: string; expiresAt?: number; error?: string }> {
+      try {
+        const normalizedOrderId = String(orderId || '').trim();
+        if (!normalizedOrderId) {
+          return { success: false, error: 'A stable POS order ID is required before payment preflight.' };
+        }
+        const database = await db();
+        const scopeBefore = currentPosSnapshotScope(configStore.getRawConfig());
+        const openShift = assertLocalOpenShiftMatchesSession(database as any, attachedPosStore as any);
+
+        await verifyServerShift();
+        shiftConsistency.assertConsistent();
+
+        // Re-check what the await could have changed underneath us.
+        const scopeAfter = currentPosSnapshotScope(configStore.getRawConfig());
+        if (
+          scopeAfter.salonId !== scopeBefore.salonId
+          || scopeAfter.userId !== scopeBefore.userId
+          || scopeAfter.registerId !== scopeBefore.registerId
+        ) {
+          return { success: false, error: 'POS user changed while payment safety was being verified.' };
+        }
+        const verifiedShift = assertLocalOpenShiftMatchesSession(database as any, attachedPosStore as any);
+        if (verifiedShift.id !== openShift.id) {
+          return { success: false, error: 'The POS shift changed while payment safety was being verified.' };
+        }
+
+        return {
+          success: true,
+          token: `pf-${(globalThis as any).crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`,
+          expiresAt: Date.now() + 15 * 60 * 1000,
+        };
+      } catch (e: any) {
+        return { success: false, error: e?.message || String(e) };
+      }
+    },
     attachPosStore(posStore: unknown) { attachedPosStore = posStore as ShimPosStore; },
     billiardPreflight: async () => billiardHandoff()?.preflight() ?? NO_HANDOFF,
     billiardPrepare: async (input) => billiardHandoff()?.prepare(input) ?? NO_HANDOFF,
@@ -1003,6 +1100,7 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
       // tabs must be decided by ITS entitlements, never the previous session's.
       entitlements.clear();
       orderDrain.stop();
+      shiftConsistency.reset();
       // Clear tokens + identity; KEEP the local SQL.js mirror (S1 §2.B note —
       // logout ≠ wipe; a re-login to the same salon stays healthy).
       await tokenStore.clear();

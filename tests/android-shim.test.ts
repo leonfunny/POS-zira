@@ -186,9 +186,16 @@ describe('android shim S1 stub defaults', () => {
   });
 
   test('payment / receipt stubs let the CASH checkout complete without the recovery overlay', async () => {
+    // Synthetic install only (no transport injected), which is why an
+    // unverified success is still acceptable here: nothing can take money on
+    // this path. With a real transport, preflight delegates to
+    // transport.paymentPreflight, which verifies the local open shift AND the
+    // register's shift on the server — see android-payment-preflight.test.ts.
+    // The literal is deliberately distinct from the old 'android:<orderId>' so
+    // a synthetic token can never be mistaken for a verified one.
     expect(await api.pos.payment.preflight('order-1')).toMatchObject({
       success: true,
-      token: 'android:order-1',
+      token: 'android-synthetic:order-1',
     });
     expect(await api.pos.payment.hasFiscalPrinter()).toEqual({
       success: true, configured: false, connected: false,

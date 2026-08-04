@@ -238,11 +238,21 @@ export function buildPaymentNamespace({ transport }: StubDeps) {
     // Android uses its own authenticated transport/shift contract. Keep the
     // renderer API shape identical; the Windows main process owns the
     // register-local server-shift verification implemented by this preflight.
-    preflight: async (orderId: string) => ({
-      success: true,
-      token: `android:${orderId}`,
-      expiresAt: Date.now() + 15 * 60 * 1000,
-    }),
+    // Delegate to the transport, which verifies the local open shift AND the
+    // register's shift on the server before releasing the payment boundary.
+    // The synthetic fallback (no transport injected — the S2 boot install) is
+    // the only place the old unverified success survives, and nothing can take
+    // money there.
+    preflight: (orderId: string) => withTransport(
+      transport.paymentPreflight,
+      [orderId],
+      () => ({
+        success: true as boolean,
+        token: `android-synthetic:${orderId}` as string | undefined,
+        expiresAt: (Date.now() + 15 * 60 * 1000) as number | undefined,
+        error: undefined as string | undefined,
+      }),
+    ),
     // E-FISCAL: delegate the fiscal-printer check to the coordinator's
     // FISCAL_RECEIPT assignment lookup when the transport provides it; else the
     // Wave-1 "no fiscal printer" outcome. `configured` + `connected` both track

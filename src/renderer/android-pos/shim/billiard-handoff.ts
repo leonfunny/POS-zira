@@ -65,6 +65,15 @@ export interface BilliardHandoffDeps {
    * this socket IS the fiscal path — `assigned` alone is not liveness.
    */
   isPrintAgentConnected: () => boolean;
+  /**
+   * Verify the register's shift against the server and throw if the last
+   * verified answer disagreed with the local journal. Windows runs the SAME
+   * check on the billiard tender path — its beginTender calls
+   * prepareOrdinaryPosPayment (pos.module.ts:2425), which is where the server
+   * shift consistency lives. Optional so tests and the synthetic install can
+   * omit it; when absent the boundary keeps its local-only guarantees.
+   */
+  assertServerShiftConsistent?: () => Promise<void>;
 }
 
 export interface BilliardPreflightResult {
@@ -479,6 +488,12 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
         // Payment preflight: a live, complete, single open shift — re-verified
         // rather than trusted from prepare time.
         const openShift = assertLocalOpenShiftMatchesSession(database, deps.posStore);
+        // …and the server has to agree that this register's shift is the one
+        // still open. Throws only on a VERIFIED disagreement; being offline
+        // leaves the local guarantees in place rather than freezing the till.
+        if (deps.assertServerShiftConsistent) {
+          await deps.assertServerShiftConsistent();
+        }
         if (!isAuthContextCurrent(authContext)) {
           return { success: false, error: 'POS user changed while payment safety was being verified.' };
         }
