@@ -30,6 +30,8 @@ import { act } from 'react';
 const captured = vi.hoisted(() => ({ billiardProps: null as Record<string, unknown> | null }));
 /** Props the Android shell handed to the shared POSLayout. */
 const capturedPos = vi.hoisted(() => ({ props: null as Record<string, unknown> | null }));
+/** Props the shared retail toolbar received after applying platform capabilities. */
+const capturedRetail = vi.hoisted(() => ({ quickActionsProps: null as Record<string, unknown> | null }));
 
 // AndroidBootApp mounts POSLayout DIRECTLY (POSApp takes no props and is shared
 // with the Windows shell), so the mock has to follow the real import — the real
@@ -52,8 +54,24 @@ vi.mock('../src/renderer/android-pos/LoginScreen', () => ({
   __esModule: true,
   default: () => createElement('div', { 'data-testid': 'login-screen' }, 'LOGIN'),
 }));
+vi.mock('../src/renderer/hooks/useConfig', () => ({
+  useConfig: () => ({ config: {} }),
+}));
+vi.mock('../src/renderer/components/pos/SearchBar', () => ({ default: () => null }));
+vi.mock('../src/renderer/components/pos/ProductGrid', () => ({ default: () => null }));
+vi.mock('../src/renderer/components/pos/Cart', () => ({ default: () => null }));
+vi.mock('../src/renderer/components/pos/AutoCameraSearch', () => ({ default: () => null }));
+vi.mock('../src/renderer/components/pos/PaymentModal', () => ({ default: () => null }));
+vi.mock('../src/renderer/components/pos/OrderHistoryModal', () => ({ default: () => null }));
+vi.mock('../src/renderer/components/pos/templates/retail/QuickActions', () => ({
+  default: (props: Record<string, unknown>) => {
+    capturedRetail.quickActionsProps = props;
+    return createElement('div', { 'data-testid': 'quick-actions' });
+  },
+}));
 
 import AndroidBootApp from '../src/renderer/android-pos/AndroidBootApp';
+import RetailTemplate from '../src/renderer/components/pos/templates/retail/RetailTemplate';
 
 // ── Contract ────────────────────────────────────────────────────────────────
 
@@ -197,5 +215,86 @@ describe('Android shell ↔ shared renderer prop parity', () => {
     expect(pos, 'POSLayout was unmounted on the tab switch').not.toBeNull();
     expect(pos!.parentElement!.className).toContain('hidden');
     expect(captured.billiardProps!.active).toBe(true);
+  });
+});
+
+function makeRetailApi(holdSupported: boolean) {
+  return {
+    getConfig: () => Promise.resolve({ authUser: { id: 'test-user' } }),
+    pos: {
+      getState: () => Promise.resolve({ checkoutDraft: {} }),
+      billiardCheckout: { recover: () => Promise.resolve({ success: true, intent: null }) },
+      categories: { getAll: () => Promise.resolve([]) },
+      products: { getAll: () => Promise.resolve([]) },
+      sync: { onProductsSynced: () => () => {} },
+      hold: {
+        supported: holdSupported,
+        list: () => Promise.resolve([]),
+        importLegacy: () => Promise.resolve({ success: true }),
+      },
+    },
+    window: { list: () => Promise.resolve([]) },
+  };
+}
+
+describe('retail Hold capability wiring', () => {
+  let container: HTMLDivElement;
+  let root: Root;
+  const previousElectronAPI = (globalThis as any).electronAPI;
+
+  beforeEach(() => {
+    capturedRetail.quickActionsProps = null;
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    localStorage.clear();
+    (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+  });
+
+  afterEach(() => {
+    act(() => { root.unmount(); });
+    container.remove();
+    (globalThis as any).electronAPI = previousElectronAPI;
+  });
+
+  async function renderRetail(holdSupported: boolean | undefined) {
+    (globalThis as any).electronAPI = makeRetailApi(holdSupported);
+    (globalThis as any).window = globalThis;
+    await act(async () => {
+      root = createRoot(container);
+      root.render(createElement(RetailTemplate, {
+        state: {
+          cart: { items: [], total: 0 },
+          checkoutDraft: {},
+          display: { mode: 'idle' },
+        } as any,
+        dispatch: () => {},
+        t: (key: string) => key,
+        session: { isOpen: false, shiftId: null, staffId: null, staffName: null } as any,
+      }));
+    });
+    await settle();
+    expect(capturedRetail.quickActionsProps, 'QuickActions never mounted').not.toBeNull();
+    return capturedRetail.quickActionsProps!;
+  }
+
+  it('does not pass Hold or Recall handlers on Android', async () => {
+    const props = await renderRetail(false);
+    expect(props.onHold).toBeUndefined();
+    expect(props.onRecall).toBeUndefined();
+  });
+
+  it('still passes Hold and Recall handlers on the Windows counter', async () => {
+    const props = await renderRetail(true);
+    expect(typeof props.onHold).toBe('function');
+    expect(typeof props.onRecall).toBe('function');
+  });
+
+  it('treats a MISSING capability flag as supported, so the counter never loses Hold', async () => {
+    // Opt-out, not opt-in. A preload built before this field exists, or a
+    // partial mock in some other test, must not strip Hold from the desktop
+    // that does support it — only an explicit `false` disables it.
+    const props = await renderRetail(undefined);
+    expect(typeof props.onHold).toBe('function');
+    expect(typeof props.onRecall).toBe('function');
   });
 });

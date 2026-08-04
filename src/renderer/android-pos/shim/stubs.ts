@@ -643,6 +643,7 @@ export function buildExcludedPosNamespaces(deps: Pick<StubDeps, 'transport'> = {
       getNetworkInfo: async () => ({ ips: [], suggestedHost: '', defaultPort: 0, running: false, port: null }),
     },
     hold: {
+      supported: false,
       create: async () => ({ success: false, error: 'desktop-only' }),
       createCurrent: async () => ({ success: false, error: 'desktop-only' }),
       importLegacy: async () => ({ success: false, error: 'desktop-only' }),

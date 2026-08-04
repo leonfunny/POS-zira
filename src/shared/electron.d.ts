@@ -1116,6 +1116,7 @@ interface ElectronAPI {
       setActive: (id: string, active: boolean) => Promise<PosStaffWriteResult>;
     };
     hold: {
+      supported: boolean;
       create: (id: string, title: string, payload: any) => Promise<{ success: boolean }>;
       createCurrent: (id: string, title: string) => Promise<{ success: boolean; error?: string }>;
       importLegacy: (rows: unknown[]) => Promise<{

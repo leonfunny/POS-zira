@@ -280,6 +280,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     // Hold Orders (park/recall)
     hold: {
+      supported: true,
       create: (id: string, title: string, payload: any) => ipcRenderer.invoke('pos:hold:create', id, title, payload),
       createCurrent: (id: string, title: string) => ipcRenderer.invoke('pos:hold:create-current', id, title),
       importLegacy: (rows: unknown[]) => ipcRenderer.invoke('pos:hold:import-legacy', rows),

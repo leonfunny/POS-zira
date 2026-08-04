@@ -231,6 +231,11 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
   const { config } = useConfig();
   const allowOversell = config?.allowOversell === true;
   const lang = language || (config?.posLanguage as string | undefined) || (config?.language as string | undefined) || 'pl';
+  // Opt-OUT, not opt-in: only a shell that explicitly says false loses Hold.
+  // A missing namespace (partial mock, preload built before this field) must not
+  // take the whole retail screen down, and must not silently strip the button
+  // from the Windows counter that does support it.
+  const holdSupported = window.electronAPI?.pos?.hold?.supported !== false;
   const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
   const [activeUnitFilter, setActiveUnitFilter] = useState<RetailUnitFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -1482,9 +1487,9 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
               displayMode={state.display?.mode || 'idle'}
               t={t}
               heldCarts={heldCarts}
-              onHold={handleHoldCart}
+              onHold={holdSupported ? handleHoldCart : undefined}
               holdDisabled={!!state.checkoutDraft?.kitchenSelfOrder?.pickupOrderId || !!state.checkoutDraft?.billiard}
-              onRecall={handleRecallCart}
+              onRecall={holdSupported ? handleRecallCart : undefined}
               onDiscardHeld={handleDiscardHeld}
               onHistory={() => setShowHistory(true)}
               onQuickAddCamera={onQuickAddCamera ? () => {

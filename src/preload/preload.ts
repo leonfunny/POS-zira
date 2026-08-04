@@ -908,6 +908,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       setActive: (id: string, active: boolean) => ipcRenderer.invoke(IPC_CHANNELS.POS_STAFF_SET_ACTIVE, id, active),
     },
     hold: {
+      supported: true,
       create: (id: string, title: string, payload: any) => ipcRenderer.invoke(IPC_CHANNELS.POS_HOLD_CREATE, id, title, payload),
       createCurrent: (id: string, title: string) => ipcRenderer.invoke('pos:hold:create-current', id, title),
       importLegacy: (rows: unknown[]) => ipcRenderer.invoke('pos:hold:import-legacy', rows),
