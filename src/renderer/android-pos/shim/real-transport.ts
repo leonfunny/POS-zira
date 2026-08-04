@@ -38,6 +38,7 @@
  */
 
 import type { AgentConfig, AuthUser } from '../../../shared/types';
+import { shouldDecrementStockAtCheckout } from '../../../shared/pos/order-line-contract';
 import { resolvePosMode } from './config-store';
 import { PosApiClient, type TokenProvider } from '../../android-pos/port/api-client';
 import type {
@@ -1173,10 +1174,15 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
 
         const id = orderRepo.create(normalizedOrder, normalizedItems);
 
-        // Local stock decrement — ported from pos.module.ts:3132-3139.
+        // Local stock decrement — the billiard term is not optional: F&B is
+        // consumed when it is added to the table session, so settling the bill
+        // must not deduct it a second time (pos.module.ts guards the same loop
+        // with the same predicate). The shared helper is imported rather than
+        // restated inline because hand-copying this condition is exactly how the
+        // guard went missing here in the first place.
         const allowNegative = (configStore.getRawConfig() as any).allowOversell === true;
         for (const item of normalizedItems) {
-          if (item.variant_id && item.quantity > 0) {
+          if (shouldDecrementStockAtCheckout(item, Boolean(normalizedOrder.billiard_origin_json))) {
             // Guard on track_inventory (Windows STOCK_TRACKED_GUARD_SQL) so
             // services / non-inventory items are not driven to phantom 0 stock.
             database.run(

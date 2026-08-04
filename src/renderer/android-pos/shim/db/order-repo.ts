@@ -174,6 +174,9 @@ export function createOrderRepo(database: AndroidDatabase) {
     deleteLocalUnsynced(id: string): { deleted: boolean; restocked: number; error?: string } {
       const order = database.get<any>('SELECT * FROM orders WHERE id = ?', [id]);
       if (!order) return { deleted: false, restocked: 0, error: 'not-found' };
+      if (order.billiard_origin_json) {
+        return { deleted: false, restocked: 0, error: 'Billiard POS orders cannot be deleted. Use the owner correction flow.' };
+      }
       if (order.backend_id || order.synced === 1) {
         return { deleted: false, restocked: 0, error: 'Synced orders cannot be deleted locally. Cancel or refund via the backend instead.' };
       }
@@ -184,7 +187,7 @@ export function createOrderRepo(database: AndroidDatabase) {
       let restocked = 0;
       database.transaction(() => {
         for (const item of items) {
-          if (item.variant_id && item.quantity > 0) {
+          if (item.variant_id && item.quantity > 0 && item.inventory_policy !== 'ALREADY_CONSUMED') {
             database.run(
               'UPDATE product_variants SET in_stock = in_stock + ?, available_qty = available_qty + ? WHERE id = ? AND track_inventory = 1',
               [item.quantity, item.quantity, item.variant_id],
