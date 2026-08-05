@@ -70,7 +70,6 @@ export default class SocketClient extends EventEmitter {
       const onConnected = (data: any) => {
         cleanup();
         logger.info(`Connected to server. Agent ID: ${data.agentId}, Pending jobs: ${data.pendingJobs}`);
-        this.startHeartbeat();
         resolve();
       };
 
@@ -135,7 +134,6 @@ export default class SocketClient extends EventEmitter {
       const onConnected = (data: any) => {
         cleanup();
         logger.info(`Connected to server. Agent ID: ${data.agentId}, Pending jobs: ${data.pendingJobs}`);
-        this.startHeartbeat();
         resolve();
       };
 
@@ -403,6 +401,10 @@ export default class SocketClient extends EventEmitter {
     });
 
     this.socket.on('connected', (data) => {
+      // This persistent handler also runs when Socket.IO reconnects after the
+      // initial 30-second connect promise has timed out. Starting heartbeat
+      // here lets the backend mark the POS online without restarting the app.
+      this.startHeartbeat();
       this.emit('agent:connected', data);
     });
 
