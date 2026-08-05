@@ -3,6 +3,7 @@ import { resolveName } from '../../shared/catalog-names';
 import { isStockTracked } from '../../shared/product-stock-tracking';
 import type { Product, Category } from './usePosDb';
 import rlog from '../utils/logger';
+import { normalizeVatRate } from '../../shared/pos/vat-rate';
 
 export type ProductKindFilter = 'all' | 'lowStock' | 'outOfStock' | 'noPrice' | 'drafts' | 'inactive';
 export type ProductSyncErrorCode = 'no-auth' | 'failed' | null;
@@ -56,7 +57,7 @@ function draftToProduct(draft: any): ProductListItem {
     category_id: draft.category_id ?? null,
     image_url: draft.image_url ?? null,
     in_stock: numberOrZero(draft.in_stock),
-    vat_rate: Number(draft.vat_rate) || 23,
+    vat_rate: normalizeVatRate(draft.vat_rate),
     is_active: 1,
     updated_at: draft.updated_at ?? null,
     available_qty: numberOrZero(draft.in_stock),

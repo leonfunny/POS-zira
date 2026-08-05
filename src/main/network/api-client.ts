@@ -62,6 +62,7 @@ import {
 } from '../../shared/types';
 import { getConfig, setConfig, getConfigValue } from '../config/store';
 import { localPrinterRepo, type LocalPrinterUpsert } from '../database/repos/local-printer-repo';
+import { normalizeVatRate } from '../../shared/pos/vat-rate';
 
 export function normalizeOpenShiftResponse(value: unknown): { shiftId: string } {
   const response = value as { id?: unknown; shiftId?: unknown } | null;
@@ -2416,7 +2417,7 @@ export class ApiClient {
         category_id: item.template?.categoryId ?? item.template?.category_id ?? item.categoryId ?? item.category_id ?? null,
         image_url: item.imageUrl ?? item.image_url ?? null,
         in_stock: item.totalStockQty ?? item.total_stock_qty ?? item.in_stock ?? 0,
-        vat_rate: parseFloat(item.template?.taxRate ?? item.template?.tax_rate ?? item.vat_rate) || 23,
+        vat_rate: normalizeVatRate(item.template?.taxRate ?? item.template?.tax_rate ?? item.vat_rate),
         is_active: item.isActive ?? item.is_active ?? true ? 1 : 0,
         updated_at: item.canonicalUpdatedAt
           ?? item.canonical_updated_at

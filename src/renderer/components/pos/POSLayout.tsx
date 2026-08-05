@@ -48,6 +48,7 @@ import type {
   RestoredCartReconciliation,
   UncertainTenderResolutionTarget,
 } from '../../../shared/billiard-pos-handoff';
+import { normalizeVatRate } from '../../../shared/pos/vat-rate';
 
 type PosMode = 'retail' | 'salon' | 'b2b' | 'restaurant';
 
@@ -83,7 +84,7 @@ function draftPreviewFromLocal(draft: any): ScanImportDraftPreview {
     barcode: draft.barcode,
     retail_price: 0,
     stock_qty: 0,
-    vat_rate: Number(draft.vat_rate) || 23,
+    vat_rate: normalizeVatRate(draft.vat_rate),
     image_url: draft.image_url,
     status: draft.status,
     source: 'draft',
@@ -105,7 +106,7 @@ function draftPreviewFromLookup(response: any, fallbackEan: string): ScanImportD
     retail_price: moneyToGrosze(source.suggestedRetailPrice ?? source.retailPrice ?? source.retail_price ?? source.retailPriceGrosze),
     purchase_price: moneyToGrosze(source.suggestedPurchasePrice ?? source.purchasePrice ?? source.purchase_price),
     stock_qty: Number(source.stockQty ?? source.stock_qty ?? source.currentStock ?? 0) || 0,
-    vat_rate: Number(source.taxRate ?? source.vat_rate ?? source.vatRate ?? 23) || 23,
+    vat_rate: normalizeVatRate(source.taxRate ?? source.vat_rate ?? source.vatRate),
     image_url: image ?? null,
     status: response?.mode ?? source.status,
     source: previewSource,

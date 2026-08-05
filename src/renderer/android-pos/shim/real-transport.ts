@@ -76,6 +76,7 @@ import {
   getLineSellBy,
   getLineTotalGrosze,
 } from './db/order-repo';
+import { normalizeVatRate } from '../../../shared/pos/vat-rate';
 
 // ─── Backend base URL ──────────────────────────────────────────────────────
 
@@ -242,8 +243,9 @@ function normalizeProductRow(item: any): AndroidProductRow | null {
     image_url: item.imageUrl ?? item.image_url ?? null,
     in_stock: item.totalStockQty ?? item.total_stock_qty ?? item.in_stock ?? 0,
     available_qty: item.availableQty ?? item.available_qty ?? item.totalStockQty ?? item.total_stock_qty ?? item.in_stock ?? 0,
-    // parseFloat(...) || 23 — NaN AND 0 fall back to the standard Polish rate (api-client.ts:2380).
-    vat_rate: Number.parseFloat(template.taxRate ?? template.tax_rate ?? item.vat_rate) || 23,
+    // A readable rate wins, INCLUDING 0% (exports / intra-EU). Only an
+    // unreadable one falls back to 23 — see shared/pos/vat-rate.ts.
+    vat_rate: normalizeVatRate(template.taxRate ?? template.tax_rate ?? item.vat_rate),
     is_active: (item.isActive ?? item.is_active ?? true) ? 1 : 0,
     is_on_sale: (item.isOnSale ?? item.is_on_sale) ? 1 : 0,
     thumbnail_url: item.thumbnailUrl ?? item.thumbnail_url ?? null,

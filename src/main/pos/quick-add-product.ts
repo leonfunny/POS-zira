@@ -1,4 +1,5 @@
 import type { ProductVariantRow } from '../database/repos/product-repo';
+import { normalizeVatRate } from '../../shared/pos/vat-rate';
 
 function encodeNameTranslations(raw: any): string | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -42,7 +43,7 @@ export function toQuickAddVariantRow(
     category_id: variant.categoryId ?? variant.category_id ?? product?.categoryId ?? product?.category_id ?? null,
     image_url: variant.imageUrl ?? variant.image_url ?? product?.imageUrl ?? product?.image_url ?? null,
     in_stock: variant.totalStockQty ?? variant.in_stock ?? fallback.quantity,
-    vat_rate: Number(variant.taxRate ?? variant.vat_rate ?? product?.taxRate ?? product?.vat_rate ?? 23) || 23,
+    vat_rate: normalizeVatRate(variant.taxRate ?? variant.vat_rate ?? product?.taxRate ?? product?.vat_rate),
     is_active: variant.isActive === false || variant.is_active === 0 ? 0 : 1,
     updated_at: variant.canonicalUpdatedAt ?? variant.canonical_updated_at ?? variant.updatedAt ?? variant.updated_at ?? product?.canonicalUpdatedAt ?? product?.canonical_updated_at ?? product?.updatedAt ?? product?.updated_at ?? new Date().toISOString(),
     available_qty: variant.availableQty ?? variant.available_qty ?? variant.totalStockQty ?? variant.in_stock ?? fallback.quantity,

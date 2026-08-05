@@ -5,6 +5,7 @@ import { productRepo } from '../database/repos/product-repo';
 import { RECEIPT_NAME_LOCALE, resolveName } from '../../shared/catalog-names';
 import { calculateLineTotalGrosze, normalizeSellBy } from '../../shared/pos-sale';
 import logger from '../logger';
+import { normalizeVatRate } from '../../shared/pos/vat-rate';
 
 export interface PaymentResult {
   success: boolean;
@@ -291,7 +292,7 @@ export class PaymentController {
         quantity,
         unitPrice: catalogPrice,
         totalPrice,
-        vatRate: Number(i.vat_rate ?? product.vat_rate) || 23,
+        vatRate: normalizeVatRate(i.vat_rate ?? product.vat_rate),
         sku: i.sku || product.sku || undefined,
         unit: i.sale_unit || product.sale_unit || undefined,
       });

@@ -41,6 +41,7 @@ import {
   countNoBarcodeByCategory,
   categoryImageUrl,
 } from './retailBrowseFilters';
+import { normalizeVatRate } from '../../../../../shared/pos/vat-rate';
 
 // Category cards render an icon glyph in the colored avatar. Prefer the
 // server-provided `icon` field when it's a short pictogram/emoji (≤ 2
@@ -482,7 +483,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
         category_id: d.category_id ?? null,
         image_url: d.image_url ?? null,
         in_stock: Number(d.in_stock) || 0,
-        vat_rate: Number(d.vat_rate) || 23,
+        vat_rate: normalizeVatRate(d.vat_rate),
         is_active: 1,
         updated_at: d.updated_at ?? null,
         available_qty: Number(d.in_stock) || 0,

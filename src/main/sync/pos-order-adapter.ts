@@ -7,6 +7,7 @@
 
 import logger from '../logger';
 import { calculateLineTotalGrosze, normalizeSaleUnit, normalizeSellBy, resolveSaleQuantity } from '../../shared/pos-sale';
+import { normalizeVatRate } from '../../shared/pos/vat-rate';
 
 const _warnedFields = new Set<string>();
 
@@ -85,9 +86,11 @@ function resolveServerPaymentAmount(args: {
 // only when value is missing or non-numeric — avoids the `parseFloat('0') || 23`
 // trap that would silently rewrite legitimate 0% products to 23%.
 export function toVatRate(value: unknown, fallback: number): number {
-  if (value == null) return fallback;
-  const n = typeof value === 'number' ? value : parseFloat(String(value));
-  return isFinite(n) ? n : fallback;
+  // Delegates to the shared normalizer so there is ONE implementation of this
+  // rule. Behaviour is unchanged except that a negative rate now falls back
+  // too — a negative VAT is not a thing, and reading it as "valid" was the same
+  // class of mistake as reading 0 as "missing".
+  return normalizeVatRate(value, fallback);
 }
 
 /**

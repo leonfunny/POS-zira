@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Package, ScanBarcode } from 'lucide-react';
 import type { ProductListItem } from '../../hooks/useProducts';
 import Modal from '../shared/Modal';
+import { normalizeVatRate } from '../../../shared/pos/vat-rate';
 
 interface ProductAddFlowProps {
   open: boolean;
@@ -43,7 +44,7 @@ function draftPreviewFromLocal(draft: any, fallbackBarcode: string): DraftPrevie
     barcode: String(draft.barcode || fallbackBarcode),
     retail_price: Number(draft.retail_price) || 0,
     in_stock: Number(draft.in_stock) || 0,
-    vat_rate: Number(draft.vat_rate) || 23,
+    vat_rate: normalizeVatRate(draft.vat_rate),
     image_url: draft.image_url ?? null,
     status: draft.status ?? null,
   };
@@ -59,7 +60,7 @@ function draftPreviewFromLookup(response: any, fallbackBarcode: string): DraftPr
     barcode: source.ean ?? source.barcode ?? fallbackBarcode,
     retail_price: moneyToGrosze(source.suggestedRetailPrice ?? source.retailPrice ?? source.retail_price),
     in_stock: Number(source.stockQty ?? source.stock_qty ?? source.currentStock ?? source.in_stock ?? 0) || 0,
-    vat_rate: Number(source.taxRate ?? source.vat_rate ?? source.vatRate ?? 23) || 23,
+    vat_rate: normalizeVatRate(source.taxRate ?? source.vat_rate ?? source.vatRate),
     image_url: image ?? null,
     status: response?.mode ?? source.status ?? null,
   };
@@ -82,7 +83,7 @@ function variantToProduct(variant: any): ProductListItem {
     category_id: variant.category_id ?? null,
     image_url: variant.image_url ?? null,
     in_stock: Number(variant.in_stock) || 0,
-    vat_rate: Number(variant.vat_rate) || 23,
+    vat_rate: normalizeVatRate(variant.vat_rate),
     is_active: Number(variant.is_active ?? 1),
     updated_at: variant.updated_at ?? null,
     available_qty: Number(variant.available_qty ?? variant.in_stock) || 0,
