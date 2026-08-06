@@ -107,6 +107,7 @@ async function buildCoordinator(overrides: {
   machineId?: string;
   pollIntervalMs?: number;
   totalWaitMs?: number;
+  assignmentCacheTtlMs?: number;
 } = {}): Promise<{ coordinator: RemotePrintCoordinator; fetchMock: ReturnType<typeof vi.fn> }> {
   const db = await initAndroidDb({ locateFile: NODE_LOCATE_FILE });
   createOrderRepo(db).create(ORDER, ITEMS);
@@ -124,7 +125,7 @@ async function buildCoordinator(overrides: {
     // Tight, deterministic budgets so the timeout scenario does not hang.
     pollIntervalMs: overrides.pollIntervalMs ?? 5,
     totalWaitMs: overrides.totalWaitMs ?? 60,
-    assignmentCacheTtlMs: 1000,
+    assignmentCacheTtlMs: overrides.assignmentCacheTtlMs ?? 1000,
   });
   const fetchMock = vi.fn();
   vi.stubGlobal('fetch', fetchMock);
@@ -153,6 +154,26 @@ describe('android remote receipt-print coordinator (E1a)', () => {
     const r2 = await coordinator.requestReceiptPrint('order-1');
     expect(r2).toMatchObject({ receiptPrinted: true, skipped: true, reason: 'no-printer' });
     expect(fetchMock.mock.calls.length).toBe(callsBefore); // no HTTP at all
+  });
+
+  test('no-printer skip via a FAILING assignment lookup surfaces the resolver error (fields unchanged)', async () => {
+    // P1.3 (2026-08-06): a transient 401/5xx on the assignment lookup must
+    // surface in the skip result so it is diagnosable — without the `error`
+    // field a flaky backend is indistinguishable from "no receipt printer". The
+    // skip outcome (receiptPrinted:true) is unchanged; only an optional `error`
+    // is added (divergence #2 stays).
+    const { coordinator, fetchMock } = await buildCoordinator();
+    fetchMock.mockImplementation(async (url: unknown) => {
+      const u = String(url);
+      if (u.includes('/printer-assignments')) throw new Error('backend 502'); // lookup THROWS
+      throw new Error(`unexpected fetch ${u}`);
+    });
+
+    const result = await coordinator.requestReceiptPrint('order-1');
+    expect(result).toMatchObject({ success: true, receiptPrinted: true, skipped: true, reason: 'no-printer' });
+    expect(result.error).toContain('backend 502');
+    expect(countJobsPosts(fetchMock)).toBe(0);
+    assertHardRails(fetchMock);
   });
 
   test('printer-assigned happy path creates ONE job, polls to PRINTED, returns receiptPrinted:true', async () => {
@@ -296,5 +317,40 @@ describe('android remote receipt-print coordinator (E1a)', () => {
     const status = await coordinator.getPrinterStatus();
     expect(status).toMatchObject({ assigned: true, printerId: 'printer-1' });
     assertHardRails(fetchMock);
+  });
+
+  test('assignment lookup ERRORS are cached briefly, not for the full TTL (B2)', async () => {
+    // B2 (2026-08-06): a transient 401/5xx/network error on the assignment
+    // lookup was negative-cached for the FULL TTL — so one transient error
+    // silently routed up to a minute of sales down the no-printer path. An
+    // error result is now cached only briefly; a genuine "no assignment" 200
+    // keeps the full TTL.
+    let calls = 0;
+    const { coordinator, fetchMock } = await buildCoordinator({ assignmentCacheTtlMs: 60_000 });
+    fetchMock.mockImplementation(async (url: unknown) => {
+      const u = String(url);
+      if (u.includes('/printer-assignments')) {
+        calls += 1;
+        if (calls === 1) throw new Error('backend 502');   // transient error
+        return jsonResponse(ASSIGNED);                      // then healthy
+      }
+      throw new Error(`unexpected fetch ${u}`);
+    });
+
+    vi.useFakeTimers();
+    try {
+      const first = await coordinator.getPrinterStatus(false);
+      expect(first.assigned).toBe(false);            // error → unresolved this attempt
+
+      // > 5s error TTL, well inside the 60s full TTL → the error cache must have
+      // expired and the lookup re-resolved.
+      await vi.advanceTimersByTimeAsync(6_000);
+      const second = await coordinator.getPrinterStatus(false);
+      expect(second.assigned).toBe(true);            // error cache expired → re-resolved
+      expect(calls).toBe(2);
+      assertHardRails(fetchMock);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

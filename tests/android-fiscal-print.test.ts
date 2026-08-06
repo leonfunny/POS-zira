@@ -168,6 +168,51 @@ describe('android remote fiscal-print coordinator (E-FISCAL)', () => {
     expect(fetchMock.mock.calls.length).toBe(callsBefore); // no HTTP at all
   });
 
+  test('fiscal print refuses on an unpaired terminal (no machineId → no idempotency key, no job created)', async () => {
+    // B1 (2026-08-06): a fiscal job without an idempotency key can print a
+    // DUPLICATE fiscal document on resubmit. machineId is the key's device
+    // component, so an unpaired terminal (no machineId) must refuse — never
+    // submit a key-less fiscal job. The fiscal printer IS assigned here, so the
+    // refusal is about pairing, not assignment.
+    // machineId gotcha (remote-print.ts:495-499): the config-store machineId is
+    // read FIRST and only falls back to the option. The seed has no machineId,
+    // and '' survives the harness's `?? 'device-1'` to fall through to undefined.
+    const { coordinator, fetchMock } = await buildCoordinator({ machineId: '' });
+    fetchMock.mockImplementation(async (url: unknown) => {
+      const u = String(url);
+      if (u.includes('/printer-assignments')) return jsonResponse(ASSIGNED_FISCAL);
+      throw new Error(`unexpected fetch ${u}`);
+    });
+
+    const result = await coordinator.requestFiscalPrint('order-1');
+    expect(result.success).toBe(false);
+    expect(result.fiscalPrinted).toBe(false);
+    expect(result.reason).toBe('failed');
+    expect(result.error).toContain('fiscal-idempotency-unavailable');
+    // The critical assertion: NO fiscal job was ever created.
+    expect(countJobsPosts(fetchMock)).toBe(0);
+    assertHardRails(fetchMock);
+  });
+
+  test('no-fiscal-printer skip via a FAILING assignment lookup surfaces the resolver error (fields unchanged)', async () => {
+    // P1.3 (2026-08-06): the skip result must carry the resolver error for
+    // diagnosability — a transient 401/5xx looks identical to "no fiscal
+    // printer" from the cashier's seat without it. The skip outcome itself is
+    // unchanged; only an optional `error` field is added.
+    const { coordinator, fetchMock } = await buildCoordinator();
+    fetchMock.mockImplementation(async (url: unknown) => {
+      const u = String(url);
+      if (u.includes('/printer-assignments')) throw new Error('backend 502'); // lookup THROWS
+      throw new Error(`unexpected fetch ${u}`);
+    });
+
+    const result = await coordinator.requestFiscalPrint('order-1');
+    expect(result).toMatchObject({ success: true, fiscalPrinted: false, skipped: true, reason: 'no-fiscal-printer' });
+    expect(result.error).toContain('backend 502');
+    expect(countJobsPosts(fetchMock)).toBe(0);
+    assertHardRails(fetchMock);
+  });
+
   test('fiscal printer assigned + job COMPLETED → fiscalPrinted:true, ONE job, fiscal contract body', async () => {
     const { coordinator, fetchMock } = await buildCoordinator();
     fetchMock.mockImplementation(async (url: unknown, init?: RequestInit) => {
@@ -408,6 +453,10 @@ describe('android fiscal-print real-transport wiring (E-FISCAL)', () => {
 
   function build() {
     const configStore = new ShimConfigStore({ storage: memoryStorage() });
+    // Pair the device — mirrors main.ts:37 `ensureStableMachineId(configStore)`,
+    // which every real device runs at boot before any fiscal print. Without it
+    // the terminal is unpaired and the coordinator refuses fiscal print (B1).
+    configStore.setConfig({ machineId: 'android-test-1' });
     const tokenStore = new TokenStore({ storage: memoryStorage() });
     const transport = createRealTransport({
       configStore,

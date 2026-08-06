@@ -95,6 +95,11 @@ const FISCAL_PRINTER_ROLE: SalonPrinterRole = 'FISCAL_RECEIPT';
  *  (shared-receipt-printer.ts:26 — Windows uses 60s for an unavailable endpoint;
  *  E1a caches BOTH the positive and negative result for this window). */
 const DEFAULT_ASSIGNMENT_CACHE_TTL_MS = 60_000;
+/** B2 (2026-08-06): an ERROR from the assignment endpoint is cached only
+ *  briefly — long enough to not hammer a flaky endpoint mid-checkout, short
+ *  enough that one transient 5xx does not silently skip printing for a full
+ *  TTL of sales. Genuine "no assignment" answers keep the full TTL. */
+const ASSIGNMENT_ERROR_CACHE_TTL_MS = 5_000;
 /** Backend hold passed as `timeoutMs` on the create body
  *  (shared-print-retry-policy.ts:13). */
 const DEFAULT_COMPLETION_TIMEOUT_MS = 10_000;
@@ -554,7 +559,11 @@ export function createRemotePrintCoordinator(options: RemotePrintCoordinatorOpti
       // endpoint does not get hammered on every sale (shared-receipt-printer.ts:298-302).
       error = e instanceof Error ? e.message : String(e);
     }
-    assignmentCacheByRole.set(role, { printerId, error, expiresAt: now + assignmentCacheTtlMs });
+    // B2 (2026-08-06): an ERROR (401/5xx/network) is cached only briefly so one
+    // transient blip does not silently route a full TTL of sales down the
+    // no-printer path; a genuine "no assignment" 200 keeps the full TTL.
+    const ttl = error ? Math.min(assignmentCacheTtlMs, ASSIGNMENT_ERROR_CACHE_TTL_MS) : assignmentCacheTtlMs;
+    assignmentCacheByRole.set(role, { printerId, error, expiresAt: now + ttl });
     return { printerId, error, cached: false };
   };
 
@@ -635,12 +644,17 @@ export function createRemotePrintCoordinator(options: RemotePrintCoordinatorOpti
     isReprint: boolean,
     openDrawer: boolean,
   ): Promise<RemoteReceiptPrintResult> => {
-    const { printerId } = await resolvePrinterByRole(RECEIPT_PRINTER_ROLE);
+    const { printerId, error: resolveError } = await resolvePrinterByRole(RECEIPT_PRINTER_ROLE);
     if (!printerId) {
       // No remote receipt printer for this salon → Wave-1 skip. The receipt COPY
       // is reported PRINTED so PaymentModal does not enter the recovery overlay
-      // on every CASH sale (divergence #2 / EXPANSION_PLAN E1a).
-      return { success: true, receiptPrinted: true, skipped: true, reason: 'no-printer' };
+      // on every CASH sale (divergence #2 / EXPANSION_PLAN E1a). The resolver
+      // error (if any) is carried for diagnosability — a transient 401/5xx is
+      // otherwise indistinguishable from "no receipt printer".
+      return {
+        success: true, receiptPrinted: true, skipped: true, reason: 'no-printer',
+        ...(resolveError ? { error: resolveError } : {}),
+      };
     }
 
     const orderRepo = createOrderRepo(await db());
@@ -782,13 +796,32 @@ export function createRemotePrintCoordinator(options: RemotePrintCoordinatorOpti
 
   /** The actual fiscal print workflow (runs under the fiscal in-flight coalescer). */
   const runRequestFiscalPrint = async (orderId: string): Promise<RemoteFiscalPrintResult> => {
-    const { printerId } = await resolvePrinterByRole(FISCAL_PRINTER_ROLE);
+    const { printerId, error: resolveError } = await resolvePrinterByRole(FISCAL_PRINTER_ROLE);
     if (!printerId) {
       // No fiscal printer assigned → skip (hasFiscalPrinter gates this call
       // anyway). fiscalPrinted:false — a FALSE fiscal claim is a legal issue, so
       // unlike the receipt COPY (which reports printed on no-printer), the
-      // fiscal skip stays fiscalPrinted:false (EXPANSION_PLAN E-FISCAL).
-      return { success: true, fiscalPrinted: false, skipped: true, reason: 'no-fiscal-printer' };
+      // fiscal skip stays fiscalPrinted:false (EXPANSION_PLAN E-FISCAL). The
+      // resolver error (if any) is carried for diagnosability.
+      return {
+        success: true, fiscalPrinted: false, skipped: true, reason: 'no-fiscal-printer',
+        ...(resolveError ? { error: resolveError } : {}),
+      };
+    }
+
+    // B1 (2026-08-06): a fiscal job without an idempotency key can print a
+    // DUPLICATE fiscal document on resubmit. machineId is the key's device
+    // component (buildFiscalIdempotencyKey), so an unpaired terminal must
+    // refuse — never submit key-less. The receipt COPY path is unchanged
+    // (a duplicate copy is annoying, not illegal).
+    const cleanMachineId = String(machineId() || '').trim();
+    if (!cleanMachineId) {
+      return {
+        success: false,
+        fiscalPrinted: false,
+        reason: 'failed',
+        error: 'fiscal-idempotency-unavailable: terminal is not paired (missing machineId); pair the device before fiscal printing.',
+      };
     }
 
     const orderRepo = createOrderRepo(await db());
