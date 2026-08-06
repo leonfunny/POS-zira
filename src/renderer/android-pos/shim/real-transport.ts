@@ -45,6 +45,7 @@ import { currentPosSnapshotScope } from '../../../shared/pos/billiard-pos-handof
 import { createPeriodicOrderDrain } from '../../../shared/order-drain';
 import { resolvePosMode, SYNTHETIC_AUTH_USER } from './config-store';
 import { PosApiClient, type TokenProvider } from '../../android-pos/port/api-client';
+import { adaptServerOrder, adaptServerOrderItem } from '../port/server-order-adapter';
 import type {
   ShimGetUserResult,
   ShimLoginResult,
@@ -1468,6 +1469,28 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
       const order = orderRepo.getById(orderId);
       if (!order) return null;
       return { order, items: orderRepo.getItemsByOrderId(orderId) };
+    },
+    getServerOrders: async (params: any) => {
+      const limit = params?.limit ?? 20;
+      const unconfigured = { orders: [], items: {}, total: 0, page: 1, limit, source: 'unconfigured' as const };
+      // Windows parity (pos.module.ts:6971-6978): no token → 'unconfigured',
+      // not an error.
+      const token = await tokenStore.getAccessToken().catch(() => null);
+      if (!token) return unconfigured;
+      try {
+        const data = await client.getServerOrders(params ?? {});
+        const itemsMap: Record<string, any[]> = {};
+        const orders = data.orders.map((s: any) => {
+          const adapted = adaptServerOrder(s);
+          if (Array.isArray(s.items)) {
+            itemsMap[adapted.id] = s.items.map((item: any) => adaptServerOrderItem(item, adapted.id, s));
+          }
+          return adapted;
+        });
+        return { orders, items: itemsMap, total: data.total, page: data.page, limit: data.limit, source: 'server' as const };
+      } catch (err: any) {
+        return { orders: [], items: {}, total: 0, page: 1, limit, source: 'network-error' as const, error: err?.message ?? String(err) };
+      }
     },
 
     /** Cancel a not-yet-synced order: delete it locally + restock so it is
