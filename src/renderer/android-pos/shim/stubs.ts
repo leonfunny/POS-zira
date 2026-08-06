@@ -325,9 +325,17 @@ export function buildOrdersNamespace({ transport }: StubDeps) {
       [orderId],
       (): any => null,
     ),
-    getServerList: async () => ({
-      orders: [], items: {}, total: 0, page: 1, limit: 50, source: 'unconfigured' as const,
-    }),
+    // Delegate to the transport so Order History's server tab shows real
+    // backend orders (Windows pos.module.ts:6970). The synthetic fallback keeps
+    // the exact S2 'unconfigured' literal (pinned by tests).
+    getServerList: (params: any) => withTransport(
+      transport.getServerOrders,
+      [params],
+      () => ({
+        orders: [] as any[], items: {} as Record<string, any[]>, total: 0, page: 1,
+        limit: params?.limit ?? 50, source: 'unconfigured' as const,
+      }),
+    ),
     // Delegate to the transport so a shelved order is actually reset + re-drained
     // and the renderer's SyncFailurePanel sees a real {result:{status}}; the S2
     // stub returned bare success and the shelved order stayed stuck forever.

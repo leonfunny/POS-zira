@@ -208,6 +208,21 @@ export interface ShimTransport {
   /** Order history (local + server) — S9. */
   getOrderHistory?(filters: any): Promise<{ orders: any[]; total: number; page: number; limit: number }>;
   getOrderDetail?(orderId: string): Promise<{ order: any; items: any[] } | null>;
+  /**
+   * Server-side order list for Order History (S1 §2.G getServerList). Windows:
+   * pos.module.ts:6970 → GET /api/v1/b2b/pos/orders (staff JWT), rows adapted
+   * via adaptServerOrder/-Item. Never throws — network/auth failures map to
+   * source:'network-error' / 'unconfigured' exactly like Windows.
+   */
+  getServerOrders?(params: any): Promise<{
+    orders: any[];
+    items: Record<string, any[]>;
+    total: number;
+    page: number;
+    limit: number;
+    source: 'server' | 'unconfigured' | 'network-error';
+    error?: string;
+  }>;
   /** Cancel/delete a not-yet-synced local order (+restock) so it never syncs. */
   cancelOrder?(orderId: string): Promise<{ success: boolean; restocked?: number; error?: string }>;
   deleteLocalOrder?(orderId: string): Promise<{ success: boolean; restocked?: number; error?: string }>;
