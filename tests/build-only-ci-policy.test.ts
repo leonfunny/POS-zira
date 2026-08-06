@@ -77,7 +77,12 @@ android {
 }
 `);
   write(root, 'android-pos/app/src/main/AndroidManifest.xml', `
-<manifest><application android:allowBackup="false" android:usesCleartextTraffic="false" /></manifest>
+<manifest>
+  <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+  <application android:allowBackup="false" android:usesCleartextTraffic="false">
+    <provider android:name="androidx.core.content.FileProvider" android:exported="false" />
+  </application>
+</manifest>
 `);
   write(root, 'android-pos/app/src/main/res/xml/network_security_config.xml', `
 <network-security-config><base-config cleartextTrafficPermitted="false" /></network-security-config>
@@ -216,7 +221,7 @@ describe('build-only CI policy', () => {
     ]));
   });
 
-  test('rejects installer permissions, cleartext, unsafe Capacitor navigation, and weak CSP', () => {
+  test('accepts the signed updater permission but rejects cleartext, unsafe navigation, and weak CSP', () => {
     const root = fixture();
     write(root, 'android-pos/app/src/main/AndroidManifest.xml', `
 <manifest><uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
@@ -226,7 +231,6 @@ describe('build-only CI policy', () => {
     write(root, 'src/renderer/android-pos/index.html', '<meta http-equiv="Content-Security-Policy" content="default-src *" />');
     const result = analyzeBuildOnlyPolicy(root);
     expect(result.failures).toEqual(expect.arrayContaining([
-      expect.stringContaining('installer/updater'),
       expect.stringContaining('backup'),
       expect.stringContaining('cleartext'),
       expect.stringContaining('unsafe navigation'),

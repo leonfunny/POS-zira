@@ -1,0 +1,18 @@
+{
+  "appId": "com.ziraai.posdiagnostics.dev.live",
+  "appName": "Zira POS Live",
+  "webDir": "dist/android-web",
+  "loggingBehavior": "debug",
+  "server": {
+    "url": "http://100.72.205.122:5173"
+  },
+  "android": {
+    "path": "android-pos",
+    "allowMixedContent": false,
+    "webContentsDebuggingEnabled": true,
+    "includePlugins": []
+  },
+  "cordova": {
+    "accessOrigins": []
+  }
+}

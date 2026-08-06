@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { createRealTransport } from '../src/renderer/android-pos/shim/real-transport';
 import { ShimConfigStore } from '../src/renderer/android-pos/shim/config-store';
 import { TokenStore, type TokenStoreStorage } from '../src/renderer/android-pos/shim/token-store';
+import type { AndroidDbInitOptions } from '../src/renderer/android-pos/shim/db/db';
 
 /** Node-friendly sql.js load — mirrors tests/android-shim-db.test.ts. */
 const NODE_LOCATE_FILE = null;
@@ -38,7 +39,7 @@ const LOGIN_BODY = {
   },
 };
 
-function build(overrides: { seed?: Record<string, unknown> } = {}) {
+function build(overrides: { seed?: Record<string, unknown>; dbInit?: AndroidDbInitOptions } = {}) {
   const configStore = new ShimConfigStore({
     storage: memoryStorage(),
     seed: overrides.seed as never,
@@ -48,7 +49,7 @@ function build(overrides: { seed?: Record<string, unknown> } = {}) {
   const transport = createRealTransport({
     configStore,
     tokenStore,
-    dbInit: { locateFile: NODE_LOCATE_FILE },
+    dbInit: overrides.dbInit ?? { locateFile: NODE_LOCATE_FILE },
     // No-op agent: these auth/order tests use mockResolvedValueOnce sequences, so
     // the real login-time /print-agent/my-key fetch would desync them. The
     // login→connect→socket path is covered by tests/android-agent-connect.test.ts.
@@ -104,6 +105,23 @@ describe('real transport auth', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url] = fetchMock.mock.calls[0];
     expect(String(url)).toContain('/api/v1/auth/login');
+  });
+
+  test('first real login does not treat the synthetic boot identity as a tenant switch', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(LOGIN_BODY));
+    const { transport } = build({
+      dbInit: {
+        locateFile: NODE_LOCATE_FILE,
+        persistence: {
+          loadImage: async () => null,
+          saveImage: async () => { throw new Error('database wipe must not run'); },
+        },
+      },
+    });
+
+    await expect(transport.loginWithEmail!('staff@salon.pl', 'pw')).resolves.toMatchObject({
+      success: true,
+    });
   });
 
   test('login without an access token fails without storing anything', async () => {

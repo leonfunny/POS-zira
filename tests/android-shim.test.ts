@@ -13,7 +13,10 @@ import {
   type PosAction,
   type PosState,
 } from '../src/renderer/android-pos/shim/pos-store';
-import { SYNTHETIC_AUTH_USER } from '../src/renderer/android-pos/shim/config-store';
+import {
+  ensureStableMachineId,
+  SYNTHETIC_AUTH_USER,
+} from '../src/renderer/android-pos/shim/config-store';
 import type { ShimTransport } from '../src/renderer/android-pos/shim/transport';
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -477,6 +480,18 @@ describe('android shim config store', () => {
     const b = new ShimConfigStore({ storage });
     expect(b.getConfig().posLanguage).toBe('vi');
     expect(b.getConfig().allowOversell).toBe(true);
+  });
+
+  test('creates one durable Android machine ID and never rotates it', () => {
+    const storage = makeMapStorage();
+    const first = new ShimConfigStore({ storage });
+
+    expect(ensureStableMachineId(first, () => 'device-uuid-1')).toBe('android-device-uuid-1');
+    expect(ensureStableMachineId(first, () => 'must-not-run')).toBe('android-device-uuid-1');
+
+    const afterRestart = new ShimConfigStore({ storage });
+    expect(ensureStableMachineId(afterRestart, () => 'must-not-run')).toBe('android-device-uuid-1');
+    expect(afterRestart.getRawConfig().machineId).toBe('android-device-uuid-1');
   });
 
   test('onConfigUpdated fires on setConfig', () => {

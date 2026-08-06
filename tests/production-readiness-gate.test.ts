@@ -168,6 +168,7 @@ describe('publish lane evaluation', () => {
 describe('merged manifest evaluation', () => {
   const goodManifest = [
     '<manifest package="com.ziraai.posdiagnostics.dev" android:versionName="1.0.23">',
+    '<uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>',
     '<application android:allowBackup="false" android:usesCleartextTraffic="false">',
     '</application></manifest>',
   ].join('\n');
@@ -176,10 +177,9 @@ describe('merged manifest evaluation', () => {
     expect(evaluateMergedManifest('debug', goodManifest, 'com.ziraai.posdiagnostics.dev')).toEqual([]);
   });
 
-  test('backup, cleartext, debuggable, installer permission, and package mismatch fail', () => {
+  test('backup, cleartext, debuggable, missing updater permission, and package mismatch fail', () => {
     const bad = [
       '<manifest package="pl.other.app">',
-      '<uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>',
       '<application android:allowBackup="true" android:usesCleartextTraffic="true" android:debuggable="true">',
       '</application></manifest>',
     ].join('\n');

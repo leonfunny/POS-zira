@@ -132,9 +132,8 @@ export function evaluateMergedManifest(variant, xml, expectedApplicationId) {
   if (attribute('android:allowBackup') !== 'false') failures.push(`${variant}: allowBackup is not false`);
   if (attribute('android:usesCleartextTraffic') !== 'false') failures.push(`${variant}: cleartext traffic is not disabled`);
   if (/android:debuggable="true"/i.test(xml)) failures.push(`${variant}: debuggable build`);
-  if (/REQUEST_INSTALL_PACKAGES|REQUEST_DELETE_PACKAGES/.test(xml)) {
-    failures.push(`${variant}: installer/updater permission present`);
-  }
+  if (!/REQUEST_INSTALL_PACKAGES/.test(xml)) failures.push(`${variant}: signed updater permission missing`);
+  if (/REQUEST_DELETE_PACKAGES/.test(xml)) failures.push(`${variant}: package deletion permission present`);
   return failures;
 }
 

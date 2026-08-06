@@ -101,10 +101,13 @@ describe('Android Stage 1 native policy', () => {
     // diagnostics-era app was deliberately offline; the POS app has been
     // network-dependent since S3, and the missing permission killed every
     // request with a bare "Failed to fetch" on the first real device run.
-    // INTERNET is REQUIRED; everything else stays deny-by-default.
+    // INTERNET and the owner-approved signed updater lane are required;
+    // everything else stays deny-by-default.
     expect(manifest).toContain('android.permission.INTERNET');
-    expect(manifest).not.toContain('androidx.core.content.FileProvider');
-    expect(manifest).not.toContain('android.support.FILE_PROVIDER_PATHS');
+    expect(manifest).toContain('android.permission.REQUEST_INSTALL_PACKAGES');
+    expect(manifest).toContain('androidx.core.content.FileProvider');
+    expect(manifest).toContain('android.support.FILE_PROVIDER_PATHS');
+    expect(manifest).toContain('android:exported="false"');
     expect(networkPolicy).toContain('cleartextTrafficPermitted="false"');
     for (const domain of ['root', 'file', 'database', 'sharedpref', 'external']) {
       expect(backupRules).toContain(`<exclude domain="${domain}" path="." />`);

@@ -37,6 +37,7 @@ import { io } from 'socket.io-client';
 
 import type { ShimConfigStore } from './config-store';
 import type { AgentConfig } from '../../../shared/types';
+import type { DeviceCommandEvent, DeviceCommandResult } from './device-command';
 
 /** Socket-client reconnect policy — mirrors socket-client.ts:23-24,48-49. */
 const MAX_RECONNECT_ATTEMPTS = 10;
@@ -48,6 +49,7 @@ const PUSHED_STATUS_MAX = 100;
  *  stand in for tests without a real network. */
 export interface MinimalAgentSocket {
   on(event: string, listener: (...args: any[]) => void): unknown;
+  emit(event: string, payload: unknown): unknown;
   disconnect(): unknown;
   connected?: boolean;
 }
@@ -85,6 +87,8 @@ export interface AgentConnectDeps {
   ioFactory?: AgentIoFactory;
   /** Injected logger (no-op by default); NEVER receives the key value. */
   log?: (message: string) => void;
+  /** Fail-closed allowlisted device command executor. */
+  handleDeviceCommand?: (command: DeviceCommandEvent) => Promise<DeviceCommandResult>;
 }
 
 export interface AgentConnectResult {
@@ -125,6 +129,18 @@ export function createAgentConnection(deps: AgentConnectDeps): AgentConnection {
   let epoch = 0;
   const pushedStatuses = new Map<string, PushedJobStatus>();
   const jobStatusListeners = new Set<(payload: PushedJobStatus) => void>();
+  const commandResults = new Map<string, DeviceCommandResult>();
+  const commandRuns = new Map<string, Promise<DeviceCommandResult>>();
+
+  const rememberCommandResult = (commandId: string, result: DeviceCommandResult): void => {
+    if (commandResults.has(commandId)) commandResults.delete(commandId);
+    commandResults.set(commandId, result);
+    while (commandResults.size > 100) {
+      const oldest = commandResults.keys().next().value;
+      if (oldest === undefined) break;
+      commandResults.delete(oldest);
+    }
+  };
 
   const machineId = (): string | undefined => {
     const raw = String(
@@ -237,6 +253,35 @@ export function createAgentConnection(deps: AgentConnectDeps): AgentConnection {
         socket.on('job:new', (job: any) => {
           log(`[agent-connect] unexpected job:new dispatch to a submitter terminal (jobId=${job?.jobId ?? job?.id ?? '?'}) — ignored, not fulfilled`);
         });
+        socket.on('device:command', (command: DeviceCommandEvent) => {
+          const commandId = String(command?.commandId || '');
+          if (!commandId) return;
+          const emitResult = (result: DeviceCommandResult) => {
+            socket?.emit('device:command-result', { commandId, ...result });
+          };
+          const cached = commandResults.get(commandId);
+          if (cached) {
+            emitResult(cached);
+            return;
+          }
+          let run = commandRuns.get(commandId);
+          if (!run) {
+            run = deps.handleDeviceCommand
+              ? deps.handleDeviceCommand(command)
+              : Promise.resolve({ status: 'FAILED', error: 'device-command-handler-unavailable' });
+            commandRuns.set(commandId, run);
+          }
+          void run
+            .catch((error: any): DeviceCommandResult => ({
+              status: 'FAILED',
+              error: String(error?.message || error).slice(0, 500),
+            }))
+            .then((result) => {
+              commandRuns.delete(commandId);
+              rememberCommandResult(commandId, result);
+              emitResult(result);
+            });
+        });
         return { connected: true };
       } catch (e: any) {
         log(`[agent-connect] socket open failed: ${e?.message || e}`);
@@ -251,6 +296,7 @@ export function createAgentConnection(deps: AgentConnectDeps): AgentConnection {
       socket = null;
       connected = false;
       pushedStatuses.clear();
+      commandRuns.clear();
       await deps.tokenStore.clearPrintAgentKey();
     },
 

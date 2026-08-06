@@ -24,7 +24,7 @@ import '../index.css';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { installShim } from './shim';
-import { ShimConfigStore, resolvePosMode } from './shim/config-store';
+import { ensureStableMachineId, ShimConfigStore, resolvePosMode } from './shim/config-store';
 import { TokenStore } from './shim/token-store';
 import { createRealTransport } from './shim/real-transport';
 import { initStorageDurability } from './shim/storage-durability';
@@ -32,6 +32,9 @@ import { installBackGuard, nativeExitApp } from './shim/back-guard';
 import AndroidBootApp from './AndroidBootApp';
 
 const configStore = new ShimConfigStore();
+// Must exist before createRealTransport(): the REST registration and Socket.IO
+// handshake both use it to address this exact physical terminal.
+ensureStableMachineId(configStore);
 const tokenStore = new TokenStore();
 const transport = createRealTransport({ configStore, tokenStore });
 

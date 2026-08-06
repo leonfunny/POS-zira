@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Zira POS Live</string>
+    <string name="title_activity_main">Zira POS Live</string>
+    <string name="package_name">com.ziraai.posdiagnostics.dev.live</string>
+    <string name="custom_url_scheme">com.ziraai.posdiagnostics.dev.live</string>
+</resources>

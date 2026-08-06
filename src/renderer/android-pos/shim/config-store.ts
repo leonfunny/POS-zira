@@ -234,3 +234,35 @@ export class ShimConfigStore {
     }
   }
 }
+
+/**
+ * Give every physical Android terminal one durable identity before it opens
+ * the print-agent socket. The backend uses this value to select (or create)
+ * the exact print_agents row, so generating it after connect could address the
+ * wrong terminal when several devices share one salon API key.
+ *
+ * Existing identities are never rotated. `createId` is injectable so tests do
+ * not depend on the host's Web Crypto implementation.
+ */
+export function ensureStableMachineId(
+  store: ShimConfigStore,
+  createId: () => string = () => {
+    const cryptoApi = globalThis.crypto;
+    if (typeof cryptoApi?.randomUUID === 'function') return cryptoApi.randomUUID();
+    const bytes = new Uint8Array(16);
+    cryptoApi.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0'));
+    return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10).join('')}`;
+  },
+): string {
+  const existing = String(store.getRawConfig().machineId ?? '').trim();
+  if (existing) return existing;
+
+  const generated = String(createId()).trim();
+  if (!generated) throw new Error('Could not generate a stable Android machine ID');
+  const machineId = generated.startsWith('android-') ? generated : `android-${generated}`;
+  store.setConfig({ machineId });
+  return machineId;
+}

@@ -254,8 +254,10 @@ export function analyzeBuildOnlyPolicy(root, workflowPath = DEFAULT_WORKFLOW, op
   if (/release\s*\{[\s\S]*?debuggable\s+true/.test(gradle)) {
     failures.push('Android release build must not be debuggable');
   }
-  if (/REQUEST_INSTALL_PACKAGES|REQUEST_DELETE_PACKAGES/.test(manifest)) {
-    failures.push('Android POS must not request installer/updater permissions');
+  if (!/REQUEST_INSTALL_PACKAGES/.test(manifest)) failures.push('Android POS signed updater permission is missing');
+  if (/REQUEST_DELETE_PACKAGES/.test(manifest)) failures.push('Android POS must not request package deletion permission');
+  if (!/androidx\.core\.content\.FileProvider/.test(manifest) || !/android:exported="false"/.test(manifest)) {
+    failures.push('Android POS updater FileProvider must exist and remain non-exported');
   }
   if (!/android:allowBackup="false"/.test(manifest)) failures.push('Android backup must be disabled');
   if (!/android:usesCleartextTraffic="false"/.test(manifest)) failures.push('Android cleartext traffic must be disabled');

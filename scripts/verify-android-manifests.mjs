@@ -24,13 +24,16 @@ const manifests = [
   ['debug', 'android-pos/app/build/intermediates/merged_manifests/debug/processDebugManifest/AndroidManifest.xml'],
   ['release', 'android-pos/app/build/intermediates/merged_manifests/release/processReleaseManifest/AndroidManifest.xml'],
 ];
-const allowedProviders = new Set(['androidx.startup.InitializationProvider']);
+const allowedProviders = new Set(['androidx.startup.InitializationProvider', 'androidx.core.content.FileProvider']);
 const allowedUsedPermissions = new Set([
   'com.ziraai.posdiagnostics.dev.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION',
   // The staff-JWT fetch client (S3) and the print-agent socket (E-PARITY-1)
   // both live in the app process; without INTERNET every request dies as a
   // bare "Failed to fetch". Required below — everything else stays denied.
   'android.permission.INTERNET',
+  // Owner-approved self-update lane (2026-08-06). Android still displays its
+  // package installer confirmation unless the terminal is device-managed.
+  'android.permission.REQUEST_INSTALL_PACKAGES',
 ]);
 const allowedDeclaredPermissions = new Map([
   ['com.ziraai.posdiagnostics.dev.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION', 'signature'],
@@ -62,12 +65,12 @@ function verifyManifest(variant, relativePath) {
   // first real device run failed on every request. INTERNET is now REQUIRED;
   // every other permission remains deny-by-default via the allowlist below.
   if (!/android\.permission\.INTERNET/.test(manifest)) failures.push(`${variant}: INTERNET permission missing — every backend call fails without it`);
+  if (!/android\.permission\.REQUEST_INSTALL_PACKAGES/.test(manifest)) failures.push(`${variant}: REQUEST_INSTALL_PACKAGES missing — signed remote updates cannot open the Android installer`);
   if (attribute(application, 'allowBackup') !== 'false') failures.push(`${variant}: allowBackup is not false`);
   if (attribute(application, 'fullBackupContent') !== '@xml/backup_rules') failures.push(`${variant}: legacy backup exclusions are missing`);
   if (attribute(application, 'dataExtractionRules') !== '@xml/data_extraction_rules') failures.push(`${variant}: Android 12+ extraction rules are missing`);
   if (attribute(application, 'usesCleartextTraffic') !== 'false') failures.push(`${variant}: usesCleartextTraffic is not false`);
   if (attribute(application, 'debuggable') === 'true') failures.push(`${variant}: debuggable=true`);
-  if (/FileProvider|FILE_PROVIDER_PATHS|file_paths/.test(manifest)) failures.push(`${variant}: FileProvider surface present`);
 
   for (const match of manifest.matchAll(/<uses-permission\b([^>]*?)\/>/g)) {
     const name = attribute(match[1], 'name');
@@ -101,6 +104,14 @@ function verifyManifest(variant, relativePath) {
     if (kind === 'provider') {
       if (!allowedProviders.has(name)) failures.push(`${variant}: unexpected provider ${name || '<unnamed>'}`);
       if (exported !== 'false') failures.push(`${variant}: provider ${name || '<unnamed>'} is not exported=false`);
+      if (name === 'androidx.core.content.FileProvider') {
+        if (attribute(attributes, 'authorities') !== 'com.ziraai.posdiagnostics.dev.fileprovider') {
+          failures.push(`${variant}: updater FileProvider authority is not package-scoped`);
+        }
+        if (!/android\.support\.FILE_PROVIDER_PATHS/.test(body) || !/@xml\/file_paths/.test(body)) {
+          failures.push(`${variant}: updater FileProvider path policy is missing`);
+        }
+      }
     }
   }
 }

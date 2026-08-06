@@ -43,7 +43,7 @@ import { createServerShiftConsistency } from '../../../shared/pos/server-shift-c
 import { assertLocalOpenShiftMatchesSession, getVerifiedServerShiftMismatch } from '../../../shared/pos/open-shift-recovery';
 import { currentPosSnapshotScope } from '../../../shared/pos/billiard-pos-handoff';
 import { createPeriodicOrderDrain } from '../../../shared/order-drain';
-import { resolvePosMode } from './config-store';
+import { resolvePosMode, SYNTHETIC_AUTH_USER } from './config-store';
 import { PosApiClient, type TokenProvider } from '../../android-pos/port/api-client';
 import type {
   ShimGetUserResult,
@@ -68,6 +68,7 @@ import { createBilliardHandoff, type AndroidBilliardHandoff } from './billiard-h
 import { createHoldOrders, type AndroidHoldOrders } from './hold-orders';
 import { createBilliardHandoffRepo } from './db/billiard-handoff-repo';
 import { createEntitlementsController } from './entitlements';
+import { createDeviceCommandHandler, type DeviceCommandEvent, type DeviceCommandResult } from './device-command';
 import {
   buildBackendOrderItem,
   createOrderRepo,
@@ -725,11 +726,16 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
   // Windows counter). Created eagerly — this is just closures, NO socket opens
   // until connect() runs after login. Its socket-pushed job statuses feed the
   // print coordinator as the PRIMARY completion signal (HTTP poll is fallback).
+  let deviceCommandHandler = async (_command: DeviceCommandEvent): Promise<DeviceCommandResult> => ({
+    status: 'FAILED',
+    error: 'device-command-handler-not-ready',
+  });
   const agentConnection: AgentConnection = options.agentConnection ?? createAgentConnection({
     client,
     tokenStore,
     configStore,
     apiUrl: baseUrl,
+    handleDeviceCommand: (command) => deviceCommandHandler(command),
   });
 
   let printCoordinatorPromise: ReturnType<typeof createRemotePrintCoordinator> | null = null;
@@ -785,7 +791,15 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
     return run;
   }
 
+  let transport: ShimTransport & RealTransportEvents;
   let attachedPosStore: ShimPosStore | null = null;
+  deviceCommandHandler = createDeviceCommandHandler({
+    configStore,
+    db,
+    getPosStore: () => attachedPosStore,
+    syncProducts: () => transport.syncProducts?.() ?? Promise.resolve({ success: false, error: 'unsupported' }),
+    syncStaff: () => transport.syncStaff?.() ?? Promise.resolve({ success: false, error: 'unsupported' }),
+  });
   let handoff: AndroidBilliardHandoff | null = null;
   let holds: AndroidHoldOrders | null = null;
   /** Same lazy seam as the billiard handoff: no pos store attached yet → refuse
@@ -891,7 +905,7 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
     }
   };
 
-  const transport: ShimTransport & RealTransportEvents = {
+  transport = {
     // ── Billiard (Bi-a) online-only (T4) — reads + 10s poll, direct mutate,
     //    allowlisted apiCall. Spread in (no key collides with the ports below).
     ...billiard,
@@ -990,7 +1004,11 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         // its queued orders under the new salon (cross-tenant leak). Parity with
         // the Windows archive-then-clear on salon change (auth.module.ts:767-800).
         const previousSalonId = configStore.getRawConfig().salonId;
-        if (previousSalonId && previousSalonId !== authUser.salonId) {
+        if (
+          previousSalonId
+          && previousSalonId !== SYNTHETIC_AUTH_USER.salonId
+          && previousSalonId !== authUser.salonId
+        ) {
           // E-PARITY-1 cross-tenant guard: the PREVIOUS salon's pa_ key must
           // never connect THIS new salon's terminal to the old salon's
           // print-agent. Windows re-validates the stored key's salonId and
