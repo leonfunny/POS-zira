@@ -43,7 +43,7 @@ export const authTranslations: Record<Language, Record<string, string>> = {
 
     // Email
     'auth.identifier.label': 'Email, phone or username',
-    'auth.identifier.placeholder': 'baohan / +48 500 100 200 / you@email.com',
+    'auth.identifier.placeholder': 'username / +48 500 100 200 / you@email.com',
     'auth.password.label': 'Password',
     'auth.password.placeholder': 'Password',
     'auth.signInButton': 'Sign in',
@@ -97,7 +97,7 @@ export const authTranslations: Record<Language, Record<string, string>> = {
     'auth.telegram.tryAgain': 'Thử lại',
 
     'auth.identifier.label': 'Email, số điện thoại hoặc tên đăng nhập',
-    'auth.identifier.placeholder': 'baohan / +48 500 100 200 / you@email.com',
+    'auth.identifier.placeholder': 'tên đăng nhập / +48 500 100 200 / you@email.com',
     'auth.password.label': 'Mật khẩu',
     'auth.password.placeholder': 'Mật khẩu',
     'auth.signInButton': 'Đăng nhập',
@@ -148,7 +148,7 @@ export const authTranslations: Record<Language, Record<string, string>> = {
     'auth.telegram.tryAgain': 'Spróbuj ponownie',
 
     'auth.identifier.label': 'E-mail, telefon lub nazwa użytkownika',
-    'auth.identifier.placeholder': 'baohan / +48 500 100 200 / ty@email.com',
+    'auth.identifier.placeholder': 'nazwa użytkownika / +48 500 100 200 / ty@email.com',
     'auth.password.label': 'Hasło',
     'auth.password.placeholder': 'Hasło',
     'auth.signInButton': 'Zaloguj się',
@@ -199,7 +199,7 @@ export const authTranslations: Record<Language, Record<string, string>> = {
     'auth.telegram.tryAgain': 'Попробовать снова',
 
     'auth.identifier.label': 'Email, телефон или имя пользователя',
-    'auth.identifier.placeholder': 'baohan / +48 500 100 200 / вы@email.com',
+    'auth.identifier.placeholder': 'имя пользователя / +48 500 100 200 / вы@email.com',
     'auth.password.label': 'Пароль',
     'auth.password.placeholder': 'Пароль',
     'auth.signInButton': 'Войти',
@@ -250,7 +250,7 @@ export const authTranslations: Record<Language, Record<string, string>> = {
     'auth.telegram.tryAgain': 'Спробувати знову',
 
     'auth.identifier.label': 'Email, телефон або ім\'я користувача',
-    'auth.identifier.placeholder': 'baohan / +48 500 100 200 / ви@email.com',
+    'auth.identifier.placeholder': 'ім\'я користувача / +48 500 100 200 / ви@email.com',
     'auth.password.label': 'Пароль',
     'auth.password.placeholder': 'Пароль',
     'auth.signInButton': 'Увійти',
@@ -301,7 +301,7 @@ export const authTranslations: Record<Language, Record<string, string>> = {
     'auth.telegram.tryAgain': '重试',
 
     'auth.identifier.label': '邮箱、电话或用户名',
-    'auth.identifier.placeholder': 'baohan / +48 500 100 200 / you@email.com',
+    'auth.identifier.placeholder': '用户名 / +48 500 100 200 / you@email.com',
     'auth.password.label': '密码',
     'auth.password.placeholder': '密码',
     'auth.signInButton': '登录',
@@ -352,7 +352,7 @@ export const authTranslations: Record<Language, Record<string, string>> = {
     'auth.telegram.tryAgain': 'Tekrar dene',
 
     'auth.identifier.label': 'E-posta, telefon veya kullanıcı adı',
-    'auth.identifier.placeholder': 'baohan / +48 500 100 200 / siz@email.com',
+    'auth.identifier.placeholder': 'kullanıcı adı / +48 500 100 200 / siz@email.com',
     'auth.password.label': 'Şifre',
     'auth.password.placeholder': 'Şifre',
     'auth.signInButton': 'Giriş yap',

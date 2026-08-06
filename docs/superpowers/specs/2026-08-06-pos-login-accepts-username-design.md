@@ -53,8 +53,9 @@ renaming them would enlarge the diff without changing behaviour.
 - `auth.email.label` / `auth.email.placeholder` renamed to `auth.identifier.*`
   across all seven locales (en, vi, pl, ru, uk, zh, tr). This is a rename, not
   an addition: no other module referenced the old keys.
-- The label now names all three accepted forms; the placeholder shows one
-  example of each.
+- The label now names all three accepted forms, and the placeholder shows one
+  of each. The username slot is the translated word "username", not a sample
+  account name — a real name there reads as an instruction to type that name.
 
 ## Test
 
