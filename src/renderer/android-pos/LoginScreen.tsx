@@ -52,15 +52,23 @@ export default function LoginScreen({ onLoggedIn }: LoginScreenProps) {
           <div className="text-sm text-gray-500">Đăng nhập nhân viên</div>
         </div>
         <label className="block">
-          <span className="text-sm text-gray-700">Email</span>
+          <span className="text-sm text-gray-700">Email, số điện thoại hoặc tên đăng nhập</span>
+          {/* Not type="email": the backend accepts an email, a phone number or a
+              plain username (LoginDto validates none of them). A type="email"
+              input made the WebView block usernames before the request was ever
+              sent. inputMode keeps the @-bearing keyboard on a tablet. */}
           <input
-            type="email"
+            type="text"
+            inputMode="email"
             autoComplete="username"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-3 text-base"
-            placeholder="staff@salon.pl"
+            placeholder="tên đăng nhập / +48 500 100 200 / staff@salon.pl"
           />
         </label>
         <label className="block">
