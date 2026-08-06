@@ -830,14 +830,22 @@ export default function AuthScreen({ onLoginSuccess, onOfflineMode }: AuthScreen
             <div className="rounded-2xl border border-slate-200 bg-white/90 p-5 shadow-sm">
               <form onSubmit={handleEmailLogin} className="space-y-3">
                 <div>
-                  <label htmlFor="auth-email" className="block text-xs font-medium text-slate-600 mb-1">{t('auth.email.label')}</label>
+                  <label htmlFor="auth-email" className="block text-xs font-medium text-slate-600 mb-1">{t('auth.identifier.label')}</label>
+                  {/* Not type="email": the backend accepts an email, a phone number or a
+                      plain username (LoginDto validates none of them), and the web login
+                      uses a text field for the same reason. A type="email" input made
+                      Chromium block usernames before the request was ever sent. */}
                   <input
                     id="auth-email"
-                    type="email"
-                    autoComplete="email"
+                    type="text"
+                    inputMode="email"
+                    autoComplete="username"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder={t('auth.email.placeholder')}
+                    placeholder={t('auth.identifier.placeholder')}
                     className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
                     disabled={emailLoading}
                   />
