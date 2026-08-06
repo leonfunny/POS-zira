@@ -524,6 +524,16 @@ function isUnsafeProductSyncCursorError(error: any): boolean {
     && resetRequired === true;
 }
 
+/**
+ * Order ids whose durability flush failed AND whose rollback transaction also
+ * threw, so the in-memory order row survived. The duplicate-by-id guard in
+ * createOrder must not answer a retry for one of these with a lying
+ * `{success:true, duplicate:true}` — the row exists only in RAM and the image
+ * on disk is stale/unknown. Module-scope so it outlives a transport rebuild
+ * within the same page session (the process must be restarted to clear it).
+ */
+const durabilityFailedOrders = new Set<string>();
+
 // ─── Transport ─────────────────────────────────────────────────────────────
 
 export interface RealTransportOptions {
@@ -693,7 +703,6 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         entitlements.clear();
         orderDrain.stop();
         shiftConsistency.reset();
-      holds?.invalidateAuth();
         holds?.invalidateAuth();
         for (const cb of [...expiredListeners]) {
           try { cb(); } catch { /* a listener throwing must not break others */ }
@@ -1262,6 +1271,12 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         // instead of throwing a PK violation — otherwise the renderer would
         // re-ring under a new id and double-charge the customer.
         if (normalizedOrder.id && orderRepo.getById(normalizedOrder.id)) {
+          if (durabilityFailedOrders.has(normalizedOrder.id)) {
+            return {
+              success: false,
+              error: 'order-durability-failed: this order could not be persisted and its rollback also failed; restart the app before retrying.',
+            };
+          }
           return { success: true, id: normalizedOrder.id, duplicate: true } as any;
         }
 
@@ -1333,8 +1348,39 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         // restated inline because hand-copying this condition is exactly how the
         // guard went missing here in the first place.
         const allowNegative = (configStore.getRawConfig() as any).allowOversell === true;
+        // Durability rollback needs the PRE-decrement rows, captured verbatim.
+        // Arithmetic reverse (+quantity) would fabricate phantom stock whenever
+        // the MAX(0, …) clamp below truncated the decrement, and
+        // orderRepo.deleteLocalUnsynced is not reusable here (it refuses
+        // billiard-origin orders outright and restocks on a DIFFERENT predicate
+        // than shouldDecrementStockAtCheckout). The WebView is single-threaded
+        // and this function runs synchronously between capture and rollback, so
+        // no other writer can interleave.
+        const stockSnapshot: Array<{ id: string; in_stock: number; available_qty: number }> = [];
+        // Capture each variant AT MOST ONCE. The cart merges lines only when
+        // variantId AND staffId AND course all match (pos-store.ts
+        // cart/addItem), so one variant can legitimately span several lines —
+        // the same service sold by two technicians. A per-line capture would
+        // read the already-decremented value on the second pass and restore
+        // short by that line's quantity.
+        const snapshotted = new Set<string>();
         for (const item of normalizedItems) {
           if (shouldDecrementStockAtCheckout(item, Boolean(normalizedOrder.billiard_origin_json))) {
+            const variantId = String(item.variant_id ?? '');
+            if (variantId && !snapshotted.has(variantId)) {
+              snapshotted.add(variantId);
+              const before = database.get<{ in_stock: number; available_qty: number }>(
+                'SELECT in_stock, available_qty FROM product_variants WHERE id = ?',
+                [item.variant_id],
+              );
+              if (before) {
+                stockSnapshot.push({
+                  id: variantId,
+                  in_stock: before.in_stock,
+                  available_qty: before.available_qty,
+                });
+              }
+            }
             // Guard on track_inventory (Windows STOCK_TRACKED_GUARD_SQL) so
             // services / non-inventory items are not driven to phantom 0 stock.
             database.run(
@@ -1347,10 +1393,59 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         }
 
         // Paid orders must survive a crash — flush immediately (order-repo.ts:249-250).
-        await database.flush().catch(() => { /* debounced flush still pending */ });
+        // This is the durability barrier: until it succeeds the sale is NOT
+        // recorded, so a swallowed failure would tell the cashier a paid order
+        // exists when it only lives in RAM. Windows awaits database.save() and
+        // lets the failure surface; hold-orders.ts:117-128 fails closed on the
+        // same barrier. Do the same here.
+        let flushError: string | undefined;
+        try {
+          await database.flush();
+        } catch (e: any) {
+          flushError = e?.message || String(e);
+        }
+
+        if (flushError) {
+          // Undo the whole create in memory: the order rows go away and every
+          // captured variant row is written back verbatim (see stockSnapshot).
+          let rollbackDurabilityError: string | undefined;
+          try {
+            database.transaction(() => {
+              database.run('DELETE FROM order_items WHERE order_id = ?', [id]);
+              database.run('DELETE FROM orders WHERE id = ?', [id]);
+              for (const row of stockSnapshot) {
+                database.run(
+                  'UPDATE product_variants SET in_stock = ?, available_qty = ? WHERE id = ?',
+                  [row.in_stock, row.available_qty, row.id],
+                );
+              }
+            });
+            try {
+              await database.flush();
+            } catch (e: any) {
+              // The row is gone from memory (a retry still re-creates cleanly),
+              // but the persisted image is stale/unknown — say so.
+              rollbackDurabilityError = e?.message || String(e);
+            }
+          } catch (e: any) {
+            // sql.js should not fail on in-memory DELETE/UPDATE, but if it did
+            // the order row survives and the duplicate-by-id guard above would
+            // answer a retry with a lying {success:true, duplicate:true}.
+            if (id) durabilityFailedOrders.add(String(id));
+            rollbackDurabilityError = e?.message || String(e);
+          }
+          const failure: Record<string, unknown> = {
+            success: false,
+            error: `order-durability-failed: ${flushError}`,
+          };
+          if (rollbackDurabilityError) failure.rollbackDurabilityError = rollbackDurabilityError;
+          return failure as { success: boolean; error: string };
+        }
+
         // E2a §2.D: salon sales best-effort close each technician's turn on the
         // nail-turn board (mode:'salon' only). Fire-and-forget + swallowed — it
         // no-ops when the board is absent, so it can never break the sale.
+        // Success path only — a rolled-back order must not touch the board.
         void syncNailTurnCheckoutForOrder(normalizedOrder, normalizedItems);
         return { success: true, id };
       } catch (e: any) {
