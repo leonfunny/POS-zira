@@ -105,6 +105,13 @@ const NOT_PORTED_NAMESPACES: Record<string, string> = {
   tvAdPickVideo: DESKTOP_INTEGRATION,
   tvAdSave: DESKTOP_INTEGRATION,
 
+  // Billiard aux namespaces — SHIM_CONTRACT_S1 §2.N left these deliberately
+  // undefined on Android; the billiard UI reaches them through optional
+  // chaining, so an absent namespace degrades to a hidden panel rather than a
+  // crash. Windows wired them to the server in the history/daily-report wave.
+  dailyReport: 'Billiard daily report is a Windows-only aux panel (S1 §2.N). The Android billiard surface is online-only reads plus the money-path mutate; the report panel is reached via optional chaining and stays hidden.',
+  sessionHistory: 'Billiard session history is a Windows-only aux panel (S1 §2.N), same decision as dailyReport. Android reads live floor state; historical reporting belongs on the counter.',
+
   // Back-office modules
   ai: BACK_OFFICE,
   bookings: BACK_OFFICE,
