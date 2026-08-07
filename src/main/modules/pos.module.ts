@@ -25,8 +25,23 @@ import {
   type TenderFiscalLine,
 } from '../pos/fiscal-tender-preflight';
 import { buildBackendOrderItem, getLineSaleQuantity, getLineSaleUnit, getLineSellBy, getLineTotalGrosze, shouldDecrementStockAtCheckout } from '../pos/order-line-contract';
-import { submitSharedReceiptPrint } from '../printing/shared-receipt-printer';
+import {
+  reconcileSharedReceiptPrintJob,
+  submitSharedReceiptPrint,
+  type SharedReceiptJobIdentity,
+  type SharedReceiptPrintResult,
+} from '../printing/shared-receipt-printer';
 import { getSharedFiscalPrinterStatus, submitSharedFiscalPrint } from '../printing/shared-fiscal-printer';
+import {
+  ReceiptPrintOutbox,
+  type ReceiptPrintDispatchResult,
+} from '../printing/receipt-print-outbox';
+import {
+  receiptPrintOutboxRepo,
+  type ReceiptPrintOutboxRow,
+  type ReceiptPrintOutboxStatus,
+} from '../database/repos/receipt-print-outbox-repo';
+import { classifyPrintFailureAfterDriverCall } from '../printing/print-failure-classifier';
 import { toCashDrawerIpcResult } from '../pos/cash-drawer-ipc-result';
 import {
   buildRefundMutationError,
@@ -202,6 +217,7 @@ import type {
   PosScheduleStaffStatusPayload,
   SelectedService,
   LiveCustomerDisplayProfile,
+  ReceiptData,
 } from '../../shared/types';
 import { PrinterType, IPC_CHANNELS } from '../../shared/types';
 import {
@@ -421,6 +437,21 @@ function moneyGroszeToPln(grosze: number): number {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const POS_PAYMENT_PREFLIGHT_TTL_MS = 15 * 60 * 1000;
+const RECEIPT_PRINT_TERMINAL_RETENTION_MS = 14 * 24 * 60 * 60_000;
+// COMPLETED/CANCELLED are settled. NEEDS_REVIEW is also intentionally absent:
+// clicking reprint is the operator's deliberate action after checking paper.
+const MANUAL_REPRINT_BLOCKED_INITIAL_STATUSES = new Set<ReceiptPrintOutboxStatus>([
+  'PENDING',
+  'FAILED_SAFE',
+  'DISPATCHING',
+  'REMOTE_ACCEPTED',
+]);
+const REMOTE_RECEIPT_TERMINAL_STATUSES = new Set([
+  'COMPLETED',
+  'PRINTED',
+  'FAILED',
+  'CANCELLED',
+]);
 
 function positiveGrosze(value: unknown): number {
   const amount = Math.round(Number(value) || 0);
@@ -580,6 +611,99 @@ function getRefundExpectedDeltaCandidates(data: RefundIpcPayload, requestedAmoun
   return candidates;
 }
 
+function sharedReceiptOutboxResult(
+  shared: SharedReceiptPrintResult,
+  fixedIdentity?: SharedReceiptJobIdentity,
+): ReceiptPrintDispatchResult {
+  const printerId = fixedIdentity?.printerId || shared.printerId;
+  const remoteJobId = fixedIdentity?.jobId || shared.jobId;
+
+  if (
+    fixedIdentity
+    && (
+      (shared.printerId && shared.printerId !== fixedIdentity.printerId)
+      || (shared.jobId && shared.jobId !== fixedIdentity.jobId)
+    )
+  ) {
+    return {
+      kind: 'NEEDS_REVIEW',
+      route: 'SHARED_NETWORK',
+      printerId: fixedIdentity.printerId,
+      remoteJobId: fixedIdentity.jobId,
+      error: 'Shared receipt status returned a different printer/job identity',
+      failureClass: 'UNCERTAIN_AFTER_PRINT',
+    };
+  }
+
+  if (shared.printed) {
+    return {
+      kind: 'COMPLETED',
+      route: 'SHARED_NETWORK',
+      printerId,
+      remoteJobId,
+    };
+  }
+
+  const status = String(shared.status || '').trim().toUpperCase();
+  const nonTerminalStatus = [
+    'PENDING',
+    'QUEUED',
+    'SENT',
+    'ASSIGNED',
+    'PROCESSING',
+    'PRINTING',
+    'IN_PROGRESS',
+    'IN_FLIGHT',
+    'TIMEOUT',
+  ].includes(status);
+  if (
+    printerId
+    && remoteJobId
+    && (shared.stillPrinting === true || (shared.sent === true && nonTerminalStatus))
+  ) {
+    return {
+      kind: 'REMOTE_ACCEPTED',
+      route: 'SHARED_NETWORK',
+      printerId,
+      remoteJobId,
+      error: shared.error,
+    };
+  }
+
+  const error = shared.error || 'Shared receipt job did not complete';
+  // Once the backend has returned a job id, retries must reconcile that exact
+  // job. Never turn it back into FAILED_SAFE, which would call create again.
+  if (printerId && remoteJobId) {
+    return {
+      kind: 'NEEDS_REVIEW',
+      route: 'SHARED_NETWORK',
+      printerId,
+      remoteJobId,
+      error,
+      failureClass: shared.failureClass === 'SAFE_BEFORE_PRINT'
+        ? 'SAFE_BEFORE_PRINT'
+        : 'UNCERTAIN_AFTER_PRINT',
+    };
+  }
+
+  if (!shared.handled || shared.failureClass === 'SAFE_BEFORE_PRINT') {
+    return {
+      kind: 'FAILED_SAFE',
+      route: 'SHARED_NETWORK',
+      printerId,
+      error,
+    };
+  }
+
+  return {
+    kind: 'NEEDS_REVIEW',
+    route: 'SHARED_NETWORK',
+    printerId,
+    error,
+    failureClass: 'UNCERTAIN_AFTER_PRINT',
+  };
+}
+
 export class PosModule extends BaseModule {
   readonly name = 'pos';
 
@@ -591,6 +715,12 @@ export class PosModule extends BaseModule {
   private fiscalReceiptSyncInFlight = false;
   private productAdminMutationOutbox: ProductAdminMutationOutbox | null = null;
   private productAdminMutationReplayTimer: ReturnType<typeof setInterval> | null = null;
+  private receiptPrintOutbox: ReceiptPrintOutbox | null = null;
+  private receiptPrintReplayTimer: ReturnType<typeof setInterval> | null = null;
+  private receiptPrintDueTimer: ReturnType<typeof setTimeout> | null = null;
+  private receiptPrintReplayEnabled = false;
+  private receiptPrintReplayGeneration = 0;
+  private receiptPrintNotifiedStatuses = new Map<string, ReceiptPrintOutboxStatus>();
   private billiardHandoffInFlight = new Map<string, Promise<any>>();
   private billiardTenderBoundaryInFlight = new Set<string>();
   private restoredCartDispatchQueue: Promise<void> = Promise.resolve();
@@ -889,6 +1019,130 @@ export class PosModule extends BaseModule {
       recordPrintAttempt,
       recordFiscalReceipt,
     );
+    this.receiptPrintOutbox = new ReceiptPrintOutbox({
+      getScope: () => {
+        const config = getConfig();
+        const activeShift = database.get<{ id: string }>(
+          'SELECT id FROM shifts WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 1',
+        );
+        return {
+          salonId: String(config.salonId || '').trim(),
+          deviceId: String(config.machineId || config.agentId || '').trim(),
+          shiftId: activeShift?.id || null,
+        };
+      },
+      flush: () => database.saveCoalesced(),
+      dispatch: async (
+        row: ReceiptPrintOutboxRow,
+        payload: Record<string, unknown>,
+      ): Promise<ReceiptPrintDispatchResult> => {
+        const receiptData = payload as unknown as ReceiptData;
+        if (
+          !receiptData
+          || typeof receiptData !== 'object'
+          || String(receiptData.orderId || '') !== row.order_id
+          || !Array.isArray(receiptData.items)
+        ) {
+          return {
+            kind: 'NEEDS_REVIEW',
+            error: 'Stored receipt snapshot is invalid or belongs to another order',
+            failureClass: 'SAFE_BEFORE_PRINT',
+          };
+        }
+
+        if (row.status === 'REMOTE_ACCEPTED') {
+          const printerId = String(row.printer_id || '').trim();
+          const remoteJobId = String(row.remote_job_id || '').trim();
+          if (!printerId || !remoteJobId || row.route !== 'SHARED_NETWORK') {
+            return {
+              kind: 'NEEDS_REVIEW',
+              route: 'SHARED_NETWORK',
+              printerId: printerId || null,
+              remoteJobId: remoteJobId || null,
+              error: 'Accepted shared receipt is missing its fixed printer/job identity',
+              failureClass: 'UNCERTAIN_AFTER_PRINT',
+            };
+          }
+
+          // This path is intentionally before local-printer selection. Once
+          // POS1 has accepted a remote job, restart/replay may only poll that
+          // exact identity; it must never print locally or create another job.
+          const identity = { printerId, jobId: remoteJobId };
+          const shared = await reconcileSharedReceiptPrintJob(identity);
+          return sharedReceiptOutboxResult(shared, identity);
+        }
+
+        const localPrinterReady =
+          await this.paymentController!.isLocalReceiptPrinterReadyForOutbox();
+        if (!localPrinterReady) {
+          const shared = await submitSharedReceiptPrint(receiptData, {
+            referenceType: 'POS_RECEIPT',
+            referenceId: row.order_id,
+            source: 'pos-outbox',
+            openDrawer: row.open_drawer === 1,
+            returnOnAccepted: true,
+          });
+          return sharedReceiptOutboxResult(shared);
+        }
+
+        const route = 'LOCAL' as const;
+
+        try {
+          if (row.open_drawer === 1) {
+            const result = await this.paymentController!.printReceiptAndOpenDrawer(
+              row.order_id,
+              receiptData,
+              { localOnly: true },
+            );
+            if (result.receiptPrinted) {
+              return { kind: 'COMPLETED', route };
+            }
+
+            const error = result.error || 'Receipt was not printed';
+            // The cash drawer is itself an irreversible side effect. If the
+            // fallback pulse succeeded, never replay a combined receipt+drawer
+            // job automatically even when the paper write failed safely.
+            if (result.drawerOpened) {
+              return {
+                kind: 'NEEDS_REVIEW',
+                route,
+                error: `${error}; cash drawer already opened`,
+                failureClass: 'UNCERTAIN_AFTER_PRINT',
+              };
+            }
+
+            const failureClass = result.failureClass
+              ?? classifyPrintFailureAfterDriverCall(new Error(error), false);
+            return failureClass === 'SAFE_BEFORE_PRINT'
+              ? { kind: 'FAILED_SAFE', route, error }
+              : {
+                  kind: 'NEEDS_REVIEW',
+                  route,
+                  error,
+                  failureClass: 'UNCERTAIN_AFTER_PRINT',
+                };
+          }
+
+          await this.paymentController!.printReceipt(
+            row.order_id,
+            receiptData,
+            { throwOnFailure: true, localOnly: true },
+          );
+          return { kind: 'COMPLETED', route };
+        } catch (error: any) {
+          const failureClass = classifyPrintFailureAfterDriverCall(error, false);
+          const message = error?.message || String(error);
+          return failureClass === 'SAFE_BEFORE_PRINT'
+            ? { kind: 'FAILED_SAFE', route, error: message }
+            : {
+                kind: 'NEEDS_REVIEW',
+                route,
+                error: message,
+                failureClass: 'UNCERTAIN_AFTER_PRINT',
+              };
+        }
+      },
+    });
     this.shiftController = new ShiftController(
       getPrinterForType,
       isConnected,
@@ -2125,6 +2379,9 @@ export class PosModule extends BaseModule {
       logger.info(`[PosModule] IPC pos:get-state from window="${e.sender.getTitle?.() ?? 'unknown'}" → mode=${state?.display?.mode}`);
       return state;
     });
+    ipcMain.handle('pos:receipt-print-status:list', () => (
+      this.listUnresolvedReceiptPrintStatuses()
+    ));
     ipcMain.handle('pos:dispatch', async (_e, rendererAction) => {
       let authContext: PosAuthContext;
       try { authContext = this.capturePosAuthContext(); }
@@ -4924,12 +5181,25 @@ export class PosModule extends BaseModule {
     );
 
     // Orders
-    ipcMain.handle('pos:orders:create', async (_e, order, items) => {
+    ipcMain.handle('pos:orders:create', async (
+      _e,
+      order,
+      items,
+      receiptOptions?: { queueInitialReceipt?: boolean },
+    ) => {
       let committedBilliardRecord: BilliardHandoffRecord | null = null;
       let tenderedBilliardCart: { checkoutId: string; orderId: string } | null = null;
       let committedRestoredOrderId: string | null = null;
       let tenderedRestoredCart: { holdId: string; orderId: string } | null = null;
       let orderAuthContext: PosAuthContext | null = null;
+      let queuedReceiptJobId: string | null = null;
+      const existingReceiptQueueMeta = (orderId: string) => {
+        if (receiptOptions?.queueInitialReceipt !== true) return {};
+        const row = receiptPrintOutboxRepo.findInitialByOrder(orderId);
+        return row
+          ? { receiptQueued: true, receiptPrintJobId: row.job_id }
+          : {};
+      };
       try {
         orderAuthContext = this.capturePosAuthContext();
         const entryState = this.posStore?.getState();
@@ -5076,7 +5346,13 @@ export class PosModule extends BaseModule {
               };
             }
             return duplicateFlush.success
-              ? { success: true, id: durableJournal.orderId, duplicate: true, paymentCommitted: true }
+              ? {
+                  success: true,
+                  id: durableJournal.orderId,
+                  duplicate: true,
+                  paymentCommitted: true,
+                  ...existingReceiptQueueMeta(durableJournal.orderId),
+                }
               : {
                   success: false,
                   id: durableJournal.orderId,
@@ -5114,7 +5390,13 @@ export class PosModule extends BaseModule {
             await database.saveCoalesced();
           }
           return duplicateFlush.success
-            ? { success: true, id: billiardRecord.orderId, duplicate: true, paymentCommitted: true }
+            ? {
+                success: true,
+                id: billiardRecord.orderId,
+                duplicate: true,
+                paymentCommitted: true,
+                ...existingReceiptQueueMeta(billiardRecord.orderId),
+              }
             : {
                 success: false,
                 id: billiardRecord.orderId,
@@ -5158,7 +5440,29 @@ export class PosModule extends BaseModule {
           normalizedOrder.staff_name = orderShift.staff_name;
         }
 
-        const id = orderRepo.create(normalizedOrder, normalizedItems, (billiardRecord || restoredContext) ? {
+        const tenderMethods = new Set<string>();
+        if (normalizedOrder.payment_tenders) {
+          try {
+            const tenders = JSON.parse(normalizedOrder.payment_tenders);
+            if (Array.isArray(tenders)) {
+              for (const tender of tenders) {
+                const method = String(tender?.method || '').trim().toUpperCase();
+                if (method) tenderMethods.add(method);
+              }
+            }
+          } catch {
+            // The accounting assertion above validates canonical tenders. The
+            // single-method fallback below keeps this print-only decision safe.
+          }
+        }
+        const primaryTender = String(normalizedOrder.payment_method || '').trim().toUpperCase();
+        if (primaryTender) tenderMethods.add(primaryTender);
+        const queueInitialReceipt = receiptOptions?.queueInitialReceipt === true
+          && (tenderMethods.has('CASH') || tenderMethods.has('BLIK'));
+
+        const id = orderRepo.create(normalizedOrder, normalizedItems, (
+          billiardRecord || restoredContext || queueInitialReceipt
+        ) ? {
           afterInsertInTransaction: () => {
             if (billiardRecord && !billiardPosHandoffRepo.markState(billiardRecord.checkoutId, 'POS_PAID_SYNC_PENDING')) {
               throw new Error('Could not commit the Billiard payment safety state.');
@@ -5174,6 +5478,38 @@ export class PosModule extends BaseModule {
                   updatedAt: new Date().toISOString(),
                 },
               });
+            }
+
+            if (queueInitialReceipt) {
+              try {
+                const orderId = String(normalizedOrder.id || '').trim();
+                const receiptData = this.paymentController?.buildSaleReceiptData(orderId);
+                const config = getConfig();
+                const salonId = String(config.salonId || '').trim();
+                const deviceId = String(config.machineId || config.agentId || '').trim();
+                if (!orderId || !receiptData || !salonId || !deviceId) {
+                  throw new Error('receipt print intent is missing order/device/salon data');
+                }
+                const queued = receiptPrintOutboxRepo.enqueue({
+                  orderId,
+                  salonId,
+                  deviceId,
+                  shiftId: normalizedOrder.shift_id || null,
+                  openDrawer: tenderMethods.has('CASH'),
+                  payload: receiptData,
+                  createdAt: normalizedOrder.created_at || new Date().toISOString(),
+                });
+                queuedReceiptJobId = queued.job_id;
+              } catch (error: any) {
+                // Printing a non-fiscal copy must never roll back a paid sale.
+                // Returning receiptQueued=false below keeps the old blocking
+                // print fallback for this exceptional validation/config case.
+                queuedReceiptJobId = null;
+                logger.error(
+                  `[PosModule] Could not persist initial receipt intent; ` +
+                  `using synchronous fallback: ${error?.message || error}`,
+                );
+              }
             }
           },
         } : undefined);
@@ -5265,7 +5601,7 @@ export class PosModule extends BaseModule {
           const authStillCurrent = this.isPosAuthContextCurrent(orderAuthContext);
           if (!flush.success) {
             logger.error(`[PosModule] Order ${id} created but disk flush failed: ${flush.error}`);
-            if (billiardRecord || restoredContext) {
+            if (billiardRecord || restoredContext || queuedReceiptJobId) {
               if (restoredContext && authStillCurrent) {
                 // sql.js contains the order + PAID_TOMBSTONE. Even if the
                 // export failed, the last durable file is COMMITTING and will
@@ -5305,7 +5641,17 @@ export class PosModule extends BaseModule {
             };
           }
 
-          return { success: true, id, paymentCommitted: Boolean(billiardRecord || restoredContext) };
+          if (queuedReceiptJobId) {
+            void this.wakeReceiptPrintOutbox('checkout');
+          }
+          return {
+            success: true,
+            id,
+            paymentCommitted: Boolean(billiardRecord || restoredContext),
+            ...(queuedReceiptJobId
+              ? { receiptQueued: true, receiptPrintJobId: queuedReceiptJobId }
+              : {}),
+          };
       }
       catch (e: any) {
         if (committedBilliardRecord && orderRepo.getById(committedBilliardRecord.orderId)) {
@@ -5365,7 +5711,12 @@ export class PosModule extends BaseModule {
         const orderId = String(order?.id || '');
         if (orderId && /UNIQUE constraint failed: orders\.id/i.test(String(e?.message || '')) && orderRepo.getById(orderId)) {
           logger.warn(`[PosModule] Order ${orderId} already exists — treating duplicate create as success`);
-          return { success: true, id: orderId, duplicate: true };
+          return {
+            success: true,
+            id: orderId,
+            duplicate: true,
+            ...existingReceiptQueueMeta(orderId),
+          };
         }
         return { success: false, error: e.message };
       }
@@ -5456,8 +5807,23 @@ export class PosModule extends BaseModule {
         }
 
         if (!order.backend_id) return { success: false, error: 'Synced order is missing backend_id' };
+        const mutationAuthContext = this.capturePosAuthContext();
         const token = getSecureAuthToken();
         if (!token) return { success: false, error: 'Not authenticated' };
+        if (!['payment', 'items', 'void'].includes(String(data?.type || ''))) {
+          return { success: false, error: 'Unknown order mutation type' };
+        }
+        await this.prepareInitialReceiptForExternalOrderMutation(
+          orderId,
+          `Initial receipt cancelled before server ${data.type} mutation`,
+        );
+        if (!this.isPosAuthContextCurrent(mutationAuthContext)) {
+          return {
+            success: false,
+            requiresRefresh: true,
+            error: 'POS user changed while the receipt cancellation was being saved. No server mutation was submitted.',
+          };
+        }
 
         const basePayload = {
           mutationId,
@@ -5496,8 +5862,6 @@ export class PosModule extends BaseModule {
             ...basePayload,
             restock: data?.restock !== false,
           });
-        } else {
-          return { success: false, error: 'Unknown order mutation type' };
         }
 
         if (response === null) {
@@ -6163,7 +6527,24 @@ export class PosModule extends BaseModule {
         return { success: false, receiptPrinted: false, error: 'Reprint already in progress for this order' };
       }
       reprintsInFlight.add(orderId);
-      try { const printed = await this.paymentController?.reprintReceipt(orderId); return { success: true, receiptPrinted: printed ?? false }; }
+      try {
+        const initialReceipt = receiptPrintOutboxRepo.findInitialByOrder(orderId);
+        if (
+          initialReceipt
+          && MANUAL_REPRINT_BLOCKED_INITIAL_STATUSES.has(initialReceipt.status)
+        ) {
+          return {
+            success: false,
+            receiptPrinted: false,
+            error:
+              `Initial receipt is still in the automatic print queue `
+              + `(${initialReceipt.status}, job ${initialReceipt.job_id}). `
+              + 'Check the queue result before reprinting.',
+          };
+        }
+        const printed = await this.paymentController?.reprintReceipt(orderId);
+        return { success: true, receiptPrinted: printed ?? false };
+      }
       catch (e: any) { return { success: false, receiptPrinted: false, error: e.message }; }
       finally { reprintsInFlight.delete(orderId); }
     });
@@ -6285,6 +6666,17 @@ export class PosModule extends BaseModule {
 
         if (!this.isPosAuthContextCurrent(refundAuthContext)) {
           return { success: false, requiresRefresh: true, error: 'POS user changed before the refund was submitted.' };
+        }
+        await this.prepareInitialReceiptForExternalOrderMutation(
+          orderId,
+          'Initial receipt cancelled before server refund',
+        );
+        if (!this.isPosAuthContextCurrent(refundAuthContext)) {
+          return {
+            success: false,
+            requiresRefresh: true,
+            error: 'POS user changed while the receipt cancellation was being saved. No refund was submitted.',
+          };
         }
         const result = await apiClient.refundOrder(token, order.backend_id, backendPayload);
         if (result === null) return { success: false, error: 'Refund endpoint not available' };
@@ -6622,6 +7014,17 @@ export class PosModule extends BaseModule {
             error: 'POS user changed after the correction command was staged. No new server request was submitted.',
           };
         }
+        await this.prepareInitialReceiptForExternalOrderMutation(
+          orderId,
+          'Initial receipt cancelled before server Billiard correction',
+        );
+        if (!this.isPosAuthContextCurrent(correctionAuthContext)) {
+          return {
+            success: false,
+            requiresRefresh: true,
+            error: 'POS user changed while the receipt cancellation was being saved. No correction was submitted.',
+          };
+        }
 
         const result: any = correctionIntent.state === 'SERVER_CONFIRMED'
           ? correctionIntent.response
@@ -6956,8 +7359,20 @@ export class PosModule extends BaseModule {
         const order = orderRepo.getById(orderId);
         if (!order) return { success: false, error: 'Order not found' };
         if (!order.backend_id) return { success: false, error: 'Order not synced — cannot cancel on server' };
+        const cancelAuthContext = this.capturePosAuthContext();
         const token = getSecureAuthToken();
         if (!token) return { success: false, error: 'Not authenticated' };
+        await this.prepareInitialReceiptForExternalOrderMutation(
+          orderId,
+          'Initial receipt cancelled before server order cancellation',
+        );
+        if (!this.isPosAuthContextCurrent(cancelAuthContext)) {
+          return {
+            success: false,
+            requiresRefresh: true,
+            error: 'POS user changed while the receipt cancellation was being saved. No cancellation was submitted.',
+          };
+        }
         await apiClient.cancelOrder(token, order.backend_id);
         database.run("UPDATE orders SET status = 'CANCELLED' WHERE id = ?", [order.id]);
         database.markDirty();
@@ -7958,6 +8373,28 @@ export class PosModule extends BaseModule {
   }
 
   setupSocketHandlers(socket: SocketClient): void {
+    socket.on('job:updated', (data: any) => {
+      const status = String(data?.status || '').trim().toUpperCase();
+      const remoteJobId = String(data?.jobId || data?.id || '').trim();
+      if (!remoteJobId || !REMOTE_RECEIPT_TERMINAL_STATUSES.has(status)) return;
+
+      const serverTimestamp = Date.parse(String(
+        data?.completedAt || data?.updatedAt || data?.createdAt || '',
+      ));
+      const ingressMs = Number.isFinite(serverTimestamp)
+        ? Math.max(0, Date.now() - serverTimestamp)
+        : -1;
+      logger.info(
+        `[ReceiptLatency] remoteJob=${remoteJobId} socketStatus=${status} `
+        + `socketIngressMs=${ingressMs}`,
+      );
+
+      // The event status is never trusted as the outcome. It only wakes the
+      // exact durable REMOTE_ACCEPTED row, which then performs an authoritative
+      // status GET without creating a job, reprinting, or pulsing the drawer.
+      void this.wakeReceiptPrintOutbox(`job-updated:${status}`, remoteJobId);
+    });
+
     socket.on('elavon:payment-status-update', (data: any) => {
       const posWindow = this.windowManager?.getWindow('pos');
       if (posWindow && !posWindow.isDestroyed()) posWindow.webContents.send('pos:elavon-status', data);
@@ -8145,6 +8582,203 @@ export class PosModule extends BaseModule {
     this.productAdminMutationReplayTimer = null;
   }
 
+  private listUnresolvedReceiptPrintStatuses(): Array<{
+    jobId: string;
+    orderId: string;
+    orderNumber: string | null;
+    status: 'FAILED_SAFE' | 'NEEDS_REVIEW';
+    error: string | null;
+  }> {
+    try {
+      const config = getConfig();
+      const salonId = String(config.salonId || '').trim();
+      const deviceId = String(config.machineId || config.agentId || '').trim();
+      if (!salonId || !deviceId) return [];
+      const rows = database.all<ReceiptPrintOutboxRow & { order_number?: string | null }>(
+        `SELECT r.*, o.order_number
+         FROM receipt_print_outbox r
+         LEFT JOIN orders o ON o.id = r.order_id
+         WHERE r.salon_id = ? AND r.device_id = ?
+           AND r.status IN ('FAILED_SAFE', 'NEEDS_REVIEW')
+         ORDER BY r.seq ASC
+         LIMIT 100`,
+        [salonId, deviceId],
+      );
+      return rows.map((row) => ({
+        jobId: row.job_id,
+        orderId: row.order_id,
+        orderNumber: row.order_number || null,
+        status: row.status as 'FAILED_SAFE' | 'NEEDS_REVIEW',
+        error: row.last_error || null,
+      }));
+    } catch (error: any) {
+      logger.debug(`[PosModule] Receipt queue status replay deferred: ${error?.message || error}`);
+      return [];
+    }
+  }
+
+  private emitReceiptPrintStatusChanges(): void {
+    let rows: Array<ReceiptPrintOutboxRow & { order_number?: string | null }> = [];
+    try {
+      const config = getConfig();
+      const salonId = String(config.salonId || '').trim();
+      const deviceId = String(config.machineId || config.agentId || '').trim();
+      if (!salonId || !deviceId) return;
+      rows = database.all<ReceiptPrintOutboxRow & { order_number?: string | null }>(
+        `SELECT r.*, o.order_number
+         FROM receipt_print_outbox r
+         LEFT JOIN orders o ON o.id = r.order_id
+         WHERE r.salon_id = ? AND r.device_id = ?
+           AND r.status IN ('FAILED_SAFE', 'NEEDS_REVIEW', 'COMPLETED')
+         ORDER BY r.seq DESC
+         LIMIT 100`,
+        [salonId, deviceId],
+      );
+    } catch (error: any) {
+      logger.debug(`[PosModule] Receipt queue status scan deferred: ${error?.message || error}`);
+      return;
+    }
+
+    for (const row of rows.reverse()) {
+      if (this.receiptPrintNotifiedStatuses.get(row.job_id) === row.status) continue;
+      this.receiptPrintNotifiedStatuses.set(row.job_id, row.status);
+      notifyPosRenderers(this.container, 'pos:receipt-print-status', {
+        jobId: row.job_id,
+        orderId: row.order_id,
+        orderNumber: row.order_number || null,
+        status: row.status,
+        error: row.last_error || null,
+      });
+    }
+    while (this.receiptPrintNotifiedStatuses.size > 200) {
+      const oldest = this.receiptPrintNotifiedStatuses.keys().next().value;
+      if (!oldest) break;
+      this.receiptPrintNotifiedStatuses.delete(oldest);
+    }
+  }
+
+  /**
+   * External order mutations cannot share one SQLite transaction with the
+   * backend. Cancel a provably pre-dispatch snapshot and force that decision
+   * to disk before crossing the network side-effect boundary. Uncertain rows
+   * throw from the repository and preserve their exact printer/job evidence.
+   */
+  private async prepareInitialReceiptForExternalOrderMutation(
+    orderId: string,
+    reason: string,
+  ): Promise<void> {
+    const before = receiptPrintOutboxRepo.findInitialByOrder(orderId);
+    database.transaction(() => {
+      receiptPrintOutboxRepo.prepareInitialForOrderMutation(orderId, reason);
+    });
+    if (
+      before?.status !== 'PENDING'
+      && before?.status !== 'FAILED_SAFE'
+      && before?.status !== 'CANCELLED'
+    ) return;
+
+    // CANCELLED also needs a barrier: it may be the in-memory result of a
+    // prior attempt whose save failed while disk still contains PENDING.
+    const flush = await database.saveCoalesced();
+    if (!flush.success) {
+      const error = new Error(
+        `Đơn chưa được thay đổi vì không thể lưu trạng thái hủy tác vụ in: `
+        + `${flush.error || 'database flush failed'}`,
+      ) as Error & { code?: string };
+      error.code = 'RECEIPT_PRINT_CANCELLATION_NOT_DURABLE';
+      throw error;
+    }
+  }
+
+  private async wakeReceiptPrintOutbox(
+    reason: string,
+    remoteJobId?: string,
+  ): Promise<void> {
+    const generation = this.receiptPrintReplayGeneration;
+    if (!this.receiptPrintOutbox || !this.receiptPrintReplayEnabled) return;
+    try {
+      if (remoteJobId) {
+        await this.receiptPrintOutbox.nudgeRemoteJob(remoteJobId);
+      } else {
+        await this.receiptPrintOutbox.wake();
+      }
+    } catch (error: any) {
+      logger.warn(
+        `[PosModule] Receipt print queue wake (${reason}) deferred: ` +
+        `${error?.message || error}`,
+      );
+    } finally {
+      // A stop/destroy can run while a DB flush or remote status GET is in
+      // flight. Never let that stale completion resurrect an exact timer (or
+      // clear a newer generation's timer after a later restart).
+      if (
+        this.receiptPrintReplayEnabled
+        && generation === this.receiptPrintReplayGeneration
+      ) {
+        this.emitReceiptPrintStatusChanges();
+        this.scheduleReceiptPrintDueWake(generation);
+      }
+    }
+  }
+
+  private scheduleReceiptPrintDueWake(generation: number): void {
+    if (
+      !this.receiptPrintReplayEnabled
+      || generation !== this.receiptPrintReplayGeneration
+    ) return;
+    if (this.receiptPrintDueTimer) {
+      clearTimeout(this.receiptPrintDueTimer);
+      this.receiptPrintDueTimer = null;
+    }
+    if (!this.receiptPrintOutbox) return;
+
+    try {
+      const delayMs = this.receiptPrintOutbox.getNextWakeDelayMs();
+      if (delayMs === null) return;
+      const boundedDelayMs = Math.min(
+        2_147_000_000,
+        Math.max(1, Math.ceil(delayMs)),
+      );
+      this.receiptPrintDueTimer = setTimeout(() => {
+        this.receiptPrintDueTimer = null;
+        if (
+          !this.receiptPrintReplayEnabled
+          || generation !== this.receiptPrintReplayGeneration
+        ) return;
+        void this.wakeReceiptPrintOutbox('due');
+      }, boundedDelayMs);
+      this.receiptPrintDueTimer.unref?.();
+    } catch (error: any) {
+      logger.debug(
+        `[PosModule] Receipt print exact wake deferred: ${error?.message || error}`,
+      );
+    }
+  }
+
+  private startReceiptPrintReplayTimer(): void {
+    if (this.receiptPrintReplayTimer) return;
+    this.receiptPrintReplayEnabled = true;
+    this.receiptPrintReplayGeneration += 1;
+    void this.wakeReceiptPrintOutbox('startup');
+    this.receiptPrintReplayTimer = setInterval(() => {
+      void this.wakeReceiptPrintOutbox('timer');
+    }, 1_000);
+    this.receiptPrintReplayTimer.unref?.();
+  }
+
+  private stopReceiptPrintReplayTimer(): void {
+    this.receiptPrintReplayEnabled = false;
+    this.receiptPrintReplayGeneration += 1;
+    if (this.receiptPrintReplayTimer) {
+      clearInterval(this.receiptPrintReplayTimer);
+      this.receiptPrintReplayTimer = null;
+    }
+    if (this.receiptPrintDueTimer) {
+      clearTimeout(this.receiptPrintDueTimer);
+      this.receiptPrintDueTimer = null;
+    }
+  }
+
   async start(): Promise<void> {
     this.setState(ModuleState.RUNNING);
     try {
@@ -8157,6 +8791,24 @@ export class PosModule extends BaseModule {
     }
     this.startFiscalReceiptSyncTimer();
     this.startProductAdminMutationReplayTimer();
+    try {
+      const cutoff = new Date(
+        Date.now() - RECEIPT_PRINT_TERMINAL_RETENTION_MS,
+      ).toISOString();
+      const pruned = receiptPrintOutboxRepo.pruneTerminalBefore(cutoff);
+      if (pruned > 0) {
+        const flush = await database.saveCoalesced();
+        if (!flush.success) {
+          logger.warn(
+            `[PosModule] Pruned ${pruned} old receipt queue rows in memory, ` +
+            `but disk flush was deferred: ${flush.error || 'unknown error'}`,
+          );
+        }
+      }
+    } catch (error: any) {
+      logger.debug(`[PosModule] Receipt queue retention deferred: ${error?.message || error}`);
+    }
+    this.startReceiptPrintReplayTimer();
     // Set salon display info from config
     const config = getConfig();
     const salonSlug = config.salonSlug as string | undefined;
@@ -8169,6 +8821,7 @@ export class PosModule extends BaseModule {
   async stop(): Promise<void> {
     this.stopFiscalReceiptSyncTimer();
     this.stopProductAdminMutationReplayTimer();
+    this.stopReceiptPrintReplayTimer();
     this.windowManager?.destroy();
     if (this.posStore && typeof this.posStore.destroy === 'function') {
       this.posStore.destroy();
@@ -8179,6 +8832,7 @@ export class PosModule extends BaseModule {
   async destroy(): Promise<void> {
     this.stopFiscalReceiptSyncTimer();
     this.stopProductAdminMutationReplayTimer();
+    this.stopReceiptPrintReplayTimer();
     this.setState(ModuleState.STOPPED);
   }
 }

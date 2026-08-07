@@ -133,6 +133,8 @@ const NOT_PORTED_NAMESPACES: Record<string, string> = {
  */
 const KNOWN_PATH_GAPS: Record<string, string> = {
   'pos.loyalty.lookupCustomer': 'Loyalty lookup is not wired on the tablet yet; the rest of pos.loyalty is stubbed identically on both platforms. Port together with the loyalty wave.',
+  'pos.onReceiptPrintStatus': 'Windows streams the local receipt-print-outbox lifecycle (QUEUED/DISPATCHING/PRINTED) for jobs it spools itself. Android never spools locally — remote-print.ts owns the whole create-and-poll cycle against the print-agent and returns a terminal outcome to the caller, so there is no outbox to observe. Port only if Android ever gains a local spooler.',
+  'pos.listReceiptPrintStatuses': 'Reads the same Windows-only receipt-print-outbox table as pos.onReceiptPrintStatus. Android has no local outbox to list; the print outcome is the return value of the remote-print call. Port only if Android ever gains a local spooler.',
 };
 
 // ── Surface capture ─────────────────────────────────────────────────────────

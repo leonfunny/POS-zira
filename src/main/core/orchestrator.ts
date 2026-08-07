@@ -19,6 +19,7 @@ import { join } from 'path';
 import fs from 'fs';
 import { createHash, randomUUID } from 'crypto';
 import { execSync } from 'child_process';
+import { monitorEventLoopDelay } from 'perf_hooks';
 
 import { ServiceContainer } from './container';
 import { EventBus } from './event-bus';
@@ -112,6 +113,7 @@ export class AgentOrchestrator implements TrayManagerHost {
 
   private initStep = 0;
   private processMetricsTimer: ReturnType<typeof setInterval> | null = null;
+  private eventLoopDelayMonitor: ReturnType<typeof monitorEventLoopDelay> | null = null;
 
   constructor() {
     this.container = new ServiceContainer();
@@ -598,6 +600,10 @@ export class AgentOrchestrator implements TrayManagerHost {
       clearInterval(this.processMetricsTimer);
       this.processMetricsTimer = null;
     }
+    if (this.eventLoopDelayMonitor) {
+      this.eventLoopDelayMonitor.disable();
+      this.eventLoopDelayMonitor = null;
+    }
 
     // Remove IPC handlers registered by modules (per-channel, not blanket)
     for (const channel of Object.values(IPC_CHANNELS)) {
@@ -657,6 +663,8 @@ export class AgentOrchestrator implements TrayManagerHost {
    */
   private startProcessMetricsLog(): void {
     if (this.processMetricsTimer) return;
+    this.eventLoopDelayMonitor = monitorEventLoopDelay({ resolution: 20 });
+    this.eventLoopDelayMonitor.enable();
     this.processMetricsTimer = setInterval(() => {
       try {
         const parts = app.getAppMetrics().map((metric) => {
@@ -664,7 +672,16 @@ export class AgentOrchestrator implements TrayManagerHost {
           const cpu = (metric.cpu?.percentCPUUsage ?? 0).toFixed(0);
           return `${metric.type}#${metric.pid} ${memMb}MB cpu=${cpu}%`;
         });
-        logger.info(`[ProcessHealth] ${parts.join(' | ')}`);
+        const loop = this.eventLoopDelayMonitor;
+        const toMs = (nanoseconds: number): string => (
+          Number.isFinite(nanoseconds) ? (nanoseconds / 1_000_000).toFixed(1) : 'n/a'
+        );
+        const eventLoop = loop
+          ? `eventLoopMs p50=${toMs(loop.percentile(50))} `
+            + `p95=${toMs(loop.percentile(95))} max=${toMs(loop.max)}`
+          : 'eventLoopMs unavailable';
+        logger.info(`[ProcessHealth] ${parts.join(' | ')} | ${eventLoop}`);
+        loop?.reset();
       } catch (err: any) {
         logger.debug('[ProcessHealth] getAppMetrics failed:', err?.message);
       }

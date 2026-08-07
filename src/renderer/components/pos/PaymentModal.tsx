@@ -636,6 +636,12 @@ export default function PaymentModal({
     const seriesHasBlik = paymentSplitMode
       ? paymentTenders.some(t => t.method === 'BLIK')
       : paymentMethod === 'BLIK';
+    const printOrderCopy = shouldPrintNonFiscalOrderCopy({
+      hasCash: seriesHasCash,
+      hasBlik: seriesHasBlik,
+      hasFiscalPrinter,
+      mode: fiscalOnCashSale,
+    });
     const numberSeries: 'FISCAL' | 'ORDER' =
       seriesHasCash || seriesHasBlik || paymentMethod === 'INVOICE' ? 'ORDER' : 'FISCAL';
 
@@ -705,7 +711,12 @@ export default function PaymentModal({
       payable_total: item.billiard?.payableGrosze ?? item.total,
     }));
 
-    const result = await window.electronAPI.pos.orders.create(order, items);
+    const result = await window.electronAPI.pos.orders.create(order, items, {
+      // Main persists this intent in the same transaction as the paid order.
+      // It derives the drawer decision from the canonical tender, so renderer
+      // input can never open the drawer for a non-cash sale.
+      queueInitialReceipt: printOrderCopy,
+    });
     if (result && !result.success) {
       if (result.paymentCommitted) {
         // Main crossed the local money boundary. Lock this modal permanently
@@ -740,12 +751,8 @@ export default function PaymentModal({
       rlog.warn('[PaymentModal] Immediate order sync failed:', err);
     });
 
-    const hasCash = paymentSplitMode
-      ? paymentTenders.some(t => t.method === 'CASH')
-      : paymentMethod === 'CASH';
-    const hasBlik = paymentSplitMode
-      ? paymentTenders.some(t => t.method === 'BLIK')
-      : paymentMethod === 'BLIK';
+    const hasCash = seriesHasCash;
+    const hasBlik = seriesHasBlik;
 
     if (paymentMethod === 'INVOICE' && extraOrderFields?.customer_id) {
       try { await window.electronAPI.pos.customers.increaseDebt(extraOrderFields.customer_id, cart.total); }
@@ -761,12 +768,6 @@ export default function PaymentModal({
     //   then follow the terminal's CASH/BLIK fiscal mode.
     // CARD/TRANSFER: skip the order copy, fire the fiscal receipt directly.
     // INVOICE: skip both prints (debt already increased above).
-    const printOrderCopy = shouldPrintNonFiscalOrderCopy({
-      hasCash,
-      hasBlik,
-      hasFiscalPrinter,
-      mode: fiscalOnCashSale,
-    });
     const printOrderCopyWithDrawer = hasCash;
     const openDrawerAfterFiscal = hasCash && !printOrderCopy;
     const autoPrintFiscal = !printOrderCopy && paymentMethod !== 'INVOICE';
@@ -781,15 +782,23 @@ export default function PaymentModal({
     let printResult: PrintReceiptResponse | undefined;
     try {
       if (printOrderCopy) {
-        const printOrderCopyAction = printOrderCopyWithDrawer
-          ? window.electronAPI.pos.payment.printReceiptAndOpenDrawer(orderId)
-          : window.electronAPI.pos.payment.printReceipt(orderId);
-        printResult = await printOrderCopyAction.catch(
-          (err: unknown) => {
-            rlog.warn('[PaymentModal] Receipt print/drawer failed:', err);
-            return { success: false, receiptPrinted: false } as PrintReceiptResponse;
-          },
-        );
+        if (result?.receiptQueued) {
+          // The paid order and print intent are already durable. Let the
+          // cashier serve the next customer while main renders/spools in FIFO.
+          printResult = { success: true, receiptPrinted: false, receiptQueued: true };
+        } else {
+          // Compatibility fallback for an older main process during a partial
+          // update. New releases always return receiptQueued for this path.
+          const printOrderCopyAction = printOrderCopyWithDrawer
+            ? window.electronAPI.pos.payment.printReceiptAndOpenDrawer(orderId)
+            : window.electronAPI.pos.payment.printReceipt(orderId);
+          printResult = await printOrderCopyAction.catch(
+            (err: unknown) => {
+              rlog.warn('[PaymentModal] Receipt print/drawer failed:', err);
+              return { success: false, receiptPrinted: false } as PrintReceiptResponse;
+            },
+          );
+        }
       } else {
         // Synthesize a "skipped" outcome so deriveReceiptOutcome does not
         // emit a "receipt not printed" warning for non-cash flows.
