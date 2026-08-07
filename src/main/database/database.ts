@@ -435,6 +435,7 @@ class Database {
       'billiard_resources',
       'billiard_floor_plans',
       'billiard_mutation_queue',
+      'billiard_history_cache',    // offline history cache is per-salon data
       // Booking pipeline (FK order: bookings ← service_rules ← services).
       // Wiping these on salon switch / re-login matches the rest of the
       // tenant-isolation contract: the previous behavior left bookings

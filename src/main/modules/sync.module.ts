@@ -26,6 +26,9 @@ import { billiardFloorPlanRepo } from '../database/repos/billiard-floor-plan-rep
 import type { BackupRunReason, LocalBackupService } from '../database/backup-service';
 import { PrinterType, ReceiptData } from '../../shared/types';
 import { getConfig, getSecureAuthToken } from '../config/store';
+import { isFeatureEnabledStrict } from '../entitlements/entitlements-controller';
+import { onOrderFinalized } from '../events/pos-event-emitter';
+import { buildRetailMirrorPayload } from '../../shared/billiard-retail-mirror';
 import SocketClient from '../network/socket-client';
 import { notifyPosRenderers } from '../windows/notify-pos-renderers';
 import { ShiftController } from '../pos/shift-controller';
@@ -105,6 +108,31 @@ export class SyncModule extends BaseModule {
     this.container.set(SERVICE_TOKENS.BILLIARD_SYNC, this.billiardSync);
     this.container.set(SERVICE_TOKENS.STAFF_SYNC, this.staffSync);
     this.container.set(SERVICE_TOKENS.SYNC_LOG_SERVICE, this.syncLogService);
+
+    // Billiard salons: mirror every finished POS-tab retail order into the
+    // billiard ledger so counter retail shows up in the billiard history and
+    // report exactly like web-made retail. Queue-safe + idempotent (server
+    // dedupes on paymentAttemptId), so offline sales replay without ever
+    // double-booking; table-handoff orders are excluded by the builder.
+    onOrderFinalized((order, items) => {
+      try {
+        if (!isFeatureEnabledStrict('billiard', getConfig().entitlements)) return;
+        // Data gate: only salons that actually have pool tables mirror retail.
+        if (billiardResourceRepo.getAll().length === 0) return;
+        const payload = buildRetailMirrorPayload(order as any, items as any);
+        if (!payload) return;
+        void this.billiardSync
+          ?.executeMutation('retail_mirror', 'POST', '/billiard/retail/quick-sale', payload)
+          .then(() => {
+            logger.info(`[SyncModule] Retail order ${order.id.slice(0, 8)} mirrored to the billiard ledger`);
+          })
+          .catch((err: any) => {
+            logger.warn(`[SyncModule] billiard retail mirror failed for ${order.id.slice(0, 8)}: ${err?.message ?? err}`);
+          });
+      } catch (err: any) {
+        logger.warn(`[SyncModule] billiard retail mirror hook error: ${err?.message ?? err}`);
+      }
+    });
 
     // Path A outbound timers start as fallback — stopped once Path B push detected.
     this.orderSync.startPeriodicSync();
@@ -292,6 +320,36 @@ export class SyncModule extends BaseModule {
     ipcMain.handle('billiard:mutate', async (_event, op: string, method: string, path: string, body?: any) => {
       if (!this.billiardSync) return { success: false, error: 'Billiard sync not initialized' };
       return await this.billiardSync.executeMutation(op, method, path, body);
+    });
+
+    ipcMain.handle('billiard:session-history:get', async (_event, params: any) => {
+      try {
+        if (!this.billiardSync) return { success: false, error: 'Billiard sync not initialized' };
+        const data = await this.billiardSync.getSessionHistory(params ?? {});
+        return { success: true, data };
+      } catch (e: any) {
+        logger.warn(`[SyncModule] billiard:session-history:get error: ${e.message}`);
+        return { success: false, error: e.message };
+      }
+    });
+
+    ipcMain.handle('billiard:session-history:tables', async () => {
+      try {
+        const rows = billiardResourceRepo.getAll();
+        return { success: true, data: rows.map((r: any) => ({ id: r.id, name: r.name })) };
+      } catch (e: any) {
+        return { success: false, error: e.message };
+      }
+    });
+
+    ipcMain.handle('billiard:daily-report:get', async (_event, dateFrom: string, dateTo: string) => {
+      try {
+        if (!this.billiardSync) return { success: false, error: 'Billiard sync not initialized' };
+        const data = await this.billiardSync.getDailyReport(dateFrom, dateTo);
+        return { success: true, data };
+      } catch (e: any) {
+        return { success: false, error: e.message, code: e.code };
+      }
     });
 
     ipcMain.handle('billiard:sync:status', async () => {

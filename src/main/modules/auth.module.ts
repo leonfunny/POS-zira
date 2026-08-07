@@ -970,14 +970,34 @@ export class AuthModule extends BaseModule {
       logger.warn('[AuthModule] REST connect failed, proceeding with socket only:', err?.message);
     }
 
-    if (
-      options.expectedSalonId
-      && (!response?.salonId || response.salonId !== options.expectedSalonId)
-    ) {
-      throw new Error(
-        `Print-agent key belongs to salon ${response?.salonId || 'unknown'}, `
-        + `expected ${options.expectedSalonId}`,
+    if (options.expectedSalonId) {
+      // A transient REST outage must not prevent the already-paired device
+      // from opening its Socket.IO connection. The socket keeps reconnecting
+      // after this method's timeout, so it can recover when Windows networking
+      // becomes ready. Only trust the local identity on this offline path when
+      // both the stored key and stored salon exactly match the expected salon.
+      const canUseStoredIdentityWhileOffline = Boolean(
+        !response
+        && prevApiKey === apiKey
+        && prevSalonId
+        && prevSalonId === options.expectedSalonId
       );
+
+      if (
+        (response && response.salonId !== options.expectedSalonId)
+        || (!response && !canUseStoredIdentityWhileOffline)
+      ) {
+        throw new Error(
+          `Print-agent key belongs to salon ${response?.salonId || 'unknown'}, `
+          + `expected ${options.expectedSalonId}`,
+        );
+      }
+
+      if (canUseStoredIdentityWhileOffline) {
+        logger.warn(
+          '[AuthModule] REST identity unavailable; continuing with the unchanged key and stored salon identity',
+        );
+      }
     }
 
     const apiKeyChanged = Boolean(prevApiKey && prevApiKey !== apiKey);

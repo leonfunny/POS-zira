@@ -1,3 +1,4 @@
+import { EventEmitter } from 'events';
 import { describe, expect, it, vi } from 'vitest';
 import SocketClient from '../src/main/network/socket-client';
 
@@ -19,5 +20,28 @@ describe('SocketClient job status contract', () => {
       errorMessage: 'Printer not connected',
       failureClass: 'SAFE_BEFORE_PRINT',
     });
+  });
+
+  it('starts heartbeat after a late backend connection event', () => {
+    vi.useFakeTimers();
+    const client = new SocketClient();
+    const socket = new EventEmitter() as EventEmitter & {
+      connected: boolean;
+      disconnect: ReturnType<typeof vi.fn>;
+    };
+    socket.connected = true;
+    socket.disconnect = vi.fn();
+    const emitSpy = vi.spyOn(socket, 'emit');
+
+    (client as any).socket = socket;
+    (client as any).setupEventHandlers();
+    socket.emit('connected', { agentId: 'agent-1', pendingJobs: 0 });
+    emitSpy.mockClear();
+
+    vi.advanceTimersByTime(30000);
+
+    expect(emitSpy).toHaveBeenCalledWith('heartbeat', {}, expect.any(Function));
+    client.disconnect();
+    vi.useRealTimers();
   });
 });

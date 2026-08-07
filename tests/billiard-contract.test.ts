@@ -245,6 +245,39 @@ describe('billiard desktop/backend contract', () => {
     expect(isAllowedBilliardOperation('online_api', 'DELETE', '/billiard/floor-plans/floor-2')).toBe(true);
   });
 
+  it('allows the counter-parity routes (merge/split, shift) and refuses POS retail', () => {
+    // No retail UI in the billiard tab; finished POS-tab orders are mirrored
+    // into the billiard ledger through this queue-safe, idempotent route.
+    expect(getBilliardMutationPolicy('POST', '/billiard/retail/quick-sale')).toBe('queue-safe');
+    expect(isAllowedBilliardOperation('retail_mirror', 'POST', '/billiard/retail/quick-sale')).toBe(true);
+    expect(isAllowedBilliardOperation('online_api', 'POST', '/billiard/retail/quick-sale')).toBe(false);
+    expect(getBilliardMutationPolicy('GET', '/billiard/retail/today')).toBeNull();
+    expect(isAllowedBilliardOperation('merge_sessions', 'PATCH', '/billiard/sessions/merge')).toBe(true);
+    expect(isAllowedBilliardOperation('split_bill', 'POST', '/billiard/sessions/session-1/split')).toBe(true);
+    expect(isAllowedBilliardOperation('online_api', 'GET', '/billiard/shifts/current')).toBe(true);
+    expect(isAllowedBilliardOperation('open_shift', 'POST', '/billiard/shifts/open')).toBe(true);
+    // Wrong labels or stray paths stay rejected.
+    expect(getBilliardMutationPolicy('POST', '/billiard/shifts/close')).toBeNull();
+    expect(getBilliardMutationPolicy('DELETE', '/billiard/sessions/merge')).toBeNull();
+  });
+
+  it('allows the history/report reads and rejects lookalikes', () => {
+    expect(isAllowedBilliardOperation(
+      'online_api', 'GET',
+      '/billiard/sessions/history?from=2026-07-29&to=2026-07-31&limit=20&page=1&paymentStatus=PAID',
+    )).toBe(true);
+    expect(isAllowedBilliardOperation(
+      'online_api', 'GET', '/billiard/analytics?from=2026-07-29&to=2026-07-31',
+    )).toBe(true);
+    // Path traversal, extra segments and writes stay out.
+    expect(getBilliardMutationPolicy('GET', '/billiard/sessions/history?from=../etc')).toBeNull();
+    expect(getBilliardMutationPolicy('POST', '/billiard/sessions/history?from=2026-07-29')).toBeNull();
+    expect(getBilliardMutationPolicy('GET', '/billiard/analytics?from=now&to=later')).toBeNull();
+    // The plain GET-session rule still refuses the literal "history" segment
+    // (query-less), so nothing falls through to a wrong handler.
+    expect(isAllowedBilliardOperation('online_api', 'GET', '/billiard/sessions/history')).toBe(true);
+  });
+
   it('guards floor creation and reconciles floor CRUD with the local cache', () => {
     const floorPlan = readSource('../src/renderer/components/billiard/BilliardFloorPlan.tsx');
     const renameFloorDialog = readSource('../src/renderer/components/billiard/RenameFloorDialog.tsx');

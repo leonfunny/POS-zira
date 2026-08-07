@@ -58,6 +58,7 @@ import { AddItemToTabModal } from './AddItemToTabModal';
 import { TransferTableDialog } from './TransferTableDialog';
 import { PaymentDialog } from './PaymentDialog';
 import { UnsettledPanel } from './UnsettledPanel';
+import { ShiftChip } from './ShiftChip';
 import { EditPriceDialog } from './EditPriceDialog';
 import { ReservationPanel } from './ReservationPanel';
 import { RenameFloorDialog } from './RenameFloorDialog';
@@ -1133,6 +1134,14 @@ function FloorPlanInner({ language, onPreflightPos, onPayInPos, active = true }:
             </div>
           </div>
         </section>
+      )}
+
+      {!editMode && (
+        <ShiftChip
+          language={language}
+          online={syncStatus?.apiReachable !== false}
+          pollPaused={!active}
+        />
       )}
 
       {!editMode && unsettledSummary.count > 0 && (

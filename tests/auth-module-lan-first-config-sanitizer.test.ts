@@ -470,6 +470,53 @@ describe('AuthModule print-agent credential commit boundary', () => {
     expect(apiApplyConnectResponseMock).not.toHaveBeenCalled();
     expect(socket.connectWithApiKey).not.toHaveBeenCalled();
   });
+
+  it('opens the reconnecting socket with the unchanged key when the REST identity probe is temporarily offline', async () => {
+    const backup = { archiveSalon: vi.fn() };
+    const socket = {
+      isConnected: vi.fn(() => false),
+      disconnect: vi.fn(),
+      connectWithApiKey: vi.fn(),
+    };
+    apiConnectWithKeyMock.mockRejectedValue(new Error('network unavailable'));
+
+    await moduleForConnect(backup, socket).connectWithApiKey(
+      'pa_old',
+      { expectedSalonId: 'salon-old' },
+    );
+
+    expect(backup.archiveSalon).not.toHaveBeenCalled();
+    expect(apiApplyConnectResponseMock).not.toHaveBeenCalled();
+    expect(setSecureApiKeyMock).toHaveBeenCalledWith('pa_old');
+    expect(setConfigMock).toHaveBeenCalledWith({ isPaired: true });
+    expect(socket.connectWithApiKey).toHaveBeenCalledWith(
+      'https://api.example.test',
+      'pa_old',
+      'machine-1',
+    );
+  });
+
+  it('keeps the socket closed when REST is offline and the stored salon does not match the expected salon', async () => {
+    const backup = { archiveSalon: vi.fn() };
+    const socket = {
+      isConnected: vi.fn(() => false),
+      disconnect: vi.fn(),
+      connectWithApiKey: vi.fn(),
+    };
+    apiConnectWithKeyMock.mockRejectedValue(new Error('network unavailable'));
+
+    await expect(
+      moduleForConnect(backup, socket).connectWithApiKey(
+        'pa_old',
+        { expectedSalonId: 'salon-other' },
+      ),
+    ).rejects.toThrow('expected salon-other');
+
+    expect(backup.archiveSalon).not.toHaveBeenCalled();
+    expect(setSecureApiKeyMock).not.toHaveBeenCalled();
+    expect(apiApplyConnectResponseMock).not.toHaveBeenCalled();
+    expect(socket.connectWithApiKey).not.toHaveBeenCalled();
+  });
 });
 
 describe('AuthModule LAN_FIRST config sanitization', () => {

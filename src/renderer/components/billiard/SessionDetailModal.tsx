@@ -10,6 +10,8 @@ import {
   Timer,
   Loader2,
   X,
+  GitMerge,
+  SplitSquareHorizontal,
 } from 'lucide-react';
 import { useTranslation } from '../../i18n/useTranslation';
 import { Language } from '../../i18n/translations';
@@ -22,6 +24,8 @@ import {
 import { AddItemToTabModal } from './AddItemToTabModal';
 import { PaymentDialog } from './PaymentDialog';
 import { TransferTableDialog } from './TransferTableDialog';
+import { MergeBillDialog } from './MergeBillDialog';
+import { SplitBillDialog } from './SplitBillDialog';
 
 interface SessionDetailModalProps {
   session: any;
@@ -80,6 +84,8 @@ export function SessionDetailModal({
   const [addItemOpen, setAddItemOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [splitOpen, setSplitOpen] = useState(false);
 
   const isPackage = session?.billingMode === 'PACKAGE_COUNTDOWN' && session?.autoEndAt;
 
@@ -352,6 +358,22 @@ export function SessionDetailModal({
                   </button>
 
                   <button
+                    className="px-3 py-1.5 text-sm font-medium rounded-lg border border-slate-300 hover:bg-slate-50 flex items-center justify-center"
+                    onClick={() => setMergeOpen(true)}
+                  >
+                    <GitMerge className="w-4 h-4 mr-2" />
+                    {t('billiard.mergeBills') || 'Merge bills'}
+                  </button>
+
+                  <button
+                    className="px-3 py-1.5 text-sm font-medium rounded-lg border border-slate-300 hover:bg-slate-50 flex items-center justify-center"
+                    onClick={() => setSplitOpen(true)}
+                  >
+                    <SplitSquareHorizontal className="w-4 h-4 mr-2" />
+                    {t('billiard.splitBill') || 'Split bill'}
+                  </button>
+
+                  <button
                     className="px-3 py-1.5 text-sm font-medium rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 flex items-center justify-center sm:col-span-2"
                     onClick={() => setPaymentOpen(true)}
                   >
@@ -386,6 +408,22 @@ export function SessionDetailModal({
         sessionId={session.id}
         open={transferOpen}
         onOpenChange={setTransferOpen}
+        language={language}
+      />
+      <MergeBillDialog
+        currentSessionId={session.id}
+        open={mergeOpen}
+        onOpenChange={setMergeOpen}
+        language={language}
+        onMerged={() => {
+          void onRefetch?.();
+          onOpenChange(false);
+        }}
+      />
+      <SplitBillDialog
+        sessionId={session.id}
+        open={splitOpen}
+        onOpenChange={setSplitOpen}
         language={language}
       />
     </>

@@ -138,6 +138,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke(IPC_CHANNELS.BILLIARD_PRINT_OPEN_DRAWER),
   },
 
+  // Billiard history & daily report (server-first, offline cache for history)
+  sessionHistory: {
+    getTables: () => ipcRenderer.invoke('billiard:session-history:tables'),
+    get: (params: any) => ipcRenderer.invoke('billiard:session-history:get', params),
+  },
+  dailyReport: {
+    get: (dateFrom: string, dateTo: string) =>
+      ipcRenderer.invoke('billiard:daily-report:get', dateFrom, dateTo),
+  },
+
   // Generic REST API proxy (for billiard, etc.)
   apiCall: (method: string, path: string, body?: any) =>
     ipcRenderer.invoke(IPC_CHANNELS.API_CALL, method, path, body),

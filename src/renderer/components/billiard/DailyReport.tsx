@@ -50,6 +50,9 @@ interface ReportData {
   tableUtilization: TableUtilization[];
   topFnbItems: TopFnbItem[];
   hourlyBreakdown: HourlyBreakdown[];
+  /** Walk-in retail (contained in fnbRevenue) — reported by the server. */
+  retailRevenue?: number;
+  retailSessions?: number;
 }
 
 type DateRange = 'today' | 'yesterday' | 'week' | 'month' | 'custom';
@@ -151,8 +154,12 @@ export function DailyReport({ language, onClose }: DailyReportProps) {
   };
 
   const summary = data?.summary;
+  const hourlyUsesRevenue = !!data?.hourlyBreakdown?.some((h) => h.revenue > 0);
   const maxHourlyRevenue = data?.hourlyBreakdown
-    ? Math.max(...data.hourlyBreakdown.map((h) => h.revenue), 1)
+    ? Math.max(
+        ...data.hourlyBreakdown.map((h) => (hourlyUsesRevenue ? h.revenue : h.sessionCount)),
+        1,
+      )
     : 1;
 
   return (
@@ -280,7 +287,11 @@ export function DailyReport({ language, onClose }: DailyReportProps) {
                 icon={<UtensilsCrossed className="w-5 h-5" />}
                 label={t('report.fnbRevenue') || 'F&B Revenue'}
                 value={formatCurrency(summary.fnbRevenue)}
-                sub={`${t('report.timeRevenue') || 'Time'}: ${formatCurrency(summary.timeRevenue)}`}
+                sub={`${t('report.timeRevenue') || 'Time'}: ${formatCurrency(summary.timeRevenue)}${
+                  data?.retailRevenue
+                    ? ` · ${t('report.retailRevenue') || 'Retail (no table)'}: ${formatCurrency(data.retailRevenue)}`
+                    : ''
+                }`}
                 color="text-orange-600"
                 bg="bg-orange-50"
               />
@@ -392,7 +403,7 @@ export function DailyReport({ language, onClose }: DailyReportProps) {
                       const entry = data.hourlyBreakdown.find((e) => e.hour === h);
                       const revenue = entry?.revenue || 0;
                       const count = entry?.sessionCount || 0;
-                      const pct = (revenue / maxHourlyRevenue) * 100;
+                      const pct = ((hourlyUsesRevenue ? revenue : count) / maxHourlyRevenue) * 100;
                       return (
                         <div
                           key={h}
