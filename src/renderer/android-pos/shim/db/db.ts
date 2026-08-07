@@ -330,6 +330,41 @@ export interface AndroidDbInitOptions {
 // re-fetch/reparse the binary.
 let sqlJsPromise: Promise<SqlJsStatic> | null = null;
 
+/**
+ * Try the WASM build, fall back to the asm.js build.
+ *
+ * Old WebViews cannot run our WASM at all. The SUNMI D2s Lite ships Android
+ * System WebView 83 and cannot update it (the system's provider allowlist holds
+ * only the AOSP package), and Chromium 83 predates the CSP token
+ * `'wasm-unsafe-eval'` (Chromium 97). It treats that token as an invalid source,
+ * drops it, and then refuses WASM code generation — so `WebAssembly.instantiate`
+ * throws. The console's "falling back to ArrayBuffer instantiation" message is
+ * misleading: that path throws with the same error. Without this fallback the
+ * local SQLite never initialises and the POS has no catalog, orders or shifts.
+ *
+ * The asm.js build needs no WASM. It is several MB, so it is imported lazily —
+ * only a device that actually failed WASM pays for it.
+ *
+ * On a double failure the ORIGINAL wasm error is rethrown: on a blocked-WASM
+ * device the asm error would otherwise hide the real cause.
+ *
+ * Exported for tests; production callers use `loadSqlJs`.
+ */
+export async function loadSqlJsWithFallback(
+  loadWasm: () => Promise<SqlJsStatic>,
+  loadAsm: () => Promise<SqlJsStatic>,
+): Promise<SqlJsStatic> {
+  try {
+    return await loadWasm();
+  } catch (wasmError) {
+    try {
+      return await loadAsm();
+    } catch {
+      throw wasmError;
+    }
+  }
+}
+
 function loadSqlJs(locateFile?: ((file: string) => string) | null): Promise<SqlJsStatic> {
   if (!sqlJsPromise) {
     const config =
@@ -338,7 +373,24 @@ function loadSqlJs(locateFile?: ((file: string) => string) | null): Promise<SqlJ
         : locateFile === null
           ? {} // node tests: let sql.js resolve its own wasm
           : { locateFile };
-    sqlJsPromise = initSqlJs(config);
+    const pending = loadSqlJsWithFallback(
+      () => initSqlJs(config),
+      async () => {
+        // Subpath of the already-allowlisted `sql.js` package. asm.js embeds the
+        // engine as plain JS, so it takes no locateFile.
+        const mod: any = await import('sql.js/dist/sql-asm.js');
+        const initAsm = (mod.default ?? mod) as typeof initSqlJs;
+        return initAsm({});
+      },
+    );
+    // Never cache a rejected promise: the old code cached it, so once the first
+    // init failed EVERY later call replayed the same rejection for the life of
+    // the page — which is why the device reported the same CompileError on
+    // every catalog read.
+    pending.catch(() => {
+      if (sqlJsPromise === pending) sqlJsPromise = null;
+    });
+    sqlJsPromise = pending;
   }
   return sqlJsPromise;
 }
