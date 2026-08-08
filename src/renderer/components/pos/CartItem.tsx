@@ -118,9 +118,12 @@ export default function CartItemRow({
     <div className={`px-3 py-2 border-b border-slate-100 last:border-b-0 transition-colors ${
       isActive ? 'bg-brand-50' : ''
     } ${fresh ? 'sc-cart-item-fresh pos-cart-item-fresh' : ''}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-extrabold text-slate-950 leading-snug line-clamp-2">
+      {/* Name left, line total right. `grid-cols-[1fr_auto]` instead of
+          flex+justify-between: flexbox `gap` is inert on Chromium 83, so the
+          two columns would butt together on the counter. */}
+      <div className="grid grid-cols-[1fr_auto] items-start gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-extrabold leading-snug line-clamp-2" style={{ color: 'var(--pos-ink)' }}>
             {resolveName(item, lang)}
           </p>
           {item.locked && item.billiard && (
@@ -143,14 +146,19 @@ export default function CartItemRow({
           type="button"
           onClick={() => { if (!item.locked) (onEditPrice ? onEditPrice(item) : onSelectField?.(item.id, 'price')); }}
           disabled={item.locked}
-          title={tOr('pos.cart.editPrice', 'Edit price')}
-          className={`min-h-11 min-w-0 flex-1 truncate rounded-md px-2 py-0.5 text-left text-sm font-semibold tabular-nums transition-colors cursor-pointer touch-manipulation ${
+          title={unitPriceQtyText}
+          aria-label={`${tOr('pos.cart.editPrice', 'Edit price')} — ${unitPriceQtyText}`}
+          className={`min-h-11 min-w-0 flex-1 truncate px-2 py-0.5 text-left text-sm font-semibold tabular-nums transition-colors cursor-pointer touch-manipulation ${
             priceHighlight
               ? 'bg-brand-100 text-brand-900 ring-1 ring-brand-400'
               : item.locked ? 'cursor-not-allowed text-slate-600' : 'text-slate-600 hover:text-brand-800'
           }`}
         >
-          {unitPriceQtyText}
+          {/* Dotykačka keeps the unit price quiet and the quantity loud — the
+              cashier scans the column of quantities, not of unit prices. */}
+          <span style={priceHighlight ? undefined : { color: 'var(--pos-ink-muted)' }}>{unitPriceText}</span>
+          <span aria-hidden="true" className="mx-1 opacity-50">×</span>
+          <span className="font-black" style={priceHighlight ? undefined : { color: 'var(--pos-primary)' }}>{formulaQtyText}</span>
         </button>
       </div>
 

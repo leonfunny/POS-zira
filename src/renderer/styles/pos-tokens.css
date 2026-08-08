@@ -54,6 +54,21 @@
 }
 
 /*
+ * The primary confirm action. Dotykačka's is a flat, square, full-width colour
+ * block — no radius, no shadow, no gradient — and the label is uppercase. Kept
+ * as a class rather than a utility soup so the three competing primary buttons
+ * in this codebase (Button.tsx primary, the cart PAY, the PaymentModal
+ * complete) can converge on one definition.
+ */
+.pos-surface .pos-btn-primary {
+  background: var(--pos-primary);
+  border-radius: 0;
+  box-shadow: none;
+}
+.pos-surface .pos-btn-primary:hover:not(:disabled) { background: var(--pos-primary-dark); }
+.pos-surface .pos-btn-primary:active:not(:disabled) { background: var(--pos-primary-dark); }
+
+/*
  * Prices, quantities and totals must line up in a column. Roboto gives
  * Dotykačka this for free; we ask for it.
  */

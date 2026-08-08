@@ -1039,11 +1039,19 @@ export default function Cart({
             )}
           </div>
 
-          <div className="flex items-baseline justify-between pt-2 mb-2 border-t border-slate-200">
-            <span className="text-xs font-black uppercase text-slate-700 tracking-[0.1em]">{t('pos.cart.total')}</span>
-            <span className="text-slate-950 leading-none tabular-nums">
+          {/* Dotykačka reads the bill bottom-up: the grand total is the largest
+              thing in the pane and the only one in the brand colour, sitting on
+              a tinted strip that separates it from the itemised rows above.
+              `grid-cols-[1fr_auto]` rather than flex+justify-between because
+              flexbox `gap` is dead on the counter's Chromium 83. */}
+          <div className="grid grid-cols-[1fr_auto] items-baseline gap-2 border-t-2 px-3 py-2.5 -mx-3 mb-2"
+               style={{ borderColor: 'var(--pos-primary)', background: 'var(--pos-canvas)' }}>
+            <span className="text-xs font-black uppercase tracking-[0.12em]" style={{ color: 'var(--pos-ink-muted)' }}>
+              {t('pos.cart.total')}
+            </span>
+            <span className="leading-none tabular-nums" style={{ color: 'var(--pos-primary)' }}>
               <span className="text-3xl font-black">{totalStr}</span>
-              <span className="text-base font-bold ml-1.5 text-slate-600">{currency}</span>
+              <span className="text-base font-bold ml-1.5">{currency}</span>
             </span>
           </div>
 
@@ -1060,7 +1068,10 @@ export default function Cart({
             type="button"
             onClick={handlePayClick}
             disabled={!hasItems || !shiftOpen}
-            className="w-full h-14 rounded-xl bg-slate-950 text-base font-black text-white shadow-xl shadow-slate-950/20 transition-colors hover:bg-black active:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-45 touch-manipulation cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2"
+            /* Flat, square, brand-coloured — Dotykačka has no rounded cards and
+               no shadows anywhere; the confirm action is a solid colour block.
+               Was a near-black rounded-xl pill with a drop shadow. */
+            className="pos-btn-primary w-full h-14 text-base font-black uppercase tracking-[0.06em] text-white transition-colors disabled:cursor-not-allowed disabled:opacity-45 touch-manipulation cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
           >
             {tOr('pos.payCta', 'PAY')} {totalStr} {currency}
           </button>

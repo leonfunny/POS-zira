@@ -52,7 +52,12 @@ describe('POS cart panel redesign', () => {
 
   it('keeps the primary checkout action as a high-priority PAY button', () => {
     expect(CART).toContain("tOr('pos.payCta', 'PAY')");
-    expect(CART).toContain('bg-slate-950');
+    // The button carries the shared primary treatment (flat, square, brand
+    // colour — pos-tokens.css). This used to assert `bg-slate-950`, which the
+    // file still contains for modal scrims and the discount popup, so the
+    // assertion passed no matter what the PAY button looked like.
+    const payButton = CART.slice(CART.indexOf("tOr('pos.payCta'") - 900, CART.indexOf("tOr('pos.payCta'"));
+    expect(payButton).toContain('pos-btn-primary');
   });
 
   it('keeps retail quick actions operational and restores discount to the cart panel', () => {
