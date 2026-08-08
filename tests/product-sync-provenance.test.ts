@@ -262,6 +262,19 @@ describe('ProductSync catalog provenance guard', () => {
     expect(getPosProductsMock).toHaveBeenLastCalledWith('token', undefined, expect.anything());
   });
 
+  it('full sync purges a foreign mirror first so the shrink guard cannot block the repair', async () => {
+    // Poisoned machine, forced FULL sync path (socket-connect / post-login):
+    // without the pre-purge, the shrink guard rejects "backend 0 products vs
+    // local 2220" and the repair never happens on this path.
+    mockDb({ cursor: encodeCursor('salon-OTHER'), stamp: 'salon-OTHER', productCount: 2220 });
+
+    const result = await new ProductSync().fullSync();
+
+    expect(databaseRunMock).toHaveBeenCalledWith('DELETE FROM product_variants');
+    expect(result).toEqual({ productsCount: 0, categoriesCount: 0 });
+    expect(markFullSyncMock).toHaveBeenCalledWith('products');
+  });
+
   it('full sync stamps db_salon_id with the fenced salon id', async () => {
     mockDb({ cursor: null, stamp: null, productCount: 0 });
 

@@ -258,6 +258,29 @@ export class ProductSync {
     const fenceGeneration = database.getTenantGeneration();
     const fenceSalonId = (getConfigValue('salonId') as string) || '';
 
+    // Provenance check mirrors deltaSyncUnlocked: when the local mirror was
+    // built for another salon, purge it BEFORE fetching so the shrink guard
+    // never rejects the honest "this salon has fewer/no products" repair.
+    const staleCursorRow = database.get<{ value: string }>(
+      'SELECT value FROM sync_metadata WHERE key = ?',
+      ['products_sync_cursor_v2'],
+    ) ?? database.get<{ value: string }>(
+      'SELECT value FROM sync_metadata WHERE key = ?',
+      ['products_last_sync'],
+    );
+    const staleStampRow = database.get<{ value: string }>(
+      'SELECT value FROM sync_metadata WHERE key = ?',
+      ['db_salon_id'],
+    );
+    const staleCursorSalon = decodeCursorSalonId(staleCursorRow?.value);
+    if ((staleStampRow?.value && fenceSalonId && staleStampRow.value !== fenceSalonId)
+        || (staleCursorSalon && fenceSalonId && staleCursorSalon !== fenceSalonId)) {
+      logger.warn(
+        `[ProductSync] Foreign catalog detected before full sync (stamp=${staleStampRow?.value ?? 'none'}, cursor=${staleCursorSalon ?? 'none'}, salon=${fenceSalonId}) — purging first`,
+      );
+      this.purgeForeignCatalog();
+    }
+
     const cursorV2 = await this.supportsProductSyncCursorV2(token);
     const data = await withRetry(
       () => apiClient.getPosProducts(token, undefined, { cursorV2 }),
