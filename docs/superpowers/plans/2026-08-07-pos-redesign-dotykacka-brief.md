@@ -346,6 +346,27 @@ Function-tile palette stays stock Material 500/700 exactly as observed — it is
 **Delete — separate cleanup commit**
 - The ten zero-importer files listed in §2.6.
 
+## 7a. Correction to step 2 (2026-08-08, after reading the code)
+
+The step order below originally said: *"D2 unification, look unchanged — move `SalonTemplate` onto shared `Cart`/`CartItem`… **No visual change in this commit.**"*
+
+**That is not achievable, and the plan was wrong to promise it.** Reading both implementations:
+
+- The shared `Cart.tsx` and the bespoke salon cart (`SalonTemplate.tsx:860-1020`) have genuinely different anatomy — different header, line layout, an order-action chip rail, a `POSNumpad` slot, and a near-black full-width PAY button that the salon cart does not have.
+- Swapping the component therefore *necessarily* changes how the salon screen looks. "Unify with no visual change" would require making the shared cart reproduce the salon look through props first, which is work spent reproducing a look we are about to discard.
+
+The salon-specific behaviour itself is small and already accommodated: the only thing the salon cart does that the shared one does not is a **per-line staff `<select>`** dispatching `cart/setItemStaff` (`SalonTemplate.tsx:908-930`). The shared cart already exposes exactly the right seam for it — `renderItemExtra?: (item) => ReactNode` (`Cart.tsx:16`, rendered at `:874`).
+
+**Revised approach:** unification and restyle happen in the *same* step, not in two. There is no value in preserving a look that the next commit replaces. The risk is managed instead by scope: the cart step lands on its own, with the salon flow (per-line staff assignment, turn board, shift gating) exercised before and after.
+
+**Revised order:** guard → tokens+font → cart (unify + restyle together) → tile wall → chrome+modals → cleanup.
+
+### Font decision (resolved)
+
+No new assets needed. The repo already self-hosts **Plus Jakarta Sans** at `src/renderer/fonts/kso/` in weights 500/600/700/800 across **latin, latin-ext and vietnamese** subsets — 132 KB total, OFL, with `LICENSE-OFL.txt` and `SOURCE.txt` already in place. latin-ext covers Polish; the vietnamese subset covers the salon names that motivated the earlier diacritics work.
+
+Today those faces are scoped behind `.kso-shell` and unreachable from the cashier screen, while the POS itself asks for `Bahnschrift, Segoe UI…` — Windows-only faces that fall back to Roboto/Noto on the tablet (§2.1). Promoting Plus Jakarta Sans to the POS surface fixes the cross-platform divergence with assets already in the tree. Weight 500 serves body, 700 serves prices and totals; the two-weight rule from §4.4 holds.
+
 ## 8. Implementation order
 
 Each step is one reviewable commit with its own gates. Steps 1–2 carry no visual change, which is what makes the risky parts revertible on their own.
