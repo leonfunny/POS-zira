@@ -54,7 +54,9 @@
     "test:ci:windows-package-preflight": "node scripts/verify-build-only-ci.mjs --json --fail-on-r12",
     "test:watch": "vitest",
     "smoke:self-checkout": "vitest run tests/smoke-self-checkout.test.ts --reporter=verbose",
-    "check:design": "bash scripts/check-design-tokens.sh"
+    "check:design": "bash scripts/check-design-tokens.sh",
+    "test:css-baseline": "node scripts/verify-css-baseline.mjs --scope=pos",
+    "test:css-baseline:strict": "node scripts/verify-css-baseline.mjs --scope=pos --strict"
   },
   "dependencies": {
     "@nut-tree-fork/nut-js": "^4.2.6",
