@@ -167,6 +167,27 @@ function isUnsafeProductSyncCursorError(error: any): boolean {
     && resetRequired;
 }
 
+/**
+ * Best-effort read of the salonId the server embedded in a sync-v2 cursor.
+ * Returns null for legacy v1 timestamp cursors, garbage, or any parse error —
+ * the caller must treat null as "unknown", never as "foreign".
+ */
+export function decodeCursorSalonId(cursor: string | null | undefined): string | null {
+  if (!cursor) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+    return typeof parsed?.salonId === 'string' ? parsed.salonId : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Server-side provenance rejection: the stored cursor was issued to another salon. */
+export function isForeignSalonCursorError(error: any): boolean {
+  return Number(error?.status) === 400
+    && /belongs to another salon/i.test(String(error?.message || ''));
+}
+
 export class ProductSync {
   /** Remember if delta sync is unsupported — avoids 7s retry waste each connect. */
   private deltaUnsupported = false;
@@ -207,6 +228,21 @@ export class ProductSync {
     return database.get<{ n: number }>(
       'SELECT COUNT(*) AS n FROM product_variants',
     )?.n ?? 0;
+  }
+
+  /**
+   * Cross-tenant contamination repair: drop the catalog mirror and its sync
+   * provenance rows so the next full sync rebuilds from the current salon.
+   * Deliberately leaves orders/shifts/local imports alone — those belong to
+   * the current tenant; only the synced mirror is foreign.
+   */
+  private purgeForeignCatalog(): void {
+    database.transaction(() => {
+      database.run('DELETE FROM product_variants');
+      database.run('DELETE FROM categories');
+      database.run("DELETE FROM sync_metadata WHERE key IN ('products_sync_cursor_v2','products_last_sync','products_last_full_sync','db_salon_id')");
+    });
+    database.markDirty();
   }
 
   /**
@@ -296,6 +332,12 @@ export class ProductSync {
           [cursorV2 ? 'products_sync_cursor_v2' : 'products_last_sync', nextCursor],
         );
       }
+      if (fenceSalonId) {
+        database.run(
+          'INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES (?, ?, datetime(\'now\'))',
+          ['db_salon_id', fenceSalonId],
+        );
+      }
     });
     database.markDirty();
     markFullSync('products');
@@ -324,6 +366,27 @@ export class ProductSync {
       'SELECT value FROM sync_metadata WHERE key = ?',
       [cursorV2 ? 'products_sync_cursor_v2' : 'products_last_sync'],
     );
+    // Catalog provenance guard (2026-08-08 baohan/chesaigon incident): if the
+    // stored cursor or the db_salon_id stamp says the local mirror was built
+    // for ANOTHER salon, this machine is contaminated. Purge the foreign
+    // catalog and rebuild for the current salon — self-heals field machines
+    // nobody can SSH into.
+    const stamp = database.get<{ value: string }>(
+      'SELECT value FROM sync_metadata WHERE key = ?',
+      ['db_salon_id'],
+    );
+    const cursorSalonId = decodeCursorSalonId(lastSync?.value);
+    const foreignStamp = !!(stamp?.value && fenceSalonId && stamp.value !== fenceSalonId);
+    const foreignCursor = !!(cursorSalonId && fenceSalonId && cursorSalonId !== fenceSalonId);
+    if (foreignStamp || foreignCursor) {
+      logger.warn(
+        `[ProductSync] Catalog provenance mismatch (stamp=${stamp?.value ?? 'none'}, cursor=${cursorSalonId ?? 'none'}, salon=${fenceSalonId}) — purging foreign catalog + full sync`,
+      );
+      this.purgeForeignCatalog();
+      const result = await this.fullSyncUnlocked();
+      return result.productsCount;
+    }
+
     // Safety net for stale-cursor / empty-mirror state — e.g. a re-pair to a
     // different agent where clearSalonData didn't run (legacy session). The
     // cursor still points at the old data window so delta returns 0 changes
@@ -349,8 +412,16 @@ export class ProductSync {
         token,
         lastSync.value,
         { cursorV2 },
-      ), 3, (error) => !(cursorV2 && isUnsafeProductSyncCursorError(error)));
+      ), 3, (error) => !(cursorV2 && (isUnsafeProductSyncCursorError(error) || isForeignSalonCursorError(error))));
     } catch (err: any) {
+      if (cursorV2 && isForeignSalonCursorError(err)) {
+        // Server confirmed the cursor was issued to another salon even though
+        // it looked fine locally — same contamination class, same repair.
+        logger.warn('[ProductSync] Server rejected cursor as foreign-salon; purging catalog and running one full sync');
+        this.purgeForeignCatalog();
+        const result = await this.fullSyncUnlocked();
+        return result.productsCount;
+      }
       if (cursorV2 && isUnsafeProductSyncCursorError(err)) {
         logger.warn('[ProductSync] Cursor-v2 exceeded the safe watermark; clearing it and running one full v2 sync');
         database.run(
