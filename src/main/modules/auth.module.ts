@@ -668,7 +668,7 @@ export class AuthModule extends BaseModule {
           ).catch((err: any) => logger.debug('[AuthModule] background auto-connect after telegram login failed:', err?.message));
 
           // Trigger post-login sync (clearSalonData may have wiped products while socket was already connected)
-          if (this.eventBus) this.eventBus.emit('user:logged-in', { userId: user.id || '', salonId: newSalonId, salonName: resolveAuthSalonName(result) });
+          if (this.eventBus) this.eventBus.emit('user:logged-in', { userId: user.id || '', salonId: newSalonId, salonName: resolveAuthSalonName(result), salonSwitched: isSalonSwitchTg });
 
           return { success: true, data: { status: 'VERIFIED', user: result.user, salon: result.salon } };
         }
@@ -836,7 +836,7 @@ export class AuthModule extends BaseModule {
           ).catch((err: any) => logger.debug('[AuthModule] background auto-connect after email login failed:', err?.message));
 
           // Trigger post-login sync (clearSalonData may have wiped products while socket was already connected)
-          if (this.eventBus) this.eventBus.emit('user:logged-in', { userId: authUser.id, salonId: authUser.salonId || '', salonName: authUser.salonName });
+          if (this.eventBus) this.eventBus.emit('user:logged-in', { userId: authUser.id, salonId: authUser.salonId || '', salonName: authUser.salonName, salonSwitched: isSalonSwitch });
 
           return { success: true, data: { user: authUser } };
         }

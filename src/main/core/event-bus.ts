@@ -16,7 +16,7 @@ export interface AppEvents {
   'socket:disconnected': { reason?: string };
 
   // Auth
-  'user:logged-in': { userId: string; salonId: string; salonName?: string };
+  'user:logged-in': { userId: string; salonId: string; salonName?: string; salonSwitched?: boolean };
   'user:logged-out': { reason?: string };
   'salon:switching': { salonName?: string };
 

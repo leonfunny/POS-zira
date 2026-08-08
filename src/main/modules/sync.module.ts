@@ -608,14 +608,21 @@ export class SyncModule extends BaseModule {
 
     // Re-sync products after login — clearSalonData may have wiped
     // the DB while the socket was already connected (no re-connect event).
-    bus.on('user:logged-in', async () => {
+    bus.on('user:logged-in', async (payload) => {
       if (!this.productSync) return;
       try {
         const forceEmptyCatalogFullSync = this.productSync.getLocalProductCount() === 0;
+        // A cross-salon login must always force a FULL sync: an in-flight
+        // sync of the leaving salon can refill the catalog between the
+        // clear and this handler, so a non-zero count proves nothing
+        // (2026-08-08 baohan/chesaigon incident).
+        const forceSalonSwitchFullSync = payload?.salonSwitched === true;
         const result = await this.runProductSync({
-          force: forceEmptyCatalogFullSync,
+          force: forceEmptyCatalogFullSync || forceSalonSwitchFullSync,
           bypassBackoff: true,
-          reason: forceEmptyCatalogFullSync ? 'post-login-empty-catalog' : 'post-login-delta',
+          reason: forceSalonSwitchFullSync
+            ? 'post-login-salon-switch'
+            : forceEmptyCatalogFullSync ? 'post-login-empty-catalog' : 'post-login-delta',
         });
         if (result.success) {
           logger.info('[SyncModule] Post-login product sync completed');
