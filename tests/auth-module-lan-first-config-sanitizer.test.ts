@@ -179,18 +179,48 @@ describe('AuthModule salon restore orchestration', () => {
     expect(database.clearSalonData).not.toHaveBeenCalled();
   });
 
-  it('clears local salon data only when the target salon has no archive', async () => {
+  it('clears local salon data when the target has no archive, then relaunches from a clean baseline', async () => {
     const backup = {
       archiveSalon: vi.fn().mockResolvedValue({ success: true }),
+      hasSalonArchive: vi.fn().mockReturnValue(false),
+      stageSalonRestore: vi.fn().mockResolvedValue({ success: true }),
+    };
+
+    const result = await authModuleWithBackup(backup).switchSalonForLogin('old-salon', 'new-salon', 'login-test');
+
+    // 2026-08-08 incident: the fresh path must relaunch through the
+    // pending-restore machinery so an in-flight sync of the leaving salon
+    // can never flush its catalog into the cleared DB.
+    expect(result).toEqual({ ok: true, willRestart: true });
+    expect(database.clearSalonData).toHaveBeenCalledTimes(1);
+    expect(backup.archiveSalon).toHaveBeenCalledWith('old-salon');
+    expect(backup.archiveSalon).toHaveBeenCalledWith('new-salon');
+    expect(backup.stageSalonRestore).toHaveBeenCalledWith('new-salon');
+    // the new-salon baseline is snapshotted from the CLEARED db
+    const newSalonArchiveCall = backup.archiveSalon.mock.calls.findIndex(
+      (call) => call[0] === 'new-salon',
+    );
+    expect(backup.archiveSalon.mock.invocationCallOrder[newSalonArchiveCall]).toBeGreaterThan(
+      vi.mocked(database.clearSalonData).mock.invocationCallOrder[0],
+    );
+  });
+
+  it('falls back to fresh + full sync when the clean-baseline snapshot fails', async () => {
+    const backup = {
+      archiveSalon: vi.fn()
+        .mockResolvedValueOnce({ success: true }) // safety archive of old salon
+        .mockResolvedValueOnce({ success: true }) // post-cancel archive of old salon
+        .mockResolvedValueOnce({ success: false, error: 'disk full' }), // clean baseline for new salon
       hasSalonArchive: vi.fn().mockReturnValue(false),
       stageSalonRestore: vi.fn(),
     };
 
     const result = await authModuleWithBackup(backup).switchSalonForLogin('old-salon', 'new-salon', 'login-test');
 
+    // snapshot failure must never block the login — old behavior remains
     expect(result).toEqual({ ok: true, willRestart: false });
-    expect(backup.stageSalonRestore).not.toHaveBeenCalled();
     expect(database.clearSalonData).toHaveBeenCalledTimes(1);
+    expect(backup.stageSalonRestore).not.toHaveBeenCalled();
   });
 
   it('stages a target archive without clearing current local data', async () => {

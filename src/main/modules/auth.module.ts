@@ -1278,6 +1278,23 @@ export class AuthModule extends BaseModule {
         error: e?.message || 'Không thể lưu trạng thái xóa dữ liệu salon',
       };
     }
+    // Snapshot the freshly-cleared DB as the new salon's baseline and relaunch
+    // through the existing pending-restore path. The relaunch kills every
+    // in-flight sync started under the old tenant, and the boot-time restore
+    // discards anything such a sync managed to flush between clear and exit
+    // (2026-08-08 baohan/chesaigon incident). Snapshot failure falls back to
+    // the old fresh + full sync behavior — it must never block the login.
+    const baseline = await backup.archiveSalon(newSalonId);
+    if (baseline.success) {
+      const staged = await backup.stageSalonRestore(newSalonId);
+      if (staged.success) {
+        logger.info(`[AuthModule] ${context}: archived ${oldSalonId}, staged clean baseline for ${newSalonId} — relaunching`);
+        return { ok: true, willRestart: true };
+      }
+      logger.warn(`[AuthModule] ${context}: staging clean baseline for ${newSalonId} failed (${staged.error}); falling back to fresh + full sync`);
+    } else {
+      logger.warn(`[AuthModule] ${context}: baseline snapshot for ${newSalonId} failed (${baseline.error}); falling back to fresh + full sync`);
+    }
     logger.info(`[AuthModule] ${context}: archived ${oldSalonId}, no usable archive for ${newSalonId} — fresh + full sync`);
     return { ok: true, willRestart: false };
   }
