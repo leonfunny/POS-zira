@@ -89,11 +89,13 @@ vi.mock('../src/main/database/database', () => ({
     markDirty: databaseMarkDirtyMock,
     saveCoalesced: databaseSaveCoalescedMock,
     transaction: databaseTransactionMock,
+    getTenantGeneration: vi.fn(() => 1),
   },
 }));
 
 vi.mock('../src/main/config/store', () => ({
   getSecureAuthToken: getSecureAuthTokenMock,
+  getConfigValue: vi.fn(() => 'salon-A'),
 }));
 
 vi.mock('../src/main/logger', () => ({

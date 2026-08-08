@@ -4,7 +4,7 @@ import { productRepo } from '../database/repos/product-repo';
 import { localVariantImportsRepo, type LocalVariantImportRow } from '../database/repos/local-variant-imports-repo';
 import { orderRepo } from '../database/repos/order-repo';
 import { database } from '../database/database';
-import { getSecureAuthToken } from '../config/store';
+import { getConfigValue, getSecureAuthToken } from '../config/store';
 import logger from '../logger';
 import { markFullSync } from './full-sync-cooldown';
 import type { BackupRunReason } from '../database/backup-service';
@@ -219,6 +219,8 @@ export class ProductSync {
   private async fullSyncUnlocked(): Promise<{ productsCount: number; categoriesCount: number }> {
     const token = getSecureAuthToken();
     if (!token) throw new Error('Not authenticated');
+    const fenceGeneration = database.getTenantGeneration();
+    const fenceSalonId = (getConfigValue('salonId') as string) || '';
 
     const cursorV2 = await this.supportsProductSyncCursorV2(token);
     const data = await withRetry(
@@ -238,6 +240,12 @@ export class ProductSync {
     this.enforceGuard(guard);
     if (baseline.activeProductCount > 0 || baseline.categoryCount > 0) {
       await this.createRestorePoint('pre-full-product-sync');
+    }
+
+    if (database.getTenantGeneration() !== fenceGeneration
+        || ((getConfigValue('salonId') as string) || '') !== fenceSalonId) {
+      logger.warn('[ProductSync] Tenant changed mid-sync — dropping fetched catalog (fence)');
+      return { productsCount: 0, categoriesCount: 0 };
     }
 
     database.transaction(() => {
@@ -309,6 +317,8 @@ export class ProductSync {
   private async deltaSyncUnlocked(): Promise<number> {
     const token = getSecureAuthToken();
     if (!token) throw new Error('Not authenticated');
+    const fenceGeneration = database.getTenantGeneration();
+    const fenceSalonId = (getConfigValue('salonId') as string) || '';
     const cursorV2 = await this.supportsProductSyncCursorV2(token);
     const lastSync = database.get<{ value: string }>(
       'SELECT value FROM sync_metadata WHERE key = ?',
@@ -377,6 +387,12 @@ export class ProductSync {
       deletedIds: data.deletedIds,
     });
     this.enforceGuard(guard);
+
+    if (database.getTenantGeneration() !== fenceGeneration
+        || ((getConfigValue('salonId') as string) || '') !== fenceSalonId) {
+      logger.warn('[ProductSync] Tenant changed mid-sync — dropping fetched delta (fence)');
+      return 0;
+    }
 
     database.transaction(() => {
       if (data.products.length > 0) {

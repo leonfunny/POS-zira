@@ -45,6 +45,7 @@ vi.mock('../src/main/database/database', () => ({
 
 vi.mock('../src/main/config/store', () => ({
   getSecureAuthToken: vi.fn(() => null),
+  getConfigValue: vi.fn(() => 'salon-A'),
 }));
 
 vi.mock('../src/main/logger', () => ({

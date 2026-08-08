@@ -14,6 +14,9 @@ class Database {
 
   private db: SqlJsDatabase | null = null;
   private dbPath: string = '';
+  /** Bumped after every durable clearSalonData; sync writers fence on it so
+   *  a fetch started under the previous tenant can never apply its payload. */
+  private tenantGeneration = 0;
   private saveInterval: ReturnType<typeof setInterval> | null = null;
   private dirty = false;
   private dirtyVersion = 0;
@@ -519,7 +522,12 @@ class Database {
     } catch (error) {
       logger.warn(`[DB] Failed to clear product-admin pending assets: ${error instanceof Error ? error.message : String(error)}`);
     }
+    this.tenantGeneration += 1;
     logger.info('[DB] Salon data cleared successfully');
+  }
+
+  getTenantGeneration(): number {
+    return this.tenantGeneration;
   }
 
   /**

@@ -97,3 +97,14 @@ describe('database.clearSalonData() table list', () => {
     expect(missing).toEqual([]);
   });
 });
+
+describe('database.clearSalonData() tenant fence', () => {
+  const source = readFileSync(
+    resolve(__dirname, '../src/main/database/database.ts'),
+    'utf-8',
+  );
+
+  it('bumps tenantGeneration after a durable clear (sync fence)', () => {
+    expect(source).toMatch(/clearSalonData[\s\S]+?tenantGeneration\s*\+=\s*1/);
+  });
+});
