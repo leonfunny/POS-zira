@@ -14,6 +14,9 @@ interface CartProps {
   shiftOpen?: boolean;
   shiftBlockReason?: string;
   renderItemExtra?: (item: CartItem) => React.ReactNode;
+  /** Salon tip in grosze (PosState.tip). Shown as its own row and added to the
+   *  displayed total, matching what PaymentModal will charge. Omit for retail. */
+  tip?: number;
   /** Operator UI language — forwarded to CartItemRow for display-only name resolution. */
   lang?: string;
   /** Held-cart badge in the header (sourced from the template, which owns hold state). */
@@ -557,6 +560,7 @@ export default function Cart({
   shiftOpen = true,
   shiftBlockReason,
   renderItemExtra,
+  tip,
   lang,
   heldCartsCount = 0,
   onHold,
@@ -735,7 +739,13 @@ export default function Cart({
     .join('|');
   const shiftWarning = shiftBlockReason || tOr('pos.shift.openRequired', 'Open a shift to accept payments');
   const subtotalStr = `${(cart.subtotal / 100).toFixed(2)} ${currency}`;
-  const totalStr = (cart.total / 100).toFixed(2);
+  // Tip lives on PosState, not CartState, and only the salon flow sets it.
+  // PaymentModal already charges `cart.total + tip` (PaymentModal.tsx:374), so a
+  // cart panel that ignored it would show the cashier a smaller number than the
+  // modal then asks for. Retail passes nothing and is unaffected.
+  const tipGrosze = Math.max(0, Math.round(Number(tip) || 0));
+  const grandTotalGrosze = cart.total + tipGrosze;
+  const totalStr = (grandTotalGrosze / 100).toFixed(2);
   const totalQuantityStr = formatCartQuantityTotal(
     cart.items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0),
   );
@@ -1019,6 +1029,12 @@ export default function Cart({
               <div className="flex justify-between text-slate-600">
                 <span className="font-bold">{tOr('pos.cart.vatIncluded', 'VAT Included')}</span>
                 <span className="font-extrabold tabular-nums">{(cart.tax / 100).toFixed(2)} {currency}</span>
+              </div>
+            )}
+            {tipGrosze > 0 && (
+              <div className="flex justify-between text-emerald-700">
+                <span className="font-bold">{tOr('pos.salon.tip', 'Tip')}</span>
+                <span className="font-extrabold tabular-nums">+{(tipGrosze / 100).toFixed(2)} {currency}</span>
               </div>
             )}
           </div>

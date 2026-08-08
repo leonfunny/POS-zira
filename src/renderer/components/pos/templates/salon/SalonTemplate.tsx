@@ -11,6 +11,8 @@ import type {
   PosScheduleWeekResponse,
 } from '../../../../../shared/types';
 import PaymentModal from '../../PaymentModal';
+import Cart from '../../Cart';
+import type { CartItem } from '../../../../hooks/usePosStore';
 import SearchBar from '../../SearchBar';
 import { resolveName } from '../../../../../shared/catalog-names';
 import { isSaleBlockedByStock } from '../../../../../shared/product-stock-tracking';
@@ -418,7 +420,6 @@ export default function SalonTemplate({ state, dispatch, t, language, session, o
     if (product) handleAddProduct(product);
   }, [handleAddProduct]);
 
-  const grandTotal = cart.total + tip;
   const setScheduleDay = useCallback((date: string) => {
     setScheduleDate(date);
     const cachedDay = scheduleWeek?.schedules.find((day) => day.business_date === date);
@@ -857,169 +858,46 @@ export default function SalonTemplate({ state, dispatch, t, language, session, o
         </div>
 
         {/* ── Right panel: Current Order ── */}
+        {/*
+          Shared cart. The salon used to render its own panel; the only thing it
+          did that the shared one does not is a per-line staff picker, which the
+          shared cart already has a seam for (`renderItemExtra`). Keeping one
+          implementation means one place to restyle and one place to fix.
+        */}
         <div className="w-80 xl:w-[340px] border-l border-slate-200 flex flex-col bg-white shrink-0">
-
-          {/* Header */}
-          <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between shrink-0">
-            <h2 className="font-bold text-slate-900 text-sm">
-              {t('pos.cart') || 'Current Order'}
-              {cart.items.length > 0 && (
-                <span className="ml-1.5 text-slate-400 font-normal text-xs">
-                  ({cart.items.length})
-                </span>
-              )}
-            </h2>
-            {cart.items.length > 0 && (
-              <button
-                onClick={() => dispatch({ type: 'cart/clear' })}
-                className="text-xs text-slate-400 hover:text-red-500 hover:bg-red-50 px-2 py-1 rounded transition-colors cursor-pointer font-medium"
-              >
-                {t('pos.cart.clear') || 'Clear'}
-              </button>
+          <Cart
+            cart={cart}
+            dispatch={dispatch}
+            onPay={() => setShowPayment(true)}
+            t={t}
+            lang={lang}
+            shiftOpen={shiftPaymentOpen}
+            shiftBlockReason={shiftBlockedMessage}
+            tip={tip}
+            renderItemExtra={(item: CartItem) => (
+              staffList.length > 0 ? (
+                <select
+                  value={item.staffId || ''}
+                  onChange={(e) => {
+                    const staff = staffList.find((s) => s.id === e.target.value);
+                    if (staff) {
+                      dispatch({
+                        type: 'cart/setItemStaff',
+                        payload: { id: item.id, staffId: staff.id, staffName: staff.name },
+                      });
+                    }
+                  }}
+                  aria-label={t('pos.salon.staff') || 'Staff'}
+                  className="mt-1 w-full px-2 py-1 text-[11px] bg-slate-50 border border-slate-200 rounded-lg text-slate-500 appearance-none focus:outline-none focus:border-brand-400 cursor-pointer"
+                >
+                  <option value="">{t('pos.salon.noStaff') || 'No staff'}</option>
+                  {staffList.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+              ) : null
             )}
-          </div>
-
-          {/* Cart items */}
-          <div className="flex-1 overflow-y-auto divide-y divide-slate-50">
-            {cart.items.length === 0 ? (
-              <div className="p-8 text-center text-slate-400 text-sm">
-                {t('pos.cart.empty') || 'No items yet'}
-              </div>
-            ) : (
-              cart.items.map((item) => {
-                const colorClass = placeholderColor(item.name);
-                const displayName = resolveName(item, lang) || item.name;
-                return (
-                  <div key={item.id} className="px-4 py-3">
-                    <div className="flex items-start gap-3">
-                      {/* Thumbnail */}
-                      <div className="w-10 h-10 rounded-lg overflow-hidden shrink-0">
-                        {item.imageUrl ? (
-                          <img src={item.imageUrl} alt={displayName} className="w-full h-full object-cover" />
-                        ) : (
-                          <div className={`w-full h-full flex items-center justify-center text-sm font-bold ${colorClass}`}>
-                            {displayName.charAt(0).toUpperCase()}
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium text-slate-800 leading-snug truncate">
-                          {displayName}
-                        </div>
-                        {staffList.length > 0 && (
-                          <select
-                            value={item.staffId || ''}
-                            onChange={(e) => {
-                              const staff = staffList.find((s) => s.id === e.target.value);
-                              if (staff) {
-                                dispatch({
-                                  type: 'cart/setItemStaff',
-                                  payload: { id: item.id, staffId: staff.id, staffName: staff.name },
-                                });
-                              }
-                            }}
-                            className="mt-1 w-full px-2 py-1 text-[11px] bg-slate-50 border border-slate-200 rounded-lg text-slate-500 appearance-none focus:outline-none focus:border-brand-400 cursor-pointer"
-                          >
-                            <option value="">{t('pos.salon.noStaff') || 'No staff'}</option>
-                            {staffList.map((s) => (
-                              <option key={s.id} value={s.id}>{s.name}</option>
-                            ))}
-                          </select>
-                        )}
-                      </div>
-
-                      <span className="text-sm font-bold text-slate-900 shrink-0">
-                        {(item.total / 100).toFixed(2)}&nbsp;{currency}
-                      </span>
-                    </div>
-
-                    {/* Qty controls */}
-                    <div className="flex items-center gap-2 mt-2 pl-[52px]">
-                      <button
-                        onClick={() => {
-                          if (item.quantity <= 1) {
-                            dispatch({ type: 'cart/removeItem', payload: { id: item.id } });
-                          } else {
-                            dispatch({ type: 'cart/updateQuantity', payload: { id: item.id, quantity: item.quantity - 1 } });
-                          }
-                        }}
-                        aria-label="Decrease quantity"
-                        className="w-9 h-9 rounded-full bg-slate-100 hover:bg-red-50 hover:text-red-500 text-slate-600 flex items-center justify-center font-bold text-base leading-none transition-colors touch-manipulation cursor-pointer select-none"
-                      >
-                        −
-                      </button>
-                      <span className="w-6 text-center text-sm font-semibold text-slate-700">
-                        {item.quantity}
-                      </span>
-                      <button
-                        onClick={() =>
-                          dispatch({ type: 'cart/updateQuantity', payload: { id: item.id, quantity: item.quantity + 1 } })
-                        }
-                        aria-label="Increase quantity"
-                        className="w-9 h-9 rounded-full bg-brand-500 hover:bg-brand-600 text-white flex items-center justify-center font-bold text-base leading-none transition-colors touch-manipulation cursor-pointer select-none"
-                      >
-                        +
-                      </button>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-
-          {/* Totals */}
-          <div className="border-t border-slate-100 px-4 pt-3 pb-2 space-y-1.5 shrink-0">
-            <div className="flex justify-between text-sm">
-              <span className="text-slate-600">{t('pos.cart.subtotal') || 'Subtotal'}</span>
-              <span className="text-slate-700 font-medium">{(cart.subtotal / 100).toFixed(2)}&nbsp;{currency}</span>
-            </div>
-            {cart.discount > 0 && (
-              <div className="flex justify-between text-sm">
-                <span className="text-emerald-600">{t('pos.cart.discount') || 'Discount'}</span>
-                <span className="text-emerald-600 font-medium">−{(cart.discount / 100).toFixed(2)}&nbsp;{currency}</span>
-              </div>
-            )}
-            {cart.tax > 0 && (
-              <div className="flex justify-between text-sm">
-                <span className="text-slate-500">Tax</span>
-                <span className="text-slate-700 font-medium">{(cart.tax / 100).toFixed(2)}&nbsp;{currency}</span>
-              </div>
-            )}
-            {tip > 0 && (
-              <div className="flex justify-between text-sm">
-                <span className="text-emerald-600">{t('pos.salon.tip') || 'Tip'}</span>
-                <span className="text-emerald-600 font-medium">+{(tip / 100).toFixed(2)}&nbsp;{currency}</span>
-              </div>
-            )}
-          </div>
-
-          {/* Total */}
-          <div className="px-4 shrink-0">
-            <div className="flex justify-between items-baseline py-3 border-t border-slate-200">
-              <span className="text-base font-bold text-slate-900">{t('pos.cart.total') || 'Total'}</span>
-              <span className="text-2xl font-bold text-slate-900">{(grandTotal / 100).toFixed(2)}&nbsp;{currency}</span>
-            </div>
-          </div>
-
-          {/* PAY button */}
-          <div className="px-4 pb-4 pt-1 shrink-0">
-            {!shiftPaymentOpen && (
-              <div className="flex items-center gap-2 px-3 py-2 mb-2 bg-amber-50 border border-amber-200 rounded-xl">
-                <svg className="w-4 h-4 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-                </svg>
-                <p className="text-xs text-amber-700 font-medium">{shiftBlockedMessage}</p>
-              </div>
-            )}
-            <button
-              onClick={() => cart.items.length > 0 && shiftPaymentOpen && setShowPayment(true)}
-              disabled={cart.items.length === 0 || !shiftPaymentOpen}
-              className="w-full py-4 bg-brand-500 hover:bg-brand-600 active:bg-brand-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl font-bold text-lg tracking-wide transition-colors shadow-sm touch-manipulation cursor-pointer"
-            >
-              {t('pos.pay') || 'PAY'}
-            </button>
-          </div>
+          />
         </div>
       </div>
 
