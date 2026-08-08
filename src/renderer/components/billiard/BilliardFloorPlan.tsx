@@ -990,7 +990,9 @@ function FloorPlanInner({ language, onPreflightPos, onPayInPos, active = true }:
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4 p-4 sm:p-6">
+    // Same cashier token scope as POSLayout — the billiard floor is a sibling
+    // tab, not a child, so it needs the class in its own right.
+    <div className="pos-surface flex h-full min-h-0 flex-col gap-4 p-4 sm:p-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div>

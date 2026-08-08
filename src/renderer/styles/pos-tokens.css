@@ -1,0 +1,64 @@
+/**
+ * POS cashier surface tokens — Dotykačka-derived visual language.
+ *
+ * See docs/superpowers/plans/2026-08-07-pos-redesign-dotykacka-brief.md.
+ *
+ * Scoped to `.pos-surface` rather than `:root` on purpose. The cashier screen
+ * is rendered in three different hosts — the detached Windows POS window, the
+ * `pos` tab inside the Windows main window, and the Android shell — so a
+ * per-window body class (the pattern used by `.kso-shell` and
+ * `.self-checkout-root`) would miss one of them. Putting the scope on the
+ * component root instead covers every host, and the modals inherit because
+ * they render inline rather than through a portal.
+ *
+ * Values come from the measured Dotykačka palette (§4.3 of the brief) with
+ * decision D3 applied: their *system* (flat colour blocks, zero radius,
+ * uppercase controls, contextual top bars) with our terracotta rather than
+ * their green, so we do not ship a look-alike of a competitor operating in the
+ * same market.
+ */
+
+.pos-surface {
+  /* Primary — our brand terracotta, standing in for Dotykačka's #2BA037. */
+  --pos-primary: #c5684a;         /* brand-600 — category bar, active tab, totals */
+  --pos-primary-dark: #a9533a;    /* brand-700 — pressed / dark top-bar variant */
+  --pos-primary-soft: #fde9dd;    /* brand-100 — selected row wash */
+
+  /* Neutrals. The canvas is deliberately a shade darker than the panels so the
+     tile wall reads as a field of colour blocks sitting ON something. */
+  --pos-canvas: #e8e5e0;          /* slate-200 — product grid background */
+  --pos-surface: #ffffff;         /* panes, bars, cart */
+  --pos-line: #d4d0c8;            /* slate-300 — hairline dividers, no shadows */
+  --pos-ink: #1a1915;             /* slate-900 — primary text */
+  --pos-ink-muted: #6b6760;       /* slate-600 — unit prices, EAN, secondary */
+
+  /* Semantic — kept from the current app so alarms stay recognisable. */
+  --pos-danger: #dc2626;
+  --pos-warning: #d97706;
+  --pos-success: #059669;
+
+  /*
+   * Both platforms must render the same letterforms. The POS previously asked
+   * for Bahnschrift / Segoe UI, which exist only on Windows: the Android
+   * WebView missed every one and fell through to Roboto, so the same markup
+   * came out with different widths and different line wrapping. Plus Jakarta
+   * Sans is already self-hosted in this repo (latin, latin-ext and vietnamese
+   * subsets, OFL) — it was merely scoped behind `.kso-shell` and unreachable
+   * from here.
+   */
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  /* The self-hosted subsets ship 500..800 — there is no 400 face. Asking for
+     500 explicitly keeps the browser from synthesising or guessing a weight. */
+  font-weight: 500;
+  color: var(--pos-ink);
+}
+
+/*
+ * Prices, quantities and totals must line up in a column. Roboto gives
+ * Dotykačka this for free; we ask for it.
+ */
+.pos-surface .pos-num,
+.pos-surface [data-pos-num] {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}

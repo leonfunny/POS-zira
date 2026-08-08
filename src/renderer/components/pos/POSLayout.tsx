@@ -1497,7 +1497,13 @@ export default function POSLayout({
   const visiblePickups = pickupOrders.filter((o) => o.id !== activePickup?.id);
 
   return (
-    <div className={`${embedded ? 'h-full' : 'h-screen'} bg-slate-50 text-slate-900 flex flex-col overflow-hidden`}>
+    // `pos-surface` scopes the cashier design tokens and the self-hosted
+    // typeface (src/renderer/styles/pos-tokens.css). It sits on the component
+    // root rather than on <body> because this tree is mounted by three hosts —
+    // the detached Windows POS window, the `pos` tab of the Windows main
+    // window, and the Android shell — and a per-window body class would miss
+    // one. Modals render inline, so they inherit it.
+    <div className={`pos-surface ${embedded ? 'h-full' : 'h-screen'} bg-slate-50 text-slate-900 flex flex-col overflow-hidden`}>
       {/* Hidden barcode capture input for USB HID scanners */}
       <input
         ref={barcodeRef}

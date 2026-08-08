@@ -33,6 +33,13 @@ export default defineConfig({
         // probes) into one vendor chunk so the boundary verifier can exempt
         // exactly that file in shim graphs while scanning all app chunks.
         manualChunks(id: string) {
+          // The asm.js build is the fallback for WebViews that refuse WASM
+          // codegen (Chromium 83 on the SUNMI counter — see shim/db/db.ts).
+          // It must live in its OWN chunk: lumped in with the wasm loader it
+          // would be parsed on every device, and it is by far the larger of
+          // the two. Reached only through a dynamic import, so a healthy
+          // device never loads this chunk at all.
+          if (/node_modules\/sql\.js\/dist\/sql-asm/.test(id)) return 'vendor-sqljs-asm';
           if (/node_modules\/sql\.js\//.test(id)) return 'vendor-sqljs';
           // E-PARITY-1: isolate the socket.io-client stack (+ its engine.io /
           // parser deps) into one vendor chunk so the boundary verifier can

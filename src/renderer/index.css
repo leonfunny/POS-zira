@@ -1,3 +1,6 @@
+/* POS cashier surface tokens — must precede the Tailwind layers. */
+@import './styles/pos-tokens.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
