@@ -800,9 +800,12 @@ export default function Cart({
           glance. Held-cart count surfaces here too (sourced from
           RetailTemplate). Destructive actions live behind the
           overflow menu to keep the strip clean. */}
-      <div className="px-3 py-2 border-b border-slate-200 shrink-0 flex items-center justify-between gap-2">
-        <div className="min-w-0 flex-1">
-          <h2 className="flex min-w-0 items-baseline gap-1.5 text-sm font-extrabold text-slate-950">
+      {/* grid-cols/space-x instead of flex+gap: flexbox `gap` is inert on the
+          counter's Chromium 83, which ran the title straight into the summary
+          ("Koszyk–Koszyk jest pusty") on the very first line the cashier reads. */}
+      <div className="px-3 py-2 border-b border-slate-200 shrink-0 grid grid-cols-[1fr_auto] items-center gap-2">
+        <div className="min-w-0">
+          <h2 className="flex min-w-0 items-baseline space-x-1.5 text-sm font-extrabold text-slate-950">
             <span className="shrink-0">{t('pos.cart')}</span>
             <span className="shrink-0 text-slate-300" aria-hidden="true">–</span>
             {hasItems ? (
@@ -818,7 +821,7 @@ export default function Cart({
             )}
           </h2>
           {heldCartsCount > 0 && (
-            <p className="text-[11px] font-bold text-amber-700 mt-0.5 flex items-center gap-1">
+            <p className="text-[11px] font-bold text-amber-700 mt-0.5 flex items-center space-x-1">
               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.4} d="M10 9v6m4-6v6m5 4H5a2 2 0 01-2-2V7a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2z" />
               </svg>
