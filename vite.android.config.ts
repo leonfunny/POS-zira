@@ -3,11 +3,10 @@ import { resolve } from 'node:path';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// S2: the Android web entry now mounts the REAL Windows POS renderer
-// (src/renderer/windows/pos/POSApp), which is React + JSX (.tsx). The React
-// plugin is required to transform that JSX, and the shared aliases mirror
-// vite.config.ts so any renderer/shared module resolves identically. The
-// renderer itself is byte-identical — this config only changes how it builds.
+// The Android entry mounts AndroidBootApp, whose cashier pane imports the shared
+// POSLayout directly (it does not mount windows/pos/POSApp). The React plugin is
+// required for that TSX graph, and the aliases mirror vite.config.ts so shared
+// renderer modules resolve identically on both hosts.
 export default defineConfig({
   plugins: [react()],
   root: resolve(__dirname, 'src/renderer/android-pos'),

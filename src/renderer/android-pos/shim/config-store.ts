@@ -16,8 +16,8 @@
  *  - `setConfig`/`saveConfig` merge + persist + emit `onConfigUpdated` so every
  *    subscribed window re-`getConfig()` (matches the Windows config-updated
  *    broadcast).
- *  - Seeds posMode='salon' (E2a — the Windows default) + a synthetic authUser so
- *    SalonTemplate/RetailTemplate mount and resolve their per-user cart key
+ *  - Seeds posMode='salon' (E2a — the shared layout fallback) + a synthetic
+ *    authUser so SalonTemplate/RetailTemplate mount and resolve their per-user cart key
  *    (S1 §0.2, §5; SHIM_CONTRACT_SALON_E2 §0.1). `resolvePosMode` is the single
  *    source of the salon-vs-retail decision at boot + login.
  */
@@ -32,10 +32,10 @@ const CONFIG_STORAGE_KEY = 'zira-android-pos-config';
  * The two POS modes the Android shell drives on the unmodified Windows
  * `POSLayout` (PosMode = 'retail'|'salon'|'b2b'|'restaurant', types.ts:586, but
  * Android only renders retail + salon — b2b/restaurant are EXCLUDE). Per
- * SHIM_CONTRACT_SALON_E2 §0.1 / §9.1 the Windows default is **'salon'**
- * (`POSLayout.tsx:294`); the S1 retail port seeded 'retail' because it only
- * shipped the retail template. E2a makes the salon template render, so the
- * Android shell must boot a salon in salon mode while keeping a
+ * SHIM_CONTRACT_SALON_E2 §0.1 / §9.1 the shared layout fallback is **'salon'**;
+ * the Electron config schema itself defaults to `retail`. The S1 retail port
+ * seeded 'retail' because it only shipped that template. E2a makes the salon
+ * template render, so the Android shell must boot a salon in salon mode while keeping a
  * retail-configured device on retail.
  */
 export type AndroidPosMode = 'retail' | 'salon';
@@ -46,7 +46,7 @@ export type AndroidPosMode = 'retail' | 'salon';
  *      choice is authoritative — a retail-configured salon stays retail);
  *   2. else the salon entitlement's `suggestedPosMode` when it names a supported
  *      mode (a salon the backend flags retail);
- *   3. else `'salon'` — the Windows default (S1 headline #2, POSLayout.tsx:294).
+ *   3. else `'salon'` — the shared layout fallback (S1 headline #2).
  *
  * Pure + exported so the boot path (main.ts) and login (real-transport) share
  * one decision, and so the precedence is unit-testable without a window.
@@ -77,8 +77,8 @@ export const SYNTHETIC_AUTH_USER: AuthUser = {
 };
 
 /**
- * The S2 boot seed — SALON mode (the Windows default, SHIM_CONTRACT_SALON_E2
- * §0.1/§9.1), synthetic session, no secrets, no URLs. A retail-configured
+ * The S2 boot seed — SALON mode (the shared layout fallback,
+ * SHIM_CONTRACT_SALON_E2 §0.1/§9.1), synthetic session, no secrets, no URLs. A retail-configured
  * device overrides this via the seed/config; `resolvePosMode` honors that.
  */
 export function createSeedConfig(overrides: Partial<AgentConfig> = {}): AgentConfig {

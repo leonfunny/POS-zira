@@ -5,8 +5,8 @@
  * docs/android-pos/PARITY_PORT_PLAN_2026-07-18.md (§5, S2) and the full method
  * contract in docs/android-pos/SHIM_CONTRACT_S1.md.
  *
- * `installShim()` MUST run before the real POS renderer (POSApp) is imported /
- * mounted: the renderer reads `window.electronAPI` at module load (e.g.
+ * `installShim()` MUST run before AndroidBootApp is mounted: the shared POS
+ * renderer reads `window.electronAPI` on first render (e.g.
  * `useConfig`/`usePosStore` on first render). It assembles the typed surface
  * from three pieces:
  *   - config-store  → getConfig/setConfig/saveConfig/onConfigUpdated (S1 §2.A)

@@ -1,13 +1,13 @@
 /**
  * Android POS web entry — installs the shim with the REAL transport (S6+S7)
- * and mounts the boot component (LoginScreen ↔ the real Windows POSApp).
+ * and mounts AndroidBootApp (LoginScreen plus the shared POSLayout cashier).
  *
  * Packets S2 + S5 + S6+S7 of the Android parity port — see
  * docs/android-pos/PARITY_PORT_PLAN_2026-07-18.md (§5) and
  * docs/android-pos/SHIM_CONTRACT_S1.md.
  *
- * Ordering note: ES imports are hoisted, so POSApp's module graph loads before
- * the statements below run — that is safe because the renderer touches
+ * Ordering note: ES imports are hoisted, so AndroidBootApp's module graph loads
+ * before the statements below run — that is safe because the renderer touches
  * `window.electronAPI` only at render time (useConfig/usePosStore), and
  * `installShim()` runs before the first render.
  *
@@ -63,7 +63,7 @@ installBackGuard(window, {
 // E2a (salon mode): materialize the resolved POS mode into config so the
 // unmodified Windows POSLayout (`posMode === 'salon'` → SalonTemplate,
 // POSLayout.tsx:1642) renders the right template. `resolvePosMode` defaults a
-// fresh/invalid config to 'salon' (the Windows default, S1 headline #2) and
+// fresh/invalid Android config to 'salon' (the shared layout's fallback) and
 // leaves an explicit 'retail' config untouched — so a salon boots salon, a
 // retail-configured device stays retail. No-op when config already holds a
 // supported mode.

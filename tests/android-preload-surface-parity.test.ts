@@ -1,9 +1,9 @@
 /**
  * PARITY GUARD 1/2 — the Windows preload surface vs the Android shim surface.
  *
- * Why this exists: the Windows renderer is shared byte-for-byte with Android
- * (vite.android.config.ts mounts src/renderer/windows/pos/POSApp), but the
- * layer BELOW `window.electronAPI` is implemented twice — Electron main for
+ * Why this exists: AndroidBootApp imports the same POSLayout cashier tree used
+ * by the Windows POSApp, but the layer BELOW `window.electronAPI` is implemented
+ * twice — Electron main for
  * Windows, the hand-written shim for Android. Every capability Windows adds is
  * therefore a silent Android regression until someone ports it, and nothing
  * used to fail when nobody did. That is exactly how the billiard POS-handoff
@@ -21,10 +21,11 @@
  * waiver fails too, so an entry cannot outlive the gap it documents.
  *
  * LIMIT — read before trusting a green run: this checks NAMES, not behaviour.
- * `pos.billiardCheckout` exists on both sides today, yet all 8 Android methods
- * return `'desktop-only'` (shim/index.ts:103-112). Name parity is necessary,
- * not sufficient; behavioural parity for the money path is pinned by the
- * per-feature tests (and by guard 2/2, android-shell-props-parity.test.tsx).
+ * `pos.billiardCheckout` exists on both sides, but name parity alone did not
+ * prove behaviour: seven Android methods now delegate to the real transport,
+ * while `beginRestoredTender` still refuses. Behavioural parity for the money
+ * path is pinned by per-feature tests (and by guard 2/2,
+ * android-shell-props-parity.test.tsx).
  */
 import { describe, expect, test, vi } from 'vitest';
 

@@ -9,9 +9,8 @@
  * mode-tab nav; selecting Bi-a renders the unmodified BilliardFloorPlan, just
  * like App.tsx:517-518 does on Windows. Mode persists in localStorage.
  *
- * POSLayout and BilliardFloorPlan are the UNMODIFIED shared renderers — never
- * edit them from here. This shell supplies the same props App.tsx does, which
- * is what lets the tablet end and settle a billiard session (L6).
+ * POSLayout and BilliardFloorPlan are shared renderers. This shell supplies the
+ * Android handoff props that let the tablet end and settle a billiard session.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -32,20 +31,15 @@ import { STORAGE_AT_RISK_MESSAGE, getStorageDurability } from './shim/storage-du
 type BootState = 'checking' | 'login' | 'pos';
 type PosMode = 'pos' | 'billiard' | 'settings';
 
-// Persists the active POS/Bi-a mode across restarts. Same key the Windows
-// shell would use to remember the cashier's last billiard tab.
+// Persists the Android shell's active POS/Bi-a mode across restarts.
 const MODE_STORAGE_KEY = 'android.pos.mode';
 
 export default function AndroidBootApp() {
   const [state, setState] = useState<BootState>('checking');
   // Billiard (Bi-a) is an entitlement-gated second mode. When the salon is not
-  // entitled the tab nav is hidden and AndroidBootApp behaves exactly as it did
-  // before (plain POSApp). Mode persists across restarts via localStorage.
-  // REMOUNT-SAFE: POSApp's cart lives in the shim pos-store singleton
-  // (ShimPosStore, retained for the process lifetime in installShim()), and
-  // usePosStore only mirrors it via getState/onStateChanged — so unmounting
-  // POSApp on a tab switch and remounting it re-hydrates the full cart. We do
-  // not need to keep POSApp mounted + CSS-hidden.
+  // entitled the tab nav is hidden and AndroidBootApp behaves like a plain
+  // POSLayout host. Mode persists across restarts via localStorage; once visited,
+  // each pane remains mounted and is hidden with CSS during tab switches.
   const [mode, setMode] = useState<PosMode>(() => {
     try {
       const stored = localStorage.getItem(MODE_STORAGE_KEY);
@@ -187,7 +181,7 @@ export default function AndroidBootApp() {
 
   // Resolve the billiard entitlement + POS language once we reach the POS
   // state. A missing/disabled entitlement is non-fatal — it just leaves the
-  // Bi-a tab hidden and the plain POSApp shown (identical to pre-billiard
+  // Bi-a tab hidden and the plain POSLayout shown (identical to pre-billiard
   // behavior). Language mirrors App.tsx:518 (`config.language as Language`).
   useEffect(() => {
     if (state !== 'pos') {
@@ -202,7 +196,7 @@ export default function AndroidBootApp() {
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     // One transient failure at boot must not pin billiardEnabled=false for the
     // whole session (with stored mode='billiard' the cashier would be stuck in
-    // POSApp with no tab nav until re-login) — retry once after 3s.
+    // POSLayout with no tab nav until re-login) — retry once after 3s.
     const resolveEntitlement = (attempt: number) => {
       api.entitlements
         .get()
@@ -329,7 +323,7 @@ export default function AndroidBootApp() {
     return <LoginScreen onLoggedIn={() => setState('pos')} />;
   }
   // state === 'pos'. When billiard is entitled, mount the POS/Bi-a mode tabs;
-  // otherwise render the plain POSApp exactly as before.
+  // otherwise render the plain POSLayout exactly as before.
   return (
     <div className="h-screen flex flex-col">
       {storageAtRisk && (

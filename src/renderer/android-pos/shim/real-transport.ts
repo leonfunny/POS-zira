@@ -1048,7 +1048,7 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         const salonSlug = resolveAuthSalonSlug(result);
         // setConfig side-effect (auth.module.ts:795), minus the print-agent auto-connect.
         // E2a: do NOT hard-seed 'retail' on every login — resolve the POS mode so a
-        // salon boots salon (the Windows default) and a retail-configured device
+        // salon boots salon (the Android/shared-layout fallback) and a retail-configured device
         // stays retail. The resolved value reflects the config the cashier already
         // has (device/driver choice authoritative); SHIM_CONTRACT_SALON_E2 §0.1.
         configStore.setConfig({
