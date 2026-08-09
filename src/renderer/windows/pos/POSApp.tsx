@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import POSLayout from '../../components/pos/POSLayout';
 import {
+  RUNTIME_ONLY_POS_CAPABILITY_POLICY_INPUTS,
   resolveWindowsPosCapabilityManifest,
   usePosCapabilityConfigRefreshGate,
   type PosCapabilityHost,
@@ -109,6 +110,7 @@ export default function POSApp() {
       configRevision,
       platformRevision: 'windows-v1',
     },
+    policyInputs: RUNTIME_ONLY_POS_CAPABILITY_POLICY_INPUTS,
     resolvePlatformManifest: resolveWindowsPosCapabilityManifest,
   }), [
     capabilityAuthBoundaryKey,

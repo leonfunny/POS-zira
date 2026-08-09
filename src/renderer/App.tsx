@@ -31,6 +31,7 @@ import { useKeyboardManager } from './hooks/useKeyboardManager';
 import { resetProductAdminCapabilitiesCache, useProductAdminCapabilities } from './hooks/useProductAdminCapabilities';
 import type { BilliardPaymentIntent, RestoredCartReconciliation } from '../shared/billiard-pos-handoff';
 import {
+  RUNTIME_ONLY_POS_CAPABILITY_POLICY_INPUTS,
   resolveWindowsPosCapabilityManifest,
   usePosCapabilityConfigRefreshGate,
   type PosCapabilityHost,
@@ -209,6 +210,7 @@ export default function App() {
       configRevision: capabilityConfigRevision,
       platformRevision: 'windows-v1',
     },
+    policyInputs: RUNTIME_ONLY_POS_CAPABILITY_POLICY_INPUTS,
     resolvePlatformManifest: resolveWindowsPosCapabilityManifest,
   }), [
     authUser?.id,

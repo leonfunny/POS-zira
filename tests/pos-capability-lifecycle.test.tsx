@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import {
   ANDROID_POS_CAPABILITY_OUTCOMES,
   PosCapabilityProvider,
+  RUNTIME_ONLY_POS_CAPABILITY_POLICY_INPUTS,
   resolveAndroidPosCapabilityManifest,
   resolveWindowsPosCapabilityManifest,
   usePosCapabilityConfigRefreshGate,
@@ -146,6 +147,21 @@ async function settle(rounds = 4) {
 }
 
 describe('POS capability host profiles', () => {
+  test('runtime-only policy is explicit, deeply immutable and has independent axes', () => {
+    const policy = RUNTIME_ONLY_POS_CAPABILITY_POLICY_INPUTS;
+    const axes = [policy.salonConfig, policy.entitlements, policy.roleAccess];
+
+    expect(Object.isFrozen(policy)).toBe(true);
+    for (const axis of axes) {
+      expect(Object.isFrozen(axis)).toBe(true);
+      expect(Object.values(axis)).not.toContain('unknown');
+      expect(new Set(Object.values(axis))).toEqual(new Set(['not-required']));
+    }
+    expect(policy.salonConfig).not.toBe(policy.entitlements as unknown);
+    expect(policy.salonConfig).not.toBe(policy.roleAccess as unknown);
+    expect(policy.entitlements).not.toBe(policy.roleAccess as unknown);
+  });
+
   test('Windows defaults describe real behavior without claiming web panels are native', () => {
     const manifest = resolveWindowsPosCapabilityManifest({
       salonId: 'salon-1',

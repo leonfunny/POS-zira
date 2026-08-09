@@ -29,6 +29,7 @@ import type {
 import type { ProtectedInterruptionRecoveryRequired } from './shim/billiard-handoff';
 import { STORAGE_AT_RISK_MESSAGE, getStorageDurability } from './shim/storage-durability';
 import {
+  RUNTIME_ONLY_POS_CAPABILITY_POLICY_INPUTS,
   resolveAndroidPosCapabilityManifest,
   type PosCapabilityHost,
 } from '../components/pos/capabilities/PosCapabilityProvider';
@@ -120,6 +121,7 @@ export default function AndroidBootApp() {
       configRevision: capabilityConfigRevision,
       platformRevision: 'android-v1',
     },
+    policyInputs: RUNTIME_ONLY_POS_CAPABILITY_POLICY_INPUTS,
     resolvePlatformManifest: resolveAndroidPosCapabilityManifest,
   }), [
     capabilityConfig?.salonId,

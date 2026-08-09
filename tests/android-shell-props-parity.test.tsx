@@ -74,6 +74,7 @@ import AndroidBootApp from '../src/renderer/android-pos/AndroidBootApp';
 import RetailTemplate from '../src/renderer/components/pos/templates/retail/RetailTemplate';
 import {
   ANDROID_POS_CAPABILITY_OUTCOMES,
+  RUNTIME_ONLY_POS_CAPABILITY_POLICY_INPUTS,
   type PosCapabilityHost,
 } from '../src/renderer/components/pos/capabilities/PosCapabilityProvider';
 
@@ -251,6 +252,11 @@ describe('Android shell ↔ shared renderer prop parity', () => {
       roleRevision: 'STAFF',
       platformRevision: 'android-v1',
     });
+    expect(host.policyInputs).toBe(RUNTIME_ONLY_POS_CAPABILITY_POLICY_INPUTS);
+    for (const axis of Object.values(host.policyInputs!)) {
+      expect(Object.values(axis)).not.toContain('unknown');
+      expect(Object.isFrozen(axis)).toBe(true);
+    }
     const manifest = await host.resolvePlatformManifest({
       salonId: 'android-salon-1',
       userId: 'android-user-1',

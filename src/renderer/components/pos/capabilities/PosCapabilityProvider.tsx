@@ -9,6 +9,7 @@ import React, {
 } from 'react';
 
 import {
+  CASHIER_CAPABILITY_KEYS,
   createCashierCapabilityManifest,
   createDefaultCashierCapabilityPolicyInputs,
   createFailClosedCashierCapabilityManifest,
@@ -19,6 +20,32 @@ import {
   type CashierCapabilityOutcomes,
   type CashierCapabilityPolicyInputs,
 } from '../../../../shared/pos/cashier-capabilities';
+
+function immutableNotRequiredPolicyAxis<T extends 'not-required'>(): Record<
+  (typeof CASHIER_CAPABILITY_KEYS)[number],
+  T
+> {
+  return Object.freeze(Object.fromEntries(
+    CASHIER_CAPABILITY_KEYS.map((key) => [key, 'not-required']),
+  )) as Record<(typeof CASHIER_CAPABILITY_KEYS)[number], T>;
+}
+
+/**
+ * W1's initial manifest is runtime-only. Existing component config,
+ * entitlement and role guards remain authoritative, and backend authorization
+ * still applies; this value only declares that the capability layer adds no
+ * second policy gate yet. Every axis is explicit so consumers never interpret
+ * an unknown policy as permission.
+ *
+ * The object and its three independent maps are frozen. Hosts may safely share
+ * this baseline without sharing mutable policy state.
+ */
+export const RUNTIME_ONLY_POS_CAPABILITY_POLICY_INPUTS: CashierCapabilityPolicyInputs =
+  Object.freeze({
+    salonConfig: immutableNotRequiredPolicyAxis(),
+    entitlements: immutableNotRequiredPolicyAxis(),
+    roleAccess: immutableNotRequiredPolicyAxis(),
+  });
 
 export const WINDOWS_POS_CAPABILITY_OUTCOMES = {
   loyaltyLookup: { state: 'supported', reasonCode: 'AVAILABLE' },
