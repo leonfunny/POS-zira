@@ -19,9 +19,34 @@ if (androidBuildNumberLong > 2100000000L) {
 }
 def androidBuildNumber = androidBuildNumberLong.toInteger()
 
+// Sideload signer. This is NOT a Play upload key and NOT a Play app-signing key
+// — those stay three separate identities (see the production-readiness gate).
+// It exists because AppUpdaterPlugin refuses any update whose signer differs
+// from the installed app's, so sideloaded terminals need one stable signer.
+// Material comes only from the environment; nothing signing-related is ever
+// committed. Absent env vars, release stays unsigned and the build still runs.
+def sideloadKeystorePath = System.getenv('ZIRA_ANDROID_KEYSTORE')
+def sideloadKeystore = sideloadKeystorePath ? file(sideloadKeystorePath) : null
+def hasSideloadSigner = sideloadKeystore?.exists()
+    && System.getenv('ZIRA_ANDROID_KEYSTORE_PASSWORD')
+    && System.getenv('ZIRA_ANDROID_KEY_ALIAS')
+    && System.getenv('ZIRA_ANDROID_KEY_PASSWORD')
+
 android {
     namespace = "com.ziraai.posdiagnostics.dev"
     compileSdk = rootProject.ext.compileSdkVersion
+    signingConfigs {
+        if (hasSideloadSigner) {
+            sideload {
+                storeFile sideloadKeystore
+                storePassword System.getenv('ZIRA_ANDROID_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('ZIRA_ANDROID_KEY_ALIAS')
+                keyPassword System.getenv('ZIRA_ANDROID_KEY_PASSWORD')
+                enableV1Signing true
+                enableV2Signing true
+            }
+        }
+    }
     defaultConfig {
         applicationId "com.ziraai.posdiagnostics.dev"
         minSdkVersion rootProject.ext.minSdkVersion
@@ -49,6 +74,9 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            if (hasSideloadSigner) {
+                signingConfig signingConfigs.sideload
+            }
         }
     }
 }
