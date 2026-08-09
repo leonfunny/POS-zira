@@ -53,6 +53,10 @@ import type {
   UncertainTenderResolutionTarget,
 } from '../../../shared/billiard-pos-handoff';
 import { normalizeVatRate } from '../../../shared/pos/vat-rate';
+import {
+  PosCapabilityProvider,
+  type PosCapabilityHost,
+} from './capabilities/PosCapabilityProvider';
 
 type PosMode = 'retail' | 'salon' | 'b2b' | 'restaurant';
 
@@ -265,6 +269,7 @@ function ManualWeightModal({ prompt, tOr, onClose, onSubmit }: ManualWeightModal
 }
 
 interface POSLayoutProps {
+  capabilityHost?: PosCapabilityHost;
   onFullscreen?: () => void;
   onEditProduct?: (variantId: string) => void;
   billiardPaymentIntent?: BilliardPaymentIntent | null;
@@ -317,7 +322,15 @@ function getPickupKitchenPrintBadge(statusValue: unknown): { text: string; class
   return { text: 'Chờ bếp', className: 'bg-slate-50 text-slate-600 border-slate-200' };
 }
 
-export default function POSLayout({
+export default function POSLayout(props: POSLayoutProps = {}) {
+  return (
+    <PosCapabilityProvider host={props.capabilityHost}>
+      <POSLayoutContent {...props} />
+    </PosCapabilityProvider>
+  );
+}
+
+function POSLayoutContent({
   onFullscreen,
   onEditProduct,
   billiardPaymentIntent,
@@ -328,7 +341,7 @@ export default function POSLayout({
   onRestoredTenderResolved,
   onRestoredCartTenderOutcomeUncertain,
   embedded = false,
-}: POSLayoutProps = {}) {
+}: POSLayoutProps) {
   useBarcodeForwarder();
   const { state, dispatch, dispatchError, clearDispatchError } = usePosStore();
   const { config, saveConfig } = useConfig();

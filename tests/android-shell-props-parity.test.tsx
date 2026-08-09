@@ -72,6 +72,10 @@ vi.mock('../src/renderer/components/pos/templates/retail/QuickActions', () => ({
 
 import AndroidBootApp from '../src/renderer/android-pos/AndroidBootApp';
 import RetailTemplate from '../src/renderer/components/pos/templates/retail/RetailTemplate';
+import {
+  ANDROID_POS_CAPABILITY_OUTCOMES,
+  type PosCapabilityHost,
+} from '../src/renderer/components/pos/capabilities/PosCapabilityProvider';
 
 // ── Contract ────────────────────────────────────────────────────────────────
 
@@ -95,15 +99,32 @@ const KNOWN_SHELL_PROP_GAPS: Record<string, string> = {};
 // ── Harness (mirrors tests/android-billiard-boot.test.tsx) ──────────────────
 
 function makeApi() {
+  const authUser = {
+    id: 'android-user-1',
+    email: 'cashier@example.test',
+    firstName: 'Cashier',
+    lastName: 'One',
+    role: 'STAFF',
+    salonId: 'android-salon-1',
+  };
   return {
     auth: {
-      getUser: () => Promise.resolve({ data: { isAuthenticated: true } }),
+      getUser: () => Promise.resolve({ data: { isAuthenticated: true, user: authUser } }),
       onExpired: () => () => {},
     },
     entitlements: {
       get: () => Promise.resolve({ features: { billiard: { enabled: true } } }),
     },
-    getConfig: () => Promise.resolve({ language: 'pl' }),
+    getConfig: () => Promise.resolve({
+      language: 'pl',
+      salonId: authUser.salonId,
+      registerCode: 'android-register-1',
+      authUser,
+    }),
+    // Same-named methods are deliberately present. The Android manifest must
+    // still come from its host-owned profile, never from function existence.
+    window: { open: () => Promise.resolve({ success: true }) },
+    printLabel: () => Promise.resolve({ success: true }),
     pos: {
       getState: () => Promise.resolve({ session: { isOpen: false } }),
       dispatch: () => Promise.resolve(),
@@ -131,6 +152,7 @@ describe('Android shell ↔ shared renderer prop parity', () => {
 
   beforeEach(() => {
     captured.billiardProps = null;
+    capturedPos.props = null;
     container = document.createElement('div');
     document.body.appendChild(container);
     localStorage.clear();
@@ -215,6 +237,29 @@ describe('Android shell ↔ shared renderer prop parity', () => {
     // before this flag existed.
     await bootIntoBilliard();
     expect(capturedPos.props!.embedded, 'POSLayout will demand a full 100vh inside a shorter parent').toBe(true);
+  });
+
+  it('hands POSLayout a host-owned Android capability profile bound to this session', async () => {
+    await bootIntoBilliard();
+    const host = capturedPos.props!.capabilityHost as PosCapabilityHost;
+
+    expect(host.session).toMatchObject({
+      authenticated: true,
+      salonId: 'android-salon-1',
+      userId: 'android-user-1',
+      registerId: 'android-register-1',
+      roleRevision: 'STAFF',
+      platformRevision: 'android-v1',
+    });
+    const manifest = await host.resolvePlatformManifest({
+      salonId: 'android-salon-1',
+      userId: 'android-user-1',
+      registerId: 'android-register-1',
+      authEpoch: 99,
+    });
+    expect((manifest as any).outcomes).toEqual(ANDROID_POS_CAPABILITY_OUTCOMES);
+    expect((manifest as any).outcomes.customerDisplay.state).toBe('unsupported');
+    expect((manifest as any).outcomes.labelPrint.state).toBe('unsupported');
   });
 
   it('keeps BOTH tabs mounted across a switch (3c2f020 parity)', async () => {

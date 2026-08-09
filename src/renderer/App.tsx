@@ -30,6 +30,11 @@ import { useEntitlements } from './hooks/useEntitlements';
 import { useKeyboardManager } from './hooks/useKeyboardManager';
 import { resetProductAdminCapabilitiesCache, useProductAdminCapabilities } from './hooks/useProductAdminCapabilities';
 import type { BilliardPaymentIntent, RestoredCartReconciliation } from '../shared/billiard-pos-handoff';
+import {
+  resolveWindowsPosCapabilityManifest,
+  usePosCapabilityConfigRefreshGate,
+  type PosCapabilityHost,
+} from './components/pos/capabilities/PosCapabilityProvider';
 
 // DEFAULT_ENTITLEMENTS now comes from shared/types — single source shared
 // with the main process (the two copies used to diverge: pos true here,
@@ -55,6 +60,14 @@ const TAB_TO_FEATURE: Record<Tab, FeatureKey> = {
   settings: 'settings',
   debug: 'debug',
 };
+
+function capabilityRevision(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? 'unknown';
+  } catch {
+    return 'unserializable';
+  }
+}
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('checkin');
@@ -84,10 +97,64 @@ export default function App() {
   const { entitlements, loading: entitlementsLoading, refresh: refreshEntitlements } = useEntitlements();
   const { visible: keyboardVisible, mode: keyboardMode, onKey, onBackspace, onDone } = useKeyboardManager();
   const { capabilities: productAdminCapabilities } = useProductAdminCapabilities(isAuthenticated);
+  const capabilityAuthBoundaryKey = isAuthenticated
+    ? `authenticated:${authUser?.id || ''}:${authUser?.salonId || ''}`
+    : 'anonymous';
+  const [capabilityConfigBinding, setCapabilityConfigBinding] = useState<{
+    config: AgentConfig | null;
+    authBoundaryKey: string;
+  }>({ config, authBoundaryKey: capabilityAuthBoundaryKey });
+  const capabilityConfig = capabilityConfigBinding.config;
+  const readCapabilityConfig = useCallback(async (): Promise<AgentConfig> => (
+    await window.electronAPI.getConfig() as AgentConfig
+  ), []);
+  const capabilityConfigGate = usePosCapabilityConfigRefreshGate(
+    readCapabilityConfig,
+    (nextConfig, authBoundaryKey) => {
+      setCapabilityConfigBinding({ config: nextConfig, authBoundaryKey });
+    },
+    capabilityAuthBoundaryKey,
+  );
+
+  // Initial hydration comes from useConfig. Once a config broadcast has been
+  // observed, only the generation-guarded read above may replace this snapshot.
+  useEffect(() => {
+    if (
+      capabilityConfigGate.revision === 0
+      && capabilityConfigGate.ready
+      && capabilityConfigBinding.authBoundaryKey === capabilityAuthBoundaryKey
+      && config
+    ) {
+      setCapabilityConfigBinding({ config, authBoundaryKey: capabilityAuthBoundaryKey });
+    }
+  }, [
+    capabilityAuthBoundaryKey,
+    capabilityConfigBinding.authBoundaryKey,
+    capabilityConfigGate.ready,
+    capabilityConfigGate.revision,
+    config,
+  ]);
+
+  // useConfig publishes the refreshed value after its async read. This second
+  // listener is only an invalidation edge: capabilities reset on the broadcast
+  // itself, before that read can complete with a new salon/register/config.
+  useEffect(() => {
+    const unsubscribe = (window.electronAPI as any)?.onConfigUpdated?.(() => {
+      capabilityConfigGate.invalidate();
+    });
+    return () => { if (typeof unsubscribe === 'function') unsubscribe(); };
+  }, [capabilityConfigGate.invalidate]);
 
   const rendererAuthBoundaryKey = isAuthenticated
     ? `${authUser?.id || ''}:${config?.salonId || authUser?.salonId || ''}:${(config as any)?.registerCode || config?.machineId || config?.agentId || ''}`
     : 'anonymous';
+  const capabilityAuthRevisionRef = useRef({ key: rendererAuthBoundaryKey, value: 0 });
+  if (capabilityAuthRevisionRef.current.key !== rendererAuthBoundaryKey) {
+    capabilityAuthRevisionRef.current = {
+      key: rendererAuthBoundaryKey,
+      value: capabilityAuthRevisionRef.current.value + 1,
+    };
+  }
   useEffect(() => {
     if (rendererAuthBoundaryRef.current === rendererAuthBoundaryKey) return;
     rendererAuthBoundaryRef.current = rendererAuthBoundaryKey;
@@ -109,6 +176,56 @@ export default function App() {
   }, []);
 
   const loading = authLoading || entitlementsLoading;
+
+  const capabilityEntitlementRevision = capabilityRevision(entitlements?.features ?? null);
+  const capabilityConfigRevision = capabilityRevision({
+    gateRevision: capabilityConfigGate.revision,
+    gateReady: capabilityConfigGate.ready,
+    authBoundaryKey: capabilityConfigBinding.authBoundaryKey,
+    customerDisplayEnabled: capabilityConfig?.customerDisplayEnabled,
+    customerDisplayProfile: capabilityConfig?.customerDisplayProfile,
+    customerDisplayMonitor: capabilityConfig?.customerDisplayMonitor,
+    labelPrinter: capabilityConfig?.labelPrinter,
+    printers: capabilityConfig?.printers,
+    scale: capabilityConfig?.scale,
+    posMode: capabilityConfig?.posMode,
+    moduleOverrides: capabilityConfig?.moduleOverrides,
+    hiddenTabs: capabilityConfig?.hiddenTabs,
+    salonCode: capabilityConfig?.salonCode,
+  });
+  const posCapabilityHost = useMemo<PosCapabilityHost>(() => ({
+    session: {
+      authenticated: isAuthenticated
+        && capabilityConfigGate.ready
+        && capabilityConfigBinding.authBoundaryKey === capabilityAuthBoundaryKey,
+      salonId: capabilityConfig?.salonId || authUser?.salonId,
+      userId: authUser?.id,
+      registerId: (capabilityConfig as any)?.registerCode
+        || capabilityConfig?.machineId
+        || capabilityConfig?.agentId,
+      authRevision: capabilityAuthRevisionRef.current.value,
+      roleRevision: String(authUser?.role || ''),
+      entitlementRevision: capabilityEntitlementRevision,
+      configRevision: capabilityConfigRevision,
+      platformRevision: 'windows-v1',
+    },
+    resolvePlatformManifest: resolveWindowsPosCapabilityManifest,
+  }), [
+    authUser?.id,
+    authUser?.role,
+    authUser?.salonId,
+    capabilityAuthBoundaryKey,
+    capabilityConfigBinding.authBoundaryKey,
+    capabilityConfigGate.ready,
+    capabilityConfigGate.revision,
+    capabilityConfigRevision,
+    capabilityEntitlementRevision,
+    capabilityConfig?.agentId,
+    capabilityConfig?.machineId,
+    capabilityConfig?.salonId,
+    isAuthenticated,
+    (capabilityConfig as any)?.registerCode,
+  ]);
 
   // Sync sidebar collapsed state from config on load
   useEffect(() => {
@@ -510,6 +627,7 @@ export default function App() {
           style={{ paddingBottom: posFullscreenKeyboardInset > 0 ? `${posFullscreenKeyboardInset}px` : '0' }}
         >
           <POSLayout
+            capabilityHost={posCapabilityHost}
             billiardPaymentIntent={billiardPaymentIntent}
             restoredCartReconciliation={restoredCartReconciliation}
             canResolveUncertainTender={String(authUser?.role || '').toUpperCase() === 'OWNER'}
@@ -613,6 +731,7 @@ export default function App() {
             <div className={activeTab === 'pos' || activeTab === 'billiard' ? 'h-full' : 'p-4'}>
               {activeTab === 'pos' && isTabAvailable('pos') && (
                 <POSLayout
+                  capabilityHost={posCapabilityHost}
                   onFullscreen={() => { setIsPosFullscreen(true); window.electronAPI.window.setKiosk(true); }}
                   onEditProduct={canEditProductsFromSale ? (variantId) => requestProductEdit(variantId, 'pos') : undefined}
                   billiardPaymentIntent={billiardPaymentIntent}

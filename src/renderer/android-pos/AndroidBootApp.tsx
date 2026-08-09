@@ -13,7 +13,7 @@
  * Android handoff props that let the tablet end and settle a billiard session.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import LoginScreen from './LoginScreen';
 // POSLayout directly, NOT the POSApp wrapper: POSApp takes no props and is
 // shared with the Windows shell, so the billiard intent has to be handed to the
@@ -28,12 +28,24 @@ import type {
 } from '../../shared/billiard-pos-handoff';
 import type { ProtectedInterruptionRecoveryRequired } from './shim/billiard-handoff';
 import { STORAGE_AT_RISK_MESSAGE, getStorageDurability } from './shim/storage-durability';
+import {
+  resolveAndroidPosCapabilityManifest,
+  type PosCapabilityHost,
+} from '../components/pos/capabilities/PosCapabilityProvider';
 
 type BootState = 'checking' | 'login' | 'pos';
 type PosMode = 'pos' | 'billiard' | 'settings';
 
 // Persists the Android shell's active POS/Bi-a mode across restarts.
 const MODE_STORAGE_KEY = 'android.pos.mode';
+
+function capabilityRevision(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? 'unknown';
+  } catch {
+    return 'unserializable';
+  }
+}
 
 export default function AndroidBootApp() {
   const [state, setState] = useState<BootState>('checking');
@@ -62,9 +74,64 @@ export default function AndroidBootApp() {
   const [protectedInterruptionRecoveryRequired, setProtectedInterruptionRecoveryRequired] = useState<ProtectedInterruptionRecoveryRequired | null>(null);
   const [isOwner, setIsOwner] = useState(false);
   const [canOpenSettings, setCanOpenSettings] = useState(false);
+  const [capabilityUser, setCapabilityUser] = useState<any>(null);
+  const [capabilityConfig, setCapabilityConfig] = useState<any>(null);
+  const [capabilityEntitlements, setCapabilityEntitlements] = useState<any>(null);
+  const [capabilityConfigSignal, setCapabilityConfigSignal] = useState(0);
   // Guards every async handoff result: a response that belongs to a previous
   // cashier must not land in this one's screen.
   const billiardGenerationRef = useRef(0);
+  const authRevisionRef = useRef({ state, value: 0 });
+  if (authRevisionRef.current.state !== state) {
+    authRevisionRef.current = {
+      state,
+      value: authRevisionRef.current.value + 1,
+    };
+  }
+
+  const capabilityEntitlementRevision = capabilityRevision(
+    capabilityEntitlements?.features ?? null,
+  );
+  const capabilityConfigRevision = capabilityRevision({
+    signal: capabilityConfigSignal,
+    customerDisplayEnabled: capabilityConfig?.customerDisplayEnabled,
+    customerDisplayProfile: capabilityConfig?.customerDisplayProfile,
+    customerDisplayMonitor: capabilityConfig?.customerDisplayMonitor,
+    labelPrinter: capabilityConfig?.labelPrinter,
+    printers: capabilityConfig?.printers,
+    scale: capabilityConfig?.scale,
+    posMode: capabilityConfig?.posMode,
+    moduleOverrides: capabilityConfig?.moduleOverrides,
+    hiddenTabs: capabilityConfig?.hiddenTabs,
+    salonCode: capabilityConfig?.salonCode,
+  });
+  const registerId = capabilityConfig?.registerCode
+    || capabilityConfig?.machineId
+    || capabilityConfig?.agentId;
+  const posCapabilityHost = useMemo<PosCapabilityHost>(() => ({
+    session: {
+      authenticated: state === 'pos',
+      salonId: capabilityConfig?.salonId || capabilityUser?.salonId,
+      userId: capabilityUser?.id,
+      registerId,
+      authRevision: authRevisionRef.current.value,
+      roleRevision: String(capabilityUser?.role || ''),
+      entitlementRevision: capabilityEntitlementRevision,
+      configRevision: capabilityConfigRevision,
+      platformRevision: 'android-v1',
+    },
+    resolvePlatformManifest: resolveAndroidPosCapabilityManifest,
+  }), [
+    capabilityConfig?.salonId,
+    capabilityConfigSignal,
+    capabilityConfigRevision,
+    capabilityEntitlementRevision,
+    capabilityUser?.id,
+    capabilityUser?.role,
+    capabilityUser?.salonId,
+    registerId,
+    state,
+  ]);
 
   useEffect(() => {
     const api = (window as any).electronAPI;
@@ -74,13 +141,31 @@ export default function AndroidBootApp() {
       .getUser()
       .then((result: any) => {
         if (cancelled) return;
-        setState(result?.data?.isAuthenticated ? 'pos' : 'login');
+        if (result?.data?.isAuthenticated) {
+          setCapabilityUser(result?.data?.user ?? null);
+          setState('pos');
+        } else {
+          setCapabilityUser(null);
+          setCapabilityConfig(null);
+          setCapabilityEntitlements(null);
+          setState('login');
+        }
       })
       .catch(() => {
-        if (!cancelled) setState('login');
+        if (!cancelled) {
+          setCapabilityUser(null);
+          setCapabilityConfig(null);
+          setCapabilityEntitlements(null);
+          setState('login');
+        }
       });
 
-    const unsubscribe = api.auth.onExpired(() => setState('login'));
+    const unsubscribe = api.auth.onExpired(() => {
+      setCapabilityUser(null);
+      setCapabilityConfig(null);
+      setCapabilityEntitlements(null);
+      setState('login');
+    });
     return () => {
       cancelled = true;
       unsubscribe();
@@ -191,6 +276,11 @@ export default function AndroidBootApp() {
       // the next login may be a different salon, and until its entitlements
       // resolve the Bi-a tab must not render on a stale flag.
       setBilliardEnabled(false);
+      setCapabilityUser(null);
+      setCapabilityConfig(null);
+      setCapabilityEntitlements(null);
+      setIsOwner(false);
+      setCanOpenSettings(false);
       return;
     }
     const api = (window as any).electronAPI;
@@ -202,9 +292,14 @@ export default function AndroidBootApp() {
     const resolveEntitlement = (attempt: number) => {
       api.entitlements
         .get()
-        .then((e: any) => { if (!cancelled) setBilliardEnabled(!!e?.features?.billiard?.enabled); })
+        .then((e: any) => {
+          if (cancelled) return;
+          setCapabilityEntitlements(e ?? null);
+          setBilliardEnabled(!!e?.features?.billiard?.enabled);
+        })
         .catch(() => {
           if (cancelled) return;
+          setCapabilityEntitlements(null);
           setBilliardEnabled(false);
           if (attempt < 1) retryTimer = setTimeout(() => resolveEntitlement(attempt + 1), 3000);
         });
@@ -213,45 +308,50 @@ export default function AndroidBootApp() {
     // Live updates: a plan change (or the first successful fetch after a boot
     // blip) flips the Bi-a tab without a restart.
     const unsubscribeEntitlements = api.entitlements.onChanged?.((e: any) => {
-      if (!cancelled) setBilliardEnabled(!!e?.features?.billiard?.enabled);
+      if (cancelled) return;
+      setCapabilityEntitlements(e ?? null);
+      setBilliardEnabled(!!e?.features?.billiard?.enabled);
     });
-    api.getConfig()
+    const resolveConfig = () => api.getConfig()
       .then((c: any) => {
         if (cancelled) return;
+        setCapabilityConfig(c ?? null);
+        setCapabilityUser(c?.authUser ?? null);
+        const role = String(c?.authUser?.role || '').toUpperCase();
+        setIsOwner(role === 'OWNER');
+        setCanOpenSettings(role === 'OWNER' || role === 'MANAGER');
         if (c?.language) setLanguage((c.language as Language) || 'en');
       })
-      .catch(() => { /* default 'en' is fine */ });
+      .catch(() => {
+        if (cancelled) return;
+        setCapabilityConfig(null);
+        setCapabilityUser(null);
+        setIsOwner(false);
+        setCanOpenSettings(false);
+      });
+    void resolveConfig();
+    const unsubscribeConfig = api.onConfigUpdated?.(() => {
+      if (cancelled) return;
+      // Drop the old salon/register/role/config snapshot before the async
+      // refresh. The provider therefore publishes fail-closed immediately.
+      setCapabilityConfig(null);
+      setCapabilityUser(null);
+      setCapabilityConfigSignal((value) => value + 1);
+      void resolveConfig();
+    });
     // Cancelled on unmount OR on state flip — a delayed response from a
     // previous session must not win after re-login (stale entitlement race).
     return () => {
       cancelled = true;
       if (retryTimer) clearTimeout(retryTimer);
       unsubscribeEntitlements?.();
+      unsubscribeConfig?.();
     };
   }, [state]);
 
   useEffect(() => {
     if (mode === 'billiard') setBilliardVisited(true);
   }, [mode]);
-
-  // Only an OWNER may resolve an uncertain tender (App.tsx:515).
-  useEffect(() => {
-    if (state !== 'pos') {
-      setIsOwner(false);
-      setCanOpenSettings(false);
-      return;
-    }
-    let cancelled = false;
-    void (window as any).electronAPI.getConfig()
-      .then((c: any) => {
-        if (cancelled) return;
-        const role = String(c?.authUser?.role || '').toUpperCase();
-        setIsOwner(role === 'OWNER');
-        setCanOpenSettings(role === 'OWNER' || role === 'MANAGER');
-      })
-      .catch(() => { /* not an owner until proven otherwise */ });
-    return () => { cancelled = true; };
-  }, [state]);
 
   useEffect(() => {
     if (!canOpenSettings && mode === 'settings') {
@@ -341,7 +441,16 @@ export default function AndroidBootApp() {
     );
   }
   if (state === 'login') {
-    return <LoginScreen onLoggedIn={() => setState('pos')} />;
+    return (
+      <LoginScreen
+        onLoggedIn={() => {
+          setCapabilityUser(null);
+          setCapabilityConfig(null);
+          setCapabilityEntitlements(null);
+          setState('pos');
+        }}
+      />
+    );
   }
   // state === 'pos'. When billiard is entitled, mount the POS/Bi-a mode tabs;
   // otherwise render the plain POSLayout exactly as before.
@@ -410,6 +519,7 @@ export default function AndroidBootApp() {
             BilliardFloorPlan pauses its polls when `active` is false (3c2f020). */}
         <div className={mode === 'pos' ? 'h-full' : 'hidden'}>
           <POSLayout
+            capabilityHost={posCapabilityHost}
             /* The shell owns the banner + tab chrome above this, so POSLayout
                must fill what is left rather than demand a full 100vh — else the
                pay button lands below the fold. */
