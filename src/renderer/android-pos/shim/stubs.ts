@@ -706,14 +706,19 @@ export function buildExcludedPosNamespaces(deps: Pick<StubDeps, 'transport'> = {
   };
 }
 
-/** Window management (S1 §2.L) — single-window on Android. */
+/**
+ * Window management (S1 §2.L) — Android hosts one WebView and cannot create
+ * Electron child windows. Keep the namespace so shared renderer boot code can
+ * safely reference it, but never acknowledge an operation that did not occur.
+ */
 export function buildWindowNamespace() {
+  const unsupported = () => ({ success: false, error: 'desktop-only' });
   return {
-    open: async () => ({ success: true }),
-    close: async () => ({ success: true }),
+    open: async (_target?: string) => unsupported(),
+    close: async (_target?: string) => unsupported(),
     list: async () => [],
-    setFullScreen: async () => ({ success: true }),
-    setKiosk: async () => ({ success: true }),
+    setFullScreen: async (_enabled?: boolean) => unsupported(),
+    setKiosk: async (_enabled?: boolean) => unsupported(),
   };
 }
 

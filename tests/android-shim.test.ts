@@ -246,7 +246,12 @@ describe('android shim S1 stub defaults', () => {
     });
     expect(await api.pos.pickupOrders.machineId()).toBeNull();
     expect(await api.pos.pickupOrders.listOpen()).toEqual([]);
-    expect(await api.window.open('customer')).toEqual({ success: true });
+    // Android has one WebView, so a shared renderer must never be told that a
+    // customer display (or any Electron child window) is active.
+    expect(await api.window.open('customer')).toEqual({ success: false, error: 'desktop-only' });
+    expect(await api.window.close('customer')).toEqual({ success: false, error: 'desktop-only' });
+    expect(await api.window.setFullScreen(true)).toEqual({ success: false, error: 'desktop-only' });
+    expect(await api.window.setKiosk(true)).toEqual({ success: false, error: 'desktop-only' });
     expect(await api.window.list()).toEqual([]);
   });
 
