@@ -5,7 +5,7 @@ import type { PosState, PosAction, CartItem } from '../../../../hooks/usePosStor
 import rlog from '../../../../utils/logger';
 import { useConfig } from '../../../../hooks/useConfig';
 import { formatProductLabelPriceText } from '../../../../utils/product-label';
-import { resolveName } from '../../../../../shared/catalog-names';
+import { resolveName, resolveProductLabelName } from '../../../../../shared/catalog-names';
 import { classifyProductSale, type ProductSaleClassification } from '../../../../../shared/product-sale-classifier';
 import { isSaleBlockedByStock } from '../../../../../shared/product-stock-tracking';
 import { normalizeSellBy } from '../../../../../shared/pos-sale';
@@ -725,9 +725,9 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
     }
 
     try {
-      const displayName = resolveName(product, lang) || product.name;
+      const labelName = resolveProductLabelName(product) || product.name;
       const priceText = formatProductLabelPriceText(product, tOr('pos.currency', 'zl'));
-      const result = await window.electronAPI.printLabel(barcode, displayName, {
+      const result = await window.electronAPI.printLabel(barcode, labelName, {
         priceText,
         sku: product.sku?.trim() || undefined,
         quantity: options.quantity,
@@ -739,7 +739,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
     } catch (err: any) {
       return { success: false, error: err?.message || tOr('pos.label.failed', 'Không in được mã') };
     }
-  }, [lang, tOr]);
+  }, [tOr]);
 
   const handlePrintCartItemCode = useCallback(async (item: CartItem) => {
     try {

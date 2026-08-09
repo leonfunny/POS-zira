@@ -15,6 +15,7 @@
 export type NameTranslations = Record<string, string>;
 
 export const RECEIPT_NAME_LOCALE = 'pl';
+export const PRODUCT_LABEL_NAME_LOCALE = 'pl';
 
 interface NamedRow {
   name?: string | null;
@@ -87,4 +88,13 @@ export function resolveName(row: NamedRow | null | undefined, lang: string | nul
   const translated = translations[code];
   if (typeof translated === 'string' && translated.trim() !== '') return translated;
   return canonical;
+}
+
+/**
+ * Customer-facing product labels in Poland always use the Polish catalog name.
+ * Missing/blank Polish translations fail visibly to the canonical name instead
+ * of silently switching to the current POS/operator UI language.
+ */
+export function resolveProductLabelName(row: NamedRow | null | undefined): string {
+  return resolveName(row, PRODUCT_LABEL_NAME_LOCALE);
 }

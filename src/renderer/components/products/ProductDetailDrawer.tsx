@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Ban, Package, PackagePlus, Pencil, Printer, X } from 'lucide-react';
-import { resolveName } from '../../../shared/catalog-names';
+import { resolveName, resolveProductLabelName } from '../../../shared/catalog-names';
 import { classifyProductSale } from '../../../shared/product-sale-classifier';
 import { isStockTracked } from '../../../shared/product-stock-tracking';
 import type { ProductAdminStockAdjustmentResponse } from '../../../shared/types';
@@ -143,7 +143,8 @@ export default function ProductDetailDrawer({
     setLabelMessage(null);
     try {
       const priceGrosze = Number(product.retail_price) || 0;
-      const result = await window.electronAPI.printLabel(product.barcode, displayName, {
+      const labelName = resolveProductLabelName(product) || product.name;
+      const result = await window.electronAPI.printLabel(product.barcode, labelName, {
         priceText: priceGrosze > 0 ? formatMoney(priceGrosze, currency) : undefined,
         sku: product.sku?.trim() || undefined,
       });

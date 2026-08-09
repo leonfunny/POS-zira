@@ -46,7 +46,7 @@ describe('native Product workspace renderer', () => {
     expect(editView).toContain('&& product.is_active !== 0;');
     expect(editView).toContain('disabled={!canPrintLabel}');
     expect(editView).toContain('formatProductLabelPriceText(product, currency)');
-    expect(editView).toContain('resolveName(product, labelLanguage)');
+    expect(editView).toContain('resolveProductLabelName(product)');
   });
 
   it('validates standalone stock quantities against the product sale mode', () => {

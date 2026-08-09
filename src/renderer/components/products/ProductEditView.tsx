@@ -1,14 +1,13 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Ban, ChevronLeft, PackagePlus, Pencil, Printer, RotateCcw } from 'lucide-react';
-import { parseTranslations, resolveName } from '../../../shared/catalog-names';
+import { parseTranslations, resolveName, resolveProductLabelName } from '../../../shared/catalog-names';
 import { classifyProductSale } from '../../../shared/product-sale-classifier';
 import { isStockTracked } from '../../../shared/product-stock-tracking';
 import type { ProductAdminReceiveStockResponse, ProductAdminStockAdjustmentResponse, ProductAdminVariant } from '../../../shared/types';
 import type { Category } from '../../hooks/usePosDb';
 import type { ProductListItem } from '../../hooks/useProducts';
-import { useConfig } from '../../hooks/useConfig';
 import { useKeyboardAwareFocus } from '../../hooks/useKeyboardAwareFocus';
-import { coerceLabelLanguage, formatProductLabelPriceText } from '../../utils/product-label';
+import { formatProductLabelPriceText } from '../../utils/product-label';
 import DeactivateProductDialog from './DeactivateProductDialog';
 import ProductEditForm, {
   productEditNavigationState,
@@ -128,7 +127,6 @@ export default function ProductEditView({
   onProductReactivated,
   onStaleProductHidden,
 }: ProductEditViewProps) {
-  const { config } = useConfig();
   const [labelBusy, setLabelBusy] = useState(false);
   const [labelMessage, setLabelMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [stockOpen, setStockOpen] = useState(false);
@@ -204,8 +202,7 @@ export default function ProductEditView({
     product.name,
     parseTranslations(product.name_translations),
   );
-  const labelLanguage = coerceLabelLanguage(config?.labelModuleLanguage ?? config?.posLanguage);
-  const labelDisplayName = resolveName(product, labelLanguage) || product.name;
+  const labelName = resolveProductLabelName(product) || product.name;
   const category = product.category_id ? categoryById.get(product.category_id) : null;
   const categoryName = category ? resolveName(category, language) : '-';
   const stock = productStockDisplay(product);
@@ -274,7 +271,7 @@ export default function ProductEditView({
     setLabelMessage(null);
     try {
       const priceText = formatProductLabelPriceText(product, currency);
-      const result = await window.electronAPI.printLabel(product.barcode, labelDisplayName, {
+      const result = await window.electronAPI.printLabel(product.barcode, labelName, {
         priceText,
         sku: product.sku?.trim() || undefined,
       });

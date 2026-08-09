@@ -137,6 +137,22 @@ export class ZplFormatter {
   }
 
   /**
+   * Font 0 uses the explicit ^A0 width as the character-cell width. Keeping it
+   * equal to the height makes a 30-40 character title nearly twice as wide as
+   * a 50mm label. Fit the cell width to the 40mm printable band while retaining
+   * a readable proportional width for shorter text.
+   */
+  private fittedTextWidthMm(
+    text: string,
+    fontHeightMm: number,
+    maxWidthMm: number,
+  ): number {
+    const glyphCount = Math.max(1, Array.from(text).length);
+    const proportionalWidthMm = fontHeightMm * 0.6;
+    return Math.max(0.6, Math.min(proportionalWidthMm, maxWidthMm / glyphCount));
+  }
+
+  /**
    * Food information labels use Font 0 blocks; GK420d renders some Latin
    * Extended-A and Vietnamese glyphs as blanks even with ^CI28. Keep the labels
    * readable until we ship/download a Unicode font to the printer.
@@ -297,8 +313,9 @@ export class ZplFormatter {
 
       for (const textLine of text1Lines) {
         if (!wouldFit(currentY, text1FontMm)) break;
+        const text1WidthMm = this.fittedTextWidthMm(textLine, text1FontMm, this.labelWidth - 10);
         lines.push(`^FO${barcodeX},${currentY}`);
-        lines.push(`^A0,${this.mmToDots(text1FontMm)},${this.mmToDots(text1FontMm)}`);
+        lines.push(`^A0,${this.mmToDots(text1FontMm)},${this.mmToDots(text1WidthMm)}`);
         lines.push(`^FD${textLine}^FS`);
         currentY += this.mmToDots(text1GapMm);
       }
@@ -325,17 +342,21 @@ export class ZplFormatter {
       currentY += this.mmToDots(barcodeHeightMm + priceGapBelowBarcodeMm);
     }
 
-    if (data.text2 && wouldFit(currentY, text2FontMm)) {
+    const printableText2 = data.text2 ? this.sanitizeText(data.text2) : '';
+    if (printableText2 && wouldFit(currentY, text2FontMm)) {
+      const text2WidthMm = this.fittedTextWidthMm(printableText2, text2FontMm, this.labelWidth - 10);
       lines.push(`^FO${barcodeX},${currentY}`);
-      lines.push(`^A0,${this.mmToDots(text2FontMm)},${this.mmToDots(text2FontMm)}`);
-      lines.push(`^FD${this.sanitizeText(data.text2)}^FS`);
+      lines.push(`^A0,${this.mmToDots(text2FontMm)},${this.mmToDots(text2WidthMm)}`);
+      lines.push(`^FD${printableText2}^FS`);
       currentY += this.mmToDots(text2GapMm);
     }
 
-    if (data.text3 && wouldFit(currentY, text3FontMm)) {
+    const printableText3 = data.text3 ? this.sanitizeText(data.text3) : '';
+    if (printableText3 && wouldFit(currentY, text3FontMm)) {
+      const text3WidthMm = this.fittedTextWidthMm(printableText3, text3FontMm, this.labelWidth - 10);
       lines.push(`^FO${barcodeX},${currentY}`);
-      lines.push(`^A0,${this.mmToDots(text3FontMm)},${this.mmToDots(text3FontMm)}`);
-      lines.push(`^FD${this.sanitizeText(data.text3)}^FS`);
+      lines.push(`^A0,${this.mmToDots(text3FontMm)},${this.mmToDots(text3WidthMm)}`);
+      lines.push(`^FD${printableText3}^FS`);
     }
 
     // Print quantity

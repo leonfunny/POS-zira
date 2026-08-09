@@ -25,7 +25,8 @@ describe('retail POS long-press label printing', () => {
     expect(retailTemplate).toContain('const handlePrintProductCode = useCallback(async (product: Product, options: { quantity?: number } = {}) => {');
     expect(retailTemplate).toContain('const barcode = product.barcode?.trim();');
     expect(retailTemplate).toContain("const priceText = formatProductLabelPriceText(product, tOr('pos.currency', 'zl'));");
-    expect(retailTemplate).toContain('window.electronAPI.printLabel(barcode, displayName, {');
+    expect(retailTemplate).toContain('const labelName = resolveProductLabelName(product) || product.name;');
+    expect(retailTemplate).toContain('window.electronAPI.printLabel(barcode, labelName, {');
     expect(retailTemplate).toContain('priceText,');
     expect(retailTemplate).toContain('sku: product.sku?.trim() || undefined');
     expect(retailTemplate).toContain('quantity: options.quantity');

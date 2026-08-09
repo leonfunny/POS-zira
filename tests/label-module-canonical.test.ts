@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  coerceLabelLanguage,
   filterValidLabelSelectionIds,
   isPrintableLabelProduct,
   toggleLabelSelectionId,
@@ -58,14 +57,13 @@ describe('canonical Label tab workflow', () => {
     expect(LABEL_MODULE).toContain('if (!isPrintableLabelProduct(product)) {');
   });
 
-  it('isolates the Label language from the global POS language', () => {
-    expect(coerceLabelLanguage('pl')).toBe('pl');
-    expect(coerceLabelLanguage('vi')).toBe('vi');
-    expect(coerceLabelLanguage('en')).toBe('vi');
+  it('locks customer-facing label content to Polish without changing the POS UI language', () => {
     expect(CONFIG_STORE).toContain("labelModuleLanguage: { type: 'string', enum: ['vi', 'pl'] }");
     expect(SHARED_TYPES).toContain("labelModuleLanguage?: 'vi' | 'pl'");
-    expect(LABEL_MODULE).toContain('config?.labelModuleLanguage ?? config?.posLanguage');
-    expect(LABEL_MODULE).toContain('saveConfig({ labelModuleLanguage: next })');
+    expect(LABEL_MODULE).toContain('const labelLanguage: LabelLanguage = PRODUCT_LABEL_NAME_LOCALE;');
+    expect(LABEL_MODULE).toContain('const copy = COPY[language] || COPY.vi;');
+    expect(LABEL_MODULE).toContain('resolveProductLabelName(product)');
+    expect(LABEL_MODULE).not.toContain('saveConfig({ labelModuleLanguage: next })');
     expect(LABEL_MODULE).not.toContain('saveConfig({ posLanguage: next })');
   });
 
@@ -129,7 +127,7 @@ describe('canonical Label tab workflow', () => {
       LABEL_MODULE.indexOf('window.electronAPI.printLabel'),
       LABEL_MODULE.indexOf('});', LABEL_MODULE.indexOf('window.electronAPI.printLabel')),
     );
-    expect(printCall).toContain('barcode, displayName');
+    expect(printCall).toContain('barcode, labelName');
     expect(printCall).toContain('priceText');
     expect(printCall).toContain('sku: product.sku?.trim() || undefined');
     expect(printCall).toContain('quantity');

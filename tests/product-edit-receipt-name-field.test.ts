@@ -48,7 +48,7 @@ describe('the field that prints is always visible', () => {
 
 describe('the product detail view surfaces the receipt name before editing', () => {
   it('replaces the duplicated display-name row with the shared receipt preview', () => {
-    expect(EDIT_VIEW).toContain("import { parseTranslations, resolveName } from '../../../shared/catalog-names'");
+    expect(EDIT_VIEW).toContain('parseTranslations, resolveName, resolveProductLabelName');
     expect(EDIT_VIEW).toContain("import { receiptNamePreview } from './receipt-name-preview'");
     expect(EDIT_VIEW).toContain('receiptNamePreview(\n    product.name,\n    parseTranslations(product.name_translations),\n  )');
     expect(EDIT_VIEW).toContain("'products.edit.displayNamePl'");

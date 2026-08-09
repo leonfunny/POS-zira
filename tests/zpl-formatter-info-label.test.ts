@@ -252,6 +252,49 @@ describe("ZplFormatter.formatLabel", () => {
     expect(priceY - (barcodeY + barcodeHeight)).toBeGreaterThanOrEqual(24);
     expect(zpl).toContain("^BY3");
   });
+
+  it("keeps long Polish title, price, and SKU text inside a 50x30 label", () => {
+    const f = new ZplFormatter(50, 30);
+    const zpl = f.formatLabel({
+      barcode: "8802241901267",
+      barcodeType: "EAN13",
+      text1: 'Snack z wodorostów z solą morską "Kung Fu Panda" LAVERLAND CRUNCH 4.5g x 3szt',
+      text2: "123.45 PLN/kg",
+      text3: "SKU EAN-18809288636470",
+      quantity: 1,
+    });
+    const lines = zpl.split("\n");
+    const textBounds: Array<{ x: number; y: number; height: number; width: number; text: string }> = [];
+
+    for (let index = 0; index < lines.length - 2; index += 1) {
+      const origin = lines[index].match(/^\^FO(\d+),(\d+)$/);
+      const font = lines[index + 1].match(/^\^A0,(\d+),(\d+)$/);
+      const field = lines[index + 2].match(/^\^FD(.*)\^FS$/);
+      if (!origin || !font || !field) continue;
+      textBounds.push({
+        x: Number(origin[1]),
+        y: Number(origin[2]),
+        height: Number(font[1]),
+        width: Number(font[2]),
+        text: field[1],
+      });
+    }
+
+    expect(zpl).toContain("^PW400");
+    expect(zpl).not.toContain("^LL");
+    expect(textBounds).toHaveLength(4);
+    for (const field of textBounds) {
+      expect(field.x + Array.from(field.text).length * field.width).toBeLessThanOrEqual(400);
+      expect(field.y + field.height).toBeLessThanOrEqual(240);
+    }
+  });
+
+  it("uses the narrower Code128 module width for Bao Han 14-digit barcodes", () => {
+    const f = new ZplFormatter(50, 30);
+    const zpl = f.formatLabel({ barcode: "00648436120895", barcodeType: "CODE128", quantity: 1 });
+    expect(zpl).toContain("^PW400");
+    expect(zpl).toContain("^BY2");
+  });
 });
 
 describe("ZplFormatter.formatKitchenPaymentLabel", () => {

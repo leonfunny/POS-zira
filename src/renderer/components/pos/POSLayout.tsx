@@ -6,7 +6,7 @@ import type { Product } from '../../hooks/usePosDb';
 import { useConfig } from '../../hooks/useConfig';
 import { useBarcodeForwarder } from '../../hooks/useBarcodeForwarder';
 import { getTranslation, Language, languageNames } from '../../i18n/translations';
-import { resolveName } from '../../../shared/catalog-names';
+import { resolveName, resolveProductLabelName } from '../../../shared/catalog-names';
 import { isValidManualWeightQuantity, normalizeSellBy } from '../../../shared/pos-sale';
 import { classifyProductSale, type ProductSaleClassification } from '../../../shared/product-sale-classifier';
 import { isSaleBlockedByStock } from '../../../shared/product-stock-tracking';
@@ -647,9 +647,9 @@ export default function POSLayout({
         return;
       }
 
-      const displayName = resolveName(product, language) || product.name;
+      const labelName = resolveProductLabelName(product) || product.name;
       const priceText = formatProductLabelPriceText(product, tOr('pos.currency', 'zl'));
-      const result = await window.electronAPI.printLabel(barcode, displayName, {
+      const result = await window.electronAPI.printLabel(barcode, labelName, {
         priceText,
         sku: product.sku?.trim() || undefined,
         quantity: labelCopiesForCartItem(item),
@@ -663,7 +663,7 @@ export default function POSLayout({
     } catch (err: any) {
       showScanToast(err?.message || tOr('pos.label.failed', 'Không in được mã'), 'err');
     }
-  }, [language, showScanToast, tOr]);
+  }, [showScanToast, tOr]);
 
   const handlePrintLastCartLabelCommand = useCallback(async () => {
     const items = state?.cart.items ?? [];

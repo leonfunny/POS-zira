@@ -14,7 +14,11 @@ import {
   Tag,
   X,
 } from 'lucide-react';
-import { resolveName } from '../../../shared/catalog-names';
+import {
+  PRODUCT_LABEL_NAME_LOCALE,
+  resolveName,
+  resolveProductLabelName,
+} from '../../../shared/catalog-names';
 import type { AgentConfig } from '../../../shared/types';
 import { useConfig } from '../../hooks/useConfig';
 import { useProducts } from '../../hooks/useProducts';
@@ -23,7 +27,6 @@ import type { Category } from '../../hooks/usePosDb';
 import { getTranslation, type Language } from '../../i18n/translations';
 import rlog from '../../utils/logger';
 import {
-  coerceLabelLanguage,
   filterValidLabelSelectionIds,
   formatProductLabelPriceText,
   isPrintableLabelProduct,
@@ -117,8 +120,6 @@ interface LabelCopy {
 
 const HIGH_COPY_CONFIRM_THRESHOLD = 10;
 const RECENT_PRINT_LIMIT = 5;
-
-const LABEL_LANGS: LabelLanguage[] = ['vi', 'pl'];
 
 const COPY: Record<string, LabelCopy> = {
   en: {
@@ -314,8 +315,12 @@ function productUnit(product: LabelProduct | null): string {
   return product.sell_by === 'WEIGHT' ? 'kg' : 'item';
 }
 
-function formatRecentTime(date: Date, labelLanguage: LabelLanguage): string {
-  const locale = labelLanguage === 'pl' ? 'pl-PL' : 'vi-VN';
+function formatRecentTime(date: Date, language: Language): string {
+  const locale = language === 'pl'
+    ? 'pl-PL'
+    : language === 'en'
+      ? 'en-US'
+      : 'vi-VN';
   return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
 }
 
@@ -372,10 +377,8 @@ function BarcodePreview({ barcode }: { barcode: string }) {
 
 export default function LabelModule({ language }: LabelModuleProps) {
   const { config, saveConfig } = useConfig();
-  const [labelLanguage, setLabelLanguage] = useState<LabelLanguage>(() => (
-    coerceLabelLanguage(config?.labelModuleLanguage ?? config?.posLanguage)
-  ));
-  const copy = COPY[labelLanguage] || COPY.vi;
+  const labelLanguage: LabelLanguage = PRODUCT_LABEL_NAME_LOCALE;
+  const copy = COPY[language] || COPY.vi;
   const t = getTranslation(language);
   const tOr = (key: string, fallback: string) => {
     const value = t(key);
@@ -411,10 +414,6 @@ export default function LabelModule({ language }: LabelModuleProps) {
       statusResetTimeoutRef.current = null;
     }
   }, []);
-
-  useEffect(() => {
-    setLabelLanguage(coerceLabelLanguage(config?.labelModuleLanguage ?? config?.posLanguage));
-  }, [config?.labelModuleLanguage, config?.posLanguage]);
 
   useEffect(() => {
     if (pendingCategoryConfigSavesRef.current > 0) return;
@@ -506,7 +505,9 @@ export default function LabelModule({ language }: LabelModuleProps) {
   );
 
   const selectedBarcode = resolveLabelCode(selectedProduct);
-  const selectedName = selectedProduct ? (resolveName(selectedProduct, labelLanguage) || selectedProduct.name || selectedBarcode) : '';
+  const selectedName = selectedProduct
+    ? (resolveProductLabelName(selectedProduct) || selectedProduct.name || selectedBarcode)
+    : '';
   const selectedPriceText = selectedProduct ? formatProductLabelPriceText(selectedProduct, 'zl') : undefined;
   const selectedCategory = selectedProduct?.category_id ? categoryById.get(selectedProduct.category_id) : null;
   const selectedUnit = productUnit(selectedProduct);
@@ -540,13 +541,6 @@ export default function LabelModule({ language }: LabelModuleProps) {
     () => printableProducts.filter((product) => pinnedProductIds.has(product.id)),
     [pinnedProductIds, printableProducts],
   );
-
-  const handleLabelLanguageChange = useCallback((next: LabelLanguage) => {
-    setLabelLanguage(next);
-    saveConfig({ labelModuleLanguage: next }).catch((err: any) => {
-      rlog.error('[LabelModule] Failed to save label language:', err);
-    });
-  }, [saveConfig]);
 
   const persistLabelConfig = useCallback((partial: Partial<AgentConfig>) => {
     const hasCategoryIds = Object.prototype.hasOwnProperty.call(partial, 'labelModuleCategoryIds');
@@ -648,7 +642,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
     }
     const barcode = resolveLabelCode(product);
     const quantity = clampCopies(requestedCopies);
-    const displayName = resolveName(product, labelLanguage) || product.name || barcode;
+    const labelName = resolveProductLabelName(product) || product.name || barcode;
     const priceText = formatProductLabelPriceText(product, 'zl');
     const printToken = ++printSequenceRef.current;
 
@@ -668,7 +662,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
 
     setStatus({ type: 'printing', message: copy.printing, productId: product.id });
     try {
-      const result = await window.electronAPI.printLabel(barcode, displayName, {
+      const result = await window.electronAPI.printLabel(barcode, labelName, {
         priceText,
         sku: product.sku?.trim() || undefined,
         quantity,
@@ -677,12 +671,12 @@ export default function LabelModule({ language }: LabelModuleProps) {
         setStatus({ type: 'error', message: result?.error || copy.printerError });
         return;
       }
-      setStatus({ type: 'success', message: `${copy.printed}: ${displayName}` });
+      setStatus({ type: 'success', message: `${copy.printed}: ${labelName}` });
       setRecentPrints((prev) => [
         {
           id: `${Date.now()}-${product.id}`,
           productId: product.id,
-          productName: displayName,
+          productName: labelName,
           barcode,
           copies: quantity,
           printedAt: new Date(),
@@ -699,7 +693,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
       rlog.error('[LabelModule] printLabel failed:', err);
       setStatus({ type: 'error', message: err?.message || copy.printerError });
     }
-  }, [clearStatusResetTimeout, copy, labelLanguage]);
+  }, [clearStatusResetTimeout, copy]);
 
   const handleCancelHighCopyPrint = useCallback(() => {
     if (confirmingHighCopyPrint) return;
@@ -809,25 +803,6 @@ export default function LabelModule({ language }: LabelModuleProps) {
               <div className="min-w-0 flex-1">
                 <h1 className="text-lg font-extrabold leading-tight">{copy.title}</h1>
                 <p className="text-xs font-semibold text-slate-500 truncate">{copy.subtitle}</p>
-              </div>
-              <div className="shrink-0 rounded-lg border border-slate-200 bg-slate-100 p-0.5 inline-flex">
-                {LABEL_LANGS.map((lang) => (
-                  <button
-                    key={lang}
-                    type="button"
-                    onClick={() => handleLabelLanguageChange(lang)}
-                    className={`h-8 min-w-9 rounded-md px-2 text-xs font-black uppercase transition-colors ${
-                      labelLanguage === lang
-                        ? 'bg-white text-emerald-700 shadow-sm'
-                        : 'text-slate-500 hover:bg-white/70 hover:text-slate-800'
-                    }`}
-                    aria-pressed={labelLanguage === lang}
-                    aria-label={lang.toUpperCase()}
-                    title={lang.toUpperCase()}
-                  >
-                    {lang.toUpperCase()}
-                  </button>
-                ))}
               </div>
             </div>
           </div>
@@ -988,7 +963,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
                         <div className="text-xs font-extrabold text-slate-900 truncate">{displayName}</div>
                         <div className="mt-1 flex items-center gap-2 text-[11px] font-bold text-slate-500">
                           <Clock size={12} />
-                          <span>{formatRecentTime(entry.printedAt, labelLanguage)}</span>
+                          <span>{formatRecentTime(entry.printedAt, language)}</span>
                           <span>x{entry.copies}</span>
                         </div>
                         <button
