@@ -55,13 +55,41 @@ import type {
 import { normalizeVatRate } from '../../../shared/pos/vat-rate';
 import {
   PosCapabilityProvider,
+  usePosCapabilities,
   type PosCapabilityHost,
 } from './capabilities/PosCapabilityProvider';
+import type { CashierCapabilityKey } from '../../../shared/pos/cashier-capabilities';
 
 type PosMode = 'retail' | 'salon' | 'b2b' | 'restaurant';
 
 const POS_LANGS: Language[] = ['en', 'pl', 'vi', 'uk', 'ru', 'zh', 'tr'];
 const PRINT_LAST_CART_LABEL_COMMAND = '00000000';
+
+const SAFE_LAYOUT_DEGRADED_CAPABILITIES: Partial<Record<CashierCapabilityKey, string>> = {
+  nativeProductCreate: 'REMOTE_ONLY',
+  debtLedgerExternal: 'EXTERNAL_ONLY',
+};
+
+function isLayoutCapabilityUsable(
+  capabilities: ReturnType<typeof usePosCapabilities>,
+  key: CashierCapabilityKey,
+): boolean {
+  if (capabilities.status !== 'ready') return false;
+  const outcome = capabilities.manifest.outcomes[key];
+  if (
+    outcome.state !== 'supported'
+    && !(
+      outcome.state === 'degraded'
+      && SAFE_LAYOUT_DEGRADED_CAPABILITIES[key] === outcome.reasonCode
+    )
+  ) return false;
+  const salon = capabilities.policyInputs.salonConfig[key];
+  const entitlement = capabilities.policyInputs.entitlements[key];
+  const role = capabilities.policyInputs.roleAccess[key];
+  return (salon === 'enabled' || salon === 'not-required')
+    && (entitlement === 'granted' || entitlement === 'not-required')
+    && (role === 'allowed' || role === 'not-required');
+}
 
 function useLiveClock() {
   const [now, setNow] = useState(new Date());
@@ -345,6 +373,13 @@ function POSLayoutContent({
   useBarcodeForwarder();
   const { state, dispatch, dispatchError, clearDispatchError } = usePosStore();
   const { config, saveConfig } = useConfig();
+  const capabilities = usePosCapabilities();
+  const canUseNativeProductCreate = isLayoutCapabilityUsable(capabilities, 'nativeProductCreate');
+  const canUseDebtLedgerExternal = isLayoutCapabilityUsable(capabilities, 'debtLedgerExternal');
+  const canUseQuickAddRecognition = isLayoutCapabilityUsable(capabilities, 'quickAddRecognition');
+  const canUsePickupOrders = isLayoutCapabilityUsable(capabilities, 'pickupOrders');
+  const canUseLabelPrint = isLayoutCapabilityUsable(capabilities, 'labelPrint');
+  const canUseScale = isLayoutCapabilityUsable(capabilities, 'scale');
   const allowOversell = config?.allowOversell === true;
   const [language, setLanguage] = useState<Language>((config?.posLanguage as Language) || (config?.language as Language) || 'pl');
   const [posMode, setPosMode] = useState<PosMode>((config?.posMode as PosMode) || 'salon');
@@ -397,6 +432,18 @@ function POSLayoutContent({
     kitchenPrintStatus?: PickupOrderKitchenPrintStatus | null;
   } | null>(null);
   const clock = useLiveClock();
+
+  useEffect(() => {
+    if (!canUseQuickAddRecognition) setShowQuickAddCamera(false);
+    if (!canUseNativeProductCreate) setShowAddProduct(false);
+    if (!canUseDebtLedgerExternal) setShowDebt(false);
+    if (!canUsePickupOrders) setPickupPanelOpen(false);
+  }, [
+    canUseDebtLedgerExternal,
+    canUseNativeProductCreate,
+    canUsePickupOrders,
+    canUseQuickAddRecognition,
+  ]);
 
   // Hidden barcode capture for USB HID keyboard-style scanners.
   // Stays focused, captures rapid keystrokes ending with Enter, looks up product.
@@ -662,6 +709,7 @@ function POSLayoutContent({
   }, [dispatch, manualWeightPrompt, rememberLastLabelVariant, showScanToast, validateCartLinePrice]);
 
   const printCartItemLabel = useCallback(async (item: CartItem) => {
+    if (!canUseLabelPrint) return;
     try {
       const product = await window.electronAPI.pos.products.getById(item.variantId);
       if (!product) {
@@ -691,9 +739,10 @@ function POSLayoutContent({
     } catch (err: any) {
       showScanToast(err?.message || tOr('pos.label.failed', 'Không in được mã'), 'err');
     }
-  }, [language, showScanToast, tOr]);
+  }, [canUseLabelPrint, language, showScanToast, tOr]);
 
   const handlePrintLastCartLabelCommand = useCallback(async () => {
+    if (!canUseLabelPrint) return;
     const items = state?.cart.items ?? [];
     const variantId = lastLabelVariantIdRef.current;
     const item = variantId
@@ -706,7 +755,7 @@ function POSLayoutContent({
     }
 
     await printCartItemLabel(item);
-  }, [printCartItemLabel, showScanToast, state?.cart.items, tOr]);
+  }, [canUseLabelPrint, printCartItemLabel, showScanToast, state?.cart.items, tOr]);
 
   const handleRetailAddProductFeedback = useCallback((displayName: string) => {
     showScanToast(`+ ${displayName}`, 'ok');
@@ -793,6 +842,7 @@ function POSLayoutContent({
     images: QuickAddCapturedImage[],
     idempotencyKey: string,
   ): Promise<QuickAddPreparedResult> => {
+    if (!canUseQuickAddRecognition) throw new Error('Quick-add recognition is unavailable');
     // Product `name` is the canonical catalog/receipt name. Keep AI analysis
     // in Polish regardless of the operator UI language; display localization
     // is a separate layer in this app.
@@ -804,7 +854,7 @@ function POSLayoutContent({
       product: result.product,
       variant: result.variant,
     };
-  }, []);
+  }, [canUseQuickAddRecognition]);
 
   // Pure recognition preview — returns structured products[] for the cashier
   // to eyeball before creating. Does not touch stock; the create flow is
@@ -812,12 +862,14 @@ function POSLayoutContent({
   const recognizeQuickAdd = useCallback(async (
     images: QuickAddCapturedImage[],
   ): Promise<any[]> => {
+    if (!canUseQuickAddRecognition) return [];
     const result = await window.electronAPI.pos.recognition.analyze({ images, language: 'vi' });
     if (!result?.ok) throw new Error(result?.error || 'Recognition failed');
     return Array.isArray(result.products) ? result.products : [];
-  }, []);
+  }, [canUseQuickAddRecognition]);
 
   const finalizeQuickAdd = useCallback(async (input: QuickAddFinalizeInput) => {
+    if (!canUseQuickAddRecognition) throw new Error('Quick-add recognition is unavailable');
     const result = await window.electronAPI.pos.quickAdd.finalize({
       productId: input.productId,
       variantId: input.variantId,
@@ -863,7 +915,7 @@ function POSLayoutContent({
     rememberLastLabelVariant(variant.id);
     showScanToast(`+ ${displayName}`, 'ok');
     setShowQuickAddCamera(false);
-  }, [dispatch, language, rememberLastLabelVariant, showScanToast, validateCartLinePrice]);
+  }, [canUseQuickAddRecognition, dispatch, language, rememberLastLabelVariant, showScanToast, validateCartLinePrice]);
 
   const confirmScanImport = useCallback(async (
     retailPriceGrosze: number,
@@ -896,29 +948,32 @@ function POSLayoutContent({
           return;
         }
         const displayName = resolveName(variant, language);
-        const item = {
-          id: crypto.randomUUID(),
-          variantId: variant.id,
-          name: variant.name,
-          sku: variant.sku || '',
-          price: variant.retail_price,
-          quantity: 1,
-          total: variant.retail_price,
-          saleUnit: variant.sale_unit ?? null,
-          sellBy: variant.sell_by ?? 'PIECE',
-          imageUrl: variant.image_url || undefined,
-          vatRate: variant.vat_rate,
-          name_translations: variant.name_translations ?? null,
-        };
-        if (!validateCartLinePrice(variant, item)) {
+        const saleResult = await resolveRetailCartItem(variant, {
+          scaleEnabled: canUseScale && config?.scale?.enabled === true,
+          scalePort: config?.scale?.port,
+          readWeight: canUseScale
+            ? window.electronAPI.pos?.scale?.readWeight || window.electronAPI.scale?.readWeight
+            : undefined,
+        });
+        if (!saleResult.ok) {
+          const message = formatRetailSaleError(saleResult.error, tOr);
+          if (saleResult.saleClass.requiresScale) {
+            closeScanImport();
+            openManualWeightPrompt(variant, saleResult.saleClass, message);
+          } else {
+            setScanImport((s) => ({ ...s, loading: false, error: message }));
+          }
+          return;
+        }
+        if (!validateCartLinePrice(variant, saleResult.item)) {
           setScanImport((s) => ({ ...s, loading: false }));
           return;
         }
         dispatch({
           type: 'cart/addItem',
-          payload: item,
+          payload: saleResult.item,
         });
-        rememberLastLabelVariant(variant.id);
+        rememberLastLabelVariant(saleResult.item.variantId);
         showScanToast(`+ ${displayName}`, 'ok');
       } else {
         showScanToast(`Imported: ${ean}`, 'ok');
@@ -928,9 +983,10 @@ function POSLayoutContent({
       rlog.error('[POSLayout] scan-import confirm failed', err?.message);
       setScanImport((s) => ({ ...s, loading: false, error: err?.message ?? 'Import failed' }));
     }
-  }, [allowOversell, scanImport.ean, scanImport.preview?.source, dispatch, language, rememberLastLabelVariant, showScanToast, closeScanImport, validateCartLinePrice]);
+  }, [allowOversell, canUseScale, closeScanImport, config?.scale?.enabled, config?.scale?.port, dispatch, language, openManualWeightPrompt, rememberLastLabelVariant, scanImport.ean, scanImport.preview?.source, showScanToast, tOr, validateCartLinePrice]);
 
   const handleAddProductPanelBarcode = useCallback(async (ean: string): Promise<boolean> => {
+    if (!canUseNativeProductCreate) return false;
     const code = ean.trim();
     if (!code || !dispatch) return false;
     try {
@@ -945,9 +1001,11 @@ function POSLayoutContent({
       }
 
       const result = await resolveRetailCartItem(product, {
-        scaleEnabled: config?.scale?.enabled === true,
+        scaleEnabled: canUseScale && config?.scale?.enabled === true,
         scalePort: config?.scale?.port,
-        readWeight: window.electronAPI.pos?.scale?.readWeight || window.electronAPI.scale?.readWeight,
+        readWeight: canUseScale
+          ? window.electronAPI.pos?.scale?.readWeight || window.electronAPI.scale?.readWeight
+          : undefined,
       });
       if (!result.ok) {
         const message = formatRetailSaleError(result.error, tOr);
@@ -971,7 +1029,7 @@ function POSLayoutContent({
       showScanToast('Scan failed', 'err');
       return true;
     }
-  }, [allowOversell, config?.scale?.enabled, config?.scale?.port, dispatch, language, openManualWeightPrompt, rememberLastLabelVariant, showScanToast, tOr, validateCartLinePrice]);
+  }, [allowOversell, canUseNativeProductCreate, canUseScale, config?.scale?.enabled, config?.scale?.port, dispatch, language, openManualWeightPrompt, rememberLastLabelVariant, showScanToast, tOr, validateCartLinePrice]);
 
   const loadKitchenSelfOrderQr = useCallback(async (
     payload: KitchenSelfOrderQrPayload,
@@ -1080,6 +1138,7 @@ function POSLayoutContent({
   // same QR payload a scan would. If the claim is lost (409/410) we block; if
   // the cart build fails after claiming we release so another station can take it.
   const openPickupOrder = useCallback(async (rowOrder: PickupOrderRow): Promise<void> => {
+    if (!canUsePickupOrders) return;
     const currentState = await window.electronAPI.pos.getState().catch(() => state);
     if ((currentState?.cart.items.length ?? 0) > 0) {
       showScanToast('Clear cart before loading a kiosk order', 'err');
@@ -1123,37 +1182,44 @@ function POSLayoutContent({
     });
     setPickupPanelOpen(false);
     setPickupOrders((prev) => removePickupOrder(prev, pickupId));
-  }, [state, loadKitchenSelfOrderQr, showScanToast, warnIfPickupKitchenPrintNotReady]);
+  }, [canUsePickupOrders, state, loadKitchenSelfOrderQr, showScanToast, warnIfPickupKitchenPrintNotReady]);
 
   // Put a loaded-but-unpaid pickup order back on the queue (release the claim).
   const releaseActivePickup = useCallback(async () => {
+    if (!canUsePickupOrders) return;
     const target = activePickup;
     if (!target) return;
     setActivePickup(null);
     await window.electronAPI.pos.pickupOrders.release(target.id).catch(() => {});
     await window.electronAPI.pos.dispatch({ type: 'cart/clear' }).catch(() => {});
     showScanToast(`Đã trả lại đơn ${target.orderNumber}`, 'ok');
-  }, [activePickup, showScanToast]);
+  }, [activePickup, canUsePickupOrders, showScanToast]);
 
   // Release a stale claim THIS station holds but isn't actively working (e.g.
   // after an app restart) straight from the list.
   const releasePickupFromList = useCallback(async (row: PickupOrderRow) => {
+    if (!canUsePickupOrders) return;
     await window.electronAPI.pos.pickupOrders.release(row.id).catch(() => {});
     setPickupOrders((prev) => removePickupOrder(prev, row.id));
-  }, []);
+  }, [canUsePickupOrders]);
 
   // This station's machineId — lets the list tell our own claims apart from
   // "claimed at another station".
   useEffect(() => {
+    if (!canUsePickupOrders) {
+      setOwnMachineId(null);
+      return;
+    }
     window.electronAPI.pos.pickupOrders?.machineId?.()
       .then((id: string | null) => setOwnMachineId(id))
       .catch(() => {});
-  }, []);
+  }, [canUsePickupOrders]);
 
   // Live cashier pickup-order waiting list: merge pickup-order:* socket events
   // as they arrive. A settled/cancelled event for the order we're holding also
   // clears the active-order banner.
   useEffect(() => {
+    if (!canUsePickupOrders) return;
     const unsub = window.electronAPI.pos.onPickupOrderEvent?.((msg: { event: string; data: any }) => {
       setPickupOrders((prev) => mergePickupEvent(prev, msg));
       if ((msg.event === 'settled' || msg.event === 'cancelled') && msg.data?.id) {
@@ -1168,23 +1234,28 @@ function POSLayoutContent({
       }
     });
     return () => { if (typeof unsub === 'function') unsub(); };
-  }, []);
+  }, [canUsePickupOrders]);
 
-  // Seed from GET /open on mount, and re-seed whenever isOnline changes (so a
-  // reconnect re-syncs missed orders). Unconditional — NOT gated on isOnline —
-  // so the initial load happens even if the connection-status indicator lags.
+  // Once the runtime capability is usable, seed from GET /open on mount and
+  // re-seed whenever isOnline changes. It is deliberately not gated on the
+  // indicator itself, so initial load still happens when connection UI lags.
   useEffect(() => {
+    if (!canUsePickupOrders) {
+      setPickupOrders([]);
+      return;
+    }
     let active = true;
     window.electronAPI.pos.pickupOrders?.listOpen?.()
       .then((rows: PickupOrderRow[]) => { if (active) setPickupOrders(seedPickupOrders(rows)); })
       .catch(() => { /* best-effort; the QR scan path still works */ });
     return () => { active = false; };
-  }, [isOnline]);
+  }, [canUsePickupOrders, isOnline]);
 
   // A legacy KSO1 scan is still just a reference to the waiting backend row:
   // claim it first, then load the cart from the authoritative backend payload.
   // No fallback load from the scanned payload, because that cannot settle.
   const handleScannedKioskOrder = useCallback(async (kioskOrder: KitchenSelfOrderQrPayload): Promise<void> => {
+    if (!canUsePickupOrders) return;
     const known = pickupOrders.find(
       (r) => (kioskOrder.orderId && r.sourceOrderId === kioskOrder.orderId) || r.orderNumber === kioskOrder.orderNumber,
     );
@@ -1234,7 +1305,7 @@ function POSLayoutContent({
     if (res?.status === 409) { showScanToast('Đơn đang được xử lý ở máy khác', 'err'); return; }
     if (res?.status === 410) { showScanToast('Đơn đã thanh toán hoặc đã huỷ', 'err'); return; }
     showScanToast('Đơn chưa lên hệ thống — chọn từ danh sách hoặc tính tiền tay', 'err');
-  }, [pickupOrders, openPickupOrder, state, loadKitchenSelfOrderQr, showScanToast, warnIfPickupKitchenPrintNotReady]);
+  }, [canUsePickupOrders, pickupOrders, openPickupOrder, state, loadKitchenSelfOrderQr, showScanToast, warnIfPickupKitchenPrintNotReady]);
 
   // A scanned KSOREF reference: claim the backend row, then build the cart from
   // the AUTHORITATIVE backend payload (the reference carries no items). Always
@@ -1242,6 +1313,7 @@ function POSLayoutContent({
   const handleScannedPickupRef = useCallback(async (
     ref: { sourceOrderId: string | null; orderNumber: string | null },
   ): Promise<void> => {
+    if (!canUsePickupOrders) return;
     const currentState = await window.electronAPI.pos.getState().catch(() => state);
     if ((currentState?.cart.items.length ?? 0) > 0) {
       showScanToast('Clear cart before scanning a kiosk order', 'err');
@@ -1284,7 +1356,7 @@ function POSLayoutContent({
     if (res?.status === 409) { showScanToast('Đơn đang được xử lý ở máy khác', 'err'); return; }
     if (res?.status === 410) { showScanToast('Đơn đã thanh toán hoặc đã huỷ', 'err'); return; }
     showScanToast('Đơn chưa lên hệ thống — chọn từ danh sách hoặc tính tiền tay', 'err');
-  }, [state, loadKitchenSelfOrderQr, showScanToast, warnIfPickupKitchenPrintNotReady]);
+  }, [canUsePickupOrders, state, loadKitchenSelfOrderQr, showScanToast, warnIfPickupKitchenPrintNotReady]);
 
   const handleBarcodeKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
@@ -1323,9 +1395,11 @@ function POSLayoutContent({
               return;
             }
             const result = await resolveRetailCartItem(product, {
-              scaleEnabled: config?.scale?.enabled === true,
+              scaleEnabled: canUseScale && config?.scale?.enabled === true,
               scalePort: config?.scale?.port,
-              readWeight: window.electronAPI.pos?.scale?.readWeight || window.electronAPI.scale?.readWeight,
+              readWeight: canUseScale
+                ? window.electronAPI.pos?.scale?.readWeight || window.electronAPI.scale?.readWeight
+                : undefined,
             });
             if (!result.ok) {
               const message = formatRetailSaleError(result.error, tOr);
@@ -1352,7 +1426,7 @@ function POSLayoutContent({
         }
       }
     }
-  }, [allowOversell, barcodeBuffer, config?.scale?.enabled, config?.scale?.port, dispatch, handlePrintLastCartLabelCommand, handleScannedPickupRef, handleScannedKioskOrder, rememberLastLabelVariant, showScanToast, language, t, tOr, openManualWeightPrompt, openScanImport, validateCartLinePrice]);
+  }, [allowOversell, barcodeBuffer, canUseScale, config?.scale?.enabled, config?.scale?.port, dispatch, handlePrintLastCartLabelCommand, handleScannedPickupRef, handleScannedKioskOrder, rememberLastLabelVariant, showScanToast, language, t, tOr, openManualWeightPrompt, openScanImport, validateCartLinePrice]);
 
   const handleUnknownBarcodeScanned = useCallback(async (code: string) => {
     const pickupRef = decodeKitchenSelfOrderRefQr(code);
@@ -1464,7 +1538,7 @@ function POSLayoutContent({
     // another station can take it. Tracked in activePickup (survives the cart
     // being emptied); only fires on a deliberate Home reset — no race with the
     // async settle (which clears activePickup via the settled event).
-    if (activePickup) {
+    if (activePickup && canUsePickupOrders) {
       void window.electronAPI.pos.pickupOrders.release(activePickup.id).catch(() => {});
       setActivePickup(null);
     }
@@ -1483,7 +1557,7 @@ function POSLayoutContent({
     dispatch({ type: 'display/setMode', payload: { mode: 'idle' } });
     setHomeResetKey((key) => key + 1);
     setTimeout(() => document.dispatchEvent(new CustomEvent('pos:focus-search')), 0);
-  }, [dispatch, activePickup]);
+  }, [dispatch, activePickup, canUsePickupOrders]);
 
   if (!state) {
     return (
@@ -1564,28 +1638,34 @@ function POSLayoutContent({
         error={scanImport.error}
         t={t}
       />
-      <QuickAddCameraModal
-        open={showQuickAddCamera}
-        onClose={() => setShowQuickAddCamera(false)}
-        onPrepare={prepareQuickAdd}
-        onFinalize={finalizeQuickAdd}
-        onRecognize={recognizeQuickAdd}
-        t={t}
-      />
-      <AddProductWebviewPanel
-        open={showAddProduct}
-        salonCode={(config as any)?.salonCode}
-        onProductCreated={(line) => {
-          dispatch({ type: 'cart/addItem', payload: { ...line, id: crypto.randomUUID() } });
-        }}
-        onExistingProductScanned={handleAddProductPanelBarcode}
-        onClose={() => setShowAddProduct(false)}
-      />
-      <DebtWebviewPanel
-        open={showDebt}
-        salonCode={(config as any)?.salonCode}
-        onClose={() => setShowDebt(false)}
-      />
+      {canUseQuickAddRecognition && (
+        <QuickAddCameraModal
+          open={showQuickAddCamera}
+          onClose={() => setShowQuickAddCamera(false)}
+          onPrepare={prepareQuickAdd}
+          onFinalize={finalizeQuickAdd}
+          onRecognize={recognizeQuickAdd}
+          t={t}
+        />
+      )}
+      {canUseNativeProductCreate && (
+        <AddProductWebviewPanel
+          open={showAddProduct}
+          salonCode={(config as any)?.salonCode}
+          onProductCreated={(line) => {
+            dispatch({ type: 'cart/addItem', payload: { ...line, id: crypto.randomUUID() } });
+          }}
+          onExistingProductScanned={handleAddProductPanelBarcode}
+          onClose={() => setShowAddProduct(false)}
+        />
+      )}
+      {canUseDebtLedgerExternal && (
+        <DebtWebviewPanel
+          open={showDebt}
+          salonCode={(config as any)?.salonCode}
+          onClose={() => setShowDebt(false)}
+        />
+      )}
       {/* Sync conflict banner (Path B) */}
       <SyncConflictBanner />
       {dispatchError && (
@@ -1750,7 +1830,7 @@ function POSLayoutContent({
                   onClick={() => setHeaderMenuOpen(false)}
                   className="absolute right-0 top-full z-40 mt-1 min-w-[230px] overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg"
                 >
-                  <button
+                  {canUseDebtLedgerExternal && <button
                     type="button"
                     role="menuitem"
                     onClick={() => setShowDebt(true)}
@@ -1759,8 +1839,8 @@ function POSLayoutContent({
                   >
                     <ReceiptText size={17} aria-hidden="true" className="shrink-0" />
                     <span>{tOr('pos.header.debt', 'So no')}</span>
-                  </button>
-                  <button
+                  </button>}
+                  {canUsePickupOrders && <button
                     type="button"
                     role="menuitem"
                     onClick={() => setPickupPanelOpen((v) => !v)}
@@ -1774,7 +1854,7 @@ function POSLayoutContent({
                         {visiblePickups.length}
                       </span>
                     )}
-                  </button>
+                  </button>}
                   {onFullscreen && (
                     <button
                       type="button"
@@ -1801,7 +1881,7 @@ function POSLayoutContent({
                 </div>
               </>
             )}
-            {pickupPanelOpen && (
+            {canUsePickupOrders && pickupPanelOpen && (
               <>
                 <div className="fixed inset-0 z-20" onClick={() => setPickupPanelOpen(false)} />
                 <div className="absolute right-0 top-full mt-1 z-30 w-80 max-h-[70vh] overflow-y-auto bg-white rounded-xl border border-slate-200 shadow-lg py-2">
@@ -1876,7 +1956,7 @@ function POSLayoutContent({
           </div>
 
           {/* Active pickup banner — đơn bếp đang xử lý ở máy này */}
-          {activePickup && (
+          {canUsePickupOrders && activePickup && (
             <div className="inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold text-orange-800 bg-orange-100 border border-orange-300 rounded-lg">
               <span className="tabular-nums">🍽 Đang xử lý: {activePickup.orderNumber}</span>
               <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold ${getPickupKitchenPrintBadge(activePickup.kitchenPrintStatus).className}`}>
@@ -1913,10 +1993,10 @@ function POSLayoutContent({
             language={language}
             session={session}
             onUnknownBarcodeScanned={handleUnknownBarcodeScanned}
-            onQuickAddCamera={() => setShowQuickAddCamera(true)}
-            onCreateProduct={() => setShowAddProduct(true)}
+            onQuickAddCamera={canUseQuickAddRecognition ? () => setShowQuickAddCamera(true) : undefined}
+            onCreateProduct={canUseNativeProductCreate ? () => setShowAddProduct(true) : undefined}
             onLastLabelVariantChange={rememberLastLabelVariant}
-            onPrintLastCartLabelCommand={handlePrintLastCartLabelCommand}
+            onPrintLastCartLabelCommand={canUseLabelPrint ? handlePrintLastCartLabelCommand : undefined}
             onManualWeightRequired={openManualWeightPrompt}
             onAddProductFeedback={handleRetailAddProductFeedback}
             onEditProduct={onEditProduct}

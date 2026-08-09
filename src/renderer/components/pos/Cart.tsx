@@ -5,6 +5,20 @@ import POSNumpad from './POSNumpad';
 import { appendDecimal, appendDigit, appendDoubleZero, parseBufferGrosze, usePOSNumpadController } from '../../hooks/usePOSNumpadController';
 import { useConfig } from '../../hooks/useConfig';
 import { normalizeSellBy } from '../../../shared/pos-sale';
+import { usePosCapabilities } from './capabilities/PosCapabilityProvider';
+
+function isCartScaleCapabilityUsable(
+  capabilities: ReturnType<typeof usePosCapabilities>,
+): boolean {
+  if (capabilities.status !== 'ready') return false;
+  if (capabilities.manifest.outcomes.scale.state !== 'supported') return false;
+  const salon = capabilities.policyInputs.salonConfig.scale;
+  const entitlement = capabilities.policyInputs.entitlements.scale;
+  const role = capabilities.policyInputs.roleAccess.scale;
+  return (salon === 'enabled' || salon === 'not-required')
+    && (entitlement === 'granted' || entitlement === 'not-required')
+    && (role === 'allowed' || role === 'not-required');
+}
 
 interface CartProps {
   cart: CartState;
@@ -566,7 +580,9 @@ export default function Cart({
 }: CartProps) {
   const currency = t('pos.currency');
   const { config } = useConfig();
-  const scaleEnabled = config?.scale?.enabled === true;
+  const capabilities = usePosCapabilities();
+  const scaleEnabled = config?.scale?.enabled === true
+    && isCartScaleCapabilityUsable(capabilities);
   const [confirmClear, setConfirmClear] = useState(false);
   const [discountPopupOpen, setDiscountPopupOpen] = useState(false);
   const [pricePopupItemId, setPricePopupItemId] = useState<string | null>(null);
@@ -696,7 +712,7 @@ export default function Cart({
   }, [dispatch, controller]);
 
   const handleReadScale = useCallback(async (item: CartItem) => {
-    if (normalizeSellBy(item.sellBy) !== 'WEIGHT') return;
+    if (!scaleEnabled || normalizeSellBy(item.sellBy) !== 'WEIGHT') return;
     setScaleBusyItemId(item.id);
     setScaleErrors((prev) => ({ ...prev, [item.id]: '' }));
     try {
@@ -726,7 +742,7 @@ export default function Cart({
     } finally {
       setScaleBusyItemId(null);
     }
-  }, [dispatch]);
+  }, [dispatch, scaleEnabled]);
 
   const isDiscountActive = controller.target.kind === 'discount';
   const hasItems = cart.items.length > 0;

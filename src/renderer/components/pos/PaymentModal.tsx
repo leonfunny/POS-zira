@@ -22,6 +22,22 @@ import {
   type ResolvedPaymentSubmission,
   type Tender,
 } from './payment-submission';
+import { usePosCapabilities } from './capabilities/PosCapabilityProvider';
+import type { CashierCapabilityKey } from '../../../shared/pos/cashier-capabilities';
+
+function isPaymentCapabilityUsable(
+  capabilities: ReturnType<typeof usePosCapabilities>,
+  key: CashierCapabilityKey,
+): boolean {
+  if (capabilities.status !== 'ready') return false;
+  if (capabilities.manifest.outcomes[key].state !== 'supported') return false;
+  const salon = capabilities.policyInputs.salonConfig[key];
+  const entitlement = capabilities.policyInputs.entitlements[key];
+  const role = capabilities.policyInputs.roleAccess[key];
+  return (salon === 'enabled' || salon === 'not-required')
+    && (entitlement === 'granted' || entitlement === 'not-required')
+    && (role === 'allowed' || role === 'not-required');
+}
 
 interface PaymentModalProps {
   cart: CartState;
@@ -116,6 +132,12 @@ export default function PaymentModal({
   extraOrderFields,
 }: PaymentModalProps) {
   const { config } = useConfig();
+  const capabilities = usePosCapabilities();
+  const canUseLoyaltyLookup = isPaymentCapabilityUsable(capabilities, 'loyaltyLookup');
+  const canUseRestoredCartTender = isPaymentCapabilityUsable(capabilities, 'restoredCartTender');
+  const restoredTenderUnsupported = Boolean(
+    checkoutDraft?.restoredInterruption && !canUseRestoredCartTender,
+  );
   const protectedTender = Boolean(checkoutDraft?.billiard || checkoutDraft?.restoredInterruption);
   const [method, setMethod] = useState<PaymentMethod>(initialMethod ?? 'CASH');
   const [cashAmount, setCashAmount] = useState(() => formatInitialCashAmount(initialCashAmountGrosze));
@@ -182,6 +204,7 @@ export default function PaymentModal({
   const fiscalOnCashSale = config?.fiscalOnCashSale;
 
   const handleLoyaltyLookup = async () => {
+    if (!canUseLoyaltyLookup) return;
     const phone = loyaltyPhone.trim();
     if (!phone) {
       setLoyaltyStatus('error');
@@ -237,6 +260,14 @@ export default function PaymentModal({
   const backspaceNip = () => updateCustomerNip(customerNip.slice(0, -1));
 
   useEffect(() => {
+    if (canUseLoyaltyLookup) return;
+    setLoyaltyOpen(false);
+    setLoyaltyStatus('idle');
+    setLoyaltyResult(null);
+    setLoyaltyError(null);
+  }, [canUseLoyaltyLookup]);
+
+  useEffect(() => {
     setCustomerNip(getInitialCustomerNip(checkoutDraft, extraOrderFields));
   }, [checkoutDraft?.customerNip, extraOrderFields?.customer_nip]);
 
@@ -254,6 +285,19 @@ export default function PaymentModal({
   }, []);
 
   useEffect(() => {
+    if (restoredTenderUnsupported) {
+      setPaymentPreflightToken(null);
+      setPaymentPreflightStatus('blocked');
+      // Do not poison the protected-boundary state while a host manifest is
+      // recomputing. A later current Windows result may safely continue; no
+      // restored-tender bridge call is made while this gate is closed.
+      setTenderPrepared(true);
+      setError(tOr(
+        'pos.payment.restoredTenderUnavailable',
+        'Restored-cart payment is unavailable on this device.',
+      ));
+      return;
+    }
     if (initialPaymentPreflightToken) {
       setPaymentPreflightToken(initialPaymentPreflightToken);
       setPaymentPreflightStatus('ready');
@@ -289,11 +333,12 @@ export default function PaymentModal({
         setError(message);
       });
     return () => { cancelled = true; };
-  }, [initialPaymentPreflightToken, protectedTender]);
+  }, [initialPaymentPreflightToken, protectedTender, restoredTenderUnsupported]);
 
   useEffect(() => {
     if (
       !protectedTender
+      || restoredTenderUnsupported
       || paymentPreflightStatus !== 'ready'
       || !paymentPreflightToken
       || protectedBoundaryStatus === 'ready'
@@ -363,10 +408,13 @@ export default function PaymentModal({
     paymentPreflightToken,
     protectedBoundaryStatus,
     protectedTender,
+    restoredTenderUnsupported,
   ]);
 
   const paymentSafetyStatus: 'checking' | 'ready' | 'blocked' =
-    protectedTender && protectedBoundaryStatus !== 'ready'
+    restoredTenderUnsupported
+      ? 'blocked'
+      : protectedTender && protectedBoundaryStatus !== 'ready'
       ? protectedBoundaryStatus === 'failed' ? 'blocked' : 'checking'
       : paymentPreflightStatus;
 
@@ -964,6 +1012,7 @@ export default function PaymentModal({
       receiptRecovery ||
       fiscalPrompt ||
       receiptRetrying ||
+      restoredTenderUnsupported ||
       paymentSafetyStatus !== 'ready' ||
       !paymentPreflightToken
     ) return;
@@ -1027,7 +1076,7 @@ export default function PaymentModal({
       setSaving(false);
       paymentCompleteInFlightRef.current = false;
     }
-  }, [cashAmountGrosze, checkoutDraft, customerNipForOrder, customerNipValid, fiscalPrompt, grandTotal, method, onTenderOutcomeUncertain, paymentPreflightToken, paymentSafetyStatus, protectedTender, receiptRecovery, receiptRetrying, saving, shiftId, splitMode, staffId, staffName, t, tOr, tenders]);
+  }, [cashAmountGrosze, checkoutDraft, customerNipForOrder, customerNipValid, fiscalPrompt, grandTotal, method, onTenderOutcomeUncertain, paymentPreflightToken, paymentSafetyStatus, protectedTender, receiptRecovery, receiptRetrying, restoredTenderUnsupported, saving, shiftId, splitMode, staffId, staffName, t, tOr, tenders]);
 
   const handleComplete = useCallback(() => {
     void completePayment();
@@ -1040,6 +1089,7 @@ export default function PaymentModal({
     && !fiscalPrompt
     && !completedOrderIdRef.current
     && !saving
+    && !restoredTenderUnsupported
     && customerNipValid
     && paymentSafetyStatus === 'ready'
     && !!paymentPreflightToken
@@ -1424,7 +1474,7 @@ export default function PaymentModal({
                     </svg>
                   )}
                 </button>
-                <button
+                {canUseLoyaltyLookup && <button
                   type="button"
                   onClick={() => setLoyaltyOpen(open => !open)}
                   aria-expanded={loyaltyOpen}
@@ -1441,7 +1491,7 @@ export default function PaymentModal({
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M6 18L18 6M6 6l12 12" />
                     </svg>
                   )}
-                </button>
+                </button>}
               </div>
 
               <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
@@ -1481,7 +1531,7 @@ export default function PaymentModal({
                 </div>
               </div>
 
-              {loyaltyOpen && (
+              {canUseLoyaltyLookup && loyaltyOpen && (
               <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
                 <div className="flex items-center justify-between gap-2">
                   <div>

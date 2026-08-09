@@ -30,6 +30,7 @@ import {
   shouldPersistLegacyActiveCart,
 } from '../../active-cart-persistence';
 import QuickActions from './QuickActions';
+import { usePosCapabilities } from '../../capabilities/PosCapabilityProvider';
 import {
   RETAIL_UNIT_FILTERS,
   type RetailUnitFilter,
@@ -42,6 +43,33 @@ import {
   categoryImageUrl,
 } from './retailBrowseFilters';
 import { normalizeVatRate } from '../../../../../shared/pos/vat-rate';
+import type { CashierCapabilityKey } from '../../../../../shared/pos/cashier-capabilities';
+
+const SAFE_RETAIL_DEGRADED_CAPABILITIES: Partial<Record<CashierCapabilityKey, string>> = {
+  nativeProductCreate: 'REMOTE_ONLY',
+  debtLedgerExternal: 'EXTERNAL_ONLY',
+};
+
+function isRetailCapabilityUsable(
+  capabilities: ReturnType<typeof usePosCapabilities>,
+  key: CashierCapabilityKey,
+): boolean {
+  if (capabilities.status !== 'ready') return false;
+  const outcome = capabilities.manifest.outcomes[key];
+  if (
+    outcome.state !== 'supported'
+    && !(
+      outcome.state === 'degraded'
+      && SAFE_RETAIL_DEGRADED_CAPABILITIES[key] === outcome.reasonCode
+    )
+  ) return false;
+  const salon = capabilities.policyInputs.salonConfig[key];
+  const entitlement = capabilities.policyInputs.entitlements[key];
+  const role = capabilities.policyInputs.roleAccess[key];
+  return (salon === 'enabled' || salon === 'not-required')
+    && (entitlement === 'granted' || entitlement === 'not-required')
+    && (role === 'allowed' || role === 'not-required');
+}
 
 // Category cards render an icon glyph in the colored avatar. Prefer the
 // server-provided `icon` field when it's a short pictogram/emoji (≤ 2
@@ -178,7 +206,12 @@ function labelCopiesForCartItem(item: CartItem): number {
   return Math.max(1, Math.min(999, Math.round(Number(item.quantity) || 1)));
 }
 
-async function matchAutoCameraImage(image: AutoCameraCapturedImage, language: string): Promise<any> {
+async function matchAutoCameraImage(
+  image: AutoCameraCapturedImage,
+  language: string,
+  recognitionAllowed: boolean,
+): Promise<any> {
+  if (!recognitionAllowed) return { ok: false, error: 'recognition-unavailable' };
   const recognition = window.electronAPI.pos?.recognition;
   if (typeof recognition?.scanMatch === 'function') {
     const result = await recognition.scanMatch({
@@ -230,6 +263,13 @@ interface RetailTemplateProps {
 export default function RetailTemplate({ state, dispatch, t, language, session, onUnknownBarcodeScanned, onQuickAddCamera, onCreateProduct, onLastLabelVariantChange, onPrintLastCartLabelCommand, onManualWeightRequired, onAddProductFeedback, onEditProduct, onBilliardIntentPrepared, onRestoredTenderOutcomeUncertain, homeResetKey }: RetailTemplateProps) {
   const [showHistory, setShowHistory] = useState(false);
   const { config } = useConfig();
+  const capabilities = usePosCapabilities();
+  const canUseCustomerDisplay = isRetailCapabilityUsable(capabilities, 'customerDisplay');
+  const canUseNativeProductCreate = isRetailCapabilityUsable(capabilities, 'nativeProductCreate');
+  const canUseQuickAddRecognition = isRetailCapabilityUsable(capabilities, 'quickAddRecognition');
+  const canUseLabelPrint = isRetailCapabilityUsable(capabilities, 'labelPrint');
+  const canUseScale = isRetailCapabilityUsable(capabilities, 'scale');
+  const canUseRestoredCartTender = isRetailCapabilityUsable(capabilities, 'restoredCartTender');
   const allowOversell = config?.allowOversell === true;
   const lang = language || (config?.posLanguage as string | undefined) || (config?.language as string | undefined) || 'pl';
   // Opt-OUT, not opt-in: only a shell that explicitly says false loses Hold.
@@ -564,6 +604,15 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
     if (!autoCameraEnabled) autoCameraRunIdRef.current += 1;
   }, [autoCameraEnabled]);
 
+  useEffect(() => {
+    if (canUseQuickAddRecognition) return;
+    autoCameraRunIdRef.current += 1;
+    autoCameraEnabledRef.current = false;
+    setAutoCameraEnabled(false);
+    setAutoCameraStatus('off');
+    setAutoCameraResult(null);
+  }, [canUseQuickAddRecognition]);
+
   const interruptAutoCamera = useCallback((message?: string) => {
     autoCameraRunIdRef.current += 1;
     if (!autoCameraEnabledRef.current) return;
@@ -597,7 +646,11 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
   const restoredPaymentBlock = state.checkoutDraft.restoredInterruption;
   const restoredPaymentBlocked = Boolean(
     restoredPaymentBlock
-    && (restoredPaymentBlock.persistenceError || restoredPaymentBlock.tenderState !== 'READY'),
+    && (
+      !canUseRestoredCartTender
+      || restoredPaymentBlock.persistenceError
+      || restoredPaymentBlock.tenderState !== 'READY'
+    ),
   );
   const holdRecallBlocked = Boolean(state.checkoutDraft.holdRecallPending);
   const shiftPaymentOpen = session.isOpen && !restoredPaymentBlocked && !holdRecallBlocked;
@@ -605,6 +658,8 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
     ? tOr('pos.shift.openRequired', 'Open a shift to accept payments')
     : restoredPaymentBlock?.persistenceError
       ? `Protected cart is frozen because its disk update failed: ${restoredPaymentBlock.persistenceError}`
+      : restoredPaymentBlock && !canUseRestoredCartTender
+        ? tOr('pos.payment.restoredTenderUnavailable', 'Restored-cart payment is unavailable on this device.')
       : holdRecallBlocked
         ? 'Held cart recall is still being saved. Wait before editing or paying.'
       : restoredPaymentBlocked
@@ -675,7 +730,9 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
     if (isSaleBlockedByStock(product, product.available_qty ?? product.in_stock, allowOversell)) return;
     const saleClass = classifyProductSale(product);
     if (saleClass.requiresScale && scaleReadInFlightRef.current) return;
-    const readWeight = window.electronAPI.pos?.scale?.readWeight || window.electronAPI.scale?.readWeight;
+    const readWeight = canUseScale
+      ? window.electronAPI.pos?.scale?.readWeight || window.electronAPI.scale?.readWeight
+      : undefined;
     const effectiveReadWeight = source === 'auto' && readWeight
       ? (options?: { port?: string }) => Promise.race([
           readWeight(options),
@@ -694,7 +751,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
     if (saleClass.requiresScale) scaleReadInFlightRef.current = true;
     try {
       const result = await resolveRetailCartItem(product, {
-        scaleEnabled: config?.scale?.enabled === true,
+        scaleEnabled: canUseScale && config?.scale?.enabled === true,
         scalePort: config?.scale?.port,
         readWeight: effectiveReadWeight,
       });
@@ -722,9 +779,12 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
     } finally {
       if (saleClass.requiresScale) scaleReadInFlightRef.current = false;
     }
-  }, [allowOversell, config?.scale?.enabled, config?.scale?.port, dispatch, interruptAutoCamera, lang, onAddProductFeedback, onLastLabelVariantChange, onManualWeightRequired, onUnknownBarcodeScanned, showToolbarError, tOr]);
+  }, [allowOversell, canUseScale, config?.scale?.enabled, config?.scale?.port, dispatch, interruptAutoCamera, lang, onAddProductFeedback, onLastLabelVariantChange, onManualWeightRequired, onUnknownBarcodeScanned, showToolbarError, tOr]);
 
   const handlePrintProductCode = useCallback(async (product: Product, options: { quantity?: number } = {}) => {
+    if (!canUseLabelPrint) {
+      return { success: false, error: tOr('pos.label.unavailable', 'Label printing is unavailable on this device') };
+    }
     const barcode = product.barcode?.trim();
     if (!barcode) {
       return { success: false, error: tOr('pos.label.noBarcode', 'Sản phẩm chưa có mã vạch') };
@@ -745,9 +805,12 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
     } catch (err: any) {
       return { success: false, error: err?.message || tOr('pos.label.failed', 'Không in được mã') };
     }
-  }, [lang, tOr]);
+  }, [canUseLabelPrint, lang, tOr]);
 
   const handlePrintCartItemCode = useCallback(async (item: CartItem) => {
+    if (!canUseLabelPrint) {
+      return { success: false, error: tOr('pos.label.unavailable', 'Label printing is unavailable on this device') };
+    }
     try {
       const product = await window.electronAPI.pos.products.getById(item.variantId);
       if (!product) {
@@ -757,13 +820,14 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
     } catch (err: any) {
       return { success: false, error: err?.message || tOr('pos.label.failed', 'Không in được mã') };
     }
-  }, [handlePrintProductCode, tOr]);
+  }, [canUseLabelPrint, handlePrintProductCode, tOr]);
 
   const handleEditCartProduct = useCallback((item: CartItem) => {
     if (item.variantId) onEditProduct?.(item.variantId);
   }, [onEditProduct]);
 
   const handlePrintLastScannedCartItemCode = useCallback(async () => {
+    if (!canUseLabelPrint) return;
     const variantId = lastLabelVariantIdRef.current;
     if (!variantId) {
       showToolbarError(tOr('pos.label.noRecentItem', 'Chưa có hàng vừa quét để in mã'));
@@ -783,7 +847,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
     }
 
     showToolbarError(result?.message || tOr('pos.label.printed', 'Đã in mã'));
-  }, [cart.items, handlePrintCartItemCode, showToolbarError, tOr]);
+  }, [canUseLabelPrint, cart.items, handlePrintCartItemCode, showToolbarError, tOr]);
 
   const handleOpenPaymentScanCommand = useCallback((initialMethod: PaymentInitialMethod) => {
     interruptAutoCamera();
@@ -870,6 +934,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
       return;
     }
     if (code === PRINT_LAST_CART_LABEL_COMMAND) {
+      if (!canUseLabelPrint) return;
       if (onPrintLastCartLabelCommand) {
         await onPrintLastCartLabelCommand();
       } else {
@@ -894,7 +959,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
     if (onUnknownBarcodeScanned) {
       await onUnknownBarcodeScanned(code);
     }
-  }, [handleAddProduct, handleOpenPaymentScanCommand, handlePrintLastScannedCartItemCode, handleVoiceSearchCommand, interruptAutoCamera, onPrintLastCartLabelCommand, onUnknownBarcodeScanned]);
+  }, [canUseLabelPrint, handleAddProduct, handleOpenPaymentScanCommand, handlePrintLastScannedCartItemCode, handleVoiceSearchCommand, interruptAutoCamera, onPrintLastCartLabelCommand, onUnknownBarcodeScanned]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -914,11 +979,12 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
   }, [canRunVoiceCommand, handleVoiceSearchCommand]);
 
   const handleAutoCameraCapture = useCallback(async (image: AutoCameraCapturedImage) => {
+    if (!canUseQuickAddRecognition) return;
     const runId = autoCameraRunIdRef.current;
     const stale = () => runId !== autoCameraRunIdRef.current || !autoCameraEnabledRef.current;
     if (stale()) return;
     setAutoCameraResult(null);
-    const result = await matchAutoCameraImage(image, lang);
+    const result = await matchAutoCameraImage(image, lang, canUseQuickAddRecognition);
     if (stale()) return;
     if (!result?.ok) {
       throw new Error(result?.error || tOr('pos.autoCamera.recognitionFailed', 'Recognition failed'));
@@ -990,7 +1056,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
       setActiveCategoryId(null);
     }
     setAutoCameraResult(tOr('pos.autoCamera.noLocalMatch', 'No local match'));
-  }, [handleAddProduct, lang, tOr]);
+  }, [canUseQuickAddRecognition, handleAddProduct, lang, tOr]);
 
   const handleHoldCart = useCallback(async () => {
     if (cart.items.length === 0) return;
@@ -1031,12 +1097,17 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
   const [isCustomerDisplayOpen, setIsCustomerDisplayOpen] = useState(false);
 
   useEffect(() => {
+    if (!canUseCustomerDisplay) {
+      setIsCustomerDisplayOpen(false);
+      return;
+    }
     window.electronAPI.window.list().then((ids: string[]) => {
       setIsCustomerDisplayOpen(ids.includes('customer'));
     });
-  }, []);
+  }, [canUseCustomerDisplay]);
 
   const handleOpenCustomerDisplay = () => {
+    if (!canUseCustomerDisplay) return;
     window.electronAPI.window.open('customer').then((result: any) => {
       if (result?.success) {
         setIsCustomerDisplayOpen(true);
@@ -1049,6 +1120,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
   };
 
   const handleCloseCustomerDisplay = () => {
+    if (!canUseCustomerDisplay) return;
     window.electronAPI.window.close('customer').then((result: any) => {
       if (result?.success) setIsCustomerDisplayOpen(false);
     });
@@ -1156,12 +1228,14 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
 
   return (
     <>
-      <AutoCameraSearch
-        enabled={autoCameraEnabled && !showPayment && !showHistory}
-        onCapture={handleAutoCameraCapture}
-        onStatus={setAutoCameraStatus}
-        onError={(message) => showToolbarError(message)}
-      />
+      {canUseQuickAddRecognition && (
+        <AutoCameraSearch
+          enabled={autoCameraEnabled && !showPayment && !showHistory}
+          onCapture={handleAutoCameraCapture}
+          onStatus={setAutoCameraStatus}
+          onError={(message) => showToolbarError(message)}
+        />
+      )}
       {/* Main content */}
       <div className="flex-1 flex overflow-hidden bg-slate-100">
         {/* Left: Products */}
@@ -1182,7 +1256,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
               />
               </div>
 
-              <button
+              {canUseQuickAddRecognition && <button
                 type="button"
                 onClick={() => {
                   setAutoCameraEnabled((enabled) => {
@@ -1205,9 +1279,9 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
                   <ScanSearch size={16} aria-hidden="true" />
                 )}
                 <span>{tOr('pos.autoCamera.button', 'Auto')}</span>
-              </button>
+              </button>}
 
-              {autoCameraEnabled && (
+          {canUseQuickAddRecognition && autoCameraEnabled && (
                 <span
                   role="status"
                   className="shrink-0 max-w-28 truncate rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700"
@@ -1384,7 +1458,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
             <ProductGrid
               products={visibleProducts}
               onAddProduct={handleAddProduct}
-              onLongPressProduct={handlePrintProductCode}
+              onLongPressProduct={canUseLabelPrint ? handlePrintProductCode : undefined}
               t={t}
               allowOversell={allowOversell}
               resetScrollKey={`${searchQuery ? 'search' : 'browse'}:${browseActiveCategoryId ?? 'all'}:${browseUnitFilter}`}
@@ -1469,7 +1543,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
             <ProductGrid
               products={visibleProducts}
               onAddProduct={handleAddProduct}
-              onLongPressProduct={handlePrintProductCode}
+              onLongPressProduct={canUseLabelPrint ? handlePrintProductCode : undefined}
               t={t}
               allowOversell={allowOversell}
               resetScrollKey={`${searchQuery ? 'search' : 'browse'}:${browseActiveCategoryId ?? 'all'}:${browseUnitFilter}`}
@@ -1493,11 +1567,11 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
               onRecall={holdSupported ? handleRecallCart : undefined}
               onDiscardHeld={handleDiscardHeld}
               onHistory={() => setShowHistory(true)}
-              onQuickAddCamera={onQuickAddCamera ? () => {
+              onQuickAddCamera={canUseQuickAddRecognition && onQuickAddCamera ? () => {
                 interruptAutoCamera();
                 onQuickAddCamera();
               } : undefined}
-              onCreateProduct={onCreateProduct ? () => {
+              onCreateProduct={canUseNativeProductCreate && onCreateProduct ? () => {
                 interruptAutoCamera();
                 onCreateProduct();
               } : undefined}
@@ -1528,7 +1602,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
             shiftBlockReason={shiftBlockedMessage}
             lang={lang}
             heldCartsCount={heldCarts.length}
-            onPrintItemLabel={handlePrintCartItemCode}
+            onPrintItemLabel={canUseLabelPrint ? handlePrintCartItemCode : undefined}
             onEditProduct={onEditProduct ? handleEditCartProduct : undefined}
             showOrderActionChips
           />

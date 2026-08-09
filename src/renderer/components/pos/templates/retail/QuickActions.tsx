@@ -1,5 +1,38 @@
 import React, { useState } from 'react';
 import type { PosAction } from '../../../../hooks/usePosStore';
+import type { CashierCapabilityKey } from '../../../../../shared/pos/cashier-capabilities';
+import {
+  usePosCapabilities,
+  type PosCapabilityContextValue,
+} from '../../capabilities/PosCapabilityProvider';
+
+const SAFE_DEGRADED_CAPABILITIES: Partial<Record<CashierCapabilityKey, string>> = {
+  // These are the two adapters Windows already exposes safely today.
+  nativeProductCreate: 'REMOTE_ONLY',
+  debtLedgerExternal: 'EXTERNAL_ONLY',
+};
+
+/** Renderer affordances require both a usable runtime and explicit policy. */
+export function isPosCapabilityUsable(
+  capabilities: PosCapabilityContextValue,
+  key: CashierCapabilityKey,
+): boolean {
+  if (capabilities.status !== 'ready') return false;
+  const outcome = capabilities.manifest.outcomes[key];
+  const runtimeUsable = outcome.state === 'supported'
+    || (
+      outcome.state === 'degraded'
+      && SAFE_DEGRADED_CAPABILITIES[key] === outcome.reasonCode
+    );
+  if (!runtimeUsable) return false;
+
+  const salonDecision = capabilities.policyInputs.salonConfig[key];
+  const entitlementDecision = capabilities.policyInputs.entitlements[key];
+  const roleDecision = capabilities.policyInputs.roleAccess[key];
+  return (salonDecision === 'enabled' || salonDecision === 'not-required')
+    && (entitlementDecision === 'granted' || entitlementDecision === 'not-required')
+    && (roleDecision === 'allowed' || roleDecision === 'not-required');
+}
 
 interface HeldCart {
   id: string;
@@ -83,6 +116,10 @@ export default function QuickActions({
   isCustomerDisplayOpen, displayMode, t,
   heldCarts = [], onHold, holdDisabled, onRecall, onDiscardHeld, onHistory, onQuickAddCamera, onCreateProduct,
 }: QuickActionsProps) {
+  const capabilities = usePosCapabilities();
+  const canUseCustomerDisplay = isPosCapabilityUsable(capabilities, 'customerDisplay');
+  const canUseQuickAddRecognition = isPosCapabilityUsable(capabilities, 'quickAddRecognition');
+  const canUseNativeProductCreate = isPosCapabilityUsable(capabilities, 'nativeProductCreate');
   const [showHeld, setShowHeld] = useState(false);
 
   const handleToggleAds = () => {
@@ -156,35 +193,39 @@ export default function QuickActions({
             onClick={onHistory}
           />
         )}
-        {onQuickAddCamera && (
+        {canUseQuickAddRecognition && onQuickAddCamera && (
           <ActionButton
             icon={icons.camera}
             label={tOr('pos.quickAdd.camera', 'Camera')}
             onClick={onQuickAddCamera}
           />
         )}
-        {onCreateProduct && (
+        {canUseNativeProductCreate && onCreateProduct && (
           <ActionButton
             icon={icons.addProduct}
             label={tOr('pos.quickAdd.createProduct', 'Tạo sản phẩm')}
             onClick={onCreateProduct}
           />
         )}
-        <ActionButton
-          icon={icons.display}
-          label={isCustomerDisplayOpen ? t('pos.displayOff') : t('pos.displayOn')}
-          onClick={isCustomerDisplayOpen ? onCloseCustomerDisplay : onOpenCustomerDisplay}
-          active={isCustomerDisplayOpen}
-          tone="success"
-        />
-        {isCustomerDisplayOpen && (
-          <ActionButton
-            icon={icons.promo}
-            label={displayMode === 'promo' ? t('pos.stopAds') : t('pos.startAds')}
-            onClick={handleToggleAds}
-            active={displayMode === 'promo'}
-            tone="warning"
-          />
+        {canUseCustomerDisplay && (
+          <>
+            <ActionButton
+              icon={icons.display}
+              label={isCustomerDisplayOpen ? t('pos.displayOff') : t('pos.displayOn')}
+              onClick={isCustomerDisplayOpen ? onCloseCustomerDisplay : onOpenCustomerDisplay}
+              active={isCustomerDisplayOpen}
+              tone="success"
+            />
+            {isCustomerDisplayOpen && (
+              <ActionButton
+                icon={icons.promo}
+                label={displayMode === 'promo' ? t('pos.stopAds') : t('pos.startAds')}
+                onClick={handleToggleAds}
+                active={displayMode === 'promo'}
+                tone="warning"
+              />
+            )}
+          </>
         )}
       </div>
 
