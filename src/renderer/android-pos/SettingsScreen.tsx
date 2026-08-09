@@ -1,34 +1,22 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { AgentConfig } from '../../shared/types';
+import type { Language } from '../i18n/translations';
+import { ANDROID_POS_LANGUAGES, normalizeAndroidPosLanguage } from './shim/config-store';
 
 type AndroidPosMode = 'salon' | 'retail';
-type PosLanguage = 'en' | 'vi' | 'pl' | 'de' | 'cs' | 'sk' | 'uk';
 
-const SETTINGS_LANGUAGES: Array<{ value: PosLanguage; label: string }> = [
-  { value: 'pl', label: 'Polski' },
-  { value: 'en', label: 'English' },
-  { value: 'vi', label: 'Tiếng Việt' },
-  { value: 'de', label: 'Deutsch' },
-  { value: 'cs', label: 'Čeština' },
-  { value: 'sk', label: 'Slovenčina' },
-  { value: 'uk', label: 'Українська' },
-];
-
-const CONFIG_STORAGE_KEY = 'zira-android-pos-config';
+const SETTINGS_LANGUAGE_LABELS: Record<Language, string> = {
+  en: 'English',
+  vi: 'Tiếng Việt',
+  tr: 'Türkçe',
+  zh: '中文',
+  uk: 'Українська',
+  ru: 'Русский',
+  pl: 'Polski',
+};
 
 function normalizePosMode(value: unknown): AndroidPosMode {
   return value === 'retail' ? 'retail' : 'salon';
-}
-
-function normalizePosLanguage(value: unknown): PosLanguage {
-  const candidate = String(value || '').trim().toLowerCase();
-  return candidate === 'en'
-    || candidate === 'vi'
-    || candidate === 'pl'
-    || candidate === 'de'
-    || candidate === 'cs'
-    || candidate === 'sk'
-    || candidate === 'uk' ? candidate as PosLanguage : 'pl';
 }
 
 function resolveOnlineLabel(online: boolean): string {
@@ -52,14 +40,9 @@ export default function SettingsScreen() {
   const [onlineState, setOnlineState] = useState(false);
   const [appVersion, setAppVersion] = useState('Không xác định');
   const [posMode, setPosMode] = useState<AndroidPosMode>('salon');
-  const [posLanguage, setPosLanguage] = useState<PosLanguage>('pl');
+  const [posLanguage, setPosLanguage] = useState<Language>('pl');
   const [allowOversell, setAllowOversell] = useState(false);
   const [showNonFiscalOrders, setShowNonFiscalOrders] = useState(true);
-  const [customerDisplayEnabled, setCustomerDisplayEnabled] = useState(false);
-  const [selfCheckoutEnabled, setSelfCheckoutEnabled] = useState(false);
-  const [kitchenSelfOrderEnabled, setKitchenSelfOrderEnabled] = useState(false);
-  const [tvAdEnabled, setTvAdEnabled] = useState(false);
-  const [remoteAccessEnabled, setRemoteAccessEnabled] = useState(false);
   const [machineId, setMachineId] = useState('Không xác định');
   const [agentId, setAgentId] = useState('Không xác định');
   const [salonName, setSalonName] = useState('Không xác định');
@@ -68,14 +51,9 @@ export default function SettingsScreen() {
   const applyConfig = useCallback((config: AgentConfig | null | undefined) => {
     if (!config) return;
     setPosMode(normalizePosMode(config.posMode));
-    setPosLanguage(normalizePosLanguage(config.posLanguage));
+    setPosLanguage(normalizeAndroidPosLanguage(config.posLanguage));
     setAllowOversell(config.allowOversell === true);
     setShowNonFiscalOrders(config.showNonFiscalOrders !== false);
-    setCustomerDisplayEnabled(config.customerDisplayEnabled === true);
-    setSelfCheckoutEnabled(config.selfCheckoutEnabled === true);
-    setKitchenSelfOrderEnabled(config.kitchenSelfOrderEnabled === true);
-    setTvAdEnabled(config.tvAdEnabled === true);
-    setRemoteAccessEnabled(config.remoteAccessEnabled === true);
     setMachineId(String(config.machineId || '').trim() || 'Không xác định');
     setAgentId(String(config.agentId || '').trim() || 'Không xác định');
     setSalonName(String(config.salonName || '').trim() || 'Không xác định');
@@ -152,12 +130,12 @@ export default function SettingsScreen() {
               data-testid="settings-pos-language"
               className="mt-2 w-full rounded border border-slate-300 px-2 py-1.5"
               value={posLanguage}
-              onChange={(event) => { void syncConfig({ posLanguage: event.target.value as PosLanguage }); }}
+              onChange={(event) => { void syncConfig({ posLanguage: event.target.value as Language }); }}
               disabled={loading}
             >
-              {SETTINGS_LANGUAGES.map((language) => (
-                <option key={language.value} value={language.value}>
-                  {language.label}
+              {ANDROID_POS_LANGUAGES.map((language) => (
+                <option key={language} value={language}>
+                  {SETTINGS_LANGUAGE_LABELS[language]}
                 </option>
               ))}
             </select>
@@ -184,57 +162,6 @@ export default function SettingsScreen() {
                 onChange={(event) => { void syncConfig({ showNonFiscalOrders: event.target.checked }); }}
               />
               <span className="ml-2 text-sm">Hiển thị đơn không hóa đơn tài chính</span>
-            </label>
-          </div>
-        </section>
-
-        <section className="bg-white rounded-lg border border-slate-200 p-3">
-          <h2 className="text-sm font-bold text-slate-700">Thiết bị</h2>
-          <div className="mt-2 grid gap-2">
-            <label className="inline-flex items-center">
-              <input
-                data-testid="settings-customer-display"
-                type="checkbox"
-                checked={customerDisplayEnabled}
-                onChange={(event) => { void syncConfig({ customerDisplayEnabled: event.target.checked }); }}
-              />
-              <span className="ml-2 text-sm">Màn hình khách</span>
-            </label>
-            <label className="inline-flex items-center">
-              <input
-                data-testid="settings-self-checkout"
-                type="checkbox"
-                checked={selfCheckoutEnabled}
-                onChange={(event) => { void syncConfig({ selfCheckoutEnabled: event.target.checked }); }}
-              />
-              <span className="ml-2 text-sm">Self-checkout</span>
-            </label>
-            <label className="inline-flex items-center">
-              <input
-                data-testid="settings-kitchen-self-order"
-                type="checkbox"
-                checked={kitchenSelfOrderEnabled}
-                onChange={(event) => { void syncConfig({ kitchenSelfOrderEnabled: event.target.checked }); }}
-              />
-              <span className="ml-2 text-sm">Nhà bếp tự đặt món</span>
-            </label>
-            <label className="inline-flex items-center">
-              <input
-                data-testid="settings-tv-ad"
-                type="checkbox"
-                checked={tvAdEnabled}
-                onChange={(event) => { void syncConfig({ tvAdEnabled: event.target.checked }); }}
-              />
-              <span className="ml-2 text-sm">TV quảng cáo</span>
-            </label>
-            <label className="inline-flex items-center">
-              <input
-                data-testid="settings-remote-access"
-                type="checkbox"
-                checked={remoteAccessEnabled}
-                onChange={(event) => { void syncConfig({ remoteAccessEnabled: event.target.checked }); }}
-              />
-              <span className="ml-2 text-sm">Remote access</span>
             </label>
           </div>
         </section>

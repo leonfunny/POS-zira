@@ -62,6 +62,34 @@ describe('Android POS device command handler', () => {
     }))).resolves.toMatchObject({ status: 'FAILED', error: 'setting-not-remote-manageable:apiKey' });
   });
 
+  test.each(['tr', 'zh', 'ru'])('accepts shared cashier language %s from remote settings', async (language) => {
+    const { handler, store } = build();
+    await expect(handler(command('SETTINGS_PATCH', {
+      settings: { posLanguage: language },
+    }))).resolves.toMatchObject({ status: 'COMPLETED' });
+    expect(store.getRawConfig().posLanguage).toBe(language);
+  });
+
+  test.each(['de', 'cs', 'sk'])('rejects legacy untranslated language %s from remote settings', async (language) => {
+    const { handler } = build();
+    await expect(handler(command('SETTINGS_PATCH', {
+      settings: { posLanguage: language },
+    }))).resolves.toMatchObject({ status: 'FAILED', error: 'invalid-setting:posLanguage' });
+  });
+
+  test('preserves Windows-managed device flags in the remote protocol', async () => {
+    const { handler, store } = build();
+    const settings = {
+      customerDisplayEnabled: true,
+      selfCheckoutEnabled: true,
+      kitchenSelfOrderEnabled: true,
+      tvAdEnabled: true,
+      remoteAccessEnabled: true,
+    };
+    await expect(handler(command('SETTINGS_PATCH', { settings }))).resolves.toMatchObject({ status: 'COMPLETED' });
+    expect(store.getRawConfig()).toMatchObject(settings);
+  });
+
   test('full database resync resets only the catalog cursor then invokes named syncs', async () => {
     const { handler, run, flush, syncProducts, syncStaff } = build();
     await expect(handler(command('DATABASE_RESYNC', { scope: 'ALL', full: true }))).resolves.toMatchObject({

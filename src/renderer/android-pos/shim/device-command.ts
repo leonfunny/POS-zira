@@ -1,5 +1,5 @@
 import type { AgentConfig } from '../../../shared/types';
-import type { ShimConfigStore } from './config-store';
+import { isAndroidPosLanguage, type ShimConfigStore } from './config-store';
 import type { AndroidDatabase } from './db/db';
 import { createSyncMeta } from './db/sync-meta';
 import type { ShimPosStore } from './pos-store';
@@ -49,8 +49,6 @@ const BOOLEAN_SETTING_KEYS = new Set([
   'tvAdEnabled',
   'remoteAccessEnabled',
 ]);
-const SAFE_LANGUAGES = new Set(['pl', 'en', 'vi', 'de', 'cs', 'sk', 'uk']);
-
 function appUpdaterPlugin(): AppUpdaterPlugin | null {
   const plugin = (globalThis as any)?.Capacitor?.Plugins?.AppUpdater;
   return plugin?.getInfo && plugin?.installFromUrl ? plugin as AppUpdaterPlugin : null;
@@ -71,8 +69,8 @@ function safeSettingsPatch(raw: unknown): Partial<AgentConfig> {
       continue;
     }
     if (key === 'language' || key === 'posLanguage') {
-      const language = String(value || '').toLowerCase();
-      if (!SAFE_LANGUAGES.has(language)) throw new Error(`invalid-setting:${key}`);
+      const language = String(value ?? '').trim().toLowerCase();
+      if (!isAndroidPosLanguage(language)) throw new Error(`invalid-setting:${key}`);
       patch[key] = language;
       continue;
     }

@@ -5,7 +5,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import type { AgentConfig } from '../src/shared/types';
 import SettingsScreen from '../src/renderer/android-pos/SettingsScreen';
-import { __resetShimForTest, installShim } from '../src/renderer/android-pos/shim';
+import { __resetShimForTest, installShim, ShimConfigStore } from '../src/renderer/android-pos/shim';
 import { createDeviceCommandHandler, type DeviceCommandEvent } from '../src/renderer/android-pos/shim/device-command';
 
 const CONFIG_STORAGE_KEY = 'zira-android-pos-config';
@@ -34,8 +34,12 @@ type RenderResult = {
   configStore: any;
 };
 
-async function renderSettings(seed?: Partial<AgentConfig>): Promise<RenderResult> {
-  const { api, configStore } = installShim({ reinstall: true, config: seed as any });
+async function renderSettings(seed?: Partial<AgentConfig>, configStore?: ShimConfigStore): Promise<RenderResult> {
+  const { api, configStore: installedConfigStore } = installShim({
+    reinstall: true,
+    config: seed as any,
+    configStore,
+  });
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -45,7 +49,7 @@ async function renderSettings(seed?: Partial<AgentConfig>): Promise<RenderResult
     root.render(createElement(SettingsScreen));
   });
   await settle();
-  return { root, container, api, configStore };
+  return { root, container, api, configStore: installedConfigStore };
 }
 
 describe('Android SettingsScreen', () => {
@@ -78,11 +82,6 @@ describe('Android SettingsScreen', () => {
       posLanguage: 'vi',
       allowOversell: false,
       showNonFiscalOrders: false,
-      customerDisplayEnabled: true,
-      selfCheckoutEnabled: true,
-      kitchenSelfOrderEnabled: false,
-      tvAdEnabled: true,
-      remoteAccessEnabled: false,
       machineId: 'machine-1',
       agentId: 'agent-1',
       salonName: 'Salon Test',
@@ -98,12 +97,6 @@ describe('Android SettingsScreen', () => {
     expect((container.querySelector('[data-testid="settings-pos-language"]') as HTMLSelectElement).value).toBe('vi');
     expect((container.querySelector('[data-testid="settings-allow-oversell"]') as HTMLInputElement).checked).toBe(false);
     expect((container.querySelector('[data-testid="settings-show-non-fiscal-orders"]') as HTMLInputElement).checked).toBe(false);
-    expect((container.querySelector('[data-testid="settings-customer-display"]') as HTMLInputElement).checked).toBe(true);
-    expect((container.querySelector('[data-testid="settings-self-checkout"]') as HTMLInputElement).checked).toBe(true);
-    expect((container.querySelector('[data-testid="settings-kitchen-self-order"]') as HTMLInputElement).checked).toBe(false);
-    expect((container.querySelector('[data-testid="settings-tv-ad"]') as HTMLInputElement).checked).toBe(true);
-    expect((container.querySelector('[data-testid="settings-remote-access"]') as HTMLInputElement).checked).toBe(false);
-
     const text = container.textContent || '';
     expect(text).toContain('9.9.1');
     expect(text).toContain('machine-1');
@@ -111,6 +104,88 @@ describe('Android SettingsScreen', () => {
     expect(text).toContain('Salon Test');
     expect(text).toContain('1234');
 
+    act(() => { root.unmount(); });
+  });
+
+  it('offers exactly the shared cashier languages', async () => {
+    const { container, root } = await renderSettings();
+    const language = container.querySelector('[data-testid="settings-pos-language"]') as HTMLSelectElement;
+    const values = Array.from(language.options, (option) => option.value);
+    expect(values).toEqual(['en', 'vi', 'tr', 'zh', 'uk', 'ru', 'pl']);
+    expect(values).not.toContain('de');
+    expect(values).not.toContain('cs');
+    expect(values).not.toContain('sk');
+    act(() => { root.unmount(); });
+  });
+
+  it('migrates persisted legacy languages once without emitting a config update', async () => {
+    const values = new Map<string, string>([
+      [CONFIG_STORAGE_KEY, JSON.stringify({ posLanguage: ' VI ', language: 'PL' })],
+    ]);
+    let writes = 0;
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        writes += 1;
+        values.set(key, value);
+      },
+      removeItem: (key: string) => { values.delete(key); },
+    };
+    const configStore = new ShimConfigStore({ storage });
+    expect(configStore.getRawConfig()).toMatchObject({ posLanguage: 'vi', language: 'pl' });
+    expect(JSON.parse(values.get(CONFIG_STORAGE_KEY) || '{}')).toMatchObject({ posLanguage: 'vi', language: 'pl' });
+    expect(writes).toBe(1);
+
+    let configUpdates = 0;
+    configStore.onConfigUpdated(() => { configUpdates += 1; });
+    const { container, root } = await renderSettings(undefined, configStore);
+    expect((container.querySelector('[data-testid="settings-pos-language"]') as HTMLSelectElement).value).toBe('vi');
+    expect(configUpdates).toBe(0);
+
+    new ShimConfigStore({ storage });
+    expect(writes).toBe(1);
+    act(() => { root.unmount(); });
+  });
+
+  it.each([
+    ['de', 'cs'],
+    ['sk', 'de'],
+  ])('migrates unsupported persisted languages %s/%s to English', (posLanguage, language) => {
+    const values = new Map<string, string>([
+      [CONFIG_STORAGE_KEY, JSON.stringify({ posLanguage, language })],
+    ]);
+    let writes = 0;
+    const configStore = new ShimConfigStore({
+      storage: {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => {
+          writes += 1;
+          values.set(key, value);
+        },
+        removeItem: (key: string) => { values.delete(key); },
+      },
+    });
+
+    expect(configStore.getRawConfig()).toMatchObject({ posLanguage: 'en', language: 'en' });
+    expect(writes).toBe(1);
+  });
+
+  it('does not render Windows-managed device controls or write their values', async () => {
+    const configStore = new ShimConfigStore();
+    let configUpdates = 0;
+    configStore.onConfigUpdated(() => { configUpdates += 1; });
+    const { container, root } = await renderSettings(undefined, configStore);
+
+    for (const id of [
+      'settings-customer-display',
+      'settings-self-checkout',
+      'settings-kitchen-self-order',
+      'settings-tv-ad',
+      'settings-remote-access',
+    ]) {
+      expect(container.querySelector(`[data-testid="${id}"]`)).toBeNull();
+    }
+    expect(configUpdates).toBe(0);
     act(() => { root.unmount(); });
   });
 
@@ -158,56 +233,6 @@ describe('Android SettingsScreen', () => {
       },
       assertConfig: (config: AgentConfig) => expect(config.showNonFiscalOrders).toBe(false),
       assertStorage: (stored: Record<string, unknown>) => expect(stored.showNonFiscalOrders).toBe(false),
-    },
-    {
-      name: 'customerDisplayEnabled',
-      initial: { customerDisplayEnabled: false } as Partial<AgentConfig>,
-      actOn: (container: HTMLDivElement) => {
-        const input = container.querySelector('[data-testid="settings-customer-display"]') as HTMLInputElement;
-        return act(async () => { input.click(); await Promise.resolve(); });
-      },
-      assertConfig: (config: AgentConfig) => expect(config.customerDisplayEnabled).toBe(true),
-      assertStorage: (stored: Record<string, unknown>) => expect(stored.customerDisplayEnabled).toBe(true),
-    },
-    {
-      name: 'selfCheckoutEnabled',
-      initial: { selfCheckoutEnabled: false } as Partial<AgentConfig>,
-      actOn: (container: HTMLDivElement) => {
-        const input = container.querySelector('[data-testid="settings-self-checkout"]') as HTMLInputElement;
-        return act(async () => { input.click(); await Promise.resolve(); });
-      },
-      assertConfig: (config: AgentConfig) => expect(config.selfCheckoutEnabled).toBe(true),
-      assertStorage: (stored: Record<string, unknown>) => expect(stored.selfCheckoutEnabled).toBe(true),
-    },
-    {
-      name: 'kitchenSelfOrderEnabled',
-      initial: { kitchenSelfOrderEnabled: false } as Partial<AgentConfig>,
-      actOn: (container: HTMLDivElement) => {
-        const input = container.querySelector('[data-testid="settings-kitchen-self-order"]') as HTMLInputElement;
-        return act(async () => { input.click(); await Promise.resolve(); });
-      },
-      assertConfig: (config: AgentConfig) => expect(config.kitchenSelfOrderEnabled).toBe(true),
-      assertStorage: (stored: Record<string, unknown>) => expect(stored.kitchenSelfOrderEnabled).toBe(true),
-    },
-    {
-      name: 'tvAdEnabled',
-      initial: { tvAdEnabled: false } as Partial<AgentConfig>,
-      actOn: (container: HTMLDivElement) => {
-        const input = container.querySelector('[data-testid="settings-tv-ad"]') as HTMLInputElement;
-        return act(async () => { input.click(); await Promise.resolve(); });
-      },
-      assertConfig: (config: AgentConfig) => expect(config.tvAdEnabled).toBe(true),
-      assertStorage: (stored: Record<string, unknown>) => expect(stored.tvAdEnabled).toBe(true),
-    },
-    {
-      name: 'remoteAccessEnabled',
-      initial: { remoteAccessEnabled: false } as Partial<AgentConfig>,
-      actOn: (container: HTMLDivElement) => {
-        const input = container.querySelector('[data-testid="settings-remote-access"]') as HTMLInputElement;
-        return act(async () => { input.click(); await Promise.resolve(); });
-      },
-      assertConfig: (config: AgentConfig) => expect(config.remoteAccessEnabled).toBe(true),
-      assertStorage: (stored: Record<string, unknown>) => expect(stored.remoteAccessEnabled).toBe(true),
     },
   ])('writes %s to persisted config', async ({ initial, actOn, assertConfig, assertStorage }) => {
     const { root, container, api } = await renderSettings(initial);

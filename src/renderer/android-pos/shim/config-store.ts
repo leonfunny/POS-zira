@@ -23,8 +23,28 @@
  */
 
 import type { AgentConfig, AuthUser } from '../../../shared/types';
+import type { Language } from '../../i18n/translations';
 
 const CONFIG_STORAGE_KEY = 'zira-android-pos-config';
+
+/**
+ * Android must only persist languages the shared cashier renderer can render.
+ * Keep this list typed against the renderer's canonical Language union instead
+ * of accepting legacy device-only values such as de/cs/sk.
+ */
+export const ANDROID_POS_LANGUAGES = ['en', 'vi', 'tr', 'zh', 'uk', 'ru', 'pl'] as const satisfies readonly Language[];
+
+export function normalizeAndroidPosLanguage(value: unknown, fallback: Language = 'en'): Language {
+  const candidate = String(value ?? '').trim().toLowerCase();
+  return (ANDROID_POS_LANGUAGES as readonly string[]).includes(candidate)
+    ? candidate as Language
+    : fallback;
+}
+
+export function isAndroidPosLanguage(value: unknown): value is Language {
+  return typeof value === 'string'
+    && (ANDROID_POS_LANGUAGES as readonly string[]).includes(value);
+}
 
 // ─── posMode resolution (packet E2a — salon mode) ───────────────────────────
 
@@ -178,12 +198,46 @@ export class ShimConfigStore {
     if (raw) {
       try {
         const parsed = JSON.parse(raw) as AgentConfig;
-        return { ...createSeedConfig(seed), ...parsed };
+        const config = { ...createSeedConfig(seed), ...parsed };
+        const normalized = this.normalizePersistedLanguages(config);
+        if (normalized.changed) this.persistNormalizedConfig(normalized.config);
+        return normalized.config;
       } catch {
         // Corrupt persisted config — fall back to seed (mirrors electron-store resilience).
       }
     }
     return createSeedConfig(seed);
+  }
+
+  /**
+   * Older Android builds could store de/cs/sk or non-canonical casing/spacing.
+   * Normalize that local legacy state once while loading; deliberately do not
+   * call setConfig(), which would emit a renderer config event or look like an
+   * operator/remote settings patch.
+   */
+  private normalizePersistedLanguages(config: AgentConfig): { config: AgentConfig; changed: boolean } {
+    let changed = false;
+    const normalized = { ...config };
+
+    for (const key of ['language', 'posLanguage'] as const) {
+      const value = config[key];
+      if (value !== undefined && value !== null) {
+        const next = normalizeAndroidPosLanguage(value);
+        if (value === next) continue;
+        normalized[key] = next;
+        changed = true;
+      }
+    }
+
+    return { config: normalized, changed };
+  }
+
+  private persistNormalizedConfig(config: AgentConfig): void {
+    try {
+      this.storage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(sanitizeConfigForRenderer(config)));
+    } catch {
+      // A storage failure must not leave the current cashier session on an invalid language.
+    }
   }
 
   /** Sanitized, renderer-visible config (S1 §2.A). Never contains secrets. */
