@@ -21,6 +21,7 @@ import LoginScreen from './LoginScreen';
 // layout the same way App.tsx does it.
 import POSLayout from '../components/pos/POSLayout';
 import BilliardFloorPlan from '../components/billiard/BilliardFloorPlan';
+import SettingsScreen from './SettingsScreen';
 import type { Language } from '../i18n/translations';
 import type {
   BilliardPaymentIntent,
@@ -29,7 +30,7 @@ import type {
 import { STORAGE_AT_RISK_MESSAGE, getStorageDurability } from './shim/storage-durability';
 
 type BootState = 'checking' | 'login' | 'pos';
-type PosMode = 'pos' | 'billiard';
+type PosMode = 'pos' | 'billiard' | 'settings';
 
 // Persists the active POS/Bi-a mode across restarts. Same key the Windows
 // shell would use to remember the cashier's last billiard tab.
@@ -64,6 +65,7 @@ export default function AndroidBootApp() {
   const [billiardPaymentIntent, setBilliardPaymentIntent] = useState<BilliardPaymentIntent | null>(null);
   const [restoredCartReconciliation, setRestoredCartReconciliation] = useState<RestoredCartReconciliation | null>(null);
   const [isOwner, setIsOwner] = useState(false);
+  const [canOpenSettings, setCanOpenSettings] = useState(false);
   // Guards every async handoff result: a response that belongs to a previous
   // cashier must not land in this one's screen.
   const billiardGenerationRef = useRef(0);
@@ -219,7 +221,8 @@ export default function AndroidBootApp() {
     });
     api.getConfig()
       .then((c: any) => {
-        if (!cancelled && c?.language) setLanguage((c.language as Language) || 'en');
+        if (cancelled) return;
+        if (c?.language) setLanguage((c.language as Language) || 'en');
       })
       .catch(() => { /* default 'en' is fine */ });
     // Cancelled on unmount OR on state flip — a delayed response from a
@@ -237,15 +240,28 @@ export default function AndroidBootApp() {
 
   // Only an OWNER may resolve an uncertain tender (App.tsx:515).
   useEffect(() => {
-    if (state !== 'pos') { setIsOwner(false); return; }
+    if (state !== 'pos') {
+      setIsOwner(false);
+      setCanOpenSettings(false);
+      return;
+    }
     let cancelled = false;
     void (window as any).electronAPI.getConfig()
       .then((c: any) => {
-        if (!cancelled) setIsOwner(String(c?.authUser?.role || '').toUpperCase() === 'OWNER');
+        if (cancelled) return;
+        const role = String(c?.authUser?.role || '').toUpperCase();
+        setIsOwner(role === 'OWNER');
+        setCanOpenSettings(role === 'OWNER' || role === 'MANAGER');
       })
       .catch(() => { /* not an owner until proven otherwise */ });
     return () => { cancelled = true; };
   }, [state]);
+
+  useEffect(() => {
+    if (!canOpenSettings && mode === 'settings') {
+      setMode('pos');
+    }
+  }, [canOpenSettings, mode]);
 
   // Crash/login recovery. The handoff only returns an intent once it has
   // activated the exact frozen cart (or verified its order is committed), so
@@ -296,7 +312,9 @@ export default function AndroidBootApp() {
   }, []);
 
   const switchMode = (next: PosMode) => {
-    try { localStorage.setItem(MODE_STORAGE_KEY, next); } catch { /* storage unavailable */ }
+    if (next === 'pos' || next === 'billiard') {
+      try { localStorage.setItem(MODE_STORAGE_KEY, next); } catch { /* storage unavailable */ }
+    }
     setMode(next);
   };
 
@@ -322,29 +340,45 @@ export default function AndroidBootApp() {
           {STORAGE_AT_RISK_MESSAGE}
         </div>
       )}
-      {billiardEnabled && (
-        <nav className="flex shrink-0 border-b bg-white" aria-label="POS mode">
+      {(billiardEnabled || canOpenSettings) && (
+        <nav
+          className="grid shrink-0 border-b bg-white"
+          aria-label="POS mode"
+          style={{ gridTemplateColumns: canOpenSettings ? (billiardEnabled ? '1fr 1fr 1fr' : '1fr 1fr') : '1fr' }}
+        >
           <button
             type="button"
-            className={`flex-1 py-3 text-sm font-semibold ${mode === 'pos' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
+            className={`py-3 text-sm font-semibold ${mode === 'pos' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
             onClick={() => switchMode('pos')}
           >
             POS
           </button>
-          <button
-            type="button"
-            className={`flex-1 py-3 text-sm font-semibold ${mode === 'billiard' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
-            onClick={() => switchMode('billiard')}
-          >
-            Bi-a
-          </button>
+          {billiardEnabled && (
+            <button
+              type="button"
+              className={`py-3 text-sm font-semibold ${mode === 'billiard' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
+              onClick={() => switchMode('billiard')}
+            >
+              Bi-a
+            </button>
+          )}
+          {canOpenSettings && (
+            <button
+              type="button"
+              data-testid="android-settings-entry"
+              className={`py-3 text-sm font-semibold ${mode === 'settings' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
+              onClick={() => switchMode('settings')}
+            >
+              Cài đặt
+            </button>
+          )}
         </nav>
       )}
       <div className="flex-1 min-h-0">
         {/* Both tabs stay mounted after first visit and are hidden with
             `hidden`, so a switch no longer destroys and rebuilds the tree.
             BilliardFloorPlan pauses its polls when `active` is false (3c2f020). */}
-        <div className={billiardEnabled && mode === 'billiard' ? 'hidden' : 'h-full'}>
+        <div className={mode === 'pos' ? 'h-full' : 'hidden'}>
           <POSLayout
             /* The shell owns the banner + tab chrome above this, so POSLayout
                must fill what is left rather than demand a full 100vh — else the
@@ -363,6 +397,11 @@ export default function AndroidBootApp() {
             }}
           />
         </div>
+        {canOpenSettings && (
+          <div className={mode === 'settings' ? 'h-full' : 'hidden'}>
+            <SettingsScreen />
+          </div>
+        )}
         {billiardEnabled && billiardVisited && (
           <div className={mode === 'billiard' ? 'h-full' : 'hidden'}>
             <BilliardFloorPlan

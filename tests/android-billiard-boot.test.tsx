@@ -55,7 +55,8 @@ import {
 } from '../src/renderer/android-pos/shim/storage-durability';
 
 /** Build a window.electronAPI mock that boots straight into the POS state. */
-function makeApi(opts: { billiardEnabled: boolean; language?: string }) {
+function makeApi(opts: { billiardEnabled: boolean; language?: string; role?: 'OWNER' | 'MANAGER' | 'STAFF' }) {
+  const role = opts.role || 'STAFF';
   return {
     auth: {
       getUser: () => Promise.resolve({ data: { isAuthenticated: true } }),
@@ -65,7 +66,7 @@ function makeApi(opts: { billiardEnabled: boolean; language?: string }) {
       get: () =>
         Promise.resolve({ features: { billiard: { enabled: opts.billiardEnabled } } }),
     },
-    getConfig: () => Promise.resolve({ language: opts.language ?? 'pl' }),
+    getConfig: () => Promise.resolve({ language: opts.language ?? 'pl', authUser: { role } }),
     pos: {
       getState: () => Promise.resolve({ session: { isOpen: false } }),
       dispatch: () => Promise.resolve(),
@@ -108,6 +109,17 @@ describe('AndroidBootApp — entitlement-gated POS/Bi-a mode tabs', () => {
   });
 
   async function boot(opts: { billiardEnabled: boolean; language?: string }) {
+    (globalThis as any).electronAPI = makeApi({ ...opts, role: 'STAFF' });
+    // `window` exists in happy-dom; the component reads (window as any).electronAPI.
+    (globalThis as any).window = globalThis;
+    await act(async () => {
+      root = createRoot(container);
+      root.render(createElement(AndroidBootApp));
+    });
+    await settle();
+  }
+
+  async function bootWithRole(opts: { billiardEnabled: boolean; language?: string; role?: 'OWNER' | 'MANAGER' | 'STAFF' }) {
     (globalThis as any).electronAPI = makeApi(opts);
     // `window` exists in happy-dom; the component reads (window as any).electronAPI.
     (globalThis as any).window = globalThis;
@@ -134,6 +146,21 @@ describe('AndroidBootApp — entitlement-gated POS/Bi-a mode tabs', () => {
     expect(text).not.toContain('Bi-a');
     expect(container.querySelector('[data-testid="pos-app"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="billiard-floor-plan"]')).toBeNull();
+  });
+
+  it('shows the Settings entry for OWNER', async () => {
+    await bootWithRole({ billiardEnabled: false, role: 'OWNER' });
+    expect(container.querySelector('[data-testid="android-settings-entry"]')).not.toBeNull();
+  });
+
+  it('shows the Settings entry for MANAGER', async () => {
+    await bootWithRole({ billiardEnabled: false, role: 'MANAGER' });
+    expect(container.querySelector('[data-testid="android-settings-entry"]')).not.toBeNull();
+  });
+
+  it('hides the Settings entry for STAFF', async () => {
+    await bootWithRole({ billiardEnabled: false, role: 'STAFF' });
+    expect(container.querySelector('[data-testid="android-settings-entry"]')).toBeNull();
   });
 
   it('switching to Bi-a renders BilliardFloorPlan with the config language and persists the mode', async () => {
