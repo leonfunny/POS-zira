@@ -15,6 +15,11 @@ interface ProductCardProps {
   onAdd: (product: Product) => void;
   onLongPress?: (product: Product) => void | ProductLongPressResult | Promise<void | ProductLongPressResult>;
   t?: (key: string) => string;
+  /** Dotykacka shows no product photography at all — colour blocks only. D4 of
+   *  the redesign brief makes that a per-salon choice: retail defaults to the
+   *  image-free tile wall, salon keeps service photos. Default true preserves
+   *  the previous behaviour for every caller that has not opted in. */
+  imagesEnabled?: boolean;
   allowOversell?: boolean;
   /** Operator UI language — drives display-name resolution. Canonical
    *  `product.name` is still used for placeholder-color stability and for
@@ -34,6 +39,40 @@ const PLACEHOLDER_COLORS = [
   'bg-teal-50 text-teal-600',
 ];
 
+/**
+ * Tile colours for the image-free product wall.
+ *
+ * Dotykačka never shows a product photo — its display settings have no image
+ * option at all. Colour IS the identifier, and merchants memorise colour and
+ * position. Where they let the merchant pick per product, we derive it from the
+ * product name so the wall is stable and needs no data migration; a real
+ * per-product colour can override this later.
+ *
+ * The set is the stock Material 500/700 family observed in their build.
+ */
+const TILE_COLORS = [
+  '#2196F3', '#607D8B', '#009688', '#795548', '#43A047',
+  '#757575', '#FB8C00', '#9C27B0', '#D32F2F', '#E91E63',
+  '#1565C0', '#546E7A', '#00838F', '#6D4C41', '#2E7D32',
+];
+
+/** Relative luminance → flip the label to black on light tiles, as they do. */
+function readableInk(hex: string): string {
+  const n = parseInt(hex.slice(1), 16);
+  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((c) => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.45 ? '#1a1915' : '#ffffff';
+}
+
+function pickTileColor(name: string): { bg: string; ink: string } {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  const bg = TILE_COLORS[Math.abs(hash) % TILE_COLORS.length];
+  return { bg, ink: readableInk(bg) };
+}
+
 function placeholderColor(name: string): string {
   let hash = 0;
   for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
@@ -44,7 +83,7 @@ function formatTemplate(template: string, values: Record<string, string | number
   return template.replace(/\{(\w+)\}/g, (_, key) => String(values[key] ?? ''));
 }
 
-function ProductCard({ product, onAdd, onLongPress, t, allowOversell = false, lang }: ProductCardProps) {
+function ProductCard({ product, onAdd, onLongPress, t, allowOversell = false, lang, imagesEnabled = true }: ProductCardProps) {
   const [imgError, setImgError] = useState(false);
   const [longPressState, setLongPressState] = useState<'idle' | 'printing' | 'printed' | 'error'>('idle');
   const [longPressMessage, setLongPressMessage] = useState('');
@@ -71,6 +110,7 @@ function ProductCard({ product, onAdd, onLongPress, t, allowOversell = false, la
   // Placeholder color hashes canonical `name` so the same product keeps the
   // same tile color regardless of operator language.
   const colorClass = placeholderColor(product.name);
+  const tile = pickTileColor(product.name);
   const displayName = resolveName(product, lang);
   const imgSrc = product.thumbnail_url || product.image_url;
   const showImage = imgSrc && !imgError;
@@ -156,6 +196,61 @@ function ProductCard({ product, onAdd, onLongPress, t, allowOversell = false, la
       }, 500);
     }
   };
+
+  // ── The image-free tile wall (D4) ─────────────────────────────────────────
+  // A flat colour rectangle: name top-left wrapping to two lines, price
+  // bottom-right, no photo, no radius, no shadow. Grid density and the tile's
+  // own height come from ProductGrid, so this needs no `aspect-*` — which is
+  // also why it renders correctly on the counter's Chromium 83, where
+  // aspect-ratio is ignored.
+  if (!imagesEnabled) {
+    return (
+      <div
+        role="button"
+        tabIndex={soldOut ? -1 : 0}
+        onClick={handleClick}
+        onKeyDown={handleKeyDown}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerEnd}
+        onPointerLeave={clearLongPressTimer}
+        onPointerCancel={handlePointerEnd}
+        onContextMenu={(event) => event.preventDefault()}
+        aria-label={soldOut ? `${displayName} — ${t?.('pos.product.soldOut') ?? 'Sold out'}` : `Add ${displayName}`}
+        aria-disabled={soldOut || undefined}
+        style={{ background: tile.bg, color: tile.ink }}
+        className={`pos-tile relative grid h-full min-h-[92px] select-none grid-rows-[1fr_auto] p-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 ${
+          soldOut ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer touch-manipulation active:brightness-90'
+        }`}
+      >
+        <p className="text-[13px] font-bold leading-tight line-clamp-2">{displayName}</p>
+        <div className="grid grid-cols-[auto_1fr] items-end gap-1">
+          <span className="text-[10px] font-bold uppercase opacity-70 leading-none">
+            {lowStock || oversoldStock ? `${stockQty} ${stockUnit}` : saleClass.isWeighted ? saleClass.saleUnit : ''}
+          </span>
+          <span className="justify-self-end text-base font-black tabular-nums leading-none">
+            {(product.retail_price / 100).toFixed(2)}&nbsp;{currency}{saleClass.priceSuffix}
+          </span>
+        </div>
+        {soldOut && (
+          <span className="absolute inset-x-0 top-1/2 -translate-y-1/2 bg-black/55 py-1 text-center text-[11px] font-black uppercase text-white">
+            {t?.('pos.product.soldOut') ?? 'Sold out'}
+          </span>
+        )}
+        {product.is_on_sale === 1 && !soldOut && !isDraft && (
+          <span className="absolute right-0 top-0 bg-black/25 px-1.5 py-0.5 text-[10px] font-black uppercase">SALE</span>
+        )}
+        {isDraft && (
+          <span className="absolute right-0 top-0 bg-black/25 px-1.5 py-0.5 text-[10px] font-black uppercase">DRAFT</span>
+        )}
+        {longPressState !== 'idle' && (
+          <div className="absolute inset-0 grid place-items-center bg-black/70 px-2 text-center text-[11px] font-black text-white">
+            {longPressMessage}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div

@@ -1382,6 +1382,8 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
           </div>
           {showCatalogSkeleton ? (
             <ProductGrid
+              /* D4: retail runs the image-free colour-block wall. */
+              imagesEnabled={false}
               products={visibleProducts}
               onAddProduct={handleAddProduct}
               onLongPressProduct={handlePrintProductCode}
@@ -1467,6 +1469,8 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
             </div>
           ) : (
             <ProductGrid
+              /* D4: retail runs the image-free colour-block wall. */
+              imagesEnabled={false}
               products={visibleProducts}
               onAddProduct={handleAddProduct}
               onLongPressProduct={handlePrintProductCode}

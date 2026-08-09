@@ -14,6 +14,10 @@ interface ProductGridProps {
   resetScrollKey?: string | null;
   /** Operator UI language — forwarded to ProductCard for display-only localization. */
   lang?: string;
+  /** Image-free colour-block tiles (D4). Forwarded to ProductCard; the grid
+   *  also tightens its rows, because a colour block needs far less height than
+   *  a card with a photo well. */
+  imagesEnabled?: boolean;
   loading?: boolean;
   emptySearchQuery?: string;
   onClearSearch?: () => void;
@@ -43,7 +47,7 @@ function ProductGridSkeleton() {
   );
 }
 
-export default function ProductGrid({ products, onAddProduct, onLongPressProduct, t, allowOversell = false, resetScrollKey, lang, loading = false, emptySearchQuery, onClearSearch }: ProductGridProps) {
+export default function ProductGrid({ products, onAddProduct, onLongPressProduct, t, allowOversell = false, resetScrollKey, lang, imagesEnabled = true, loading = false, emptySearchQuery, onClearSearch }: ProductGridProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const tOr = (key: string, fallback: string) => {
     const value = t?.(key);
@@ -99,7 +103,11 @@ export default function ProductGrid({ products, onAddProduct, onLongPressProduct
 
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto">
-      <div className="grid [grid-template-columns:repeat(auto-fill,minmax(154px,1fr))] 2xl:[grid-template-columns:repeat(auto-fill,minmax(172px,1fr))] gap-2 p-1 pb-2">
+      <div className={imagesEnabled
+        ? 'grid [grid-template-columns:repeat(auto-fill,minmax(154px,1fr))] 2xl:[grid-template-columns:repeat(auto-fill,minmax(172px,1fr))] gap-2 p-1 pb-2'
+        // Colour blocks are wider than tall (~4:2.2 in their build) and need no
+        // photo well, so the wall runs denser and the gutter is one uniform 6px.
+        : 'grid [grid-template-columns:repeat(auto-fill,minmax(168px,1fr))] gap-1.5 p-1.5 pb-2'}>
         {products.map((product) => (
           <ProductCard
             key={product.id}
@@ -109,6 +117,7 @@ export default function ProductGrid({ products, onAddProduct, onLongPressProduct
             t={t}
             allowOversell={allowOversell}
             lang={lang}
+            imagesEnabled={imagesEnabled}
           />
         ))}
       </div>

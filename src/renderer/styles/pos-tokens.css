@@ -77,3 +77,14 @@
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'tnum' 1;
 }
+
+/*
+ * The tile wall. Dotykačka's single most identifying trait: hard rectangles
+ * butted together with one uniform gutter, no radius, no shadow, no border.
+ * The colour comes inline from the per-product hash (ProductCard), so only the
+ * geometry lives here.
+ */
+.pos-surface .pos-tile {
+  border-radius: 0;
+  box-shadow: none;
+}
