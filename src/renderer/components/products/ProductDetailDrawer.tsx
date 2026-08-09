@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Ban, Package, PackagePlus, Pencil, Printer, X } from 'lucide-react';
-import { resolveName, resolveProductLabelName } from '../../../shared/catalog-names';
+import { resolveName, resolveProductLabelNameResult } from '../../../shared/catalog-names';
 import { classifyProductSale } from '../../../shared/product-sale-classifier';
 import { isStockTracked } from '../../../shared/product-stock-tracking';
 import type { ProductAdminStockAdjustmentResponse } from '../../../shared/types';
 import type { Category } from '../../hooks/usePosDb';
 import type { ProductListItem } from '../../hooks/useProducts';
+import { formatProductLabelPriceText } from '../../utils/product-label';
 import DeactivateProductDialog from './DeactivateProductDialog';
 import ProductEditForm from './ProductEditForm';
 import ProductStatusBadge from './ProductStatusBadge';
@@ -98,7 +99,7 @@ export default function ProductDetailDrawer({
   onStaleProductHidden,
 }: ProductDetailDrawerProps) {
   const [labelBusy, setLabelBusy] = useState(false);
-  const [labelMessage, setLabelMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [labelMessage, setLabelMessage] = useState<{ ok: boolean; warning?: boolean; text: string } | null>(null);
   const [stockOpen, setStockOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editDirty, setEditDirty] = useState(false);
@@ -142,14 +143,19 @@ export default function ProductDetailDrawer({
     setLabelBusy(true);
     setLabelMessage(null);
     try {
-      const priceGrosze = Number(product.retail_price) || 0;
-      const labelName = resolveProductLabelName(product) || product.name;
+      const nameResolution = resolveProductLabelNameResult(product);
+      const labelName = nameResolution.name || product.name;
       const result = await window.electronAPI.printLabel(product.barcode, labelName, {
-        priceText: priceGrosze > 0 ? formatMoney(priceGrosze, currency) : undefined,
-        sku: product.sku?.trim() || undefined,
+        priceText: formatProductLabelPriceText(product, currency),
       });
       if (result?.success) {
-        setLabelMessage({ ok: true, text: tOr(t, 'products.label.printed', 'Label printed') });
+        setLabelMessage(nameResolution.missingPolishName
+          ? {
+            ok: true,
+            warning: true,
+            text: tOr(t, 'products.label.missingPolishName', 'Thiếu tên tiếng Ba Lan — đã in tên gốc'),
+          }
+          : { ok: true, text: tOr(t, 'products.label.printed', 'Label printed') });
       } else {
         setLabelMessage({ ok: false, text: result?.error || tOr(t, 'products.label.failed', 'Could not print label') });
       }
@@ -283,7 +289,9 @@ export default function ProductDetailDrawer({
               ) : null}
               {labelMessage ? (
                 <div className={`mt-2 rounded-md border px-3 py-2 text-xs ${
-                  labelMessage.ok
+                  labelMessage.warning
+                    ? 'border-amber-200 bg-amber-50 text-amber-800'
+                    : labelMessage.ok
                     ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
                     : 'border-rose-200 bg-rose-50 text-rose-700'
                 }`}>

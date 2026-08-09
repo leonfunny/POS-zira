@@ -6,7 +6,7 @@ import type { Product } from '../../hooks/usePosDb';
 import { useConfig } from '../../hooks/useConfig';
 import { useBarcodeForwarder } from '../../hooks/useBarcodeForwarder';
 import { getTranslation, Language, languageNames } from '../../i18n/translations';
-import { resolveName, resolveProductLabelName } from '../../../shared/catalog-names';
+import { resolveName, resolveProductLabelNameResult } from '../../../shared/catalog-names';
 import { isValidManualWeightQuantity, normalizeSellBy } from '../../../shared/pos-sale';
 import { classifyProductSale, type ProductSaleClassification } from '../../../shared/product-sale-classifier';
 import { isSaleBlockedByStock } from '../../../shared/product-stock-tracking';
@@ -647,16 +647,21 @@ export default function POSLayout({
         return;
       }
 
-      const labelName = resolveProductLabelName(product) || product.name;
+      const nameResolution = resolveProductLabelNameResult(product);
+      const labelName = nameResolution.name || product.name;
       const priceText = formatProductLabelPriceText(product, tOr('pos.currency', 'zl'));
       const result = await window.electronAPI.printLabel(barcode, labelName, {
         priceText,
-        sku: product.sku?.trim() || undefined,
         quantity: labelCopiesForCartItem(item),
       });
 
       if (result?.success) {
-        showScanToast(tOr('pos.label.printed', 'Đã in mã'), 'ok');
+        showScanToast(
+          nameResolution.missingPolishName
+            ? tOr('pos.label.missingPolishName', 'Thiếu tên tiếng Ba Lan — đã in tên gốc')
+            : tOr('pos.label.printed', 'Đã in mã'),
+          nameResolution.missingPolishName ? 'warn' : 'ok',
+        );
       } else {
         showScanToast(result?.error || tOr('pos.label.failed', 'Không in được mã'), 'err');
       }

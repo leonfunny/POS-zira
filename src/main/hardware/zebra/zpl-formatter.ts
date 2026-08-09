@@ -175,24 +175,17 @@ export class ZplFormatter {
   }
 
   /**
-   * Wrap label copy into at most two readable lines. Explicit backend line
-   * breaks are honored first; longer content wraps at word boundaries and
-   * gets an ellipsis if it still exceeds the two-line budget.
+   * Wrap the complete label copy at word boundaries. Product shelf labels
+   * must never silently replace the end of a name with an ellipsis.
    */
-  private wrapLabelText(text: string, maxCharsPerLine: number, maxLines: number = 2): string[] {
+  private wrapLabelText(text: string, maxCharsPerLine: number): string[] {
     const paragraphs = text.replace(/\r\n?/g, '\n').split('\n');
     const wrapped: string[] = [];
-    let overflow = false;
 
     const appendLine = (line: string): void => {
       const trimmed = line.trim();
       if (!trimmed) return;
-
-      if (wrapped.length < maxLines) {
-        wrapped.push(trimmed);
-      } else {
-        overflow = true;
-      }
+      wrapped.push(trimmed);
     };
 
     for (let paragraphIndex = 0; paragraphIndex < paragraphs.length; paragraphIndex++) {
@@ -228,19 +221,9 @@ export class ZplFormatter {
         appendLine(current);
       }
 
-      if (paragraphIndex < paragraphs.length - 1 && wrapped.length >= maxLines) {
-        overflow = true;
-      }
-    }
-
-    if (overflow && wrapped.length > 0) {
-      const lastIndex = Math.min(wrapped.length, maxLines) - 1;
-      const maxContentLength = Math.max(1, maxCharsPerLine - 1);
-      wrapped[lastIndex] = `${wrapped[lastIndex].slice(0, maxContentLength).trimEnd()}…`;
     }
 
     return wrapped
-      .slice(0, maxLines)
       .map((line) => this.sanitizeText(line, maxCharsPerLine));
   }
 
@@ -264,11 +247,15 @@ export class ZplFormatter {
 
     // Adaptive vertical budget based on configured label height (mm).
     const H = this.labelHeight;
-    const topMarginMm = Math.max(2, H * 0.07);
+    const compactShelfLabel = this.labelWidth >= 45 && this.labelWidth <= 55 && H <= 35;
+    const topMarginMm = compactShelfLabel ? 1.4 : Math.max(2, H * 0.07);
     const baseBarcodeHeightMm = Math.max(10, Math.min(15, H * 0.42));
-    const text2FontMm = Math.max(4.2, Math.min(5.8, H * 0.16));
+    const text2FontMm = compactShelfLabel ? 5.6 : Math.max(4.2, Math.min(5.8, H * 0.16));
     const text2GapMm = text2FontMm + 0.1;
     const text3FontMm = Math.max(1.8, Math.min(3, H * 0.072));
+    const barcodeValueFontMm = compactShelfLabel ? 2.4 : Math.max(2.2, Math.min(3, H * 0.075));
+    const barcodeToValueGapMm = 0.25;
+    const valueToPriceGapMm = 0.35;
 
     // Helper: returns true if a text field at yDots with given font height would still fit
     const labelHeightDots = this.mmToDots(this.labelHeight);
@@ -302,14 +289,17 @@ export class ZplFormatter {
       // Product title first: the old order wasted the whole upper half of
       // 50x30mm product labels by placing every text line below the barcode.
       const titleCharsPerLine = Math.max(22, Math.floor((this.labelWidth - 10) / 1.1));
-      const titleMaxLines = H >= 45 ? 3 : 2;
-      const text1Lines = data.text1 ? this.wrapLabelText(data.text1, titleCharsPerLine, titleMaxLines) : [];
+      const text1Lines = data.text1 ? this.wrapLabelText(data.text1, titleCharsPerLine) : [];
+      const maxReadableTitleLines = compactShelfLabel ? 4 : Math.max(4, Math.floor(H / 8));
+      if (text1Lines.length > maxReadableTitleLines) {
+        throw new Error(`Product name needs ${text1Lines.length} lines; ${maxReadableTitleLines} fit readably on this label`);
+      }
       const text1FontMm = text1Lines.length >= 3
-        ? Math.max(2.1, Math.min(2.8, H * 0.072))
+        ? compactShelfLabel ? 2.4 : Math.max(2.4, Math.min(2.8, H * 0.072))
         : text1Lines.length > 1
-          ? Math.max(2.4, Math.min(3.1, H * 0.09))
+          ? compactShelfLabel ? 2.8 : Math.max(2.4, Math.min(3.1, H * 0.09))
           : Math.max(3, Math.min(4.1, H * 0.115));
-      const text1GapMm = text1FontMm + 0.25;
+      const text1GapMm = text1FontMm + (compactShelfLabel ? 0.15 : 0.25);
 
       for (const textLine of text1Lines) {
         if (!wouldFit(currentY, text1FontMm)) break;
@@ -321,25 +311,43 @@ export class ZplFormatter {
       }
 
       if (text1Lines.length > 0) {
-        currentY += this.mmToDots(0.4);
+        currentY += this.mmToDots(compactShelfLabel ? 0.3 : 0.4);
       }
 
       // Linear barcode (CODE128 or EAN13). Let long product names and the
       // enlarged price line claim vertical space first, while preserving a
       // scannable minimum bar height on 50x30mm labels.
       const currentYMm = currentY / this.dotsPerMm;
-      const priceGapBelowBarcodeMm = data.text2 ? (H <= 35 ? 3.2 : 3) : 2;
+      const priceGapBelowBarcodeMm = barcodeToValueGapMm + barcodeValueFontMm + valueToPriceGapMm;
       const footerBudgetMm =
-        (data.text2 ? priceGapBelowBarcodeMm + text2GapMm : 0)
+        priceGapBelowBarcodeMm
+        + (data.text2 ? text2GapMm : 0)
         + (data.text3 ? text3FontMm + 0.7 : 0)
-        + 0.8;
-      const barcodeHeightMm = Math.max(9.5, Math.min(baseBarcodeHeightMm, H - currentYMm - footerBudgetMm));
+        + (compactShelfLabel ? 0.7 : 0.8);
+      const minimumBarcodeHeightMm = compactShelfLabel ? 9 : 9.5;
+      const barcodeHeightMm = Math.max(
+        minimumBarcodeHeightMm,
+        Math.min(baseBarcodeHeightMm, H - currentYMm - footerBudgetMm),
+      );
       const barcodeModuleWidth = resolvedBarcodeType === 'EAN13' && this.labelWidth >= 45 ? 3 : 2;
       lines.push(`^FO${barcodeX},${currentY}^BY${barcodeModuleWidth}`);  // Wider EAN bars on GK420d 50mm labels.
       const barcodeCmd = BARCODE_COMMANDS[resolvedBarcodeType];
-      lines.push(`${barcodeCmd},${this.mmToDots(barcodeHeightMm)},Y,N,N`);  // Adaptive height, interpretation line
+      lines.push(`${barcodeCmd},${this.mmToDots(barcodeHeightMm)},N,N,N`);  // Explicit readable value line follows.
       lines.push(`^FD${data.barcode}^FS`);
-      currentY += this.mmToDots(barcodeHeightMm + priceGapBelowBarcodeMm);
+      currentY += this.mmToDots(barcodeHeightMm + barcodeToValueGapMm);
+
+      const printableBarcode = this.sanitizeText(data.barcode, 50);
+      if (printableBarcode && wouldFit(currentY, barcodeValueFontMm)) {
+        const barcodeValueWidthMm = this.fittedTextWidthMm(
+          printableBarcode,
+          barcodeValueFontMm,
+          this.labelWidth - 10,
+        );
+        lines.push(`^FO${barcodeX},${currentY}`);
+        lines.push(`^A0,${this.mmToDots(barcodeValueFontMm)},${this.mmToDots(barcodeValueWidthMm)}`);
+        lines.push(`^FD${printableBarcode}^FS`);
+        currentY += this.mmToDots(barcodeValueFontMm + valueToPriceGapMm);
+      }
     }
 
     const printableText2 = data.text2 ? this.sanitizeText(data.text2) : '';

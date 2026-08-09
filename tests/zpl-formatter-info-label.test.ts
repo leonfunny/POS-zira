@@ -189,7 +189,6 @@ describe("ZplFormatter.formatLabel", () => {
       barcodeType: "EAN13",
       text1: "Pra\u017cone wodorosty Yangban Korea 30g",
       text2: "3.00 PLN",
-      text3: "SKU prazone-wodorosty",
       quantity: 1,
     });
 
@@ -201,7 +200,8 @@ describe("ZplFormatter.formatLabel", () => {
     expect(secondLineIndex).toBeGreaterThan(firstLineIndex);
     expect(barcodeIndex).toBeGreaterThan(secondLineIndex);
     expect(zpl).toContain("3.00 PLN");
-    expect(zpl).toContain("SKU prazone-wodorosty");
+    expect(zpl).toContain("^FD8801047626671^FS");
+    expect(zpl).not.toContain("SKU ");
   });
 
   it("honors explicit text1 line breaks and resolves AUTO EAN13 payloads", () => {
@@ -226,7 +226,6 @@ describe("ZplFormatter.formatLabel", () => {
       barcodeType: "EAN13",
       text1: "Mieszanka do sma\u017cenia banan\u00f3w Lobo Banana Fritter Batter Mix 85g",
       text2: "6.00 PLN",
-      text3: "#LOBO-86G SKU mieszanka-do-smaz",
       quantity: 1,
     });
     const lines = zpl.split("\n");
@@ -236,6 +235,8 @@ describe("ZplFormatter.formatLabel", () => {
     const barcodeY = Number(lines[barcodeIndex - 1]?.match(/\^FO\d+,(\d+)/)?.[1] || 0);
     const barcodeHeight = Number(lines[barcodeIndex]?.match(/\^BE,(\d+),/)?.[1] || 0);
     const priceY = Number(lines[priceIndex - 2]?.match(/\^FO\d+,(\d+)/)?.[1] || 0);
+    const barcodeValueIndex = lines.lastIndexOf("^FD5901234123457^FS");
+    const barcodeValueFont = lines[barcodeValueIndex - 1]?.match(/\^A0,(\d+),(\d+)/);
     const titleLines = lines
       .slice(0, barcodeIndex)
       .filter((line) => line.startsWith("^FD") && line.endsWith("^FS"));
@@ -248,19 +249,22 @@ describe("ZplFormatter.formatLabel", () => {
     expect(zpl).not.toContain("\u2026");
     expect(priceIndex).toBeGreaterThan(0);
     expect(Number(titleFont?.[1] || 0)).toBeGreaterThanOrEqual(22);
-    expect(Number(priceFont?.[1] || 0)).toBeGreaterThanOrEqual(36);
+    expect(Number(priceFont?.[1] || 0)).toBeGreaterThanOrEqual(44);
+    expect(Number(barcodeValueFont?.[1] || 0)).toBeGreaterThanOrEqual(19);
     expect(priceY - (barcodeY + barcodeHeight)).toBeGreaterThanOrEqual(24);
     expect(zpl).toContain("^BY3");
+    expect(zpl).toContain("^BE,");
+    expect(zpl).toContain(",N,N,N");
   });
 
-  it("keeps long Polish title, price, and SKU text inside a 50x30 label", () => {
+  it("keeps the complete long Polish title, readable EAN, and price inside a 50x30 shelf label", () => {
     const f = new ZplFormatter(50, 30);
+    const productName = 'Snack z wodorostów z solą morską "Kung Fu Panda" LAVERLAND CRUNCH 4.5g x 3szt';
     const zpl = f.formatLabel({
       barcode: "8802241901267",
       barcodeType: "EAN13",
-      text1: 'Snack z wodorostów z solą morską "Kung Fu Panda" LAVERLAND CRUNCH 4.5g x 3szt',
+      text1: productName,
       text2: "123.45 PLN/kg",
-      text3: "SKU EAN-18809288636470",
       quantity: 1,
     });
     const lines = zpl.split("\n");
@@ -282,11 +286,44 @@ describe("ZplFormatter.formatLabel", () => {
 
     expect(zpl).toContain("^PW400");
     expect(zpl).not.toContain("^LL");
-    expect(textBounds).toHaveLength(4);
+    expect(zpl).not.toContain("\u2026");
+    expect(zpl).not.toContain("SKU ");
+    const barcodeIndex = lines.findIndex((line) => line.startsWith("^BE,"));
+    const printedTitle = lines
+      .slice(0, barcodeIndex)
+      .filter((line) => line.startsWith("^FD") && line.endsWith("^FS"))
+      .map((line) => line.slice(3, -3))
+      .join(" ");
+    expect(printedTitle).toBe(productName);
+    expect(textBounds.length).toBeGreaterThanOrEqual(5);
     for (const field of textBounds) {
       expect(field.x + Array.from(field.text).length * field.width).toBeLessThanOrEqual(400);
       expect(field.y + field.height).toBeLessThanOrEqual(240);
     }
+    const titleBounds = textBounds.filter((field) => !["8802241901267", "123.45 PLN/kg"].includes(field.text));
+    const barcodeY = Number(lines[barcodeIndex - 1]?.match(/\^FO\d+,(\d+)/)?.[1] || 0);
+    const barcodeHeight = Number(lines[barcodeIndex]?.match(/\^BE,(\d+),/)?.[1] || 0);
+    const eanBounds = textBounds.find((field) => field.text === "8802241901267");
+    const priceBounds = textBounds.find((field) => field.text === "123.45 PLN/kg");
+    expect(Math.min(...titleBounds.map((field) => field.height))).toBeGreaterThanOrEqual(19);
+    expect(eanBounds?.height).toBeGreaterThanOrEqual(19);
+    expect(priceBounds?.height).toBeGreaterThanOrEqual(44);
+    expect(Math.max(...titleBounds.map((field) => field.y + field.height))).toBeLessThan(barcodeY);
+    expect(barcodeY + barcodeHeight).toBeLessThan(eanBounds?.y || 0);
+    expect((eanBounds?.y || 0) + (eanBounds?.height || 0)).toBeLessThan(priceBounds?.y || 0);
+  });
+
+  it("refuses to silently cut a name that cannot fit at the readable 50x30 minimum", () => {
+    const f = new ZplFormatter(50, 30);
+    const tooLongName = Array.from({ length: 35 }, (_, index) => `produkt${index}`).join(" ");
+
+    expect(() => f.formatLabel({
+      barcode: "5901234123457",
+      barcodeType: "EAN13",
+      text1: tooLongName,
+      text2: "12,99 zl",
+      quantity: 1,
+    })).toThrow(/fit readably/);
   });
 
   it("uses the narrower Code128 module width for Bao Han 14-digit barcodes", () => {

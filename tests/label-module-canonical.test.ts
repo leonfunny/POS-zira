@@ -62,7 +62,8 @@ describe('canonical Label tab workflow', () => {
     expect(SHARED_TYPES).toContain("labelModuleLanguage?: 'vi' | 'pl'");
     expect(LABEL_MODULE).toContain('const labelLanguage: LabelLanguage = PRODUCT_LABEL_NAME_LOCALE;');
     expect(LABEL_MODULE).toContain('const copy = COPY[language] || COPY.vi;');
-    expect(LABEL_MODULE).toContain('resolveProductLabelName(product)');
+    expect(LABEL_MODULE).toContain('resolveProductLabelNameResult(product)');
+    expect(LABEL_MODULE).toContain('copy.missingPolishName');
     expect(LABEL_MODULE).not.toContain('saveConfig({ labelModuleLanguage: next })');
     expect(LABEL_MODULE).not.toContain('saveConfig({ posLanguage: next })');
   });
@@ -122,6 +123,9 @@ describe('canonical Label tab workflow', () => {
   it('selects cards for preview and passes quantity to the existing print API', () => {
     expect(LABEL_MODULE).toContain('onClick={() => selectProduct(product)}');
     expect(LABEL_MODULE).not.toContain('onClick={() => void printProductLabel(product)}');
+    expect(LABEL_MODULE).toContain('aspect-[5/3]');
+    expect(LABEL_MODULE.indexOf('<BarcodePreview barcode={selectedBarcode} />'))
+      .toBeLessThan(LABEL_MODULE.indexOf('{selectedPriceText || copy.noPrice}'));
 
     const printCall = LABEL_MODULE.slice(
       LABEL_MODULE.indexOf('window.electronAPI.printLabel'),
@@ -129,7 +133,7 @@ describe('canonical Label tab workflow', () => {
     );
     expect(printCall).toContain('barcode, labelName');
     expect(printCall).toContain('priceText');
-    expect(printCall).toContain('sku: product.sku?.trim() || undefined');
+    expect(printCall).not.toContain('sku:');
     expect(printCall).toContain('quantity');
   });
 

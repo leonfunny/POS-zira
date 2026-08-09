@@ -4,7 +4,9 @@ import { describe, expect, it } from 'vitest';
 import {
   PRODUCT_LABEL_NAME_LOCALE,
   resolveProductLabelName,
+  resolveProductLabelNameResult,
 } from '../src/shared/catalog-names';
+import { formatProductLabelPriceText } from '../src/renderer/utils/product-label';
 
 const root = resolve(__dirname, '..');
 const source = (path: string): string =>
@@ -39,11 +41,51 @@ describe('product label name locale contract', () => {
       name: 'Nuoc OKF co gas vi kiwi',
       name_translations: JSON.stringify({ pl: '   ', vi: 'Nước OKF có gas vị kiwi' }),
     })).toBe('Nuoc OKF co gas vi kiwi');
+
+    expect(resolveProductLabelNameResult({
+      name: 'Nuoc OKF co gas vi kiwi',
+      name_translations: JSON.stringify({ vi: 'Nước OKF có gas vị kiwi' }),
+    })).toEqual({
+      name: 'Nuoc OKF co gas vi kiwi',
+      missingPolishName: true,
+    });
+  });
+
+  it('marks a usable Polish translation as present', () => {
+    expect(resolveProductLabelNameResult({
+      name: 'Mi Ramen Vi Hai San Cay',
+      name_translations: { pl: 'Zupka błyskawiczna ostra' },
+    })).toEqual({
+      name: 'Zupka błyskawiczna ostra',
+      missingPolishName: false,
+    });
+  });
+
+  it('prints only the price for pieces and keeps /kg for weighted products', () => {
+    expect(formatProductLabelPriceText({
+      retail_price: 1299,
+      sell_by: 'PIECE',
+      sale_unit: 'szt',
+    }, 'zl')).toBe('12,99 zl');
+    expect(formatProductLabelPriceText({
+      retail_price: 1299,
+      sell_by: 'WEIGHT',
+      sale_unit: 'kg',
+    }, 'zl')).toBe('12,99 zl/kg');
   });
 
   it.each(PRODUCT_LABEL_PRINT_PATHS)('%s routes the printed name through the Polish resolver', (path) => {
     const printPath = source(path);
-    expect(printPath).toContain('resolveProductLabelName(product)');
+    expect(printPath).toContain('resolveProductLabelNameResult(product)');
     expect(printPath).toMatch(/electronAPI\.printLabel\([\s\S]{0,120}labelName,/);
+  });
+
+  it.each(PRODUCT_LABEL_PRINT_PATHS)('%s leaves SKU off the customer shelf label', (path) => {
+    const printPath = source(path);
+    const printCall = printPath.slice(
+      printPath.indexOf('electronAPI.printLabel'),
+      printPath.indexOf('});', printPath.indexOf('electronAPI.printLabel')),
+    );
+    expect(printCall).not.toContain('sku:');
   });
 });

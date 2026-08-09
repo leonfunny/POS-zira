@@ -17,6 +17,11 @@ export type NameTranslations = Record<string, string>;
 export const RECEIPT_NAME_LOCALE = 'pl';
 export const PRODUCT_LABEL_NAME_LOCALE = 'pl';
 
+export interface ProductLabelNameResolution {
+  name: string;
+  missingPolishName: boolean;
+}
+
 interface NamedRow {
   name?: string | null;
   name_translations?: NameTranslations | string | null;
@@ -96,5 +101,28 @@ export function resolveName(row: NamedRow | null | undefined, lang: string | nul
  * of silently switching to the current POS/operator UI language.
  */
 export function resolveProductLabelName(row: NamedRow | null | undefined): string {
-  return resolveName(row, PRODUCT_LABEL_NAME_LOCALE);
+  return resolveProductLabelNameResult(row).name;
+}
+
+/**
+ * Resolve the customer-facing shelf-label name and expose whether the Polish
+ * translation was missing. Printing remains allowed: callers can show a
+ * non-blocking warning while the canonical name is used as the fallback.
+ */
+export function resolveProductLabelNameResult(
+  row: NamedRow | null | undefined,
+): ProductLabelNameResolution {
+  if (!row) return { name: '', missingPolishName: true };
+
+  const canonical = (row.name ?? '').trim();
+  const raw = row.name_translations ?? row.nameTranslations ?? null;
+  const translations = raw && typeof raw === 'object' && !Array.isArray(raw)
+    ? raw as NameTranslations
+    : parseTranslations(raw);
+  const polishName = translations[PRODUCT_LABEL_NAME_LOCALE]?.trim() || '';
+
+  return {
+    name: polishName || canonical,
+    missingPolishName: !polishName,
+  };
 }

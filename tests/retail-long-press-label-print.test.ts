@@ -21,14 +21,15 @@ describe('retail POS long-press label printing', () => {
     expect(preloadPos).toContain("ipcRenderer.invoke('print-label', barcode, text, options)");
   });
 
-  it('prints the product barcode, name, price, and sku through the Zebra label path', () => {
+  it('prints the product barcode, Polish name, price, and quantity through the Zebra label path', () => {
     expect(retailTemplate).toContain('const handlePrintProductCode = useCallback(async (product: Product, options: { quantity?: number } = {}) => {');
     expect(retailTemplate).toContain('const barcode = product.barcode?.trim();');
     expect(retailTemplate).toContain("const priceText = formatProductLabelPriceText(product, tOr('pos.currency', 'zl'));");
-    expect(retailTemplate).toContain('const labelName = resolveProductLabelName(product) || product.name;');
+    expect(retailTemplate).toContain('const nameResolution = resolveProductLabelNameResult(product);');
+    expect(retailTemplate).toContain('const labelName = nameResolution.name || product.name;');
     expect(retailTemplate).toContain('window.electronAPI.printLabel(barcode, labelName, {');
     expect(retailTemplate).toContain('priceText,');
-    expect(retailTemplate).toContain('sku: product.sku?.trim() || undefined');
+    expect(retailTemplate).not.toContain('sku: product.sku?.trim() || undefined');
     expect(retailTemplate).toContain('quantity: options.quantity');
     expect(retailTemplate).toContain('onLongPressProduct={handlePrintProductCode}');
   });

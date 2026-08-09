@@ -17,7 +17,7 @@ import {
 import {
   PRODUCT_LABEL_NAME_LOCALE,
   resolveName,
-  resolveProductLabelName,
+  resolveProductLabelNameResult,
 } from '../../../shared/catalog-names';
 import type { AgentConfig } from '../../../shared/types';
 import { useConfig } from '../../hooks/useConfig';
@@ -47,6 +47,7 @@ type LabelStatus =
   | { type: 'idle'; message: string }
   | { type: 'printing'; message: string; productId: string }
   | { type: 'success'; message: string }
+  | { type: 'warning'; message: string }
   | { type: 'error'; message: string };
 
 interface RecentPrint {
@@ -92,6 +93,7 @@ interface LabelCopy {
   unit: string;
   missingEan: string;
   missingPrice: string;
+  missingPolishName: string;
   priceMissingHint: string;
   noPrice: string;
   copies: string;
@@ -150,6 +152,7 @@ const COPY: Record<string, LabelCopy> = {
     unit: 'Unit',
     missingEan: 'Missing EAN',
     missingPrice: 'Missing price',
+    missingPolishName: 'Missing Polish name — the original name will be printed.',
     priceMissingHint: 'Label can print, but the price line will be blank.',
     noPrice: 'No price',
     copies: 'Copies',
@@ -203,6 +206,7 @@ const COPY: Record<string, LabelCopy> = {
     unit: 'Đơn vị',
     missingEan: 'Thiếu EAN',
     missingPrice: 'Thiếu giá',
+    missingPolishName: 'Thiếu tên tiếng Ba Lan — tem sẽ in tên gốc.',
     priceMissingHint: 'Tem vẫn in được, nhưng dòng giá sẽ để trống.',
     noPrice: 'Không có giá',
     copies: 'Số bản in',
@@ -256,6 +260,7 @@ const COPY: Record<string, LabelCopy> = {
     unit: 'Jednostka',
     missingEan: 'Brak EAN',
     missingPrice: 'Brak ceny',
+    missingPolishName: 'Brak polskiej nazwy — zostanie wydrukowana nazwa podstawowa.',
     priceMissingHint: 'Etykieta może zostać wydrukowana, ale linia ceny będzie pusta.',
     noPrice: 'Brak ceny',
     copies: 'Kopie',
@@ -505,8 +510,11 @@ export default function LabelModule({ language }: LabelModuleProps) {
   );
 
   const selectedBarcode = resolveLabelCode(selectedProduct);
+  const selectedNameResolution = selectedProduct
+    ? resolveProductLabelNameResult(selectedProduct)
+    : { name: '', missingPolishName: false };
   const selectedName = selectedProduct
-    ? (resolveProductLabelName(selectedProduct) || selectedProduct.name || selectedBarcode)
+    ? (selectedNameResolution.name || selectedProduct.name || selectedBarcode)
     : '';
   const selectedPriceText = selectedProduct ? formatProductLabelPriceText(selectedProduct, 'zl') : undefined;
   const selectedCategory = selectedProduct?.category_id ? categoryById.get(selectedProduct.category_id) : null;
@@ -642,7 +650,8 @@ export default function LabelModule({ language }: LabelModuleProps) {
     }
     const barcode = resolveLabelCode(product);
     const quantity = clampCopies(requestedCopies);
-    const labelName = resolveProductLabelName(product) || product.name || barcode;
+    const nameResolution = resolveProductLabelNameResult(product);
+    const labelName = nameResolution.name || product.name || barcode;
     const priceText = formatProductLabelPriceText(product, 'zl');
     const printToken = ++printSequenceRef.current;
 
@@ -664,14 +673,15 @@ export default function LabelModule({ language }: LabelModuleProps) {
     try {
       const result = await window.electronAPI.printLabel(barcode, labelName, {
         priceText,
-        sku: product.sku?.trim() || undefined,
         quantity,
       });
       if (!result?.success) {
         setStatus({ type: 'error', message: result?.error || copy.printerError });
         return;
       }
-      setStatus({ type: 'success', message: `${copy.printed}: ${labelName}` });
+      setStatus(nameResolution.missingPolishName
+        ? { type: 'warning', message: `${copy.printed}: ${labelName}. ${copy.missingPolishName}` }
+        : { type: 'success', message: `${copy.printed}: ${labelName}` });
       setRecentPrints((prev) => [
         {
           id: `${Date.now()}-${product.id}`,
@@ -814,12 +824,12 @@ export default function LabelModule({ language }: LabelModuleProps) {
                   ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
                   : status.type === 'printing'
                     ? 'border-sky-200 bg-sky-50 text-sky-800'
-                    : status.type === 'error' || (!!selectedProduct && !selectedBarcode)
+                    : status.type === 'warning' || status.type === 'error' || (!!selectedProduct && !selectedBarcode)
                       ? 'border-amber-200 bg-amber-50 text-amber-800'
                       : 'border-slate-200 bg-slate-50 text-slate-700'
               }`}
             >
-              {status.type === 'success' ? <CheckCircle2 size={17} /> : status.type === 'printing' ? <RefreshCw size={17} className="animate-spin" /> : status.type === 'error' || (!!selectedProduct && !selectedBarcode) ? <AlertTriangle size={17} /> : <Printer size={17} />}
+              {status.type === 'success' ? <CheckCircle2 size={17} /> : status.type === 'printing' ? <RefreshCw size={17} className="animate-spin" /> : status.type === 'warning' || status.type === 'error' || (!!selectedProduct && !selectedBarcode) ? <AlertTriangle size={17} /> : <Printer size={17} />}
               <span>{statusText}</span>
             </div>
 
@@ -828,16 +838,13 @@ export default function LabelModule({ language }: LabelModuleProps) {
                 <section className="space-y-2">
                   <div className="text-xs font-extrabold uppercase tracking-wide text-slate-400">{copy.labelPreview}</div>
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">
-                    <div className="mx-auto aspect-[58/40] w-full max-w-[270px] rounded-lg bg-white p-3 shadow-sm flex flex-col justify-between">
-                      <div className="text-sm font-black leading-tight text-slate-950 line-clamp-2">{selectedName}</div>
-                      <div className="flex items-baseline justify-between gap-3">
-                        <span className={`text-xl font-black tabular-nums ${selectedPriceText ? 'text-slate-950' : 'text-amber-700'}`}>
-                          {selectedPriceText || copy.noPrice}
-                        </span>
-                        <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-extrabold text-slate-600">{selectedUnit}</span>
-                      </div>
+                    <div className="mx-auto aspect-[5/3] w-full max-w-[270px] rounded-lg bg-white p-2 shadow-sm flex flex-col justify-between">
+                      <div className="text-xs font-black leading-tight text-slate-950 line-clamp-4">{selectedName}</div>
                       <div>
                         <BarcodePreview barcode={selectedBarcode} />
+                      </div>
+                      <div className={`text-2xl font-black leading-none tabular-nums ${selectedPriceText ? 'text-slate-950' : 'text-amber-700'}`}>
+                        {selectedPriceText || copy.noPrice}
                       </div>
                     </div>
                   </div>
@@ -846,6 +853,12 @@ export default function LabelModule({ language }: LabelModuleProps) {
                 {priceMissing && (
                   <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">
                     {copy.missingPrice}. {copy.priceMissingHint}
+                  </div>
+                )}
+
+                {selectedNameResolution.missingPolishName && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">
+                    {copy.missingPolishName}
                   </div>
                 )}
 

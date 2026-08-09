@@ -5,7 +5,7 @@ import type { PosState, PosAction, CartItem } from '../../../../hooks/usePosStor
 import rlog from '../../../../utils/logger';
 import { useConfig } from '../../../../hooks/useConfig';
 import { formatProductLabelPriceText } from '../../../../utils/product-label';
-import { resolveName, resolveProductLabelName } from '../../../../../shared/catalog-names';
+import { resolveName, resolveProductLabelNameResult } from '../../../../../shared/catalog-names';
 import { classifyProductSale, type ProductSaleClassification } from '../../../../../shared/product-sale-classifier';
 import { isSaleBlockedByStock } from '../../../../../shared/product-stock-tracking';
 import { normalizeSellBy } from '../../../../../shared/pos-sale';
@@ -725,15 +725,20 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
     }
 
     try {
-      const labelName = resolveProductLabelName(product) || product.name;
+      const nameResolution = resolveProductLabelNameResult(product);
+      const labelName = nameResolution.name || product.name;
       const priceText = formatProductLabelPriceText(product, tOr('pos.currency', 'zl'));
       const result = await window.electronAPI.printLabel(barcode, labelName, {
         priceText,
-        sku: product.sku?.trim() || undefined,
         quantity: options.quantity,
       });
       if (result?.success) {
-        return { success: true, message: tOr('pos.label.printed', 'Đã in mã') };
+        return {
+          success: true,
+          message: nameResolution.missingPolishName
+            ? tOr('pos.label.missingPolishName', 'Thiếu tên tiếng Ba Lan — đã in tên gốc')
+            : tOr('pos.label.printed', 'Đã in mã'),
+        };
       }
       return { success: false, error: result?.error || tOr('pos.label.failed', 'Không in được mã') };
     } catch (err: any) {

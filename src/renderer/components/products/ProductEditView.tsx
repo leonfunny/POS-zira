@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Ban, ChevronLeft, PackagePlus, Pencil, Printer, RotateCcw } from 'lucide-react';
-import { parseTranslations, resolveName, resolveProductLabelName } from '../../../shared/catalog-names';
+import { parseTranslations, resolveName, resolveProductLabelNameResult } from '../../../shared/catalog-names';
 import { classifyProductSale } from '../../../shared/product-sale-classifier';
 import { isStockTracked } from '../../../shared/product-stock-tracking';
 import type { ProductAdminReceiveStockResponse, ProductAdminStockAdjustmentResponse, ProductAdminVariant } from '../../../shared/types';
@@ -128,7 +128,7 @@ export default function ProductEditView({
   onStaleProductHidden,
 }: ProductEditViewProps) {
   const [labelBusy, setLabelBusy] = useState(false);
-  const [labelMessage, setLabelMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [labelMessage, setLabelMessage] = useState<{ ok: boolean; warning?: boolean; text: string } | null>(null);
   const [stockOpen, setStockOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editDirty, setEditDirty] = useState(false);
@@ -202,7 +202,8 @@ export default function ProductEditView({
     product.name,
     parseTranslations(product.name_translations),
   );
-  const labelName = resolveProductLabelName(product) || product.name;
+  const labelNameResolution = resolveProductLabelNameResult(product);
+  const labelName = labelNameResolution.name || product.name;
   const category = product.category_id ? categoryById.get(product.category_id) : null;
   const categoryName = category ? resolveName(category, language) : '-';
   const stock = productStockDisplay(product);
@@ -273,10 +274,15 @@ export default function ProductEditView({
       const priceText = formatProductLabelPriceText(product, currency);
       const result = await window.electronAPI.printLabel(product.barcode, labelName, {
         priceText,
-        sku: product.sku?.trim() || undefined,
       });
       setLabelMessage(result?.success
-        ? { ok: true, text: tOr(t, 'products.label.printed', 'Label printed') }
+        ? labelNameResolution.missingPolishName
+          ? {
+            ok: true,
+            warning: true,
+            text: tOr(t, 'products.label.missingPolishName', 'Thiếu tên tiếng Ba Lan — đã in tên gốc'),
+          }
+          : { ok: true, text: tOr(t, 'products.label.printed', 'Label printed') }
         : { ok: false, text: result?.error || tOr(t, 'products.label.failed', 'Could not print label') });
     } catch (error) {
       setLabelMessage({
@@ -431,7 +437,9 @@ export default function ProductEditView({
               <div
                 role={labelMessage.ok ? 'status' : 'alert'}
                 className={`mt-3 rounded-md border px-3 py-2 text-sm ${
-                  labelMessage.ok
+                  labelMessage.warning
+                    ? 'border-amber-200 bg-amber-50 text-amber-800'
+                    : labelMessage.ok
                     ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
                     : 'border-rose-200 bg-rose-50 text-rose-700'
                 }`}

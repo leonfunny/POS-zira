@@ -50,5 +50,6 @@ export function formatProductLabelPriceText(
   const priceGrosze = Number(product.retail_price) || 0;
   if (priceGrosze <= 0) return undefined;
   const saleClass = classifyProductSale(product);
-  return `${(priceGrosze / 100).toFixed(2)} ${currency}${saleClass.priceSuffix}`;
+  const polishPrice = (priceGrosze / 100).toFixed(2).replace('.', ',');
+  return `${polishPrice} ${currency}${saleClass.priceSuffix}`;
 }
