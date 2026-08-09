@@ -100,6 +100,14 @@ export interface BilliardBoundaryResult {
   durabilityError?: string;
 }
 
+export interface ProtectedInterruptionRecoveryRequired {
+  durable: true;
+  count: number;
+  holdId: string;
+  checkoutId?: string;
+  message: string;
+}
+
 /** `crypto.randomUUID` in the WebView; the fallback keeps unit tests portable. */
 function newId(): string {
   return globalThis.crypto?.randomUUID?.()
@@ -226,6 +234,55 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
     } catch {
       return false;
     }
+  };
+
+  /**
+   * Detect protected ordinary carts left by builds that could park them during
+   * a Billiard handoff but could not restore them afterwards. This is strictly
+   * read-only: the protected Hold remains the only durable evidence of the
+   * cashier's cart until the restored-cart recovery wave can classify it.
+   */
+  const findProtectedInterruptionRecoveryRequired = (
+    database: AndroidDatabase,
+    scope: PosSnapshotScope,
+  ): ProtectedInterruptionRecoveryRequired | null => {
+    const journal = createBilliardHandoffRepo(database);
+    const holds = createHoldOrderRepo(database);
+    const orders = createOrderRepo(database);
+    const activeStates = new Set([
+      'POS_READY',
+      'POS_PAYMENT_OPEN',
+      'POS_TENDER_COMMITTING',
+      'POS_TENDER_UNCERTAIN',
+    ]);
+
+    const stranded = holds.listDetailed().filter((held) => {
+      const payload = held.payload;
+      if (payload?.protected !== true || payload.holdReason !== 'BILLIARD_INTERRUPTION') return false;
+      if (payload.restoreState === 'PAID_TOMBSTONE') return false;
+      if (!samePosSalonRegister(payload.snapshot, scope)) return false;
+
+      const checkoutId = String(payload.autoRestoreForCheckoutId || '').trim();
+      const record = checkoutId ? journal.get(checkoutId) : null;
+      return !record
+        || record.interruptedHoldId !== held.id
+        || record.sessionId !== payload.sourceBilliardSessionId
+        || record.salonId !== scope.salonId
+        || record.registerId !== scope.registerId
+        || !activeStates.has(record.state)
+        || orders.getById(record.orderId) !== null;
+    });
+
+    if (stranded.length === 0) return null;
+    const first = stranded[0];
+    const checkoutId = String(first.payload.autoRestoreForCheckoutId || '').trim();
+    return {
+      durable: true,
+      count: stranded.length,
+      holdId: first.id,
+      ...(checkoutId ? { checkoutId } : {}),
+      message: `Recovery required: ${stranded.length} protected cart${stranded.length === 1 ? '' : 's'} from an earlier Billiard checkout remain on this tablet. Do not delete or charge them; contact the salon owner or support.`,
+    };
   };
 
   return {
@@ -711,10 +768,10 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
           deps.posStore.dispatch({ type: 'cart/completeCheckout' });
         }
 
-        // The parked cart stays in Holds for the cashier to recall. Automatic
-        // restore needs the restored-cart journal machinery (next slice), and
-        // reinstating a cart without it would hand back an unprotected cart —
-        // so it is left where it is, never dropped.
+        // A protected cart created by an older build stays durable and hidden
+        // from manual Hold/Recall. The next boot surfaces recovery-required;
+        // reinstating it without the restored-cart journal would hand back an
+        // unprotected cart, so it is left untouched here.
         let durabilityError: string | undefined;
         try {
           await database.flush();
@@ -753,6 +810,7 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
       outcomeUncertain?: boolean;
       paymentCommitted?: boolean;
       durabilityError?: string;
+      protectedInterruptionRecoveryRequired?: ProtectedInterruptionRecoveryRequired;
       error?: string;
     }> {
       try {
@@ -764,12 +822,24 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
         const orders = createOrderRepo(database);
         const isOwner = String(config.authUser?.role || '').toUpperCase() === 'OWNER';
 
+        const protectedInterruptionRecoveryRequired = findProtectedInterruptionRecoveryRequired(database, scope);
+        if (protectedInterruptionRecoveryRequired) {
+          // Do not mutate, delete, unprotect or reactivate an orphan whose
+          // payment ownership this build cannot prove. Its durable Hold is the
+          // evidence an owner/support recovery flow will need.
+          return {
+            success: false,
+            intent: null,
+            protectedInterruptionRecoveryRequired,
+            error: protectedInterruptionRecoveryRequired.message,
+          };
+        }
+
         const record = journal.getRecoverable(scope)
           ?? (isOwner ? journal.getUncertainForOwner({ salonId: scope.salonId, registerId: scope.registerId }) : null);
         if (!record) {
-          // Nothing of ours to resume. (Restored-cart discovery — the parked
-          // ordinary cart — lands with the restored-cart journal slice; until
-          // then a parked cart simply waits in Holds for manual recall.)
+          // Nothing of ours to resume. Protected interruption rows were scanned
+          // above and never fall through into the manual Hold/Recall lane.
           return { success: true, intent: null };
         }
 

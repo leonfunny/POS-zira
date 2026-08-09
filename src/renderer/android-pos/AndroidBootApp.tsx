@@ -26,6 +26,7 @@ import type {
   BilliardPaymentIntent,
   RestoredCartReconciliation,
 } from '../../shared/billiard-pos-handoff';
+import type { ProtectedInterruptionRecoveryRequired } from './shim/billiard-handoff';
 import { STORAGE_AT_RISK_MESSAGE, getStorageDurability } from './shim/storage-durability';
 
 type BootState = 'checking' | 'login' | 'pos';
@@ -58,6 +59,7 @@ export default function AndroidBootApp() {
   const [billiardVisited, setBilliardVisited] = useState(false);
   const [billiardPaymentIntent, setBilliardPaymentIntent] = useState<BilliardPaymentIntent | null>(null);
   const [restoredCartReconciliation, setRestoredCartReconciliation] = useState<RestoredCartReconciliation | null>(null);
+  const [protectedInterruptionRecoveryRequired, setProtectedInterruptionRecoveryRequired] = useState<ProtectedInterruptionRecoveryRequired | null>(null);
   const [isOwner, setIsOwner] = useState(false);
   const [canOpenSettings, setCanOpenSettings] = useState(false);
   // Guards every async handoff result: a response that belongs to a previous
@@ -261,7 +263,19 @@ export default function AndroidBootApp() {
   // activated the exact frozen cart (or verified its order is committed), so
   // this just puts the answer on screen. Mirrors App.tsx:189-224.
   useEffect(() => {
-    if (state !== 'pos') return;
+    if (state !== 'pos') {
+      setBilliardPaymentIntent(null);
+      setRestoredCartReconciliation(null);
+      setProtectedInterruptionRecoveryRequired(null);
+      return;
+    }
+    // Never show another cashier/salon's diagnostic while this session's
+    // durable recovery scan is still in flight. Clear every recovery-owned UI
+    // value together so an intent from the previous cashier cannot coexist
+    // with a new fail-closed diagnostic.
+    setBilliardPaymentIntent(null);
+    setRestoredCartReconciliation(null);
+    setProtectedInterruptionRecoveryRequired(null);
     const api = (window as any).electronAPI;
     const generation = ++billiardGenerationRef.current;
     let cancelled = false;
@@ -271,6 +285,13 @@ export default function AndroidBootApp() {
     if (!recovering) return;
     void recovering.then((result: any) => {
       if (cancelled || generation !== billiardGenerationRef.current) return;
+      const recoveryRequired = result?.protectedInterruptionRecoveryRequired ?? null;
+      setProtectedInterruptionRecoveryRequired(recoveryRequired);
+      if (recoveryRequired) {
+        setBilliardPaymentIntent(null);
+        setRestoredCartReconciliation(null);
+        switchMode('pos');
+      }
       setRestoredCartReconciliation(result?.restoredCartReconciliation ?? null);
       if (result?.restoredCartReconciliation) switchMode('pos');
       if (!result?.success) return;
@@ -332,6 +353,21 @@ export default function AndroidBootApp() {
           className="shrink-0 bg-amber-500 px-3 py-2 text-center text-xs font-semibold text-amber-950"
         >
           {STORAGE_AT_RISK_MESSAGE}
+        </div>
+      )}
+      {protectedInterruptionRecoveryRequired && (
+        <div
+          role="alert"
+          data-testid="android-protected-interruption-recovery-required"
+          className="shrink-0 border-b border-red-300 bg-red-50 px-4 py-3 text-red-950"
+        >
+          <div className="text-sm font-extrabold">Recovery required</div>
+          <div className="mt-0.5 text-xs font-semibold">
+            {protectedInterruptionRecoveryRequired.message}
+          </div>
+          <div className="mt-1 text-[11px] font-semibold tabular-nums text-red-800">
+            Hold safety ID: {protectedInterruptionRecoveryRequired.holdId}
+          </div>
         </div>
       )}
       {(billiardEnabled || canOpenSettings) && (

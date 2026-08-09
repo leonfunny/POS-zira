@@ -20,9 +20,14 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
+import { initAndroidDb } from '../src/renderer/android-pos/shim/db/db';
+import { ShimConfigStore } from '../src/renderer/android-pos/shim/config-store';
+import { ShimPosStore } from '../src/renderer/android-pos/shim/pos-store';
+import { createBilliardHandoff } from '../src/renderer/android-pos/shim/billiard-handoff';
 
 /** Props the Android shell handed to the shared POSLayout. */
 const capturedPos = vi.hoisted(() => ({ props: null as Record<string, unknown> | null }));
+let expireAuth: (() => void) | null = null;
 
 // Mock the heavy Windows renderer children. The real POSApp → POSLayout and
 // BilliardFloorPlan pull enormous subtrees (and read window.electronAPI at
@@ -44,7 +49,11 @@ vi.mock('../src/renderer/components/billiard/BilliardFloorPlan', () => ({
 }));
 vi.mock('../src/renderer/android-pos/LoginScreen', () => ({
   __esModule: true,
-  default: () => createElement('div', { 'data-testid': 'login-screen' }, 'LOGIN'),
+  default: ({ onLoggedIn }: { onLoggedIn: () => void }) => createElement(
+    'button',
+    { type: 'button', 'data-testid': 'login-screen', onClick: onLoggedIn },
+    'LOGIN',
+  ),
 }));
 
 import AndroidBootApp from '../src/renderer/android-pos/AndroidBootApp';
@@ -55,12 +64,22 @@ import {
 } from '../src/renderer/android-pos/shim/storage-durability';
 
 /** Build a window.electronAPI mock that boots straight into the POS state. */
-function makeApi(opts: { billiardEnabled: boolean; language?: string; role?: 'OWNER' | 'MANAGER' | 'STAFF' }) {
+function makeApi(opts: {
+  billiardEnabled: boolean;
+  language?: string;
+  role?: 'OWNER' | 'MANAGER' | 'STAFF';
+  recoveryResult?: Record<string, unknown>;
+}) {
   const role = opts.role || 'STAFF';
   return {
     auth: {
       getUser: () => Promise.resolve({ data: { isAuthenticated: true } }),
-      onExpired: () => () => {},
+      onExpired: (listener: () => void) => {
+        expireAuth = listener;
+        return () => {
+          if (expireAuth === listener) expireAuth = null;
+        };
+      },
     },
     entitlements: {
       get: () =>
@@ -76,7 +95,9 @@ function makeApi(opts: { billiardEnabled: boolean; language?: string; role?: 'OW
       snapshot: { load: () => Promise.resolve(null), save: () => Promise.resolve(), clear: () => Promise.resolve() },
       // The real shim always carries this namespace; the boot effect calls
       // recover() to pick up a journal left by a killed process.
-      billiardCheckout: { recover: () => Promise.resolve({ success: true, intent: null }) },
+      billiardCheckout: {
+        recover: () => Promise.resolve(opts.recoveryResult ?? { success: true, intent: null }),
+      },
     },
   };
 }
@@ -99,6 +120,8 @@ describe('AndroidBootApp — entitlement-gated POS/Bi-a mode tabs', () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     localStorage.clear();
+    expireAuth = null;
+    capturedPos.props = null;
     (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   });
 
@@ -108,7 +131,7 @@ describe('AndroidBootApp — entitlement-gated POS/Bi-a mode tabs', () => {
     (globalThis as any).electronAPI = previousElectronAPI;
   });
 
-  async function boot(opts: { billiardEnabled: boolean; language?: string }) {
+  async function boot(opts: { billiardEnabled: boolean; language?: string; recoveryResult?: Record<string, unknown> }) {
     (globalThis as any).electronAPI = makeApi({ ...opts, role: 'STAFF' });
     // `window` exists in happy-dom; the component reads (window as any).electronAPI.
     (globalThis as any).window = globalThis;
@@ -119,7 +142,12 @@ describe('AndroidBootApp — entitlement-gated POS/Bi-a mode tabs', () => {
     await settle();
   }
 
-  async function bootWithRole(opts: { billiardEnabled: boolean; language?: string; role?: 'OWNER' | 'MANAGER' | 'STAFF' }) {
+  async function bootWithRole(opts: {
+    billiardEnabled: boolean;
+    language?: string;
+    role?: 'OWNER' | 'MANAGER' | 'STAFF';
+    recoveryResult?: Record<string, unknown>;
+  }) {
     (globalThis as any).electronAPI = makeApi(opts);
     // `window` exists in happy-dom; the component reads (window as any).electronAPI.
     (globalThis as any).window = globalThis;
@@ -161,6 +189,68 @@ describe('AndroidBootApp — entitlement-gated POS/Bi-a mode tabs', () => {
   it('hides the Settings entry for STAFF', async () => {
     await bootWithRole({ billiardEnabled: false, role: 'STAFF' });
     expect(container.querySelector('[data-testid="android-settings-entry"]')).toBeNull();
+  });
+
+  it('surfaces a durable protected-cart recovery requirement without a dismiss action', async () => {
+    await boot({
+      billiardEnabled: false,
+      recoveryResult: {
+        success: false,
+        intent: null,
+        protectedInterruptionRecoveryRequired: {
+          durable: true,
+          count: 1,
+          holdId: 'billiard-interruption:legacy-1',
+          checkoutId: 'legacy-1',
+          message: 'Recovery required: 1 protected cart from an earlier Billiard checkout remains on this tablet.',
+        },
+      },
+    });
+
+    const banner = container.querySelector('[data-testid="android-protected-interruption-recovery-required"]');
+    expect(banner).not.toBeNull();
+    expect(banner!.getAttribute('role')).toBe('alert');
+    expect(banner!.textContent).toContain('Recovery required');
+    expect(banner!.textContent).toContain('billiard-interruption:legacy-1');
+    expect(banner!.querySelector('button')).toBeNull();
+    expect(container.querySelector('[data-testid="pos-app"]')).not.toBeNull();
+  });
+
+  it('clears a previous payment intent before a relogin recovery refusal is shown', async () => {
+    const recoveryRequired = {
+      durable: true,
+      count: 1,
+      holdId: 'billiard-interruption:legacy-2',
+      checkoutId: 'legacy-2',
+      message: 'Recovery required: protected cart remains on this tablet.',
+    };
+    const api = makeApi({ billiardEnabled: false });
+    let recoverCalls = 0;
+    api.pos.billiardCheckout.recover = () => Promise.resolve(
+      recoverCalls++ === 0
+        ? { success: true, intent: { checkoutId: 'old-checkout', nonce: 'old-nonce' } }
+        : { success: false, intent: null, protectedInterruptionRecoveryRequired: recoveryRequired },
+    );
+    (globalThis as any).electronAPI = api;
+    (globalThis as any).window = globalThis;
+    await act(async () => {
+      root = createRoot(container);
+      root.render(createElement(AndroidBootApp));
+    });
+    await settle();
+    expect(capturedPos.props?.billiardPaymentIntent).toMatchObject({ checkoutId: 'old-checkout' });
+
+    await act(async () => { expireAuth?.(); });
+    await settle();
+    const login = container.querySelector('[data-testid="login-screen"]') as HTMLButtonElement;
+    expect(login).not.toBeNull();
+    await act(async () => { login.click(); });
+    await settle();
+
+    expect(recoverCalls).toBe(2);
+    expect(capturedPos.props?.billiardPaymentIntent).toBeNull();
+    expect(capturedPos.props?.restoredCartReconciliation).toBeNull();
+    expect(container.querySelector('[data-testid="android-protected-interruption-recovery-required"]')).not.toBeNull();
   });
 
   it('switching to Bi-a renders BilliardFloorPlan with the config language and persists the mode', async () => {
@@ -232,5 +322,91 @@ describe('AndroidBootApp — storage at-risk banner', () => {
     expect(container.querySelector('[role="status"]')).toBeNull();
     // …and the POS is still the thing on screen.
     expect(container.querySelector('[data-testid="pos-app"]')).not.toBeNull();
+  });
+});
+
+describe('Android Billiard boot recovery — legacy protected interruption rows', () => {
+  it('reports an orphan from the durable Hold without mutating, deleting or unprotecting it', async () => {
+    const database = await initAndroidDb({
+      locateFile: null,
+      persistence: {
+        loadImage: async () => null,
+        saveImage: async () => undefined,
+        quarantineImage: async () => undefined,
+      },
+    });
+    const payload = {
+      schemaVersion: 1,
+      holdReason: 'BILLIARD_INTERRUPTION',
+      protected: true,
+      snapshot: {
+        schemaVersion: 1,
+        state: {
+          cart: { items: [{ id: 'ordinary-1', name: 'Protected sale' }], subtotal: 1200, discount: 0, total: 1200 },
+          checkoutDraft: {},
+        },
+        posMode: 'retail',
+        scope: { salonId: 'salon-1', userId: 'old-cashier', registerId: 'agent-1' },
+        capturedAt: '2026-08-08T10:00:00.000Z',
+      },
+      sourceBilliardSessionId: 'legacy-session-1',
+      autoRestoreForCheckoutId: 'legacy-checkout-1',
+      restoreState: 'WAITING_FOR_BILLIARD_PAYMENT',
+    };
+    const serialized = JSON.stringify(payload);
+    database.run(
+      'INSERT INTO pos_hold_orders (id, title, payload, items_count, total, staff_name) VALUES (?, ?, ?, ?, ?, ?)',
+      ['billiard-interruption:legacy-checkout-1', 'Legacy protected cart', serialized, 1, 1200, 'Old cashier'],
+    );
+    await database.flush();
+
+    const values = new Map<string, string>();
+    const configStore = new ShimConfigStore({
+      storage: {
+        getItem: (key) => values.get(key) ?? null,
+        setItem: (key, value) => { values.set(key, value); },
+        removeItem: (key) => { values.delete(key); },
+      },
+      seed: {
+        salonId: 'salon-1',
+        agentId: 'agent-1',
+        posMode: 'retail',
+        authUser: {
+          id: 'current-cashier',
+          email: 'cashier@example.test',
+          firstName: 'Cashier',
+          lastName: '',
+          role: 'STAFF',
+          salonId: 'salon-1',
+          salonName: 'Salon',
+        },
+      } as any,
+    });
+    const handoff = createBilliardHandoff({
+      configStore,
+      posStore: new ShimPosStore(),
+      db: async () => database,
+      isFiscalPrinterAssigned: async () => false,
+      isPrintAgentConnected: () => false,
+    });
+    const changesBefore = database.get<{ count: number }>('SELECT total_changes() AS count')!.count;
+
+    const result = await handoff.recover();
+
+    expect(result.success).toBe(false);
+    expect(result.intent).toBeNull();
+    expect(result.protectedInterruptionRecoveryRequired).toMatchObject({
+      durable: true,
+      count: 1,
+      holdId: 'billiard-interruption:legacy-checkout-1',
+      checkoutId: 'legacy-checkout-1',
+    });
+    expect(result.error).toMatch(/Recovery required/i);
+    expect(database.get<{ payload: string }>(
+      'SELECT payload FROM pos_hold_orders WHERE id = ?',
+      ['billiard-interruption:legacy-checkout-1'],
+    )?.payload).toBe(serialized);
+    expect(database.all('SELECT 1 FROM pos_billiard_handoffs')).toHaveLength(0);
+    expect(database.get<{ count: number }>('SELECT total_changes() AS count')!.count).toBe(changesBefore);
   });
 });
