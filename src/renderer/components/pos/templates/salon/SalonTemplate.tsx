@@ -810,29 +810,38 @@ export default function SalonTemplate({ state, dispatch, t, language, session, o
                   const colorClass = placeholderColor(product.name);
                   const displayName = resolveName(product, lang) || product.name;
                   return (
+                    /* Flat card, Dotykačka geometry: no radius, no shadow, one
+                       hairline. Salon keeps its service photo (D4) — a nail
+                       salon sells by look — but everything around it goes
+                       square so the wall matches retail's colour blocks. */
                     <div
                       key={product.id}
-                      className="bg-white border border-slate-100 rounded-xl overflow-hidden shadow-sm hover:shadow-md hover:border-brand-200 transition-all duration-200 group"
+                      className="pos-tile group border bg-white transition-colors"
+                      style={{ borderColor: 'var(--pos-line)' }}
                     >
-                      {/* Image / placeholder */}
-                      <div className="relative aspect-[3/2] w-full overflow-hidden bg-slate-50">
+                      {/* Fixed height rather than aspect-[3/2]: aspect-ratio is
+                          ignored on the counter's Chromium 83, which left the
+                          well with no intrinsic height. */}
+                      <div className="relative h-[86px] w-full overflow-hidden bg-slate-50">
                         {product.image_url ? (
                           <img
                             src={product.image_url}
                             alt={displayName}
                             loading="lazy"
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                            className="w-full h-full object-cover"
                           />
                         ) : (
                           <div className={`w-full h-full flex items-center justify-center text-2xl font-bold ${colorClass}`}>
                             {displayName.charAt(0).toUpperCase()}
                           </div>
                         )}
-                        {/* Circular add button */}
+                        {/* Square add affordance — their action blocks are
+                            rectangles, never circles. */}
                         <button
                           onClick={() => handleAddProduct(product)}
                           aria-label={`Add ${displayName}`}
-                          className="absolute bottom-1.5 right-1.5 w-8 h-8 bg-brand-500 hover:bg-brand-600 active:bg-brand-700 text-white rounded-full flex items-center justify-center shadow-md active:scale-95 transition-all cursor-pointer touch-manipulation"
+                          className="absolute bottom-0 right-0 w-9 h-9 text-white flex items-center justify-center transition-colors cursor-pointer touch-manipulation"
+                          style={{ background: 'var(--pos-primary)' }}
                         >
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
@@ -840,12 +849,13 @@ export default function SalonTemplate({ state, dispatch, t, language, session, o
                         </button>
                       </div>
 
-                      {/* Name + price */}
-                      <div className="px-2.5 py-2">
-                        <div className="text-xs font-medium text-slate-800 leading-snug truncate">
+                      {/* Name left, price right — the cart and the wall read the
+                          same way round. */}
+                      <div className="grid grid-cols-[1fr_auto] items-baseline gap-1.5 px-2 py-1.5">
+                        <div className="truncate text-xs font-bold leading-snug" style={{ color: 'var(--pos-ink)' }}>
                           {displayName}
                         </div>
-                        <div className="text-xs font-bold text-brand-500 mt-0.5">
+                        <div className="text-xs font-black tabular-nums" style={{ color: 'var(--pos-primary)' }}>
                           {(product.retail_price / 100).toFixed(2)}&nbsp;{currency}
                         </div>
                       </div>
