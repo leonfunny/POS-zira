@@ -198,6 +198,20 @@ describe('preflight — D1, fiscal readiness on a device that owns no printer', 
 });
 
 describe('preflight — durability and identity', () => {
+  test('an occupied ordinary cart is refused while the Billiard table is still running', async () => {
+    const { handoff, database, posStore } = await makeHarness();
+    posStore.dispatch({ type: 'cart/addItem', payload: ordinaryLine() as any });
+    const before = posStore.getState();
+
+    const result = await handoff.preflight();
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/Hold the current cart manually/i);
+    expect(database.all('SELECT 1 FROM pos_billiard_handoffs')).toHaveLength(0);
+    expect(database.all('SELECT 1 FROM pos_hold_orders')).toHaveLength(0);
+    expect(posStore.getState()).toEqual(before);
+  });
+
   test('a failed durability barrier refuses instead of ending the session', async () => {
     const database = await initAndroidDb({ locateFile: NODE_LOCATE_FILE });
     const { configStore, posStore } = await makeHarness({ db: database });
@@ -315,31 +329,41 @@ describe('prepare — freezing the bill', () => {
     expect(state.checkoutDraft.billiard?.orderCommitted).toBe(false);
   });
 
-  test("a cashier's in-progress cart is parked in a PROTECTED hold, never discarded", async () => {
+  test("a cashier's in-progress cart is refused before any journal or Hold write", async () => {
     const { handoff, database, posStore } = await makeHarness();
     posStore.dispatch({ type: 'cart/addItem', payload: ordinaryLine() as any });
-    expect(posStore.getState().cart.items).toHaveLength(1);
+    const before = posStore.getState();
 
     const result = await handoff.prepare({ posCheckout: bundle() });
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/Hold the current cart manually/i);
+    expect(database.all('SELECT 1 FROM pos_billiard_handoffs')).toHaveLength(0);
+    expect(database.all('SELECT 1 FROM pos_hold_orders')).toHaveLength(0);
+    expect(posStore.getState()).toEqual(before);
+    expect(posStore.getState().checkoutDraft.billiard).toBeUndefined();
+  });
 
-    const holds = database.all<{ id: string; payload: string }>('SELECT id, payload FROM pos_hold_orders');
-    expect(holds).toHaveLength(1);
-    expect(holds[0].id).toBe('billiard-interruption:checkout-1');
-    const payload = JSON.parse(holds[0].payload);
-    expect(payload.protected).toBe(true);
-    expect(payload.holdReason).toBe('BILLIARD_INTERRUPTION');
-    expect(payload.snapshot.state.cart.items).toHaveLength(1);
-    expect(payload.autoRestoreForCheckoutId).toBe('checkout-1');
+  test('repeating the refused prepare never creates a journal or Hold row', async () => {
+    const { handoff, database, posStore } = await makeHarness();
+    posStore.dispatch({ type: 'cart/addItem', payload: ordinaryLine() as any });
+    const before = posStore.getState();
 
-    // Screen now shows the billiard bill, not the parked cart.
-    expect(posStore.getState().cart.items.map((i) => i.name)).toEqual(['Playing time', 'Cola']);
+    const first = await handoff.prepare({ posCheckout: bundle() });
+    const second = await handoff.prepare({ posCheckout: bundle() });
+
+    expect(first.success).toBe(false);
+    expect(second.success).toBe(false);
+    expect(first.error).toMatch(/Hold the current cart manually/i);
+    expect(second.error).toMatch(/Hold the current cart manually/i);
+    expect(database.all('SELECT 1 FROM pos_billiard_handoffs')).toHaveLength(0);
+    expect(database.all('SELECT 1 FROM pos_hold_orders')).toHaveLength(0);
+    expect(posStore.getState()).toEqual(before);
+    expect(posStore.getState().checkoutDraft.billiard).toBeUndefined();
   });
 
   test('a failed durability barrier leaves NO journal row, NO hold, and the live cart intact', async () => {
     const database = await initAndroidDb({ locateFile: NODE_LOCATE_FILE });
     const { configStore, posStore } = await makeHarness({ db: database });
-    posStore.dispatch({ type: 'cart/addItem', payload: ordinaryLine() as any });
     const realFlush = database.flush.bind(database);
     let failNext = true;
     (database as any).flush = async () => {
@@ -354,13 +378,13 @@ describe('prepare — freezing the bill', () => {
 
     const result = await handoff.prepare({ posCheckout: bundle() });
     expect(result.success).toBe(false);
-    expect(result.error).toMatch(/Could not safely hold the current POS cart/);
+    expect(result.error).toMatch(/Could not safely persist the Billiard checkout/);
     expect(result.error).toMatch(/quota exceeded/);
 
     expect(database.all('SELECT 1 FROM pos_billiard_handoffs')).toHaveLength(0);
     expect(database.all('SELECT 1 FROM pos_hold_orders')).toHaveLength(0);
-    // The cashier still owns their cart — nothing was frozen.
-    expect(posStore.getState().cart.items).toHaveLength(1);
+    // Nothing was frozen into the empty cashier screen.
+    expect(posStore.getState().cart.items).toHaveLength(0);
     expect(posStore.getState().checkoutDraft.billiard).toBeUndefined();
   });
 
@@ -733,40 +757,6 @@ describe('complete — settling after the money is in', () => {
     // Cashier gets a clean screen back.
     expect(posStore.getState().cart.items).toHaveLength(0);
     expect(posStore.getState().checkoutDraft.billiard).toBeUndefined();
-  });
-
-  test("a cashier's parked cart survives the settle, reported for recall", async () => {
-    // Park a real cart: items on screen BEFORE the bill is frozen.
-    const h = await makeHarness();
-    h.posStore.dispatch({ type: 'cart/addItem', payload: ordinaryLine() as any });
-    await h.handoff.prepare({ posCheckout: bundle() });
-    const opened = await h.handoff.markPaymentOpened('checkout-1');
-    await h.handoff.beginTender('checkout-1', opened.token!);
-    const row = h.database.get<{ order_id: string; client_attempt_id: string; interrupted_hold_id: string }>(
-      'SELECT order_id, client_attempt_id, interrupted_hold_id FROM pos_billiard_handoffs WHERE checkout_id = ?',
-      ['checkout-1'],
-    )!;
-    expect(row.interrupted_hold_id).toBe('billiard-interruption:checkout-1');
-
-    const { createOrderRepo } = await import('../src/renderer/android-pos/shim/db/order-repo');
-    const { order, items } = committedOrderFrom({
-      orderId: row.order_id, clientAttemptId: row.client_attempt_id,
-      sessionId: 'session-1', checkoutId: 'checkout-1',
-    });
-    createOrderRepo(h.database).create(order, items);
-
-    const result = await h.handoff.complete('checkout-1', row.order_id);
-    expect(result.success).toBe(true);
-    expect(result.restoredHoldId).toBe('billiard-interruption:checkout-1');
-    // Automatic restore lands with the restored-cart journal (next slice); what
-    // matters now is that the cart is still THERE to be recalled.
-    expect(result.restored).toBe(false);
-    const held = h.database.get<{ payload: string }>(
-      'SELECT payload FROM pos_hold_orders WHERE id = ?', ['billiard-interruption:checkout-1'],
-    );
-    expect(held).toBeTruthy();
-    expect(JSON.parse(held!.payload).snapshot.state.cart.items).toHaveLength(1);
-    expect(h.posStore.getState().cart.items).toHaveLength(0);
   });
 
   test('an order whose TOTAL differs from the frozen bill refuses — and keeps the cart', async () => {

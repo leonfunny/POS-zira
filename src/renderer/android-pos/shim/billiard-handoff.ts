@@ -27,13 +27,10 @@ import {
   adoptPosCheckoutSnapshotScope,
   assertBilliardCheckoutSnapshotIntegrity,
   buildBilliardCheckoutSnapshot,
-  buildBilliardInterruptionHoldPayload,
-  capturePosCheckoutSnapshot,
   currentPosSnapshotScope,
   isActiveBilliardCheckoutSnapshot,
   samePosSalonRegister,
   samePosSnapshotScope,
-  withoutRestoredInterruptionMarker,
   type PosSnapshotScope,
 } from '../../../shared/pos/billiard-pos-handoff';
 import { assertCommittedBilliardOrder } from '../../../shared/pos/billiard-order-verification';
@@ -261,6 +258,15 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
         // shared assertion needs — no adapter, no cast.
         assertLocalOpenShiftMatchesSession(database, deps.posStore);
 
+        // PaymentDialog runs this preflight before it ends/freezes the server
+        // session. Refuse an occupied ordinary cart here, not only later in
+        // prepare(), so the cashier can Hold it while the table is still live.
+        // prepare() repeats the check to close the race between both calls.
+        const { current } = assertReadyForNewHandoff(database, scope);
+        if (current.cart.items.length > 0) {
+          throw new Error('Hold the current cart manually before starting a Billiard checkout on this tablet.');
+        }
+
         // D1 — fiscal readiness for a device that owns no printer.
         const assigned = await deps.isFiscalPrinterAssigned().catch(() => false);
         const fiscalPreflight = {
@@ -299,10 +305,10 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
      * pos.module.ts prepareBilliardHandoff.
      *
      * The order of operations is the safety property, not an implementation
-     * detail: the journal row and the protected hold are written in ONE
-     * transaction, that transaction crosses a durability barrier BEFORE the
-     * cart is touched, and a failed barrier rolls the in-memory DB back to the
-     * still-live cart rather than leaving a half-frozen checkout.
+     * detail: the journal row is written in one transaction, that transaction
+     * crosses a durability barrier BEFORE the cart is touched, and a failed
+     * barrier rolls the in-memory DB back to the still-live cart rather than
+     * leaving a half-frozen checkout.
      */
     prepare(input: { posCheckout?: unknown; tableName?: string | null }): Promise<BilliardPrepareResult> {
       let bundle;
@@ -321,7 +327,6 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
           const authContext = captureAuthContext(scope);
           const database = await deps.db();
           const journal = createBilliardHandoffRepo(database);
-          const holds = createHoldOrderRepo(database);
           const orders = createOrderRepo(database);
 
           // ── Resume: this checkout was already frozen ────────────────────
@@ -376,17 +381,17 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
           // ── New checkout ────────────────────────────────────────────────
           assertLocalOpenShiftMatchesSession(database, deps.posStore);
           const { current } = assertReadyForNewHandoff(database, scope);
+          if (current.cart.items.length > 0) {
+            // Android cannot yet restore the protected interruption Hold after
+            // the Billiard sale completes. Refuse before creating a journal or
+            // Hold row; the cashier can park the ordinary cart through the
+            // normal, visible Hold flow and then retry the Billiard checkout.
+            throw new Error('Hold the current cart manually before starting a Billiard checkout on this tablet.');
+          }
 
           const orderId = newId();
-          // An in-progress ordinary cart is parked in a PROTECTED hold so the
-          // cashier gets it back after the bill is paid — it is never discarded.
-          const interruptedHoldId = current.cart.items.length > 0
-            ? `billiard-interruption:${bundle.checkoutId}`
-            : null;
+          const interruptedHoldId = null;
           const mode = posMode();
-          const interruptedSnapshot = interruptedHoldId
-            ? withoutRestoredInterruptionMarker(capturePosCheckoutSnapshot(current, scope, mode))
-            : null;
           const checkoutSnapshot = buildBilliardCheckoutSnapshot({
             currentState: current,
             bundle,
@@ -398,17 +403,6 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
           });
 
           database.transaction(() => {
-            if (interruptedHoldId && interruptedSnapshot) {
-              holds.upsert(
-                interruptedHoldId,
-                'Cart interrupted by Billiard payment',
-                buildBilliardInterruptionHoldPayload({
-                  snapshot: interruptedSnapshot,
-                  sessionId: bundle.sessionId,
-                  checkoutId: bundle.checkoutId,
-                }),
-              );
-            }
             journal.create({
               checkoutId: bundle.checkoutId,
               sessionId: bundle.sessionId,
@@ -434,11 +428,10 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
             try {
               database.transaction(() => {
                 database.run('DELETE FROM pos_billiard_handoffs WHERE checkout_id = ?', [bundle.checkoutId]);
-                if (interruptedHoldId) holds.remove(interruptedHoldId, true);
               });
               void database.flush().catch(() => { /* best-effort */ });
             } catch { /* the revert is best-effort; the throw below is what matters */ }
-            throw new Error(`Could not safely hold the current POS cart: ${flushError?.message || flushError}`);
+            throw new Error(`Could not safely persist the Billiard checkout: ${flushError?.message || flushError}`);
           }
 
           if (!isAuthContextCurrent(authContext)) {
