@@ -60,6 +60,22 @@ export type AgentIoFactory = (uri: string, opts: Record<string, any>) => Minimal
 const defaultIoFactory: AgentIoFactory = (uri, opts) =>
   io(uri, opts) as unknown as MinimalAgentSocket;
 
+/** The versionName Android actually has installed, or undefined off-device. */
+async function installedAppVersion(deps: {
+  appVersion?: () => Promise<string | undefined>;
+}): Promise<string | undefined> {
+  if (deps.appVersion) return deps.appVersion();
+  try {
+    const plugin = (globalThis as any)?.Capacitor?.Plugins?.AppUpdater;
+    if (!plugin?.getInfo) return undefined;
+    const info = await plugin.getInfo();
+    const version = String(info?.versionName ?? '').trim();
+    return version || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** A print-job status pushed by the server over the socket (`job:new` /
  *  `job:updated`). Shape-compatible with the coordinator's poll result: it reads
  *  `.status` / `.jobId` / `.id`. */
@@ -89,6 +105,8 @@ export interface AgentConnectDeps {
   log?: (message: string) => void;
   /** Fail-closed allowlisted device command executor. */
   handleDeviceCommand?: (command: DeviceCommandEvent) => Promise<DeviceCommandResult>;
+  /** Installed version reporter; defaults to asking the AppUpdater plugin. */
+  appVersion?: () => Promise<string | undefined>;
 }
 
 export interface AgentConnectResult {
@@ -208,7 +226,15 @@ export function createAgentConnection(deps: AgentConnectDeps): AgentConnection {
       //    X-Agent-Id / X-Salon-Code context headers and audit can attribute the
       //    terminal (reviewer finding #3).
       try {
-        const reg: any = await deps.client.connectPrintAgent(key, { machineId: machineId() });
+        const reg: any = await deps.client.connectPrintAgent(key, {
+          machineId: machineId(),
+          // What the remote-control panel shows as this terminal's version, and
+          // what an operator reads before deciding whether to push an update.
+          // Ask the installed package rather than guess: it used to fall back
+          // to a constant, so every Android till reported 1.0.23 forever and
+          // an update never appeared to change anything.
+          appVersion: await installedAppVersion(deps),
+        });
         if (reg && typeof reg === 'object' && !superseded()) {
           const patch: Record<string, unknown> = {};
           if (reg.agentId) patch.agentId = reg.agentId;

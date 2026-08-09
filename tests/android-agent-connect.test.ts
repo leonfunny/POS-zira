@@ -82,6 +82,7 @@ function buildAgent(over: Partial<AgentConnectDeps> & {
     tokenStore,
     configStore,
     apiUrl: over.apiUrl ?? API_URL,
+    appVersion: over.appVersion,
     ioFactory: (uri, o) => { capturedUri = uri; capturedOpts = o; return socket; },
   });
   return { agent, client, socket, tokenStore, configStore, io: () => ({ capturedUri, capturedOpts }) };
@@ -311,5 +312,42 @@ describe('socket-push is the PRIMARY print signal (E-PARITY-1 ↔ remote-print)'
 
     expect(result.receiptPrinted).toBe(true);
     expect(statusPolls).toBe(0); // the socket push replaced the HTTP poll entirely
+  });
+});
+
+describe('the version this terminal reports', () => {
+  // The remote-control panel presents app_version as the terminal's installed
+  // build, and an operator reads it before deciding whether to push an update.
+  // It used to be a hardcoded '1.0.23', so every Android till reported the same
+  // number forever and updating one changed nothing on screen.
+  test('reports the installed versionName, not a constant', async () => {
+    const { agent, client } = buildAgent({ appVersion: async () => '1.0.26' });
+
+    await agent.connect();
+
+    expect(client.connectPrintAgent).toHaveBeenCalledWith(
+      'pa_test_key_123',
+      expect.objectContaining({ appVersion: '1.0.26' }),
+    );
+  });
+
+  test('a different installed build reports that build', async () => {
+    const { agent, client } = buildAgent({ appVersion: async () => '1.1.0' });
+
+    await agent.connect();
+
+    expect(client.connectPrintAgent).toHaveBeenCalledWith(
+      'pa_test_key_123',
+      expect.objectContaining({ appVersion: '1.1.0' }),
+    );
+  });
+
+  test('off-device it reports nothing rather than inventing a version', async () => {
+    const { agent, client } = buildAgent({ appVersion: async () => undefined });
+
+    await agent.connect();
+
+    const meta = client.connectPrintAgent.mock.calls[0][1];
+    expect(meta.appVersion).toBeUndefined();
   });
 });

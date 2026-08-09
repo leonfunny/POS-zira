@@ -794,7 +794,10 @@ export class PosApiClient {
       body: JSON.stringify({
         apiKey,
         machineId: meta.machineId ?? this.machineId ?? '',
-        appVersion: meta.appVersion ?? '1.0.23',
+        // No made-up version number here: a stale constant is worse than an
+        // honest blank, because the remote-control panel presents this as the
+        // terminal's installed build.
+        appVersion: meta.appVersion ?? 'unknown',
         osVersion: meta.osVersion ?? 'android',
       }),
     }, DEFAULT_TIMEOUT);
