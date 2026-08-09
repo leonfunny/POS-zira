@@ -73,6 +73,10 @@ export const ANDROID_POS_CAPABILITY_OUTCOMES = {
   scale: { state: 'unsupported', reasonCode: 'PLATFORM_UNSUPPORTED' },
 } satisfies CashierCapabilityOutcomes;
 
+export interface AndroidPosRuntimeCapabilities {
+  loyaltyLookup?: boolean;
+}
+
 export type PosPlatformManifestResolver = (
   identity: CashierCapabilityIdentity,
 ) => unknown | Promise<unknown>;
@@ -214,8 +218,14 @@ export function resolveWindowsPosCapabilityManifest(
 
 export function resolveAndroidPosCapabilityManifest(
   identity: CashierCapabilityIdentity,
+  runtime: AndroidPosRuntimeCapabilities = {},
 ): CashierCapabilityManifest {
-  return createCashierCapabilityManifest(identity, ANDROID_POS_CAPABILITY_OUTCOMES);
+  return createCashierCapabilityManifest(identity, {
+    ...ANDROID_POS_CAPABILITY_OUTCOMES,
+    loyaltyLookup: runtime.loyaltyLookup === true
+      ? { state: 'supported', reasonCode: 'AVAILABLE' }
+      : ANDROID_POS_CAPABILITY_OUTCOMES.loyaltyLookup,
+  });
 }
 
 function lifecycleKey(session: PosCapabilitySession | undefined): string {

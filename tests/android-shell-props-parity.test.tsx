@@ -250,7 +250,7 @@ describe('Android shell ↔ shared renderer prop parity', () => {
       userId: 'android-user-1',
       registerId: 'android-register-1',
       roleRevision: 'STAFF',
-      platformRevision: 'android-v1',
+      platformRevision: '{"loyaltyLookup":false}',
     });
     expect(host.policyInputs).toBe(RUNTIME_ONLY_POS_CAPABILITY_POLICY_INPUTS);
     for (const axis of Object.values(host.policyInputs!)) {

@@ -916,6 +916,7 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
   };
 
   transport = {
+    runtimeCapabilities: Object.freeze({ loyaltyLookup: true }),
     // ── Billiard (Bi-a) online-only (T4) — reads + 10s poll, direct mutate,
     //    allowlisted apiCall. Spread in (no key collides with the ports below).
     ...billiard,
@@ -1740,6 +1741,17 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         // 404 (no such NIP in GUS), other 4xx/5xx, or network — the api-client
         // attaches err.status; map every throw to the renderer {success:false}.
         return { success: false, error: e?.message || String(e) };
+      }
+    },
+    async loyaltyLookupCustomer(phone: string) {
+      const value = String(phone ?? '').trim();
+      if (!value) return { success: false, error: 'phone_required' };
+      try {
+        const result = await client.getPosCustomerLoyalty(value);
+        if (!result) return { success: false, unavailable: true, error: 'loyalty_unavailable' };
+        return { success: true, result };
+      } catch (error: any) {
+        return { success: false, unavailable: true, error: error?.message || 'loyalty_lookup_failed' };
       }
     },
     async addInvoice(

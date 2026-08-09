@@ -585,6 +585,13 @@ export function buildExcludedPosNamespaces(deps: Pick<StubDeps, 'transport'> = {
         () => ({ success: false as boolean, error: 'nip-lookup-unavailable' as string | undefined }),
       ),
     },
+    loyalty: {
+      lookupCustomer: (phone: string) => withTransport(
+        transport.loyaltyLookupCustomer,
+        [phone],
+        () => ({ success: false, unavailable: true, error: 'loyalty_unavailable' }),
+      ),
+    },
     pickupOrders: {
       machineId: async () => null,
       listOpen: async () => [],

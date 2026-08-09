@@ -42,6 +42,7 @@
 import type {
   CreatePrintJobRequest,
   CreatePrintJobResponse,
+  PosLoyaltyLookupResponse,
   SalonPrinterAssignmentsResponse,
 } from '../../../shared/types';
 
@@ -911,6 +912,25 @@ export class PosApiClient {
       throw error;
     }
     return response.json();
+  }
+
+  /** GET /api/v1/loyalty/pos/customer — staff JWT with the standard 401 refresh path. */
+  async getPosCustomerLoyalty(phone: string): Promise<PosLoyaltyLookupResponse | null> {
+    const value = String(phone ?? '').trim();
+    if (!value) return null;
+    const token = await this.requireToken('getPosCustomerLoyalty');
+    const response = await this.fetchWithTimeout(
+      `${this.baseUrl}/api/v1/loyalty/pos/customer?phone=${encodeURIComponent(value)}`,
+      { method: 'GET', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } },
+    );
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      const error = new Error(errorData.message || `HTTP ${response.status}`) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
+    }
+    const text = await response.text();
+    return text ? JSON.parse(text) as PosLoyaltyLookupResponse : null;
   }
 
   /**

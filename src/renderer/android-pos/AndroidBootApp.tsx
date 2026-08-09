@@ -78,6 +78,7 @@ export default function AndroidBootApp() {
   const [capabilityUser, setCapabilityUser] = useState<any>(null);
   const [capabilityConfig, setCapabilityConfig] = useState<any>(null);
   const [capabilityEntitlements, setCapabilityEntitlements] = useState<any>(null);
+  const [capabilityRuntime, setCapabilityRuntime] = useState({ loyaltyLookup: false });
   const [capabilityConfigSignal, setCapabilityConfigSignal] = useState(0);
   // Guards every async handoff result: a response that belongs to a previous
   // cashier must not land in this one's screen.
@@ -119,15 +120,16 @@ export default function AndroidBootApp() {
       roleRevision: String(capabilityUser?.role || ''),
       entitlementRevision: capabilityEntitlementRevision,
       configRevision: capabilityConfigRevision,
-      platformRevision: 'android-v1',
+      platformRevision: capabilityRevision(capabilityRuntime),
     },
     policyInputs: RUNTIME_ONLY_POS_CAPABILITY_POLICY_INPUTS,
-    resolvePlatformManifest: resolveAndroidPosCapabilityManifest,
+    resolvePlatformManifest: (identity) => resolveAndroidPosCapabilityManifest(identity, capabilityRuntime),
   }), [
     capabilityConfig?.salonId,
     capabilityConfigSignal,
     capabilityConfigRevision,
     capabilityEntitlementRevision,
+    capabilityRuntime,
     capabilityUser?.id,
     capabilityUser?.role,
     capabilityUser?.salonId,
@@ -166,6 +168,7 @@ export default function AndroidBootApp() {
       setCapabilityUser(null);
       setCapabilityConfig(null);
       setCapabilityEntitlements(null);
+      setCapabilityRuntime({ loyaltyLookup: false });
       setState('login');
     });
     return () => {
@@ -187,6 +190,7 @@ export default function AndroidBootApp() {
   useEffect(() => {
     if (state !== 'pos') return;
     const api = (window as any).electronAPI;
+    setCapabilityRuntime({ loyaltyLookup: api.pos?.runtimeCapabilities?.loyaltyLookup === true });
     let cancelledSnapshot = false;
     let unsubscribeSnapshot: (() => void) | null = null;
     let snapshotTimer: ReturnType<typeof setTimeout> | null = null;
@@ -281,6 +285,7 @@ export default function AndroidBootApp() {
       setCapabilityUser(null);
       setCapabilityConfig(null);
       setCapabilityEntitlements(null);
+      setCapabilityRuntime({ loyaltyLookup: false });
       setIsOwner(false);
       setCanOpenSettings(false);
       return;

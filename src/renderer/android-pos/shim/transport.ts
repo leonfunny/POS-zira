@@ -34,7 +34,7 @@
  * Windows main-process handler cited in S1 for that method.
  */
 
-import type { AgentConfig, AuthUser, SalonEntitlements } from '../../../shared/types';
+import type { AgentConfig, AuthUser, PosLoyaltyLookupIpcResult, SalonEntitlements } from '../../../shared/types';
 import type {
   NailTurnBoardIpcResult,
   PosScheduleAssignNextPayload,
@@ -185,6 +185,8 @@ export interface RemotePrinterStatus {
  * directly; it receives one via `installShim({ transport })`.
  */
 export interface ShimTransport {
+  /** Explicit host-owned facts; renderer must not infer support from method names. */
+  runtimeCapabilities?: { loyaltyLookup?: boolean };
   /** Product/stock/category admin surface (E-PARITY-3, owner-only). */
   productAdmin?: ProductAdminSurface;
 
@@ -202,6 +204,7 @@ export interface ShimTransport {
   getByCategory?(categoryId: string): Promise<ShimPosProduct[]>;
   searchProducts?(query: string): Promise<ShimPosProduct[]>;
   getCategories?(): Promise<ShimPosCategory[]>;
+  loyaltyLookupCustomer?(phone: string): Promise<PosLoyaltyLookupIpcResult>;
 
   /** CASH order create (local-first; S8 ports the exact DTO + order-sync). */
   createOrder?(order: any, items: any[]): Promise<{ success: boolean; id?: string; error?: string }>;

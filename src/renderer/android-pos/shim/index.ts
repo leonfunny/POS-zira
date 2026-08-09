@@ -150,6 +150,7 @@ export function installShim(options: InstallShimOptions = {}): InstalledShim {
     shift: buildShiftNamespace(stubDeps),
     staff: buildStaffNamespace(stubDeps),
     sync: buildSyncNamespace(stubDeps),
+    runtimeCapabilities: Object.freeze({ loyaltyLookup: transport.runtimeCapabilities?.loyaltyLookup === true }),
     ...buildExcludedPosNamespaces(stubDeps),
   };
 
