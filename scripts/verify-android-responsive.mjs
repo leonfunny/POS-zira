@@ -75,8 +75,11 @@ try {
     await page.goto(pageUrl, { waitUntil: 'load' });
 
     // Boot resolves to the staff login screen (no persisted session).
-    const emailInput = page.locator('input[type="email"]');
-    await emailInput.waitFor({ state: 'visible', timeout: 15000 });
+    // Matched on autocomplete, not type="email": c245740 made the field accept a
+    // username or phone number as well, and this gate kept waiting for an email
+    // input that no longer exists — no release APK could be built after 2026-08-06.
+    const identifierInput = page.locator('input[autocomplete="username"]');
+    await identifierInput.waitFor({ state: 'visible', timeout: 15000 });
     const passwordInput = page.locator('input[type="password"]');
     const submit = page.locator('button[type="submit"]');
     assert.equal(await passwordInput.isVisible(), true, `${viewport.name}: password field visible`);
