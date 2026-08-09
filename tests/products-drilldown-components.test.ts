@@ -46,13 +46,15 @@ describe('Products drill-down components', () => {
     expect(grid).toContain('minmax(220px,1fr)');
   });
 
-  it('renders sorted category buttons plus all and uncategorised entries with one search/scan entry point', () => {
+  it('renders one merged uncategorised entry plus all and sorted categories with one search/scan entry point', () => {
     const grid = source('src/renderer/components/products/CategoryGrid.tsx');
 
     expect(grid).toContain('sortCategories(categories, language)');
     expect(grid).toContain("onOpenCategory('ALL')");
-    expect(grid).toContain('onOpenCategory(null)');
-    expect(grid).toContain('product.category_id == null');
+    expect(grid).toContain('findUncategorisedCategory(sortedCategories)');
+    expect(grid).toContain('countMergedUncategorisedProducts(');
+    expect(grid).toContain('onOpenCategory(uncategorisedCategory?.id ?? null)');
+    expect(grid).toContain('regularCategories.map((category)');
     expect(grid).toContain('canCreateProduct ? (');
     expect(grid).toContain('canManageCategories ? (');
     expect(grid).toContain('onOpenSearch');
@@ -118,6 +120,7 @@ describe('Products drill-down components', () => {
     expect(moduleSource).toContain('syncProducts');
     expect(moduleSource).toContain('setKindFilter');
     expect(moduleSource).toContain('categoryById={categoryById}');
+    expect(moduleSource).toContain('isInMergedUncategorisedCategory(product.category_id, uncategorisedCategoryId)');
     expect(moduleSource).toContain("browseKey={`${view.categoryId ?? 'UNCATEGORISED'}:${kindFilter}`}");
     expect(moduleSource).not.toContain('<ProductTable');
     expect(moduleSource).not.toContain('<ProductToolbar');

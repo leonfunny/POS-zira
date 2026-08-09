@@ -3,6 +3,7 @@ import { FolderX, Grid3X3, Image as ImageIcon, Plus, Search, Tags } from 'lucide
 import { resolveName } from '../../../shared/catalog-names';
 import type { Category } from '../../hooks/usePosDb';
 import type { ProductListItem } from '../../hooks/useProducts';
+import { countMergedUncategorisedProducts, findUncategorisedCategory } from './uncategorised-category';
 
 export type ProductCategorySelection = string | null | 'ALL';
 
@@ -97,6 +98,14 @@ export default function CategoryGrid({
   onManageCategories,
 }: CategoryGridProps) {
   const sortedCategories = useMemo(() => sortCategories(categories, language), [categories, language]);
+  const uncategorisedCategory = useMemo(
+    () => findUncategorisedCategory(sortedCategories),
+    [sortedCategories],
+  );
+  const regularCategories = useMemo(
+    () => sortedCategories.filter((category) => category.id !== uncategorisedCategory?.id),
+    [sortedCategories, uncategorisedCategory],
+  );
   const productCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const product of products) {
@@ -105,7 +114,10 @@ export default function CategoryGrid({
     }
     return counts;
   }, [products]);
-  const uncategorisedCount = products.filter((product) => product.category_id == null).length;
+  const uncategorisedCount = countMergedUncategorisedProducts(
+    products,
+    uncategorisedCategory?.id ?? null,
+  );
 
   return (
     <section className="flex min-h-0 flex-1 flex-col">
@@ -159,12 +171,15 @@ export default function CategoryGrid({
             onClick={() => onOpenCategory('ALL')}
           />
           <CategoryButton
-            label={tOr(t, 'products.uncategorised', 'Uncategorised')}
+            label={uncategorisedCategory
+              ? resolveName(uncategorisedCategory, language)
+              : tOr(t, 'products.uncategorised', 'Uncategorised')}
             count={uncategorisedCount}
             icon={<FolderX size={22} />}
-            onClick={() => onOpenCategory(null)}
+            imageUrl={uncategorisedCategory ? categoryImageUrl(uncategorisedCategory) : null}
+            onClick={() => onOpenCategory(uncategorisedCategory?.id ?? null)}
           />
-          {sortedCategories.map((category) => (
+          {regularCategories.map((category) => (
             <CategoryButton
               key={category.id}
               label={resolveName(category, language)}

@@ -19,6 +19,7 @@ import { deepLinkOutcome, isExternalEdit, viewAfterEditExit, type BrowseView, ty
 import ProductTileGrid from './ProductTileGrid';
 import { LOW_STOCK_THRESHOLD } from './product-stock-color';
 import { findDuplicateBarcodeSet } from './scan-match';
+import { findUncategorisedCategory, isInMergedUncategorisedCategory } from './uncategorised-category';
 
 interface ProductModuleProps {
   language: Language;
@@ -462,6 +463,8 @@ export default function ProductModule({ language, openVariantId, onExitExternal,
   const consumedOpenVariantIdRef = useRef<string | null>(null);
 
   const categoryById = useMemo(() => new Map(categories.map((category) => [category.id, category])), [categories]);
+  const uncategorisedCategory = useMemo(() => findUncategorisedCategory(categories), [categories]);
+  const uncategorisedCategoryId = uncategorisedCategory?.id ?? null;
   const draftCount = useMemo(() => allProducts.filter((product) => product._isDraft).length, [allProducts]);
   const activeCatalogProducts = useMemo(
     () => allProducts.filter((product) => !product._isDraft && product.is_active !== 0),
@@ -496,17 +499,25 @@ export default function ProductModule({ language, openVariantId, onExitExternal,
   const browseProducts = useMemo(() => {
     if (view.name !== 'products') return [];
     if (view.categoryId === 'ALL') return filteredAllProducts;
-    if (view.categoryId === null) return filteredAllProducts.filter((product) => product.category_id == null);
+    if (view.categoryId === null || view.categoryId === uncategorisedCategoryId) {
+      return filteredAllProducts.filter((product) => (
+        isInMergedUncategorisedCategory(product.category_id, uncategorisedCategoryId)
+      ));
+    }
     return filteredAllProducts.filter((product) => product.category_id === view.categoryId);
-  }, [filteredAllProducts, view]);
+  }, [filteredAllProducts, uncategorisedCategoryId, view]);
 
   const browseCategoryName = useMemo(() => {
     if (view.name !== 'products') return '';
     if (view.categoryId === 'ALL') return tOr(t, 'products.allCategories', 'All products');
-    if (view.categoryId === null) return tOr(t, 'products.uncategorised', 'Uncategorised');
+    if (view.categoryId === null) {
+      return uncategorisedCategory
+        ? resolveName(uncategorisedCategory, language)
+        : tOr(t, 'products.uncategorised', 'Uncategorised');
+    }
     const category = categoryById.get(view.categoryId);
     return category ? resolveName(category, language) : tOr(t, 'products.uncategorised', 'Uncategorised');
-  }, [categoryById, language, t, view]);
+  }, [categoryById, language, t, uncategorisedCategory, view]);
 
   const currentCategoryId = view.name === 'products' && view.categoryId !== 'ALL'
     ? view.categoryId
