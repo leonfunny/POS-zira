@@ -134,8 +134,13 @@ export function createDeviceCommandHandler(deps: DeviceCommandHandlerDeps) {
           products: database.get<{ count: number }>('SELECT COUNT(*) AS count FROM product_variants')?.count ?? 0,
           categories: database.get<{ count: number }>('SELECT COUNT(*) AS count FROM categories')?.count ?? 0,
           staff: database.get<{ count: number }>('SELECT COUNT(*) AS count FROM staff')?.count ?? 0,
+          // `synced` (0 pending / 1 done / 2 in flight), not `sync_status` —
+          // that column has never existed in the Android schema, so this query
+          // threw and took the whole DEVICE_STATE reply down with it. It went
+          // unnoticed because the test faked `database.get` to answer any SQL
+          // string with a count.
           pendingOrders: database.get<{ count: number }>(
-            "SELECT COUNT(*) AS count FROM orders WHERE sync_status != 'SYNCED'",
+            'SELECT COUNT(*) AS count FROM orders WHERE synced != 1',
           )?.count ?? 0,
         };
         const updater = deps.updater === undefined ? appUpdaterPlugin() : deps.updater;
