@@ -65,7 +65,10 @@ export const ANDROID_POS_CAPABILITY_OUTCOMES = {
   loyaltyLookup: { state: 'unsupported', reasonCode: 'RUNTIME_UNAVAILABLE' },
   restoredCartTender: { state: 'unsupported', reasonCode: 'RUNTIME_UNAVAILABLE' },
   customerDisplay: { state: 'unsupported', reasonCode: 'PLATFORM_UNSUPPORTED' },
-  nativeProductCreate: { state: 'unsupported', reasonCode: 'RUNTIME_UNAVAILABLE' },
+  // The Android renderer has a native, server-authorized product-admin path.
+  // This only declares the platform route; its per-user capability hook still
+  // has to resolve canCreateProduct before any control is enabled or mounted.
+  nativeProductCreate: { state: 'degraded', reasonCode: 'RUNTIME_DEGRADED' },
   debtLedgerExternal: { state: 'unsupported', reasonCode: 'PLATFORM_UNSUPPORTED' },
   quickAddRecognition: { state: 'unsupported', reasonCode: 'RUNTIME_UNAVAILABLE' },
   pickupOrders: { state: 'unsupported', reasonCode: 'RUNTIME_UNAVAILABLE' },

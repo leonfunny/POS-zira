@@ -140,16 +140,14 @@ export function createProductAdminSurface(deps: ProductAdminSurfaceDeps): Produc
     return { salonCode, agentId };
   };
 
-  // Capabilities gate for purchase-price redaction. Fetched once per surface
-  // (shared with getCapabilities) — leaner than Windows' per-call fetch, same
-  // safety. FAIL-SAFE: an unfetchable capabilities response redacts (matches
-  // Windows' canViewPurchasePrice:false default on error, pos.module.ts:1440).
-  let capsPromise: Promise<any | null> | null = null;
+  // Capabilities gate for purchase-price redaction. Do not cache this on the
+  // long-lived Android surface: its STAFF JWT can change after logout, tenant
+  // switch, or refresh while the surface remains installed. Reusing a prior
+  // user's promise would leak authorization across that boundary. The extra
+  // probe is deliberately fail-closed and is cheaper than guessing an auth
+  // identity that the transport does not expose here.
   const loadCaps = (): Promise<any | null> => {
-    if (!capsPromise) {
-      capsPromise = client.productAdminRequest<any>('GET', '/capabilities', context()).catch(() => null);
-    }
-    return capsPromise;
+    return client.productAdminRequest<any>('GET', '/capabilities', context()).catch(() => null);
   };
   const canSeePurchasePrice = async (): Promise<boolean> => {
     const caps = await loadCaps();

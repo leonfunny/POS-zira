@@ -47,12 +47,12 @@ function callsOf(mock: ReturnType<typeof vi.fn>): RoutedCall[] {
   });
 }
 
-function build() {
+function build(tokenProvider = STAFF_TOKEN_PROVIDER) {
   const configStore = new ShimConfigStore({
     storage: memoryStorage(),
     seed: { salonCode: '6535', agentId: 'agent-9' } as never,
   });
-  const client = new PosApiClient({ baseUrl: 'https://api.enail.pro', tokenProvider: STAFF_TOKEN_PROVIDER, salonSlug: 'test-salon' });
+  const client = new PosApiClient({ baseUrl: 'https://api.enail.pro', tokenProvider, salonSlug: 'test-salon' });
   const surface = createProductAdminSurface({ client, configStore });
   return { surface, configStore, client };
 }
@@ -77,6 +77,29 @@ describe('product-admin surface (E-PARITY-3)', () => {
     expect(c.headers['X-Salon-Slug']).toBe('test-salon');
     expect(c.headers['X-Salon-Code']).toBe('6535');
     expect(c.headers['X-Agent-Id']).toBe('agent-9');
+  });
+
+  test('never reuses capability answers across a changed staff context and retries after 403', async () => {
+    const getAccessToken = vi.fn()
+      .mockResolvedValueOnce('jwt-staff-1')
+      .mockResolvedValueOnce('jwt-staff-2')
+      .mockResolvedValueOnce('jwt-staff-2');
+    const { surface, configStore } = build({ getAccessToken, refresh: async () => false, onExpired: () => undefined });
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ canCreateProduct: true }))
+      .mockResolvedValueOnce(jsonResponse({ message: 'forbidden', code: 'UNAUTHORIZED_PRODUCT_ADMIN' }, 403))
+      .mockResolvedValueOnce(jsonResponse({ canCreateProduct: false }));
+
+    expect(await surface.getCapabilities()).toMatchObject({ ok: true, capabilities: { canCreateProduct: true } });
+    configStore.saveConfig({ salonCode: '7777', agentId: 'agent-2' } as never);
+    expect(await surface.getCapabilities()).toMatchObject({ ok: false, error: 'capabilities-unavailable' });
+    expect(await surface.getCapabilities()).toMatchObject({ ok: true, capabilities: { canCreateProduct: false } });
+
+    const calls = callsOf(fetchMock);
+    expect(calls).toHaveLength(3);
+    expect(calls.map((call) => call.headers.Authorization)).toEqual(['Bearer jwt-staff-1', 'Bearer jwt-staff-2', 'Bearer jwt-staff-2']);
+    expect(calls[1].headers['X-Salon-Code']).toBe('7777');
+    expect(calls[2].headers['X-Agent-Id']).toBe('agent-2');
   });
 
   test('createProduct POSTs /products with an Idempotency-Key and drops the retailPrice alias', async () => {

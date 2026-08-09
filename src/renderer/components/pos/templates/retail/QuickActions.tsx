@@ -60,6 +60,7 @@ interface QuickActionsProps {
   onHistory?: () => void;
   onQuickAddCamera?: () => void;
   onCreateProduct?: () => void;
+  canCreateProduct?: boolean;
 }
 
 interface ActionButtonProps {
@@ -114,7 +115,7 @@ const icons = {
 export default function QuickActions({
   dispatch, hasItems, onOpenCustomerDisplay, onCloseCustomerDisplay,
   isCustomerDisplayOpen, displayMode, t,
-  heldCarts = [], onHold, holdDisabled, onRecall, onDiscardHeld, onHistory, onQuickAddCamera, onCreateProduct,
+  heldCarts = [], onHold, holdDisabled, onRecall, onDiscardHeld, onHistory, onQuickAddCamera, onCreateProduct, canCreateProduct,
 }: QuickActionsProps) {
   const capabilities = usePosCapabilities();
   const canUseCustomerDisplay = isPosCapabilityUsable(capabilities, 'customerDisplay');
@@ -200,7 +201,7 @@ export default function QuickActions({
             onClick={onQuickAddCamera}
           />
         )}
-        {canUseNativeProductCreate && onCreateProduct && (
+        {(canCreateProduct === true || (canCreateProduct === undefined && canUseNativeProductCreate)) && onCreateProduct && (
           <ActionButton
             icon={icons.addProduct}
             label={tOr('pos.quickAdd.createProduct', 'Tạo sản phẩm')}

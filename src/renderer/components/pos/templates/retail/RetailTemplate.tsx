@@ -250,6 +250,7 @@ interface RetailTemplateProps {
   onUnknownBarcodeScanned?: (ean: string) => void | Promise<void>;
   onQuickAddCamera?: () => void;
   onCreateProduct?: () => void;
+  canCreateProduct?: boolean;
   onLastLabelVariantChange?: (variantId: string) => void;
   onPrintLastCartLabelCommand?: () => void | Promise<void>;
   onManualWeightRequired?: (product: Product, saleClass: ProductSaleClassification, error: string) => void;
@@ -260,7 +261,7 @@ interface RetailTemplateProps {
   homeResetKey?: number;
 }
 
-export default function RetailTemplate({ state, dispatch, t, language, session, onUnknownBarcodeScanned, onQuickAddCamera, onCreateProduct, onLastLabelVariantChange, onPrintLastCartLabelCommand, onManualWeightRequired, onAddProductFeedback, onEditProduct, onBilliardIntentPrepared, onRestoredTenderOutcomeUncertain, homeResetKey }: RetailTemplateProps) {
+export default function RetailTemplate({ state, dispatch, t, language, session, onUnknownBarcodeScanned, onQuickAddCamera, onCreateProduct, canCreateProduct, onLastLabelVariantChange, onPrintLastCartLabelCommand, onManualWeightRequired, onAddProductFeedback, onEditProduct, onBilliardIntentPrepared, onRestoredTenderOutcomeUncertain, homeResetKey }: RetailTemplateProps) {
   const [showHistory, setShowHistory] = useState(false);
   const { config } = useConfig();
   const capabilities = usePosCapabilities();
@@ -1571,10 +1572,11 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
                 interruptAutoCamera();
                 onQuickAddCamera();
               } : undefined}
-              onCreateProduct={canUseNativeProductCreate && onCreateProduct ? () => {
+              onCreateProduct={canCreateProduct && onCreateProduct ? () => {
                 interruptAutoCamera();
                 onCreateProduct();
               } : undefined}
+              canCreateProduct={canCreateProduct}
             />
           </div>
         </div>

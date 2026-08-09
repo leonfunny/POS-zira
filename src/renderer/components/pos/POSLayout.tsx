@@ -42,6 +42,9 @@ import QuickAddCameraModal, {
 } from './QuickAddCameraModal';
 import AddProductWebviewPanel from './AddProductWebviewPanel';
 import DebtWebviewPanel from './DebtWebviewPanel';
+import ProductModule from '../products/ProductModule';
+import { useProductAdminCapabilities } from '../../hooks/useProductAdminCapabilities';
+import { productAdminVariantToCartLine } from '../products/product-admin-variant-adapter';
 import { buildRetailCartItem, formatRetailSaleError, resolveRetailCartItem } from './retail-sale-flow';
 import {
   createReceiptPrintStatusHandler,
@@ -64,6 +67,14 @@ type PosMode = 'retail' | 'salon' | 'b2b' | 'restaurant';
 
 const POS_LANGS: Language[] = ['en', 'pl', 'vi', 'uk', 'ru', 'zh', 'tr'];
 const PRINT_LAST_CART_LABEL_COMMAND = '00000000';
+
+// Android's Chromium 83 does not guarantee crypto.randomUUID. This mirrors the
+// old external-WebView path's need for a local-only cart identity without
+// making a committed server create depend on a newer browser primitive.
+function createExternalCartLineId(): string {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  return uuid || `native-product-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
 const SAFE_LAYOUT_DEGRADED_CAPABILITIES: Partial<Record<CashierCapabilityKey, string>> = {
   nativeProductCreate: 'REMOTE_ONLY',
@@ -375,6 +386,23 @@ function POSLayoutContent({
   const { config, saveConfig } = useConfig();
   const capabilities = usePosCapabilities();
   const canUseNativeProductCreate = isLayoutCapabilityUsable(capabilities, 'nativeProductCreate');
+  const nativeProductOutcome = capabilities.manifest.outcomes.nativeProductCreate;
+  const hasAndroidNativeProductPath = capabilities.status === 'ready'
+    && nativeProductOutcome.state === 'degraded'
+    && nativeProductOutcome.reasonCode === 'RUNTIME_DEGRADED';
+  const productAdminScope = hasAndroidNativeProductPath
+    ? `${capabilities.manifest.identity.salonId}:${capabilities.manifest.identity.userId}:${capabilities.manifest.identity.registerId}:${capabilities.manifest.identity.authEpoch}`
+    : undefined;
+  const { capabilities: productAdminCapabilities, invalidate: invalidateProductAdminCapabilities } = useProductAdminCapabilities(
+    hasAndroidNativeProductPath,
+    productAdminScope,
+  );
+  // RUNTIME_DEGRADED only exposes a possible renderer path. Server-issued,
+  // auth-scoped capability flags are the actual permission to show an action.
+  const canUseAndroidNativeProductCreate = hasAndroidNativeProductPath
+    && productAdminCapabilities?.canCreateProduct === true;
+  const canUseAndroidNativeProductEdit = hasAndroidNativeProductPath
+    && (productAdminCapabilities?.canUpdateProduct === true || productAdminCapabilities?.canAdjustStock === true);
   const canUseDebtLedgerExternal = isLayoutCapabilityUsable(capabilities, 'debtLedgerExternal');
   const canUseQuickAddRecognition = isLayoutCapabilityUsable(capabilities, 'quickAddRecognition');
   const canUsePickupOrders = isLayoutCapabilityUsable(capabilities, 'pickupOrders');
@@ -400,6 +428,8 @@ function POSLayoutContent({
   const [scanImportCategories, setScanImportCategories] = useState<ScanImportCategoryOption[]>([]);
   const [showQuickAddCamera, setShowQuickAddCamera] = useState(false);
   const [showAddProduct, setShowAddProduct] = useState(false);
+  const [nativeProductCreateOpen, setNativeProductCreateOpen] = useState(false);
+  const [nativeProductEditId, setNativeProductEditId] = useState<string | null>(null);
   const [showDebt, setShowDebt] = useState(false);
   const [homeResetKey, setHomeResetKey] = useState(0);
   // P6: a fiscal receipt that ended in an ambiguous (UNKNOWN) state — the cashier
@@ -436,10 +466,14 @@ function POSLayoutContent({
   useEffect(() => {
     if (!canUseQuickAddRecognition) setShowQuickAddCamera(false);
     if (!canUseNativeProductCreate) setShowAddProduct(false);
+    if (!canUseAndroidNativeProductCreate) setNativeProductCreateOpen(false);
+    if (!canUseAndroidNativeProductEdit) setNativeProductEditId(null);
     if (!canUseDebtLedgerExternal) setShowDebt(false);
     if (!canUsePickupOrders) setPickupPanelOpen(false);
   }, [
     canUseDebtLedgerExternal,
+    canUseAndroidNativeProductCreate,
+    canUseAndroidNativeProductEdit,
     canUseNativeProductCreate,
     canUsePickupOrders,
     canUseQuickAddRecognition,
@@ -1659,6 +1693,34 @@ function POSLayoutContent({
           onClose={() => setShowAddProduct(false)}
         />
       )}
+      {(nativeProductCreateOpen || nativeProductEditId) && hasAndroidNativeProductPath && (
+        <div className="fixed inset-0 z-[70] bg-slate-50">
+          <ProductModule
+            language={language}
+            openCreate={nativeProductCreateOpen}
+            openVariantId={nativeProductEditId}
+            adminCapabilityScope={productAdminScope}
+            externalBackLabel={tOr('common.back', 'Back to POS')}
+            onCreatedForExternal={(variant) => {
+              const outcome = productAdminVariantToCartLine(variant, createExternalCartLineId());
+              if (outcome.kind === 'manual-weight') {
+                openManualWeightPrompt(outcome.product, outcome.saleClass);
+                return;
+              }
+              dispatch({ type: 'cart/addItem', payload: outcome.line });
+            }}
+            onAccessDeniedForExternal={() => {
+              invalidateProductAdminCapabilities();
+              setNativeProductCreateOpen(false);
+              setNativeProductEditId(null);
+            }}
+            onExitExternal={() => {
+              setNativeProductCreateOpen(false);
+              setNativeProductEditId(null);
+            }}
+          />
+        </div>
+      )}
       {canUseDebtLedgerExternal && (
         <DebtWebviewPanel
           open={showDebt}
@@ -1994,12 +2056,17 @@ function POSLayoutContent({
             session={session}
             onUnknownBarcodeScanned={handleUnknownBarcodeScanned}
             onQuickAddCamera={canUseQuickAddRecognition ? () => setShowQuickAddCamera(true) : undefined}
-            onCreateProduct={canUseNativeProductCreate ? () => setShowAddProduct(true) : undefined}
+            onCreateProduct={canUseAndroidNativeProductCreate
+              ? () => setNativeProductCreateOpen(true)
+              : canUseNativeProductCreate ? () => setShowAddProduct(true) : undefined}
+            canCreateProduct={canUseAndroidNativeProductCreate || canUseNativeProductCreate}
             onLastLabelVariantChange={rememberLastLabelVariant}
             onPrintLastCartLabelCommand={canUseLabelPrint ? handlePrintLastCartLabelCommand : undefined}
             onManualWeightRequired={openManualWeightPrompt}
             onAddProductFeedback={handleRetailAddProductFeedback}
-            onEditProduct={onEditProduct}
+            onEditProduct={canUseAndroidNativeProductEdit
+              ? (variantId) => setNativeProductEditId(variantId)
+              : onEditProduct}
             onBilliardIntentPrepared={activateBilliardIntent}
             onRestoredTenderOutcomeUncertain={onRestoredCartTenderOutcomeUncertain}
             homeResetKey={homeResetKey}

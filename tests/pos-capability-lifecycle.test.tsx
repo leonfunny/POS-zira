@@ -206,8 +206,12 @@ describe('POS capability host profiles', () => {
         authEpoch: 1,
       });
       expect(manifest.outcomes).toEqual(ANDROID_POS_CAPABILITY_OUTCOMES);
-      for (const outcome of Object.values(manifest.outcomes)) {
-        expect(outcome.state).toBe('unsupported');
+      for (const [key, outcome] of Object.entries(manifest.outcomes)) {
+        if (key === 'nativeProductCreate') {
+          expect(outcome).toEqual({ state: 'degraded', reasonCode: 'RUNTIME_DEGRADED' });
+        } else {
+          expect(outcome.state).toBe('unsupported');
+        }
       }
     } finally {
       (globalThis as any).electronAPI = previousApi;
@@ -296,8 +300,12 @@ describe('PosCapabilityProvider lifecycle', () => {
 
     expect(latest.status).toBe('ready');
     expect(latest.manifest.outcomes).toEqual(ANDROID_POS_CAPABILITY_OUTCOMES);
-    for (const outcome of Object.values(latest.manifest.outcomes)) {
-      expect(outcome.state).toBe('unsupported');
+    for (const [key, outcome] of Object.entries(latest.manifest.outcomes)) {
+      if (key === 'nativeProductCreate') {
+        expect(outcome).toEqual({ state: 'degraded', reasonCode: 'RUNTIME_DEGRADED' });
+      } else {
+        expect(outcome.state).toBe('unsupported');
+      }
     }
   });
 

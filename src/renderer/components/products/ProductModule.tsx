@@ -19,10 +19,16 @@ import { deepLinkOutcome, isExternalEdit, viewAfterEditExit, type BrowseView, ty
 import ProductTileGrid from './ProductTileGrid';
 import { LOW_STOCK_THRESHOLD } from './product-stock-color';
 import { findDuplicateBarcodeSet } from './scan-match';
+import { productAdminVariantToProduct } from './product-admin-variant-adapter';
 
 interface ProductModuleProps {
   language: Language;
   openVariantId?: string | null;
+  /** Native POS invokes the existing create dialog without exposing the module browse UI. */
+  openCreate?: boolean;
+  adminCapabilityScope?: string;
+  onCreatedForExternal?: (variant: ProductAdminVariant) => Promise<void> | void;
+  onAccessDeniedForExternal?: () => void;
   onExitExternal?: () => void;
   externalBackLabel?: string;
 }
@@ -159,31 +165,6 @@ function initialFailedImportCategoryId(
   if (!isBackendCategoryId(candidate)) return '';
   if (immutableIdentity) return candidate;
   return categories.some((category) => category.id === candidate) ? candidate : '';
-}
-
-function productAdminVariantToProduct(variant: ProductAdminVariant): ProductListItem {
-  const saleUnit = variant.saleUnit ?? null;
-  const vatRate = Number(variant.vatRate);
-  return {
-    id: variant.id,
-    template_id: variant.templateId ?? null,
-    name: variant.name || variant.id,
-    sku: variant.sku ?? null,
-    barcode: variant.barcode ?? null,
-    retail_price: Number(variant.priceGrossGrosze) || Math.round((Number(variant.retailPrice) || 0) * 100),
-    category_id: variant.categoryId ?? null,
-    image_url: variant.imageUrl ?? null,
-    in_stock: Number(variant.totalStockQty) || 0,
-    vat_rate: Number.isFinite(vatRate) && vatRate >= 0 ? vatRate : 23,
-    is_active: variant.isActive === false ? 0 : 1,
-    updated_at: variant.canonicalUpdatedAt ?? variant.updatedAt ?? null,
-    available_qty: Number(variant.availableQty) || 0,
-    sale_unit: saleUnit,
-    sell_by: variant.sellBy === 'WEIGHT' || saleUnitImpliesWeight(saleUnit) ? 'WEIGHT' : 'PIECE',
-    item_type: variant.itemType != null ? String(variant.itemType).toLowerCase() : null,
-    track_inventory: variant.trackInventory === false ? 0 : 1,
-    name_translations: variant.nameTranslations ? JSON.stringify(variant.nameTranslations) : null,
-  };
 }
 
 function productDisplayName(product: ProductListItem, language: Language): string {
@@ -416,7 +397,7 @@ function matchesProductKind(product: ProductListItem, filter: ProductKindFilter)
   }
 }
 
-export default function ProductModule({ language, openVariantId, onExitExternal, externalBackLabel }: ProductModuleProps) {
+export default function ProductModule({ language, openVariantId, openCreate = false, adminCapabilityScope, onCreatedForExternal, onAccessDeniedForExternal, onExitExternal, externalBackLabel }: ProductModuleProps) {
   const { t } = useTranslation(language);
   const { state: posState } = usePosStore();
   const {
@@ -451,7 +432,7 @@ export default function ProductModule({ language, openVariantId, onExitExternal,
     error: adminCapabilityError,
     loading: adminCapabilitiesLoading,
     retry: retryAdminCapabilities,
-  } = useProductAdminCapabilities();
+  } = useProductAdminCapabilities(true, adminCapabilityScope);
   const [toast, setToast] = useState<ProductModuleToast | null>(null);
   const [failedImports, setFailedImports] = useState<FailedLocalVariantImport[]>([]);
   const [failedImportsOpen, setFailedImportsOpen] = useState(false);
@@ -639,9 +620,23 @@ export default function ProductModule({ language, openVariantId, onExitExternal,
         ? `${tOr(t, 'products.create.success', 'Created')}: ${productDisplayName(createdProduct, language)}. ${outcome.warning}`
         : `${tOr(t, 'products.create.success', 'Created')}: ${productDisplayName(createdProduct, language)}`,
     });
-    await refresh();
+    if (onCreatedForExternal) {
+      // The server has already committed. First deliver its exact returned
+      // variant to the till and leave this overlay; catalogue refresh is only
+      // best-effort and must never hold the sale outcome hostage.
+      await onCreatedForExternal(variant);
+      void syncProducts().catch(() => undefined);
+      onExitExternal?.();
+      return;
+    }
+    await syncProducts();
     handleOpenProduct(createdProduct);
-  }, [handleOpenProduct, language, refresh, t]);
+  }, [handleOpenProduct, language, onCreatedForExternal, onExitExternal, syncProducts, t]);
+
+  useEffect(() => {
+    if (!openCreate) return;
+    if (adminCapabilities?.canCreateProduct === true) setCreateOpen(true);
+  }, [adminCapabilities?.canCreateProduct, openCreate]);
 
   const handleProductSaved = useCallback((product: ProductListItem, outcome: ProductSaveOutcome) => {
     if (outcome.vatChanged && selectedProductInCart) {
@@ -950,7 +945,7 @@ export default function ProductModule({ language, openVariantId, onExitExternal,
           onBack={returnFromEdit}
           onImportDraft={handleImportDraft}
           onManageCategories={() => setCategoryManagerOpen(true)}
-          onProductChanged={refresh}
+          onProductChanged={syncProducts}
           onProductSaved={handleProductSaved}
           onStockAdjusted={handleStockAdjusted}
           onProductDeactivated={handleProductDeactivated}
@@ -984,10 +979,17 @@ export default function ProductModule({ language, openVariantId, onExitExternal,
         initialCategoryId={createCategoryId}
         initialBarcode={createBarcode}
         supportsItemType={adminCapabilities?.supportsItemType === true}
+        canCreateProduct={adminCapabilities?.canCreateProduct === true}
         canViewPurchasePrice={adminCapabilities?.supportsPurchasePrice === true && adminCapabilities?.canViewPurchasePrice === true}
         canReplaceMainImage={adminCapabilities?.supportsMainImageUpload === true && adminCapabilities?.canReplaceMainImage === true}
         salonCode={adminCapabilities?.salonCode ?? null}
-        onClose={() => setCreateOpen(false)}
+        onClose={() => {
+          setCreateOpen(false);
+          // The Android POS opens this module only as a transient dialog host.
+          // Cancel must return to the till, never reveal the admin browse UI.
+          if (onCreatedForExternal) onExitExternal?.();
+        }}
+        onAccessDenied={onAccessDeniedForExternal}
         onCreated={handleCreatedProduct}
       />
 
