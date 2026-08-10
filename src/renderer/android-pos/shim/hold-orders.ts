@@ -24,7 +24,11 @@
 import {
   capturePosCheckoutSnapshot,
   currentPosSnapshotScope,
+  isActiveRestoredCartSnapshot,
+  isValidRestoredCartCheckoutJournal,
+  sameRestoredCartCheckoutIdentity,
   samePosSnapshotScope,
+  withoutRestoredInterruptionMarker,
   type PosSnapshotScope,
 } from '../../../shared/pos/billiard-pos-handoff';
 import {
@@ -35,12 +39,14 @@ import { PosAuthEpochGuard, type PosAuthContext } from '../../../shared/pos/pos-
 import type { AndroidDatabase } from './db/db';
 import { createHoldOrderRepo } from './db/hold-repo';
 import type { ShimConfigStore } from './config-store';
-import type { ShimPosStore } from './pos-store';
+import type { RestoredCartTransitionToken, ShimPosStore } from './pos-store';
 
 export interface HoldOrdersDeps {
   configStore: ShimConfigStore;
   posStore: ShimPosStore;
   db: () => Promise<AndroidDatabase>;
+  /** Same exclusive lane that owns restored-cart dispatch/persistence. */
+  runRestoredCartExclusive?: <T>(work: () => Promise<T>) => Promise<T>;
 }
 
 export interface HoldResult {
@@ -73,43 +79,95 @@ export function createHoldOrders(deps: HoldOrdersDeps) {
     },
 
     /** Park the live cart. pos.module.ts:5713-5786. */
-    async createCurrent(id: string, title: string): Promise<HoldResult> {
-      try {
+    createCurrent(id: string, title: string): Promise<HoldResult> {
+      let transitionToken: RestoredCartTransitionToken | null = null;
+      const work = async (): Promise<HoldResult> => {
+        try {
         const holdId = String(id || '').trim();
         if (!holdId) return { success: false, error: 'A hold id is required.' };
 
-        const state = deps.posStore.getState();
-        if (!state.cart.items.length) return { success: false, error: 'Cart is empty.' };
-        if (state.checkoutDraft?.billiard) {
+        const entry = deps.posStore.getState();
+        if (!entry.cart.items.length) return { success: false, error: 'Cart is empty.' };
+        if (entry.checkoutDraft?.billiard) {
           return { success: false, error: 'Frozen Billiard checkout cannot be held.' };
         }
-        if (state.checkoutDraft?.kitchenSelfOrder?.pickupOrderId) {
+        if (entry.checkoutDraft?.kitchenSelfOrder?.pickupOrderId) {
           return { success: false, error: 'Active kitchen pickup cannot be held.' };
-        }
-        if ((state.checkoutDraft as any)?.restoredInterruption) {
-          // The Windows counter validates a long list of safe-state conditions
-          // before it lets a restored interruption cart be re-held. That slice
-          // (beginRestoredTender + auto-restore) is not ported here, so the
-          // conditions cannot be checked — refuse rather than hold a cart whose
-          // ownership this build cannot reason about.
-          return { success: false, error: 'A restored interruption cart can only be held at the Windows counter.' };
         }
 
         const scope = scopeNow();
+        const entryRestored = entry.checkoutDraft.restoredInterruption;
+        const transitionSnapshot = entryRestored
+          ? withoutRestoredInterruptionMarker(
+              capturePosCheckoutSnapshot(entry, scope, posModeNow()),
+            )
+          : null;
+        if (entryRestored && transitionSnapshot) {
+          transitionToken = deps.posStore.acquireRestoredCartTransition(
+            entryRestored.holdId,
+            entryRestored.orderId,
+            entryRestored.clientAttemptId,
+            transitionSnapshot,
+          );
+          if (!transitionToken) {
+            return { success: false, error: 'Another restored-cart transition is already in progress.' };
+          }
+        }
         const authContext = authEpoch.capture(scope);
         const database = await deps.db();
         const repo = createHoldOrderRepo(database);
+        const state = deps.posStore.getState();
+        const restored = state.checkoutDraft.restoredInterruption;
+        const protectedHold = restored ? repo.get(restored.holdId) : null;
+        const restoredJournal = protectedHold?.payload?.restoredCheckout;
+        if (restored && (
+          state !== entry
+          || holdId === restored.holdId
+          || restored.persistenceError
+          || !protectedHold
+          || protectedHold.payload?.protected !== true
+          || protectedHold.payload?.holdReason !== 'BILLIARD_INTERRUPTION'
+          || protectedHold.payload?.restoreState !== 'ACTIVE_CART_BACKUP'
+          || !isValidRestoredCartCheckoutJournal(restoredJournal)
+          || !sameRestoredCartCheckoutIdentity(restored, restoredJournal)
+          || restoredJournal.state !== 'READY'
+          || !samePosSnapshotScope(protectedHold.payload.snapshot, scope)
+          || protectedHold.payload.snapshot.posMode !== posModeNow()
+          || !isActiveRestoredCartSnapshot(state, protectedHold.payload.snapshot)
+        )) {
+          return { success: false, error: 'This restored cart is not in a safe state to hold.' };
+        }
+        if (!isAuthCurrent(authContext)) {
+          return { success: false, error: 'POS user changed before the cart could be held.' };
+        }
 
         const payload = {
           schemaVersion: POS_CHECKOUT_SNAPSHOT_VERSION,
           holdReason: 'MANUAL' as const,
           protected: false,
-          snapshot: capturePosCheckoutSnapshot(state, scope, posModeNow()),
+          snapshot: transitionSnapshot ?? withoutRestoredInterruptionMarker(
+            capturePosCheckoutSnapshot(state, scope, posModeNow()),
+          ),
         };
 
+        if (restored) {
+          const latestProtected = repo.get(restored.holdId);
+          if (
+            !latestProtected
+            || !protectedHold
+            || JSON.stringify(latestProtected.payload) !== JSON.stringify(protectedHold.payload)
+          ) {
+            return { success: false, error: 'The protected restored-cart owner changed before re-hold.' };
+          }
+        }
+
         database.transaction(() => {
+          // Reserve one manual slot before writing this attempt. Pruning after
+          // upsert can delete the target itself when the caller reuses an old
+          // Hold id whose created_at sorts beyond the limit.
+          repo.prune(19);
           repo.upsert(holdId, String(title || '').trim() || 'Held cart', payload);
-          repo.prune();
+          if (restored) repo.remove(restored.holdId, true);
         });
 
         // Durability barrier. Until this succeeds the cart is NOT held.
@@ -122,25 +180,79 @@ export function createHoldOrders(deps: HoldOrdersDeps) {
         if (flushError) {
           try {
             repo.remove(holdId, true);
+            if (restored && protectedHold) {
+              const newerOwner = repo.get(protectedHold.id);
+              if (!newerOwner) repo.upsert(protectedHold.id, protectedHold.title, protectedHold.payload);
+            }
             await database.flush().catch(() => { /* best effort */ });
           } catch { /* the live cart is still on screen either way */ }
           return { success: false, error: `Held cart was not saved: ${flushError}` };
         }
 
-        if (!isAuthCurrent(authContext)) {
-          // The row is on disk and belongs to the previous cashier, who can
-          // recall it after signing back in. Do NOT clear the new user's screen.
-          return {
-            success: false,
-            error: 'POS user changed after the Hold was saved; the previous user can recall it after login.',
-          };
+        if (restored) {
+          const savedManual = repo.get(holdId);
+          const newerProtected = repo.get(restored.holdId);
+          if (
+            !savedManual
+            || savedManual.payload.protected === true
+            || JSON.stringify(savedManual.payload.snapshot) !== JSON.stringify(payload.snapshot)
+          ) {
+            return {
+              success: false,
+              error: 'The re-hold durability image changed before the live cart could be cleared.',
+            };
+          }
+          if (newerProtected) {
+            // Another trusted owner won the durable race. Remove only the manual
+            // row this attempt wrote; never delete or overwrite the newer owner.
+            repo.remove(holdId, true);
+            let rollbackDurabilityError: string | undefined;
+            try { await database.flush(); } catch (e: any) { rollbackDurabilityError = e?.message || String(e); }
+            return {
+              success: false,
+              error: 'A newer protected restored-cart owner replaced this re-hold attempt; the live cart was not cleared.',
+              rollbackDurabilityError,
+            };
+          }
+          if (!deps.posStore.clearRestoredCartAfterHold(
+            restored.holdId,
+            restored.orderId,
+            restored.clientAttemptId,
+            payload.snapshot,
+            transitionToken!,
+          )) {
+            return {
+              success: false,
+              error: 'The exact restored-cart transition could not clear its live owner; the durable manual Hold was preserved.',
+            };
+          }
+          // Even if logout/login advanced the auth epoch during flush, the
+          // opaque transition token proves no live mutation occurred and this
+          // exact snapshot is now durably owned by the manual Hold. Reporting
+          // success is truthful; leaving its restored marker would point at the
+          // protected row that the same durable image already removed.
+        } else {
+          if (!isAuthCurrent(authContext)) {
+            // Ordinary holds have no transition freeze proving the screen is
+            // still the exact cart that was saved. Keep the new session intact.
+            return {
+              success: false,
+              error: 'POS user changed after the Hold was saved; the previous user can recall it after login.',
+            };
+          }
+          deps.posStore.dispatch({ type: 'cart/clear' });
         }
-
-        deps.posStore.dispatch({ type: 'cart/clear' });
         return { success: true };
-      } catch (e: any) {
-        return { success: false, error: e?.message || String(e) };
-      }
+        } catch (e: any) {
+          return { success: false, error: e?.message || String(e) };
+        } finally {
+          if (transitionToken) {
+            deps.posStore.releaseRestoredCartTransition(transitionToken);
+            transitionToken = null;
+          }
+        }
+      };
+      return deps.runRestoredCartExclusive ? deps.runRestoredCartExclusive(work) : work();
     },
 
     /** Put a parked cart back on screen. pos.module.ts:5848-5921. */

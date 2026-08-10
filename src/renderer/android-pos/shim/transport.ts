@@ -186,7 +186,7 @@ export interface RemotePrinterStatus {
  */
 export interface ShimTransport {
   /** Explicit host-owned facts; renderer must not infer support from method names. */
-  runtimeCapabilities?: { loyaltyLookup?: boolean };
+  runtimeCapabilities?: { loyaltyLookup?: boolean; restoredCartTender?: boolean };
   /** Product/stock/category admin surface (E-PARITY-3, owner-only). */
   productAdmin?: ProductAdminSurface;
 
@@ -207,7 +207,24 @@ export interface ShimTransport {
   loyaltyLookupCustomer?(phone: string): Promise<PosLoyaltyLookupIpcResult>;
 
   /** CASH order create (local-first; S8 ports the exact DTO + order-sync). */
-  createOrder?(order: any, items: any[]): Promise<{ success: boolean; id?: string; error?: string }>;
+  createOrder?(order: any, items: any[]): Promise<{
+    success: boolean;
+    id?: string;
+    error?: string;
+    duplicate?: boolean;
+    paymentCommitted?: boolean;
+    outcomeUncertain?: boolean;
+    durabilityError?: string;
+    rollbackDurabilityError?: string;
+    restoredCartReconciliation?: unknown;
+    protectedInterruptionRecoveryRequired?: {
+      durable: boolean;
+      count: number;
+      holdId: string;
+      checkoutId?: string;
+      message: string;
+    };
+  }>;
   /** Order history (local + server) — S9. */
   getOrderHistory?(filters: any): Promise<{ orders: any[]; total: number; page: number; limit: number }>;
   getOrderDetail?(orderId: string): Promise<{ order: any; items: any[] } | null>;
@@ -300,6 +317,7 @@ export interface ShimTransport {
   /** Ordinary payment boundary — verifies the shift locally AND against the server. */
   paymentPreflight?(orderId: string): Promise<{ success: boolean; token?: string; expiresAt?: number; error?: string }>;
   billiardBeginTender?(checkoutId: string, paymentPreflightToken: string): Promise<any>;
+  billiardBeginRestoredTender?(holdId: string, paymentPreflightToken: string): Promise<any>;
   /** Settle the handoff once the order is committed locally. */
   billiardComplete?(checkoutId: string, orderId: string): Promise<any>;
   /** OWNER-only exit from an uncertain tender outcome. */
@@ -309,6 +327,8 @@ export interface ShimTransport {
   /** installShim hands over the POS store it owns; the handoff needs both it
    *  and the transport's platform signals. */
   attachPosStore?(posStore: unknown): void;
+  /** Route POS mutations through the protected restored-cart durability owner. */
+  posDispatch?(action: unknown): Promise<void>;
 
   /** Persist the serialized in-progress cart (Android crash/back-press survival). */
   posSnapshotSave?(json: string): Promise<void>;

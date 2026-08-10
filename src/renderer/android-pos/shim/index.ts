@@ -102,6 +102,7 @@ export function installShim(options: InstallShimOptions = {}): InstalledShim {
   const posNamespace = {
     getState: (): Promise<PosState> => Promise.resolve(posStore.getState()),
     dispatch: (action: PosAction): Promise<void> => {
+      if (transport.posDispatch) return transport.posDispatch(action);
       posStore.dispatch(action);
       return Promise.resolve();
     },
@@ -113,9 +114,8 @@ export function installShim(options: InstallShimOptions = {}): InstalledShim {
       clear: (): Promise<void> => Promise.resolve(transport.posSnapshotClear?.() ?? undefined),
     },
     // The billiard POS-handoff. A real transport carries the ported
-    // orchestration (shim/billiard-handoff.ts); the synthetic one does not, and
-    // its refusals below stay the fallback. `beginRestoredTender` has no
-    // Android implementation yet, so it refuses on BOTH transports.
+    // orchestration (shim/billiard-handoff.ts + restored-cart-handoff.ts); the
+    // synthetic one does not, and its refusals below stay the fallback.
     billiardCheckout: {
       preflight: async () => (transport.billiardPreflight
         ? transport.billiardPreflight()
@@ -132,10 +132,11 @@ export function installShim(options: InstallShimOptions = {}): InstalledShim {
       beginTender: async (checkoutId: string, token: string) => (transport.billiardBeginTender
         ? transport.billiardBeginTender(checkoutId, token)
         : { success: false, error: 'desktop-only' }),
-      beginRestoredTender: async () => ({
-        success: false,
-        error: 'Restored-cart tender is available on the Windows counter.',
-      }),
+      beginRestoredTender: async (holdId: string, token: string) => (
+        transport.billiardBeginRestoredTender
+          ? transport.billiardBeginRestoredTender(holdId, token)
+          : { success: false, error: 'Restored-cart tender requires the durable Android transport.' }
+      ),
       resolveUncertainTender: async (input: any) => (transport.billiardResolveUncertainTender
         ? transport.billiardResolveUncertainTender(input)
         : { success: false, error: 'desktop-only' }),
@@ -150,7 +151,10 @@ export function installShim(options: InstallShimOptions = {}): InstalledShim {
     shift: buildShiftNamespace(stubDeps),
     staff: buildStaffNamespace(stubDeps),
     sync: buildSyncNamespace(stubDeps),
-    runtimeCapabilities: Object.freeze({ loyaltyLookup: transport.runtimeCapabilities?.loyaltyLookup === true }),
+    runtimeCapabilities: Object.freeze({
+      loyaltyLookup: transport.runtimeCapabilities?.loyaltyLookup === true,
+      restoredCartTender: transport.runtimeCapabilities?.restoredCartTender === true,
+    }),
     ...buildExcludedPosNamespaces(stubDeps),
   };
 

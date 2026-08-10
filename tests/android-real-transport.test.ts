@@ -3,7 +3,15 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { createRealTransport } from '../src/renderer/android-pos/shim/real-transport';
 import { ShimConfigStore } from '../src/renderer/android-pos/shim/config-store';
 import { TokenStore, type TokenStoreStorage } from '../src/renderer/android-pos/shim/token-store';
-import type { AndroidDbInitOptions } from '../src/renderer/android-pos/shim/db/db';
+import { initAndroidDb, type AndroidDbInitOptions } from '../src/renderer/android-pos/shim/db/db';
+import { createHoldOrderRepo } from '../src/renderer/android-pos/shim/db/hold-repo';
+import { ShimPosStore } from '../src/renderer/android-pos/shim/pos-store';
+import {
+  buildBilliardInterruptionHoldPayload,
+  capturePosCheckoutSnapshot,
+  withRestoredInterruptionMarker,
+} from '../src/shared/pos/billiard-pos-handoff';
+import type { PosHoldPayload, RestoredCartCheckoutJournal } from '../src/shared/billiard-pos-handoff';
 
 /** Node-friendly sql.js load — mirrors tests/android-shim-db.test.ts. */
 const NODE_LOCATE_FILE = null;
@@ -39,7 +47,11 @@ const LOGIN_BODY = {
   },
 };
 
-function build(overrides: { seed?: Record<string, unknown>; dbInit?: AndroidDbInitOptions } = {}) {
+function build(overrides: {
+  seed?: Record<string, unknown>;
+  dbInit?: AndroidDbInitOptions;
+  agentConnection?: Parameters<typeof createRealTransport>[0]['agentConnection'];
+} = {}) {
   const configStore = new ShimConfigStore({
     storage: memoryStorage(),
     seed: overrides.seed as never,
@@ -53,7 +65,7 @@ function build(overrides: { seed?: Record<string, unknown>; dbInit?: AndroidDbIn
     // No-op agent: these auth/order tests use mockResolvedValueOnce sequences, so
     // the real login-time /print-agent/my-key fetch would desync them. The
     // login→connect→socket path is covered by tests/android-agent-connect.test.ts.
-    agentConnection: {
+    agentConnection: overrides.agentConnection ?? {
       connect: async () => ({ connected: false, reason: 'no-key' as const }),
       disconnect: async () => {},
       isConnected: () => false,
@@ -73,6 +85,45 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe('real transport restored-cart capability', () => {
+  test('advertises only the fully wired durable tender and exposes its boundary/recovery ports', () => {
+    const { transport } = build();
+    expect(transport.runtimeCapabilities).toMatchObject({ restoredCartTender: true });
+    expect(typeof transport.billiardBeginRestoredTender).toBe('function');
+    expect(typeof transport.billiardRecover).toBe('function');
+    expect(typeof transport.posDispatch).toBe('function');
+  });
+});
+
+describe('real transport POS snapshot durability', () => {
+  test('failed clear rejects and durably restores the ordinary snapshot; a later clear removes it', async () => {
+    let image: Uint8Array | null = null;
+    let failSaves = 0;
+    const persistence = {
+      loadImage: async () => image ? new Uint8Array(image) : null,
+      saveImage: async (next: Uint8Array) => {
+        if (failSaves > 0) {
+          failSaves -= 1;
+          throw new Error('snapshot clear disk failure');
+        }
+        image = new Uint8Array(next);
+      },
+      quarantineImage: async () => {},
+    };
+    const first = build({ dbInit: { locateFile: NODE_LOCATE_FILE, persistence } }).transport;
+    await first.posSnapshotSave!('{"owner":"ordinary-cart"}');
+    failSaves = 1;
+
+    await expect(first.posSnapshotClear!()).rejects.toThrow(/snapshot clear disk failure/i);
+    await expect(first.posSnapshotLoad!()).resolves.toBe('{"owner":"ordinary-cart"}');
+
+    const afterRestart = build({ dbInit: { locateFile: NODE_LOCATE_FILE, persistence } }).transport;
+    await expect(afterRestart.posSnapshotLoad!()).resolves.toBe('{"owner":"ordinary-cart"}');
+    await expect(afterRestart.posSnapshotClear!()).resolves.toBeUndefined();
+    await expect(afterRestart.posSnapshotLoad!()).resolves.toBeNull();
+  });
 });
 
 describe('real transport auth', () => {
@@ -248,6 +299,122 @@ describe('real transport auth', () => {
     // salonId survives (S1 §2.B: logout keeps the local mirror healthy for a
     // re-login to the same salon).
     expect(configStore.getRawConfig().salonId).toBe('salon-1');
+  });
+
+  test('delayed restored re-hold cannot cross logout and same-identity relogin', async () => {
+    let image: Uint8Array | null = null;
+    const persistence = {
+      loadImage: async () => image ? new Uint8Array(image) : null,
+      saveImage: async (next: Uint8Array) => { image = new Uint8Array(next); },
+      quarantineImage: async () => {},
+    };
+    const seedDb = await initAndroidDb({ locateFile: NODE_LOCATE_FILE, persistence });
+    const posStore = new ShimPosStore();
+    posStore.dispatch({
+      type: 'session/open',
+      payload: {
+        shiftId: 'shift-1', staffId: 'staff-1', staffName: 'Ala Nowak',
+        openedAt: '2026-08-10T08:00:00.000Z',
+      },
+    });
+    posStore.dispatch({
+      type: 'cart/addItem',
+      payload: {
+        id: 'line-1', variantId: 'variant-1', name: 'Gel', sku: 'GEL-1',
+        price: 2500, quantity: 1, total: 2500, vatRate: 23,
+      },
+    });
+    const scope = { salonId: 'salon-1', userId: 'staff-1', registerId: 'register-1' };
+    const snapshot = capturePosCheckoutSnapshot(posStore.getState(), scope, 'retail');
+    const journal: RestoredCartCheckoutJournal = {
+      orderId: 'restored-order-auth-boundary',
+      clientAttemptId: 'restored:restored-order-auth-boundary',
+      state: 'READY',
+      updatedAt: '2026-08-10T08:05:00.000Z',
+    };
+    const payload: PosHoldPayload = {
+      ...buildBilliardInterruptionHoldPayload({
+        snapshot,
+        checkoutId: 'checkout-auth-boundary',
+        sessionId: 'session-auth-boundary',
+      }),
+      restoreState: 'ACTIVE_CART_BACKUP',
+      restoredCheckout: journal,
+    };
+    createHoldOrderRepo(seedDb).upsert('protected-auth-boundary', 'Interrupted cart', payload);
+    await seedDb.flush();
+    posStore.dispatch({
+      type: 'state/replaceCheckoutSnapshot',
+      payload: {
+        snapshot: withRestoredInterruptionMarker(
+          snapshot,
+          'protected-auth-boundary',
+          'checkout-auth-boundary',
+          journal,
+        ),
+      },
+    });
+
+    let resolveLoad!: (value: Uint8Array | null) => void;
+    let signalLoad!: () => void;
+    const loadRequested = new Promise<void>((resolve) => { signalLoad = resolve; });
+    const delayedImage = new Promise<Uint8Array | null>((resolve) => { resolveLoad = resolve; });
+    const delayedPersistence = {
+      ...persistence,
+      loadImage: async () => { signalLoad(); return delayedImage; },
+    };
+    let releaseDisconnect!: () => void;
+    let signalDisconnect!: () => void;
+    const disconnectEntered = new Promise<void>((resolve) => { signalDisconnect = resolve; });
+    const disconnectGate = new Promise<void>((resolve) => { releaseDisconnect = resolve; });
+    const { configStore, transport } = build({
+      seed: {
+        salonId: scope.salonId,
+        registerCode: scope.registerId,
+        posMode: 'retail',
+        authUser: LOGIN_BODY.user,
+      },
+      dbInit: { locateFile: NODE_LOCATE_FILE, persistence: delayedPersistence },
+      agentConnection: {
+        connect: async () => ({ connected: false, reason: 'no-key' as const }),
+        disconnect: async () => { signalDisconnect(); await disconnectGate; },
+        isConnected: () => false,
+        getPushedJobStatus: () => null,
+        onJobStatus: () => () => {},
+      },
+    });
+    transport.attachPosStore!(posStore);
+
+    const rehold = transport.holdCreateCurrent!('manual-auth-boundary', 'Must not land');
+    await loadRequested;
+    const logout = transport.logout!();
+    await disconnectEntered;
+
+    // Let the old durable work resume while production-like SecureKV teardown
+    // is still blocked. Logout must already have advanced the Hold epoch.
+    resolveLoad(image ? new Uint8Array(image) : null);
+    await expect(rehold).resolves.toMatchObject({
+      success: false,
+      error: expect.stringMatching(/user changed/i),
+    });
+    releaseDisconnect();
+    await expect(logout).resolves.toEqual({ success: true });
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(LOGIN_BODY));
+    const relogin = await transport.loginWithEmail!('staff@salon.pl', 'pw');
+    expect(relogin).toMatchObject({ success: true });
+    expect(configStore.getRawConfig().authUser?.id).toBe('staff-1');
+    const reopened = await initAndroidDb({ locateFile: NODE_LOCATE_FILE, persistence });
+    expect(createHoldOrderRepo(reopened).get('manual-auth-boundary')).toBeNull();
+    expect(createHoldOrderRepo(reopened).get('protected-auth-boundary')?.payload.restoredCheckout.state)
+      .toBe('READY');
+    expect(posStore.getState().cart.items[0].quantity).toBe(1);
+    expect(posStore.getState().checkoutDraft.restoredInterruption?.holdId)
+      .toBe('protected-auth-boundary');
+
+    // The refused re-hold released its transition lock.
+    posStore.dispatch({ type: 'cart/updateQuantity', payload: { id: 'line-1', quantity: 2 } });
+    expect(posStore.getState().cart.items[0].quantity).toBe(2);
   });
 });
 

@@ -66,6 +66,10 @@ import { createAgentConnection, type AgentConnection } from './agent-connect';
 import { createProductAdminSurface } from './product-admin';
 import { createBilliardTransport } from './billiard-transport';
 import { createBilliardHandoff, type AndroidBilliardHandoff } from './billiard-handoff';
+import {
+  createRestoredCartHandoff,
+  type PreparedRestoredOrderCommit,
+} from './restored-cart-handoff';
 import { createHoldOrders, type AndroidHoldOrders } from './hold-orders';
 import { createBilliardHandoffRepo } from './db/billiard-handoff-repo';
 import { createEntitlementsController } from './entitlements';
@@ -698,13 +702,14 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         // Any in-flight handoff work belongs to the dead session — abandon it
         // so a late resolve cannot land under the next cashier.
         handoff?.invalidateAuth();
+        restoredHandoff?.invalidateAuth();
+        holds?.invalidateAuth();
         // Tenant boundary: drop the cached plan too, so the next login cannot
         // inherit the dead session's feature flags (and its persisted record is
         // removed from storage).
         entitlements.clear();
         orderDrain.stop();
         shiftConsistency.reset();
-        holds?.invalidateAuth();
         for (const cb of [...expiredListeners]) {
           try { cb(); } catch { /* a listener throwing must not break others */ }
         }
@@ -811,13 +816,36 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
     syncStaff: () => transport.syncStaff?.() ?? Promise.resolve({ success: false, error: 'unsupported' }),
   });
   let handoff: AndroidBilliardHandoff | null = null;
+  let restoredHandoff: ReturnType<typeof createRestoredCartHandoff> | null = null;
   let holds: AndroidHoldOrders | null = null;
   /** Same lazy seam as the billiard handoff: no pos store attached yet → refuse
    *  rather than pretend, because a hold without the live cart is meaningless. */
   const holdOrders = (): AndroidHoldOrders | null => {
     if (!attachedPosStore) return null;
-    if (!holds) holds = createHoldOrders({ configStore, posStore: attachedPosStore, db });
+    if (!holds) {
+      holds = createHoldOrders({
+        configStore,
+        posStore: attachedPosStore,
+        db,
+        runRestoredCartExclusive: (work) => restoredCartHandoff()?.runExclusive(work) ?? work(),
+      });
+    }
     return holds;
+  };
+  const restoredCartHandoff = () => {
+    if (!attachedPosStore) return null;
+    if (!restoredHandoff) {
+      restoredHandoff = createRestoredCartHandoff({
+        configStore,
+        posStore: attachedPosStore,
+        db,
+        assertServerShiftConsistent: async () => {
+          await verifyServerShift();
+          shiftConsistency.assertConsistent();
+        },
+      });
+    }
+    return restoredHandoff;
   };
   const billiardHandoff = (): AndroidBilliardHandoff | null => {
     if (!attachedPosStore) return null;
@@ -837,6 +865,11 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
           await verifyServerShift();
           shiftConsistency.assertConsistent();
         },
+        restoredCartRecoveryAvailable: true,
+        stageRestoredCartAfterCommit: (database, record, scope) =>
+          restoredCartHandoff()?.stageAfterBilliardCommit(database, record, scope) ?? null,
+        activateStagedRestoredCart: (staged) =>
+          restoredCartHandoff()?.activateStaged(staged) ?? false,
       });
     }
     return handoff;
@@ -916,7 +949,7 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
   };
 
   transport = {
-    runtimeCapabilities: Object.freeze({ loyaltyLookup: true }),
+    runtimeCapabilities: Object.freeze({ loyaltyLookup: true, restoredCartTender: true }),
     // ── Billiard (Bi-a) online-only (T4) — reads + 10s poll, direct mutate,
     //    allowlisted apiCall. Spread in (no key collides with the ports below).
     ...billiard,
@@ -938,11 +971,8 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
      * so the one thing this gate exists to catch — a shift the server no longer
      * considers open — sailed straight through.
      *
-     * The returned token is a SUCCESS SIGNAL, not a capability: PaymentModal
-     * refuses to tender without one. Nothing validates the ordinary token later
-     * (true on Windows too), so there is deliberately no write-only registry
-     * here; the billiard tender path has its own registry and does validate,
-     * in billiard-handoff.ts.
+     * A restored cart additionally binds this token to its durable journal,
+     * auth epoch and shift before READY can cross to TENDER_COMMITTING.
      */
     async paymentPreflight(orderId: string): Promise<{ success: boolean; token?: string; expiresAt?: number; error?: string }> {
       try {
@@ -971,10 +1001,18 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
           return { success: false, error: 'The POS shift changed while payment safety was being verified.' };
         }
 
+        const token = `pf-${(globalThis as any).crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+        const expiresAt = Date.now() + 15 * 60 * 1000;
+        restoredCartHandoff()?.registerPaymentPreflight({
+          token,
+          orderId: normalizedOrderId,
+          shiftId: verifiedShift.id,
+          expiresAt,
+        });
         return {
           success: true,
-          token: `pf-${(globalThis as any).crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`,
-          expiresAt: Date.now() + 15 * 60 * 1000,
+          token,
+          expiresAt,
         };
       } catch (e: any) {
         return { success: false, error: e?.message || String(e) };
@@ -989,14 +1027,36 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
     holdRemove: async (id: string) =>
       holdOrders()?.remove(id) ?? { success: false, error: 'POS is not ready.' },
     attachPosStore(posStore: unknown) { attachedPosStore = posStore as ShimPosStore; },
+    posDispatch: async (action: unknown) => {
+      const owner = restoredCartHandoff();
+      if (!owner) throw new Error('POS is not ready.');
+      await owner.dispatchPosAction(action as any);
+    },
     billiardPreflight: async () => billiardHandoff()?.preflight() ?? NO_HANDOFF,
     billiardPrepare: async (input) => billiardHandoff()?.prepare(input) ?? NO_HANDOFF,
-    billiardRecover: async () => billiardHandoff()?.recover() ?? NO_HANDOFF,
+    billiardRecover: async () => {
+      const billiardResult: any = await (billiardHandoff()?.recover() ?? NO_HANDOFF);
+      if (!billiardResult?.success || (billiardResult.intent && !billiardResult.paymentCommitted)) {
+        return billiardResult;
+      }
+      const restoredResult = await (restoredCartHandoff()?.recover()
+        ?? { success: false, restoredCart: false, error: 'POS is not ready.' });
+      return { ...billiardResult, ...restoredResult, intent: billiardResult.intent ?? null };
+    },
     billiardMarkPaymentOpened: async (checkoutId) => billiardHandoff()?.markPaymentOpened(checkoutId) ?? NO_HANDOFF,
     billiardBeginTender: async (checkoutId, token) => billiardHandoff()?.beginTender(checkoutId, token) ?? NO_HANDOFF,
+    billiardBeginRestoredTender: async (holdId, token) => restoredCartHandoff()?.beginTender(holdId, token) ?? NO_HANDOFF,
     billiardComplete: async (checkoutId, orderId) => billiardHandoff()?.complete(checkoutId, orderId) ?? NO_HANDOFF,
-    billiardResolveUncertainTender: async (input) => billiardHandoff()?.resolveUncertainTender(input as any) ?? NO_HANDOFF,
-    billiardInvalidateAuth: () => { handoff?.invalidateAuth(); },
+    billiardResolveUncertainTender: async (input) => (
+      (input as any)?.target?.type === 'RESTORED_CART'
+        ? restoredCartHandoff()?.resolveUncertainTender(input as any) ?? NO_HANDOFF
+        : billiardHandoff()?.resolveUncertainTender(input as any) ?? NO_HANDOFF
+    ),
+    billiardInvalidateAuth: () => {
+      handoff?.invalidateAuth();
+      restoredHandoff?.invalidateAuth();
+      holds?.invalidateAuth();
+    },
 
     // ── Auth (S1 §2.B) ─────────────────────────────────────────────────────
     async loginWithEmail(email, password): Promise<ShimLoginResult> {
@@ -1009,6 +1069,12 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         if (!authUser.salonId) {
           return { success: false, error: 'Login response missing salon id' };
         }
+        // A validated login response starts a new auth epoch immediately,
+        // before any tenant-wipe/token/config await. Even the same identity
+        // strings represent a new session; no earlier durable task may land.
+        handoff?.invalidateAuth();
+        restoredHandoff?.invalidateAuth();
+        holds?.invalidateAuth();
         // Tenant switch: if a DIFFERENT salon was previously bound to this
         // device, wipe its local mirror before adopting the new identity —
         // otherwise the cashier could sell the previous salon's catalog or sync
@@ -1138,6 +1204,12 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
     },
 
     async logout() {
+      // Invalidate synchronously before the first await. The real agent
+      // disconnect clears its SecureKV pairing key asynchronously; durable POS
+      // work from this session must not land while that teardown is pending.
+      handoff?.invalidateAuth();
+      restoredHandoff?.invalidateAuth();
+      holds?.invalidateAuth();
       // E-PARITY-1: tear down the print-agent socket + drop the pa_ key before
       // clearing the session (mirror Windows disconnect-on-logout).
       await agentConnection.disconnect();
@@ -1145,7 +1217,6 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
       // teardown path (T4) — the 10s background refresh must not outlive the
       // session.
       billiard.dispose();
-      handoff?.invalidateAuth();
       // Drop the cached plan: the next login may be a different salon, and its
       // tabs must be decided by ITS entitlements, never the previous session's.
       entitlements.clear();
@@ -1261,9 +1332,44 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
 
     // ── Orders: CASH create + push (S8 — ported pos.module.ts:3053-3121 and
     //    order-sync.ts:97-292) ─────────────────────────────────────────────
-    async createOrder(order: any, items: any[]): Promise<{ success: boolean; id?: string; error?: string }> {
+    async createOrder(order: any, items: any[]): Promise<{
+      success: boolean;
+      id?: string;
+      error?: string;
+      duplicate?: boolean;
+      paymentCommitted?: boolean;
+      outcomeUncertain?: boolean;
+      durabilityError?: string;
+      rollbackDurabilityError?: string;
+      restoredCartReconciliation?: unknown;
+      protectedInterruptionRecoveryRequired?: {
+        durable: boolean;
+        count: number;
+        holdId: string;
+        checkoutId?: string;
+        message: string;
+      };
+    }> {
+      let preparedRestored: PreparedRestoredOrderCommit | null = null;
+      let activeDatabase: AndroidDatabase | null = null;
+      let activeRestoredOwner: ReturnType<typeof createRestoredCartHandoff> | null = null;
+      let activeBilliardOwner: AndroidBilliardHandoff | null = null;
+      const classifyCrossedTenderFailure = async (message: string) => {
+        const restoredOwner = activeRestoredOwner ?? restoredCartHandoff();
+        const restoredUncertain = await restoredOwner?.classifyActiveCommittingFailure(activeDatabase, message);
+        if (restoredUncertain) return restoredUncertain;
+        const billiardOwner = activeBilliardOwner ?? billiardHandoff();
+        return billiardOwner?.classifyActiveCommittingFailure(activeDatabase, message) ?? null;
+      };
+      const failAfterCrossedTenderBoundary = async (message: string) => {
+        const uncertain = await classifyCrossedTenderFailure(message);
+        return uncertain ?? { success: false, error: message };
+      };
       try {
         const database = await db();
+        activeDatabase = database;
+        activeRestoredOwner = restoredCartHandoff();
+        activeBilliardOwner = billiardHandoff();
         const orderRepo = createOrderRepo(database);
         const productRepo = createProductRepo(database);
         const normalizedOrder = { ...(order || {}) };
@@ -1272,7 +1378,9 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         // create with the same client order id returns the existing order
         // instead of throwing a PK violation — otherwise the renderer would
         // re-ring under a new id and double-charge the customer.
-        if (normalizedOrder.id && orderRepo.getById(normalizedOrder.id)) {
+        const existingAtEntry = normalizedOrder.id ? orderRepo.getById(normalizedOrder.id) : null;
+        const hasRestoredOwner = !!attachedPosStore?.getState().checkoutDraft.restoredInterruption;
+        if (existingAtEntry && !hasRestoredOwner) {
           if (durabilityFailedOrders.has(normalizedOrder.id)) {
             return {
               success: false,
@@ -1289,7 +1397,7 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         // is accepted on the same basis as Windows — see assertTenderAllowed +
         // the owner decision recorded in EXPANSION_PLAN_2026-07-19.md.
         const tenderError = assertTenderAllowed(normalizedOrder);
-        if (tenderError) return { success: false, error: tenderError };
+        if (tenderError) return failAfterCrossedTenderBoundary(tenderError);
 
         const isPosOrder = (normalizedOrder.source ?? 'POS') === 'POS';
         if (isPosOrder) {
@@ -1305,11 +1413,15 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
           }
           const requestedShiftId = String(normalizedOrder.shift_id || '').trim();
           if (!requestedShiftId || !String(normalizedOrder.staff_id || '').trim() || !String(normalizedOrder.staff_name || '').trim()) {
-            return { success: false, error: 'Cannot create POS order without an active shift staff. Close and reopen the shift before payment.' };
+            return failAfterCrossedTenderBoundary(
+              'Cannot create POS order without an active shift staff. Close and reopen the shift before payment.',
+            );
           }
           const orderShift = orderRepo.getOpenShiftById(requestedShiftId);
           if (!orderShift) {
-            return { success: false, error: 'Cannot create POS order without a local active shift. Close and reopen the shift before payment.' };
+            return failAfterCrossedTenderBoundary(
+              'Cannot create POS order without a local active shift. Close and reopen the shift before payment.',
+            );
           }
           normalizedOrder.shift_id = orderShift.id;
           normalizedOrder.staff_id = orderShift.staff_id;
@@ -1340,6 +1452,35 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
             total: getLineTotalGrosze({ ...item, price, quantity: sale_quantity, sale_quantity, sell_by }),
           };
         });
+
+        const restoredOwner = activeRestoredOwner;
+        preparedRestored = restoredOwner?.prepareOrderCommitWithDatabase(
+          database,
+          normalizedOrder,
+          normalizedItems,
+        ) ?? null;
+
+        // A retry after the order row crossed disk but before the protected
+        // Hold tombstone did is not an ordinary duplicate. Verify the entire
+        // financial snapshot, write PAID_TOMBSTONE, and cross one durability
+        // barrier before the renderer may clear or report completion.
+        const existing = normalizedOrder.id ? orderRepo.getById(normalizedOrder.id) : null;
+        if (existing) {
+          if (!preparedRestored) return { success: true, id: normalizedOrder.id, duplicate: true };
+          restoredOwner!.verifyExistingOrder(database, preparedRestored);
+          restoredOwner!.tombstoneOrderBeforeFlush(database, preparedRestored);
+          try {
+            await database.flush();
+          } catch (e: any) {
+            return restoredOwner!.markOrderFailureUncertain(
+              database,
+              preparedRestored,
+              `The paid restored cart could not save its tombstone: ${e?.message || String(e)}`,
+            );
+          }
+          restoredOwner!.markOrderCommittedInLive(preparedRestored);
+          return { success: true, id: normalizedOrder.id, duplicate: true, paymentCommitted: true };
+        }
 
         const id = orderRepo.create(normalizedOrder, normalizedItems);
 
@@ -1394,6 +1535,12 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
           }
         }
 
+        // Same in-memory transaction image as the order and stock changes.
+        // SQL.js export/replace is the single atomic durability barrier.
+        if (preparedRestored) {
+          restoredOwner!.tombstoneOrderBeforeFlush(database, preparedRestored);
+        }
+
         // Paid orders must survive a crash — flush immediately (order-repo.ts:249-250).
         // This is the durability barrier: until it succeeds the sale is NOT
         // recorded, so a swallowed failure would tell the cashier a paid order
@@ -1408,6 +1555,21 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         }
 
         if (flushError) {
+          if (preparedRestored) {
+            // Never perform the ordinary rollback after a restored tender
+            // crossed COMMITTING. Classify the ambiguous order/tombstone image
+            // as UNCERTAIN; live clear remains locked until a later verified
+            // recovery/owner decision.
+            return restoredOwner!.markOrderFailureUncertain(
+              database,
+              preparedRestored,
+              `The order/tombstone durability barrier failed: ${flushError}`,
+            );
+          }
+          const billiardUncertain = await classifyCrossedTenderFailure(
+            `The Billiard order durability barrier failed: ${flushError}`,
+          );
+          if (billiardUncertain) return billiardUncertain;
           // Undo the whole create in memory: the order rows go away and every
           // captured variant row is written back verbatim (see stockSnapshot).
           let rollbackDurabilityError: string | undefined;
@@ -1449,9 +1611,34 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         // no-ops when the board is absent, so it can never break the sale.
         // Success path only — a rolled-back order must not touch the board.
         void syncNailTurnCheckoutForOrder(normalizedOrder, normalizedItems);
-        return { success: true, id };
+        if (preparedRestored) restoredOwner!.markOrderCommittedInLive(preparedRestored);
+        return { success: true, id, ...(preparedRestored ? { paymentCommitted: true } : {}) };
       } catch (e: any) {
-        return { success: false, error: e?.message || String(e) };
+        if (activeDatabase && preparedRestored) {
+          const owner = restoredCartHandoff();
+          const existing = createOrderRepo(activeDatabase).getById(preparedRestored.journal.orderId);
+          if (owner && existing) {
+            try {
+              owner.verifyExistingOrder(activeDatabase, preparedRestored);
+              owner.tombstoneOrderBeforeFlush(activeDatabase, preparedRestored);
+              await activeDatabase.flush();
+              owner.markOrderCommittedInLive(preparedRestored);
+              return {
+                success: false,
+                id: preparedRestored.journal.orderId,
+                paymentCommitted: true,
+                error: `Payment is recorded locally, but checkout completion failed: ${e?.message || String(e)}`,
+              };
+            } catch (recoveryError: any) {
+              return owner.markOrderFailureUncertain(
+                activeDatabase,
+                preparedRestored,
+                recoveryError?.message || e?.message || String(e),
+              );
+            }
+          }
+        }
+        return failAfterCrossedTenderBoundary(e?.message || String(e));
       }
     },
 
@@ -1550,11 +1737,22 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
       }
     },
     async posSnapshotClear(): Promise<void> {
+      const database = await db();
+      const snapshots = createPosSnapshotRepo(database);
+      const previous = snapshots.load(POS_SNAPSHOT_CART_KEY);
+      snapshots.clear(POS_SNAPSHOT_CART_KEY);
       try {
-        const database = await db();
-        createPosSnapshotRepo(database).clear(POS_SNAPSHOT_CART_KEY);
         await database.flush();
-      } catch { /* best-effort */ }
+      } catch (clearError) {
+        // A protected boot must be able to distinguish "deleted from the
+        // in-memory sql.js image" from "durably absent on disk". Restore the
+        // prior ordinary snapshot in memory and across a compensating barrier,
+        // then reject so boot never arms its writer or hydrates stale data.
+        if (previous == null) snapshots.clear(POS_SNAPSHOT_CART_KEY);
+        else snapshots.save(POS_SNAPSHOT_CART_KEY, previous);
+        try { await database.flush(); } catch { /* original clear failure remains authoritative */ }
+        throw clearError;
+      }
     },
 
     async getOrderHistory(filters: any): Promise<{ orders: any[]; total: number; page: number; limit: number }> {

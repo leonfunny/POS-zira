@@ -26,7 +26,7 @@ import type {
   BilliardPaymentIntent,
   RestoredCartReconciliation,
 } from '../../shared/billiard-pos-handoff';
-import type { ProtectedInterruptionRecoveryRequired } from './shim/billiard-handoff';
+import type { ProtectedInterruptionRecoveryRequired } from './shim/restored-cart-handoff';
 import { STORAGE_AT_RISK_MESSAGE, getStorageDurability } from './shim/storage-durability';
 import {
   RUNTIME_ONLY_POS_CAPABILITY_POLICY_INPUTS,
@@ -78,7 +78,10 @@ export default function AndroidBootApp() {
   const [capabilityUser, setCapabilityUser] = useState<any>(null);
   const [capabilityConfig, setCapabilityConfig] = useState<any>(null);
   const [capabilityEntitlements, setCapabilityEntitlements] = useState<any>(null);
-  const [capabilityRuntime, setCapabilityRuntime] = useState({ loyaltyLookup: false });
+  const [capabilityRuntime, setCapabilityRuntime] = useState({
+    loyaltyLookup: false,
+    restoredCartTender: false,
+  });
   const [capabilityConfigSignal, setCapabilityConfigSignal] = useState(0);
   // Guards every async handoff result: a response that belongs to a previous
   // cashier must not land in this one's screen.
@@ -110,6 +113,19 @@ export default function AndroidBootApp() {
   const registerId = capabilityConfig?.registerCode
     || capabilityConfig?.machineId
     || capabilityConfig?.agentId;
+  const bootIdentityKey = state === 'pos'
+    && capabilityConfig
+    && capabilityUser?.id
+    && (capabilityConfig?.salonId || capabilityUser?.salonId)
+    && registerId
+    ? JSON.stringify([
+        capabilityConfig?.salonId || capabilityUser?.salonId,
+        capabilityUser.id,
+        registerId,
+        authRevisionRef.current.value,
+        capabilityConfigSignal,
+      ])
+    : '';
   const posCapabilityHost = useMemo<PosCapabilityHost>(() => ({
     session: {
       authenticated: state === 'pos',
@@ -123,7 +139,18 @@ export default function AndroidBootApp() {
       platformRevision: capabilityRevision(capabilityRuntime),
     },
     policyInputs: RUNTIME_ONLY_POS_CAPABILITY_POLICY_INPUTS,
-    resolvePlatformManifest: (identity) => resolveAndroidPosCapabilityManifest(identity, capabilityRuntime),
+    resolvePlatformManifest: (identity) => {
+      const manifest = resolveAndroidPosCapabilityManifest(identity, capabilityRuntime);
+      return capabilityRuntime.restoredCartTender
+        ? {
+            ...manifest,
+            outcomes: {
+              ...manifest.outcomes,
+              restoredCartTender: { state: 'supported' as const, reasonCode: 'AVAILABLE' },
+            },
+          }
+        : manifest;
+    },
   }), [
     capabilityConfig?.salonId,
     capabilityConfigSignal,
@@ -168,7 +195,7 @@ export default function AndroidBootApp() {
       setCapabilityUser(null);
       setCapabilityConfig(null);
       setCapabilityEntitlements(null);
-      setCapabilityRuntime({ loyaltyLookup: false });
+      setCapabilityRuntime({ loyaltyLookup: false, restoredCartTender: false });
       setState('login');
     });
     return () => {
@@ -189,87 +216,11 @@ export default function AndroidBootApp() {
 
   useEffect(() => {
     if (state !== 'pos') return;
-    const api = (window as any).electronAPI;
-    setCapabilityRuntime({ loyaltyLookup: api.pos?.runtimeCapabilities?.loyaltyLookup === true });
-    let cancelledSnapshot = false;
-    let unsubscribeSnapshot: (() => void) | null = null;
-    let snapshotTimer: ReturnType<typeof setTimeout> | null = null;
-    // Restore the open-shift session after a restart: the local shift row
-    // survives but the in-memory POS store starts empty, so re-dispatch
-    // session/open (the Windows main process does this at boot). Without it the
-    // cashier would have to close+reopen the shift to unlock payments.
-    Promise.resolve(api.pos.shift.getActive())
-      .then(async (active: any) => {
-        const current = await api.pos.getState();
-        if (active?.success && active.shift?.id && !current?.session?.isOpen) {
-          await api.pos.dispatch({
-            type: 'session/open',
-            payload: {
-              shiftId: active.shift.id,
-              staffId: active.shift.staff_id,
-              staffName: active.shift.staff_name,
-              openedAt: active.shift.opened_at,
-            },
-          });
-        }
-      })
-      .catch(() => { /* no active shift / offline boot is fine */ });
-    // Fire-and-forget catalog sync after an authenticated mount (S1 §2.E). The
-    // sync worker no-ops with {success:false, error:'no-auth'} when tokens are
-    // missing, so this is safe on every entry into the POS state.
-    // Restore a cart abandoned by a back-press exit or an OS kill, THEN start
-    // writing snapshots. The order matters: arming the writer first would let
-    // the shift restore's `session/open` broadcast persist an empty cart over
-    // the saved one before it had been read.
-    void (async () => {
-      try {
-        const json = await api.pos.snapshot.load();
-        const parsed = json ? JSON.parse(json) : null;
-        const current = await api.pos.getState();
-        // A cart already in memory wins — never clobber live work with a snapshot.
-        if (parsed?.cart?.items?.length && !current?.cart?.items?.length) {
-          await api.pos.dispatch({
-            type: 'cart/hydrate',
-            payload: {
-              cart: parsed.cart,
-              checkoutDraft: parsed.checkoutDraft ?? {},
-              activeTable: parsed.activeTable ?? null,
-              activeCustomer: parsed.activeCustomer ?? null,
-              tip: parsed.tip ?? 0,
-            },
-          });
-        }
-      } catch { /* a corrupt snapshot must not block boot */ }
-
-      if (cancelledSnapshot) return;
-      // Debounced 400ms so a burst of quantity taps writes once. The transport
-      // flushes the SQLite image on each write, so the cart survives a
-      // back-press exit or an OS background kill.
-      //
-      // A frozen billiard checkout is NOT snapshotted: it is owned by the
-      // durable handoff journal and restored by its own recover() path.
-      unsubscribeSnapshot = api.pos.onStateChanged((next: any) => {
-        if (next?.checkoutDraft?.billiard) return;
-        if (snapshotTimer) clearTimeout(snapshotTimer);
-        snapshotTimer = setTimeout(() => {
-          snapshotTimer = null;
-          void api.pos.snapshot.save(JSON.stringify({
-            cart: next.cart,
-            checkoutDraft: next.checkoutDraft,
-            activeTable: next.activeTable ?? null,
-            activeCustomer: next.activeCustomer ?? null,
-            tip: next.tip ?? 0,
-          }));
-        }, 400);
-      });
-    })();
-
-    Promise.resolve(api.pos.sync.products()).catch(() => { /* offline boot is fine */ });
-    return () => {
-      cancelledSnapshot = true;
-      if (snapshotTimer) clearTimeout(snapshotTimer);
-      unsubscribeSnapshot?.();
-    };
+    const runtime = (window as any).electronAPI.pos?.runtimeCapabilities;
+    setCapabilityRuntime({
+      loyaltyLookup: runtime?.loyaltyLookup === true,
+      restoredCartTender: runtime?.restoredCartTender === true,
+    });
   }, [state]);
 
   // Resolve the billiard entitlement + POS language once we reach the POS
@@ -285,7 +236,7 @@ export default function AndroidBootApp() {
       setCapabilityUser(null);
       setCapabilityConfig(null);
       setCapabilityEntitlements(null);
-      setCapabilityRuntime({ loyaltyLookup: false });
+      setCapabilityRuntime({ loyaltyLookup: false, restoredCartTender: false });
       setIsOwner(false);
       setCanOpenSettings(false);
       return;
@@ -366,50 +317,147 @@ export default function AndroidBootApp() {
     }
   }, [canOpenSettings, mode]);
 
-  // Crash/login recovery. The handoff only returns an intent once it has
-  // activated the exact frozen cart (or verified its order is committed), so
-  // this just puts the answer on screen. Mirrors App.tsx:189-224.
+  // One cancellable boot orchestrator owns every local-cart source. Protected
+  // recovery always wins; ordinary snapshot hydration/writes cannot race it.
   useEffect(() => {
-    if (state !== 'pos') {
+    if (!bootIdentityKey) {
       setBilliardPaymentIntent(null);
       setRestoredCartReconciliation(null);
       setProtectedInterruptionRecoveryRequired(null);
       return;
     }
-    // Never show another cashier/salon's diagnostic while this session's
-    // durable recovery scan is still in flight. Clear every recovery-owned UI
-    // value together so an intent from the previous cashier cannot coexist
-    // with a new fail-closed diagnostic.
     setBilliardPaymentIntent(null);
     setRestoredCartReconciliation(null);
     setProtectedInterruptionRecoveryRequired(null);
     const api = (window as any).electronAPI;
     const generation = ++billiardGenerationRef.current;
     let cancelled = false;
-    // Optional-chained on purpose: a boot effect must not be able to white-screen
-    // the app because one namespace is absent. The shim always provides it.
-    const recovering = api.pos.billiardCheckout?.recover?.();
-    if (!recovering) return;
-    void recovering.then((result: any) => {
-      if (cancelled || generation !== billiardGenerationRef.current) return;
-      const recoveryRequired = result?.protectedInterruptionRecoveryRequired ?? null;
-      setProtectedInterruptionRecoveryRequired(recoveryRequired);
-      if (recoveryRequired) {
-        setBilliardPaymentIntent(null);
-        setRestoredCartReconciliation(null);
-        switchMode('pos');
+    let unsubscribeSnapshot: (() => void) | null = null;
+    let snapshotTimer: ReturnType<typeof setTimeout> | null = null;
+    const isCurrent = () => !cancelled && generation === billiardGenerationRef.current;
+
+    void (async () => {
+      // 1/2. Identity/config is represented by bootIdentityKey. Restore the
+      // local shift before any payment owner is classified.
+      const active = await api.pos.shift.getActive().catch(() => null);
+      if (!isCurrent()) return;
+      const beforeRecovery = await api.pos.getState();
+      if (!isCurrent()) return;
+      if (active?.success && active.shift?.id && !beforeRecovery?.session?.isOpen) {
+        await api.pos.dispatch({
+          type: 'session/open',
+          payload: {
+            shiftId: active.shift.id,
+            staffId: active.shift.staff_id,
+            staffName: active.shift.staff_name,
+            openedAt: active.shift.opened_at,
+          },
+        });
       }
-      setRestoredCartReconciliation(result?.restoredCartReconciliation ?? null);
-      if (result?.restoredCartReconciliation) switchMode('pos');
-      if (!result?.success) return;
-      setBilliardPaymentIntent(result.intent ? (result.intent as BilliardPaymentIntent) : null);
-      if (result.intent) switchMode('pos');
-    }).catch(() => { /* recovery is best-effort; the journal survives */ });
+      if (!isCurrent()) return;
+
+      // 3. Billiard + restored protected Hold recovery is one transport call.
+      if (typeof api.pos.billiardCheckout?.recover !== 'function') return;
+      const result = await api.pos.billiardCheckout.recover();
+      if (!isCurrent()) return;
+      const recoveryRequired = result?.protectedInterruptionRecoveryRequired ?? null;
+      const reconciliation = result?.restoredCartReconciliation ?? null;
+      setProtectedInterruptionRecoveryRequired(recoveryRequired);
+      setRestoredCartReconciliation(reconciliation);
+      setBilliardPaymentIntent(result?.success && result?.intent
+        ? (result.intent as BilliardPaymentIntent)
+        : null);
+      if (recoveryRequired || reconciliation || result?.intent || result?.restoredCart) switchMode('pos');
+
+      const protectedOwnsBoot = !!(
+        recoveryRequired
+        || reconciliation
+        || result?.intent
+        || result?.restoredCart
+        || result?.outcomeUncertain
+        || result?.paymentCommitted
+      );
+      const unresolvedProtected = !!(
+        recoveryRequired
+        || reconciliation
+        || result?.outcomeUncertain
+      );
+      // An unsuccessful/unknown scan cannot prove ordinary hydration is safe.
+      if (result?.success !== true && !protectedOwnsBoot) return;
+
+      // 4. Protected owner wins and stale ordinary snapshots are discarded.
+      if (protectedOwnsBoot) {
+        try {
+          await api.pos.snapshot.clear();
+        } catch {
+          // The protected owner is known, but its competing ordinary snapshot
+          // could not be proved absent on disk. Stop this boot sequence before
+          // hydration, writer-arm, or sync; the next boot retries the clear.
+          return;
+        }
+      } else {
+        try {
+          const json = await api.pos.snapshot.load();
+          const parsed = json ? JSON.parse(json) : null;
+          const current = await api.pos.getState();
+          if (!isCurrent()) return;
+          if (
+            parsed?.owner === bootIdentityKey
+            && parsed?.cart?.items?.length
+            && !current?.cart?.items?.length
+          ) {
+            await api.pos.dispatch({
+              type: 'cart/hydrate',
+              payload: {
+                cart: parsed.cart,
+                checkoutDraft: parsed.checkoutDraft ?? {},
+                activeTable: parsed.activeTable ?? null,
+                activeCustomer: parsed.activeCustomer ?? null,
+                tip: parsed.tip ?? 0,
+              },
+            });
+          }
+        } catch { /* corrupt ordinary snapshot: continue with the empty cart */ }
+      }
+      if (!isCurrent()) return;
+
+      // A diagnostic/reconciliation screen has no editable live cart owner.
+      // Do not arm an ordinary writer that could persist an empty/stale cart
+      // while the protected row is still awaiting owner action.
+      if (unresolvedProtected) {
+        await Promise.resolve(api.pos.sync.products()).catch(() => {});
+        return;
+      }
+
+      // 5. Arm only after recovery/hydration. Protected carts have their own
+      // journal writer and are never copied into the ordinary snapshot slot.
+      unsubscribeSnapshot = api.pos.onStateChanged((next: any) => {
+        if (next?.checkoutDraft?.billiard || next?.checkoutDraft?.restoredInterruption) return;
+        if (snapshotTimer) clearTimeout(snapshotTimer);
+        snapshotTimer = setTimeout(() => {
+          snapshotTimer = null;
+          if (!isCurrent()) return;
+          void api.pos.snapshot.save(JSON.stringify({
+            owner: bootIdentityKey,
+            cart: next.cart,
+            checkoutDraft: next.checkoutDraft,
+            activeTable: next.activeTable ?? null,
+            activeCustomer: next.activeCustomer ?? null,
+            tip: next.tip ?? 0,
+          }));
+        }, 400);
+      });
+
+      // 6. Catalog work is deliberately last.
+      if (isCurrent()) await Promise.resolve(api.pos.sync.products()).catch(() => {});
+    })().catch(() => { /* fail closed: no ordinary hydrate/writer after an unknown recovery */ });
     return () => {
       cancelled = true;
+      if (snapshotTimer) clearTimeout(snapshotTimer);
+      unsubscribeSnapshot?.();
       if (generation === billiardGenerationRef.current) billiardGenerationRef.current += 1;
     };
-  }, [state]);
+  }, [bootIdentityKey]);
 
   // ── The two handoff callbacks PaymentDialog drives ────────────────────────
   const handlePreflightPos = useCallback(async () => {
@@ -537,6 +585,10 @@ export default function AndroidBootApp() {
             onBilliardTenderResolved={(intent) => {
               setBilliardPaymentIntent(intent);
               setRestoredCartReconciliation(null);
+            }}
+            onRestoredCartTenderOutcomeUncertain={(reconciliation) => {
+              setRestoredCartReconciliation(reconciliation);
+              switchMode('pos');
             }}
             onRestoredTenderResolved={() => setRestoredCartReconciliation(null)}
             onBilliardPaymentIntentConsumed={(nonce) => {

@@ -63,6 +63,7 @@ import type {
   PosState,
 } from '../../../shared/pos/pos-state';
 import type { PosCheckoutSnapshot } from '../../../shared/billiard-pos-handoff';
+import { isActiveRestoredCartSnapshot } from '../../../shared/pos/billiard-pos-handoff';
 
 /**
  * The slice of PosState restored after a process death / back-press exit.
@@ -218,6 +219,10 @@ export function posReducer(
       // Frozen server-origin lines are not editable (Windows pos-store.ts:238).
       if (state.cart.items.some((item) => item.id === action.payload.id && item.locked)) return state;
       const items = state.cart.items.filter((i) => i.id !== action.payload.id);
+      // A restored cart remains owned by its protected Hold until it is either
+      // re-held durably or paid. Removing the final line would silently discard
+      // that ownership marker and make the protected backup unreachable.
+      if (state.checkoutDraft.restoredInterruption && items.length === 0) return state;
       const display = items.length === 0 ? { ...state.display, mode: 'idle' as const } : state.display;
       const checkoutDraft = items.length === 0 ? createInitialState().checkoutDraft : state.checkoutDraft;
       return { ...state, cart: recalcCart({ ...state.cart, items }), checkoutDraft, display };
@@ -234,6 +239,7 @@ export function posReducer(
           ? normalizedCartItem({ ...i, quantity: action.payload.quantity })
           : i,
       ).filter((i) => i.quantity > 0);
+      if (state.checkoutDraft.restoredInterruption && items.length === 0) return state;
       const display = items.length === 0 ? { ...state.display, mode: 'idle' as const } : state.display;
       const checkoutDraft = items.length === 0 ? createInitialState().checkoutDraft : state.checkoutDraft;
       return { ...state, cart: recalcCart({ ...state.cart, items }), checkoutDraft, display };
@@ -241,7 +247,7 @@ export function posReducer(
 
     case 'cart/clear': {
       // Never discard a frozen billiard bill by clearing the cart.
-      if (state.checkoutDraft.billiard) return state;
+      if (state.checkoutDraft.billiard || state.checkoutDraft.restoredInterruption) return state;
       const display = state.display?.mode === 'cart' ? { ...state.display, mode: 'idle' as const } : state.display;
       return { ...state, cart: createInitialState().cart, checkoutDraft: createInitialState().checkoutDraft, tip: 0, display };
     }
@@ -251,7 +257,12 @@ export function posReducer(
       // its own crash recovery. Letting a snapshot write one — or overwrite an
       // active one — would put a second, unverified source of truth in front of
       // the cashier, so both directions are refused.
-      if (state.checkoutDraft.billiard || action.payload.checkoutDraft?.billiard) return state;
+      if (
+        state.checkoutDraft.billiard
+        || state.checkoutDraft.restoredInterruption
+        || action.payload.checkoutDraft?.billiard
+        || action.payload.checkoutDraft?.restoredInterruption
+      ) return state;
       // Totals are RECOMPUTED, never trusted from storage: a snapshot written by
       // an older build (or a partially-flushed image) must not be able to put a
       // wrong total in front of a cashier.
@@ -275,6 +286,10 @@ export function posReducer(
       // local order is durably committed, otherwise a crash here would lose the
       // bill with the money already taken (Windows pos-store.ts:375-378).
       if (state.checkoutDraft.billiard && state.checkoutDraft.billiard.orderCommitted !== true) return state;
+      if (
+        state.checkoutDraft.restoredInterruption
+        && state.checkoutDraft.restoredInterruption.tenderState !== 'PAID_TOMBSTONE'
+      ) return state;
       const display = state.display?.mode === 'cart' ? { ...state.display, mode: 'idle' as const } : state.display;
       return { ...state, cart: createInitialState().cart, checkoutDraft: createInitialState().checkoutDraft, tip: 0, display };
     }
@@ -283,7 +298,7 @@ export function posReducer(
       // While a billiard checkout is frozen only the invoice fields may move —
       // the renderer must not overwrite the handoff context (Windows
       // pos-store.ts:283-290).
-      const payload = state.checkoutDraft.billiard
+      const payload = state.checkoutDraft.billiard || state.checkoutDraft.restoredInterruption
         ? {
             customerNip: action.payload.customerNip,
             customerName: action.payload.customerName,
@@ -479,17 +494,66 @@ export function restoreCheckoutSnapshotCart(
 
 type StateListener = (state: PosState) => void;
 
+/** Opaque authority for one exact restored-cart durable transition. */
+export type RestoredCartTransitionToken = symbol;
+
 export class ShimPosStore {
   private state: PosState = createInitialState();
   private readonly listeners = new Set<StateListener>();
+  private restoredCartTransitionLock: {
+    token: RestoredCartTransitionToken;
+    holdId: string;
+    orderId: string;
+    clientAttemptId: string;
+    expectedSnapshot: PosCheckoutSnapshot;
+  } | null = null;
 
   getState(): PosState {
     return this.state;
   }
 
   dispatch(action: PosAction): void {
+    // Re-hold owns a short exact transition from protected owner -> durable
+    // manual Hold -> live clear. No public/trusted mutation may make the first
+    // flushed image stale while that transition is awaiting storage.
+    if (this.restoredCartTransitionLock) return;
     this.state = posReducer(this.state, action);
     this.broadcast();
+  }
+
+  /** Freeze one exact READY restored cart before the re-hold path first awaits. */
+  acquireRestoredCartTransition(
+    holdId: string,
+    orderId: string,
+    clientAttemptId: string,
+    expectedSnapshot: PosCheckoutSnapshot,
+  ): RestoredCartTransitionToken | null {
+    if (this.restoredCartTransitionLock) return null;
+    const restored = this.state.checkoutDraft.restoredInterruption;
+    if (
+      !restored
+      || restored.holdId !== holdId
+      || restored.orderId !== orderId
+      || restored.clientAttemptId !== clientAttemptId
+      || restored.tenderState !== 'READY'
+      || restored.persistenceError
+      || !isActiveRestoredCartSnapshot(this.state, expectedSnapshot)
+    ) return null;
+    const token = Symbol('restored-cart-transition');
+    this.restoredCartTransitionLock = {
+      token,
+      holdId,
+      orderId,
+      clientAttemptId,
+      expectedSnapshot,
+    };
+    return token;
+  }
+
+  releaseRestoredCartTransition(token: RestoredCartTransitionToken): boolean {
+    if (this.restoredCartTransitionLock?.token !== token) return false;
+    this.restoredCartTransitionLock = null;
+    return true;
   }
 
   /**
@@ -499,6 +563,7 @@ export class ShimPosStore {
    * checkout. Not reachable from the renderer — the handoff orchestration owns it.
    */
   markBilliardOrderCommitted(checkoutId: string, orderId: string): boolean {
+    if (this.restoredCartTransitionLock) return false;
     const billiard = this.state.checkoutDraft.billiard;
     if (!billiard || billiard.origin.checkoutId !== checkoutId || billiard.orderId !== orderId) return false;
     this.state = {
@@ -507,6 +572,102 @@ export class ShimPosStore {
         ...this.state.checkoutDraft,
         billiard: { ...billiard, orderCommitted: true },
       },
+    };
+    this.broadcast();
+    return true;
+  }
+
+  /**
+   * Unlock the paid clear for an exact restored-cart identity only after its
+   * protected Hold has been moved to PAID_TOMBSTONE in the same DB image as
+   * the local order.
+   */
+  markRestoredOrderCommitted(holdId: string, orderId: string, clientAttemptId: string): boolean {
+    if (this.restoredCartTransitionLock) return false;
+    const restored = this.state.checkoutDraft.restoredInterruption;
+    if (
+      !restored
+      || restored.holdId !== holdId
+      || restored.orderId !== orderId
+      || restored.clientAttemptId !== clientAttemptId
+    ) return false;
+    this.state = {
+      ...this.state,
+      checkoutDraft: {
+        ...this.state.checkoutDraft,
+        restoredInterruption: { ...restored, tenderState: 'PAID_TOMBSTONE' },
+      },
+    };
+    this.broadcast();
+    return true;
+  }
+
+  /** Lock the volatile marker after its exact durable journal became uncertain. */
+  markRestoredTenderUncertain(
+    holdId: string,
+    orderId: string,
+    clientAttemptId: string,
+    persistenceError?: string,
+  ): boolean {
+    if (this.restoredCartTransitionLock) return false;
+    const restored = this.state.checkoutDraft.restoredInterruption;
+    if (
+      !restored
+      || restored.holdId !== holdId
+      || restored.orderId !== orderId
+      || restored.clientAttemptId !== clientAttemptId
+      || restored.tenderState !== 'TENDER_COMMITTING'
+    ) return false;
+    this.state = {
+      ...this.state,
+      checkoutDraft: {
+        ...this.state.checkoutDraft,
+        restoredInterruption: {
+          ...restored,
+          tenderState: 'TENDER_UNCERTAIN',
+          persistenceError: persistenceError || restored.persistenceError,
+        },
+      },
+    };
+    this.broadcast();
+    return true;
+  }
+
+  /**
+   * Clear an exact READY restored cart only after hold-orders atomically moved
+   * its protected owner into a normal manual Hold and flushed that image.
+   */
+  clearRestoredCartAfterHold(
+    holdId: string,
+    orderId: string,
+    clientAttemptId: string,
+    expectedSnapshot: PosCheckoutSnapshot,
+    transitionToken: RestoredCartTransitionToken,
+  ): boolean {
+    const transition = this.restoredCartTransitionLock;
+    const restored = this.state.checkoutDraft.restoredInterruption;
+    if (
+      !transition
+      || transition.token !== transitionToken
+      || transition.holdId !== holdId
+      || transition.orderId !== orderId
+      || transition.clientAttemptId !== clientAttemptId
+      || transition.expectedSnapshot !== expectedSnapshot
+      || !restored
+      || restored.holdId !== holdId
+      || restored.orderId !== orderId
+      || restored.clientAttemptId !== clientAttemptId
+      || restored.tenderState !== 'READY'
+      || restored.persistenceError
+      || !isActiveRestoredCartSnapshot(this.state, expectedSnapshot)
+    ) return false;
+    const empty = createInitialState();
+    this.state = {
+      ...this.state,
+      cart: empty.cart,
+      checkoutDraft: empty.checkoutDraft,
+      tip: 0,
+      display: { ...this.state.display, mode: 'idle' },
     };
     this.broadcast();
     return true;

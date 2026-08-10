@@ -27,10 +27,13 @@ import {
   adoptPosCheckoutSnapshotScope,
   assertBilliardCheckoutSnapshotIntegrity,
   buildBilliardCheckoutSnapshot,
+  buildBilliardInterruptionHoldPayload,
+  capturePosCheckoutSnapshot,
   currentPosSnapshotScope,
   isActiveBilliardCheckoutSnapshot,
   samePosSalonRegister,
   samePosSnapshotScope,
+  withoutRestoredInterruptionMarker,
   type PosSnapshotScope,
 } from '../../../shared/pos/billiard-pos-handoff';
 import { assertCommittedBilliardOrder } from '../../../shared/pos/billiard-order-verification';
@@ -49,6 +52,7 @@ import { createHoldOrderRepo } from './db/hold-repo';
 import { createOrderRepo } from './db/order-repo';
 import type { ShimConfigStore } from './config-store';
 import type { ShimPosStore } from './pos-store';
+import type { StagedRestoredCart } from './restored-cart-handoff';
 
 export interface BilliardHandoffDeps {
   configStore: ShimConfigStore;
@@ -71,6 +75,16 @@ export interface BilliardHandoffDeps {
    * omit it; when absent the boundary keeps its local-only guarantees.
    */
   assertServerShiftConsistent?: () => Promise<void>;
+  /** W5 coordinator owns protected-cart classification/restoration. */
+  restoredCartRecoveryAvailable?: boolean;
+  /** Stage the protected cart in the same SQL.js image as the paid handoff. */
+  stageRestoredCartAfterCommit?: (
+    database: AndroidDatabase,
+    record: BilliardPosHandoffRecord,
+    scope: PosSnapshotScope,
+  ) => StagedRestoredCart | null;
+  /** Activate only after the shared durability barrier succeeds. */
+  activateStagedRestoredCart?: (staged: StagedRestoredCart | null) => boolean;
 }
 
 export interface BilliardPreflightResult {
@@ -98,10 +112,11 @@ export interface BilliardBoundaryResult {
   error?: string;
   rollbackDurabilityError?: string;
   durabilityError?: string;
+  protectedInterruptionRecoveryRequired?: ProtectedInterruptionRecoveryRequired;
 }
 
 export interface ProtectedInterruptionRecoveryRequired {
-  durable: true;
+  durable: boolean;
   count: number;
   holdId: string;
   checkoutId?: string;
@@ -198,6 +213,28 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
     }
   };
 
+  /** Apply the already-durable paid/restored image to volatile renderer state. */
+  const activateAfterCommittedBarrier = (
+    record: BilliardPosHandoffRecord,
+    staged: StagedRestoredCart | null,
+  ): boolean => {
+    const state = deps.posStore.getState();
+    const liveCheckoutId = state.checkoutDraft.billiard?.origin.checkoutId;
+    if (liveCheckoutId) {
+      if (
+        liveCheckoutId !== record.checkoutId
+        || !isActiveBilliardCheckoutSnapshot(state, record.checkoutSnapshot)
+      ) {
+        throw new Error('Refused to clear a POS cart that differs from the committed Billiard checkout.');
+      }
+      if (!deps.posStore.markBilliardOrderCommitted(record.checkoutId, record.orderId)) {
+        throw new Error('Could not authorize clearing the committed Billiard cart.');
+      }
+      deps.posStore.dispatch({ type: 'cart/completeCheckout' });
+    }
+    return deps.activateStagedRestoredCart?.(staged) ?? false;
+  };
+
   /**
    * Nothing else may be half-finished on this register before a NEW bill is
    * frozen (pos.module.ts assertNewBilliardHandoffReadiness).
@@ -218,8 +255,6 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
       throw new Error('Another frozen Billiard checkout is already active.');
     }
     if (current.checkoutDraft.restoredInterruption) {
-      // The restored-cart journal machinery is not ported yet (next slice), so
-      // rather than reason about a cart we cannot fully validate, refuse.
       throw new Error('Finish or hold the restored cart before ending another Billiard session.');
     }
     return { current };
@@ -316,11 +351,11 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
         assertLocalOpenShiftMatchesSession(database, deps.posStore);
 
         // PaymentDialog runs this preflight before it ends/freezes the server
-        // session. Refuse an occupied ordinary cart here, not only later in
-        // prepare(), so the cashier can Hold it while the table is still live.
+        // session. A full W5 host may park an occupied ordinary cart under its
+        // durable protected owner; older/direct hosts stay on W0 containment.
         // prepare() repeats the check to close the race between both calls.
         const { current } = assertReadyForNewHandoff(database, scope);
-        if (current.cart.items.length > 0) {
+        if (current.cart.items.length > 0 && !deps.restoredCartRecoveryAvailable) {
           throw new Error('Hold the current cart manually before starting a Billiard checkout on this tablet.');
         }
 
@@ -384,6 +419,7 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
           const authContext = captureAuthContext(scope);
           const database = await deps.db();
           const journal = createBilliardHandoffRepo(database);
+          const holds = createHoldOrderRepo(database);
           const orders = createOrderRepo(database);
 
           // ── Resume: this checkout was already frozen ────────────────────
@@ -438,17 +474,20 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
           // ── New checkout ────────────────────────────────────────────────
           assertLocalOpenShiftMatchesSession(database, deps.posStore);
           const { current } = assertReadyForNewHandoff(database, scope);
-          if (current.cart.items.length > 0) {
-            // Android cannot yet restore the protected interruption Hold after
-            // the Billiard sale completes. Refuse before creating a journal or
-            // Hold row; the cashier can park the ordinary cart through the
-            // normal, visible Hold flow and then retry the Billiard checkout.
+          if (current.cart.items.length > 0 && !deps.restoredCartRecoveryAvailable) {
+            // W0 containment remains the safe fallback for synthetic/direct
+            // harnesses that do not install W5's durable restored-cart owner.
             throw new Error('Hold the current cart manually before starting a Billiard checkout on this tablet.');
           }
 
           const orderId = newId();
-          const interruptedHoldId = null;
+          const interruptedHoldId = current.cart.items.length > 0
+            ? `billiard-interruption:${bundle.checkoutId}`
+            : null;
           const mode = posMode();
+          const interruptedSnapshot = interruptedHoldId
+            ? withoutRestoredInterruptionMarker(capturePosCheckoutSnapshot(current, scope, mode))
+            : null;
           const checkoutSnapshot = buildBilliardCheckoutSnapshot({
             currentState: current,
             bundle,
@@ -460,6 +499,17 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
           });
 
           database.transaction(() => {
+            if (interruptedHoldId && interruptedSnapshot) {
+              holds.upsert(
+                interruptedHoldId,
+                'Cart interrupted by Billiard payment',
+                buildBilliardInterruptionHoldPayload({
+                  snapshot: interruptedSnapshot,
+                  sessionId: bundle.sessionId,
+                  checkoutId: bundle.checkoutId,
+                }),
+              );
+            }
             journal.create({
               checkoutId: bundle.checkoutId,
               sessionId: bundle.sessionId,
@@ -485,10 +535,15 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
             try {
               database.transaction(() => {
                 database.run('DELETE FROM pos_billiard_handoffs WHERE checkout_id = ?', [bundle.checkoutId]);
+                if (interruptedHoldId) holds.remove(interruptedHoldId, true);
               });
               void database.flush().catch(() => { /* best-effort */ });
             } catch { /* the revert is best-effort; the throw below is what matters */ }
-            throw new Error(`Could not safely persist the Billiard checkout: ${flushError?.message || flushError}`);
+            throw new Error(
+              `${interruptedHoldId
+                ? 'Could not safely hold the current POS cart'
+                : 'Could not safely persist the Billiard checkout'}: ${flushError?.message || flushError}`,
+            );
           }
 
           if (!isAuthContextCurrent(authContext)) {
@@ -671,13 +726,29 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
           await database.flush();
         } catch (flushError: any) {
           // Safe: the renderer was never released past the boundary.
-          journal.rollbackTenderBeforeCharge(record.checkoutId, true);
+          const rolledBack = journal.rollbackTenderBeforeCharge(record.checkoutId, true);
           let rollbackDurabilityError: string | undefined;
           try { await database.flush(); } catch (e: any) { rollbackDurabilityError = e?.message || String(e); }
+          if (!rolledBack || rollbackDurabilityError) {
+            // The first barrier and the compensating barrier both failed. The
+            // in-memory rollback is not proof of the image on disk, so PAYMENT_OPEN
+            // would be a dangerous invitation to charge again. Lock it uncertain
+            // and make one final best-effort durability attempt instead.
+            journal.markTenderUncertainAfterRollbackFailure(record.checkoutId);
+            let durabilityError: string | undefined;
+            try { await database.flush(); } catch (e: any) { durabilityError = e?.message || String(e); }
+            return {
+              success: false,
+              outcomeUncertain: true,
+              error: 'The Billiard tender boundary and its rollback could not be confirmed. '
+                + 'Do not charge; owner reconciliation is required.',
+              rollbackDurabilityError,
+              durabilityError,
+            };
+          }
           return {
             success: false,
             error: flushError?.message || 'Could not persist the Billiard tender boundary.',
-            rollbackDurabilityError,
           };
         }
 
@@ -708,6 +779,113 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
     },
 
     /**
+     * Classify failures that occur after beginTender released the renderer past
+     * the durable money boundary but before createOrder could complete. This is
+     * deliberately separate from ordinary order failure handling: it only owns
+     * the exact live frozen Billiard cart whose journal is still COMMITTING.
+     */
+    async classifyActiveCommittingFailure(
+      database: AndroidDatabase | null,
+      message: string,
+    ): Promise<BilliardBoundaryResult | null> {
+      const live = deps.posStore.getState();
+      const context = live.checkoutDraft.billiard;
+      if (!context) return null;
+
+      let record: BilliardPosHandoffRecord | null = null;
+      const recoveryRequired = (detail: string): BilliardBoundaryResult => ({
+        success: false,
+        error: `Recovery required: ${detail} Do not charge or replace this cart; contact the salon owner or support.`,
+        protectedInterruptionRecoveryRequired: {
+          durable: record != null,
+          count: record ? 1 : 0,
+          holdId: record?.interruptedHoldId ?? `billiard:${context.origin.checkoutId}`,
+          checkoutId: context.origin.checkoutId,
+          message: `Recovery required: ${detail} Do not charge or replace this cart; contact the salon owner or support.`,
+        },
+      });
+      try {
+        const activeDatabase = database ?? await deps.db();
+        const journal = createBilliardHandoffRepo(activeDatabase);
+        record = journal.get(String(context.origin.checkoutId || '').trim());
+        if (
+          !record
+          || record.state !== 'POS_TENDER_COMMITTING'
+          || context.origin.checkoutId !== record.checkoutId
+          || context.origin.sessionId !== record.sessionId
+          || context.orderId !== record.orderId
+          || context.clientAttemptId !== record.clientAttemptId
+          || context.handoffId !== record.checkoutId
+        ) {
+          return recoveryRequired('The live Billiard marker cannot be matched to one real COMMITTING journal.');
+        }
+        let verificationError: string | undefined;
+        try {
+          assertBilliardCheckoutSnapshotIntegrity(record);
+        } catch (error: any) {
+          verificationError = error?.message || String(error);
+        }
+
+        let scope: PosSnapshotScope;
+        try {
+          scope = resolveTabletScope(deps.configStore.getRawConfig());
+        } catch {
+          return recoveryRequired('The current POS identity is unavailable.');
+        }
+        if (
+          record.salonId !== scope.salonId
+          || record.registerId !== scope.registerId
+        ) {
+          return recoveryRequired('This COMMITTING Billiard checkout belongs to a different salon or register.');
+        }
+
+        // A same-register OWNER relogin and cart drift both happen after the
+        // charge boundary. Neither may leave the durable row COMMITTING. The
+        // owner resolver intentionally accepts the same salon/register across
+        // users, so lock the actual row first and report the verifier drift.
+        if (!samePosSalonRegister(record.checkoutSnapshot, scope)) {
+          const scopeError = 'The saved Billiard snapshot salon/register failed verification.';
+          verificationError = verificationError ? `${verificationError}; ${scopeError}` : scopeError;
+        }
+        const liveCartDrift = !isActiveBilliardCheckoutSnapshot(live, record.checkoutSnapshot);
+        const orders = createOrderRepo(activeDatabase);
+        const existing = orders.getById(record.orderId);
+        if (liveCartDrift) {
+          const driftError = 'The live Billiard cart no longer exactly matches its committing financial snapshot.';
+          verificationError = verificationError ? `${verificationError}; ${driftError}` : driftError;
+        }
+        if (existing) {
+          try {
+            assertCommittedBilliardOrder(record, existing, orders.getItemsByOrderId(record.orderId));
+          } catch (error: any) {
+            // The journal/live owner is exact, but an incomplete or conflicting
+            // local order makes the money outcome even less knowable. Preserve
+            // that verifier evidence while still durably locking the journal.
+            const orderError = error?.message || String(error);
+            verificationError = verificationError ? `${verificationError}; ${orderError}` : orderError;
+          }
+        }
+        if (!journal.markTenderUncertain(record.checkoutId)) {
+          throw new Error('The committing Billiard tender changed before it could be locked uncertain.');
+        }
+        let durabilityError = verificationError;
+        try { await activeDatabase.flush(); } catch (error: any) {
+          const flushError = error?.message || String(error);
+          durabilityError = durabilityError ? `${durabilityError}; ${flushError}` : flushError;
+        }
+        return {
+          success: false,
+          outcomeUncertain: true,
+          orderId: record.orderId,
+          error: `Billiard payment outcome is uncertain. Do not charge again. ${message}`,
+          durabilityError,
+        };
+      } catch (error: any) {
+        return recoveryRequired(`The committing Billiard owner could not be verified: ${error?.message || String(error)}.`);
+      }
+    },
+
+    /**
      * The order is committed locally — settle the handoff and give the cashier
      * their screen back. Windows: pos:billiard:complete-handoff.
      *
@@ -721,9 +899,11 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
       success: boolean;
       restored?: boolean;
       restoredHoldId?: string | null;
+      paymentCommitted?: boolean;
       durabilityError?: string;
       error?: string;
     }> {
+      let paymentCommitted = false;
       try {
         const scope = resolveTabletScope(deps.configStore.getRawConfig());
         const database = await deps.db();
@@ -745,14 +925,32 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
 
         assertBilliardCheckoutSnapshotIntegrity(record);
         assertCommittedBilliardOrder(record, order, orders.getItemsByOrderId(record.orderId));
+        paymentCommitted = true;
 
         if (record.state !== 'SETTLED') {
           journal.markState(record.checkoutId, 'POS_PAID_SYNC_PENDING');
         }
 
+        // The paid handoff transition and protected-cart READY journal share
+        // ONE exported SQL.js image. Neither live cart moves before that image
+        // is durable; a process kill can therefore reveal only the old frozen
+        // bill or the new restored owner, never an unowned ordinary cart.
+        const staged = deps.stageRestoredCartAfterCommit?.(database, record, scope) ?? null;
+        try {
+          await database.flush();
+        } catch (e: any) {
+          return {
+            success: false,
+            paymentCommitted: true,
+            restored: false,
+            restoredHoldId: record.interruptedHoldId,
+            durabilityError: e?.message || String(e),
+            error: 'Billiard payment is recorded, but cart restoration was not durable. Do not charge again; restart to recover.',
+          };
+        }
+
         // Clear the frozen cart — but only the one that matches this record,
-        // and only after the store itself authorises it (L4's exact-identity
-        // unlock, which is what `cart/completeCheckout` requires).
+        // and only AFTER the shared durability barrier above.
         const state = deps.posStore.getState();
         const liveCheckoutId = state.checkoutDraft.billiard?.origin.checkoutId;
         if (liveCheckoutId) {
@@ -767,25 +965,19 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
           }
           deps.posStore.dispatch({ type: 'cart/completeCheckout' });
         }
-
-        // A protected cart created by an older build stays durable and hidden
-        // from manual Hold/Recall. The next boot surfaces recovery-required;
-        // reinstating it without the restored-cart journal would hand back an
-        // unprotected cart, so it is left untouched here.
-        let durabilityError: string | undefined;
-        try {
-          await database.flush();
-        } catch (e: any) {
-          durabilityError = e?.message || String(e);
-        }
+        const restored = deps.activateStagedRestoredCart?.(staged) ?? false;
         return {
           success: true,
-          restored: false,
+          paymentCommitted: true,
+          restored,
           restoredHoldId: record.interruptedHoldId,
-          durabilityError,
         };
       } catch (error: any) {
-        return { success: false, error: error?.message || String(error) };
+        return {
+          success: false,
+          ...(paymentCommitted ? { paymentCommitted: true } : {}),
+          error: error?.message || String(error),
+        };
       }
     },
 
@@ -822,7 +1014,9 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
         const orders = createOrderRepo(database);
         const isOwner = String(config.authUser?.role || '').toUpperCase() === 'OWNER';
 
-        const protectedInterruptionRecoveryRequired = findProtectedInterruptionRecoveryRequired(database, scope);
+        const protectedInterruptionRecoveryRequired = deps.restoredCartRecoveryAvailable
+          ? null
+          : findProtectedInterruptionRecoveryRequired(database, scope);
         if (protectedInterruptionRecoveryRequired) {
           // Do not mutate, delete, unprotect or reactivate an orphan whose
           // payment ownership this build cannot prove. Its durable Hold is the
@@ -849,6 +1043,7 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
         const committed = orders.getById(record.orderId);
         if (committed) {
           assertCommittedBilliardOrder(record, committed, orders.getItemsByOrderId(record.orderId));
+          const staged = deps.stageRestoredCartAfterCommit?.(database, record, scope) ?? null;
 
           // ALREADY ON THE SERVER. `synced = 1` with a backend id is the local
           // proof that the settle round-trip finished; only the journal write
@@ -867,29 +1062,47 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
             // runs at boot, so it would take the whole app down on launch.
             journal.markState(record.checkoutId, 'POS_PAID_SYNC_PENDING');
             journal.markState(record.checkoutId, 'SETTLED');
-            let settleDurabilityError: string | undefined;
-            try { await database.flush(); } catch (e: any) { settleDurabilityError = e?.message || String(e); }
+            try {
+              await database.flush();
+            } catch (e: any) {
+              return {
+                success: false,
+                intent: null,
+                paymentCommitted: true,
+                durabilityError: e?.message || String(e),
+                error: 'Paid Billiard recovery was not durable. Do not charge again; restart to recover.',
+              };
+            }
             if (!isAuthContextCurrent(authContext)) {
               return { success: false, intent: null, paymentCommitted: true, error: 'POS user changed during Billiard recovery.' };
             }
+            activateAfterCommittedBarrier(record, staged);
             // Nothing for the cashier to resume: the money is in, the server
             // knows, the register is free again.
-            return { success: true, paymentCommitted: true, durabilityError: settleDurabilityError, intent: null };
+            return { success: true, paymentCommitted: true, intent: null };
           }
 
           if (record.state !== 'SETTLED') {
             journal.markState(record.checkoutId, 'POS_PAID_SYNC_PENDING');
           }
-          deps.posStore.markBilliardOrderCommitted(record.checkoutId, record.orderId);
-          let durabilityError: string | undefined;
-          try { await database.flush(); } catch (e: any) { durabilityError = e?.message || String(e); }
+          try {
+            await database.flush();
+          } catch (e: any) {
+            return {
+              success: false,
+              intent: null,
+              paymentCommitted: true,
+              durabilityError: e?.message || String(e),
+              error: 'Paid Billiard recovery was not durable. Do not charge again; restart to recover.',
+            };
+          }
           if (!isAuthContextCurrent(authContext)) {
             return { success: false, intent: null, paymentCommitted: true, error: 'POS user changed during Billiard recovery.' };
           }
+          activateAfterCommittedBarrier(record, staged);
           return {
             success: true,
             paymentCommitted: true,
-            durabilityError,
             intent: intentOf({ ...record, state: 'POS_PAID_SYNC_PENDING' }, true),
           };
         }
@@ -1018,11 +1231,6 @@ export function createBilliardHandoff(deps: BilliardHandoffDeps) {
             paymentCommitted: true,
             error: 'A local paid order exists. Reconcile it instead of resetting tender.',
           };
-        }
-
-        const live = deps.posStore.getState();
-        if (live.cart.items.length > 0 && !isActiveBilliardCheckoutSnapshot(live, record.checkoutSnapshot)) {
-          return { success: false, error: 'Another POS cart is active. Hold it before resolving this tender.' };
         }
 
         // The parked cart moves to the OWNER's scope along with the checkout,

@@ -10,13 +10,15 @@
  * Decisions under test: D1 (fiscal readiness = ASSIGNED + a live print-agent
  * link) and D2 (an unpaired tablet cannot settle), plan §5.
  */
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 
 import { initAndroidDb, type AndroidDatabase } from '../src/renderer/android-pos/shim/db/db';
 import { ShimConfigStore } from '../src/renderer/android-pos/shim/config-store';
 import { ShimPosStore } from '../src/renderer/android-pos/shim/pos-store';
 import { createBilliardHandoff } from '../src/renderer/android-pos/shim/billiard-handoff';
+import { createRestoredCartHandoff } from '../src/renderer/android-pos/shim/restored-cart-handoff';
 import { createBilliardHandoffRepo } from '../src/renderer/android-pos/shim/db/billiard-handoff-repo';
+import { createHoldOrderRepo } from '../src/renderer/android-pos/shim/db/hold-repo';
 
 const NODE_LOCATE_FILE = null;
 
@@ -612,7 +614,14 @@ describe('markPaymentOpened / beginTender — not charging twice', () => {
     const { handoff } = await frozen({ db: database });
     const opened = await handoff.markPaymentOpened('checkout-1');
     const realFlush = database.flush.bind(database);
-    (database as any).flush = async () => { throw new Error('disk gone'); };
+    let failNext = true;
+    (database as any).flush = async () => {
+      if (failNext) {
+        failNext = false;
+        throw new Error('disk gone');
+      }
+      return realFlush();
+    };
 
     const tender = await handoff.beginTender('checkout-1', opened.token!);
     expect(tender.success).toBe(false);
@@ -623,6 +632,101 @@ describe('markPaymentOpened / beginTender — not charging twice', () => {
     )?.state).toBe('POS_PAYMENT_OPEN');
     (database as any).flush = realFlush;
   });
+
+  test('tender-boundary flush plus rollback flush failure locks a durable uncertain attempt', async () => {
+    const database = await initAndroidDb({ locateFile: NODE_LOCATE_FILE });
+    const { handoff } = await frozen({ db: database });
+    const opened = await handoff.markPaymentOpened('checkout-1');
+    const realFlush = database.flush.bind(database);
+    let failures = 2;
+    (database as any).flush = vi.fn(async () => {
+      if (failures > 0) {
+        failures -= 1;
+        throw new Error(failures === 1 ? 'boundary disk failure' : 'rollback disk failure');
+      }
+      return realFlush();
+    });
+
+    const tender = await handoff.beginTender('checkout-1', opened.token!);
+    expect(tender).toMatchObject({
+      success: false,
+      outcomeUncertain: true,
+      rollbackDurabilityError: 'rollback disk failure',
+    });
+    expect(database.get<{ state: string }>(
+      'SELECT state FROM pos_billiard_handoffs WHERE checkout_id = ?', ['checkout-1'],
+    )?.state).toBe('POS_TENDER_UNCERTAIN');
+    expect((database as any).flush).toHaveBeenCalledTimes(3);
+  });
+
+  test('cashier logout then same-register OWNER relogin locks and resolves the real Billiard journal', async () => {
+    const h = await frozen();
+    const opened = await h.handoff.markPaymentOpened('checkout-1');
+    await h.handoff.beginTender('checkout-1', opened.token!);
+    h.handoff.invalidateAuth();
+    h.configStore.setConfig({
+      authUser: { ...(h.configStore.getRawConfig().authUser as any), id: 'owner-2', role: 'OWNER' },
+    } as any);
+
+    await expect(h.handoff.classifyActiveCommittingFailure(h.database, 'checkout validation failed'))
+      .resolves.toMatchObject({ success: false, outcomeUncertain: true });
+    expect(createBilliardHandoffRepo(h.database).get('checkout-1')?.state)
+      .toBe('POS_TENDER_UNCERTAIN');
+    await expect(h.handoff.resolveUncertainTender({
+      target: { type: 'BILLIARD', checkoutId: 'checkout-1' },
+      reason: 'Owner checked terminal; no payment remains',
+      confirmedNoPaymentRemains: true,
+    })).resolves.toMatchObject({ success: true, resolved: true });
+  });
+
+  test('cart drift after begin still durably locks the real Billiard journal uncertain', async () => {
+    const h = await frozen();
+    const opened = await h.handoff.markPaymentOpened('checkout-1');
+    await h.handoff.beginTender('checkout-1', opened.token!);
+    const record = createBilliardHandoffRepo(h.database).get('checkout-1')!;
+    const drifted = JSON.parse(JSON.stringify(record.checkoutSnapshot));
+    drifted.state.cart.items.push(ordinaryLine());
+    h.posStore.dispatch({ type: 'state/replaceCheckoutSnapshot', payload: { snapshot: drifted } });
+
+    await expect(h.handoff.classifyActiveCommittingFailure(h.database, 'cart drifted'))
+      .resolves.toMatchObject({ success: false, outcomeUncertain: true });
+    expect(createBilliardHandoffRepo(h.database).get('checkout-1')?.state)
+      .toBe('POS_TENDER_UNCERTAIN');
+    expect(h.posStore.getState().cart.items).toHaveLength(3);
+
+    h.configStore.setConfig({
+      authUser: { ...(h.configStore.getRawConfig().authUser as any), role: 'OWNER' },
+    } as any);
+    const driftedLiveBeforeResolution = JSON.stringify(h.posStore.getState());
+    await expect(h.handoff.resolveUncertainTender({
+      target: { type: 'BILLIARD', checkoutId: 'checkout-1' },
+      reason: 'Owner verified that no payment remains',
+      confirmedNoPaymentRemains: true,
+    })).resolves.toMatchObject({ success: true, resolved: true });
+    expect(createBilliardHandoffRepo(h.database).get('checkout-1')?.state)
+      .toBe('POS_PAYMENT_OPEN');
+    expect(JSON.stringify(h.posStore.getState())).toBe(driftedLiveBeforeResolution);
+  });
+
+  test.each(['salon', 'register'] as const)(
+    'cross-%s Billiard classifier does not mutate and returns recovery-required',
+    async (boundary) => {
+      const h = await frozen();
+      const opened = await h.handoff.markPaymentOpened('checkout-1');
+      await h.handoff.beginTender('checkout-1', opened.token!);
+      if (boundary === 'salon') h.configStore.setConfig({ salonId: 'salon-other' } as any);
+      if (boundary === 'register') h.configStore.setConfig({ agentId: 'register-other' } as any);
+
+      const result = await h.handoff.classifyActiveCommittingFailure(h.database, 'scope drift');
+      expect(result).toMatchObject({
+        success: false,
+        protectedInterruptionRecoveryRequired: { checkoutId: 'checkout-1' },
+      });
+      expect(result?.outcomeUncertain).toBeUndefined();
+      expect(createBilliardHandoffRepo(h.database).get('checkout-1')?.state)
+        .toBe('POS_TENDER_COMMITTING');
+    },
+  );
 });
 
 describe('order-repo keeps the billiard identity the renderer sends (schema v7)', () => {
@@ -757,6 +861,121 @@ describe('complete — settling after the money is in', () => {
     // Cashier gets a clean screen back.
     expect(posStore.getState().cart.items).toHaveLength(0);
     expect(posStore.getState().checkoutDraft.billiard).toBeUndefined();
+  });
+
+  test('the full W5 coordinator parks an ordinary cart and auto-restores it after Billiard commit', async () => {
+    const h = await makeHarness();
+    h.posStore.dispatch({ type: 'cart/addItem', payload: ordinaryLine() as any });
+    const restored = createRestoredCartHandoff({
+      configStore: h.configStore,
+      posStore: h.posStore,
+      db: async () => h.database,
+    });
+    const handoff = createBilliardHandoff({
+      configStore: h.configStore,
+      posStore: h.posStore,
+      db: async () => h.database,
+      isFiscalPrinterAssigned: async () => false,
+      isPrintAgentConnected: () => false,
+      restoredCartRecoveryAvailable: true,
+      stageRestoredCartAfterCommit: (database, record, handoffScope) =>
+        restored.stageAfterBilliardCommit(database, record, handoffScope),
+      activateStagedRestoredCart: (staged) => restored.activateStaged(staged),
+    });
+    await expect(handoff.preflight()).resolves.toEqual({ success: true });
+    const prepared = await handoff.prepare({ posCheckout: bundle() });
+    expect(prepared.success).toBe(true);
+    const holdId = 'billiard-interruption:checkout-1';
+    expect(createHoldOrderRepo(h.database).get(holdId)?.payload).toMatchObject({
+      protected: true,
+      restoreState: 'WAITING_FOR_BILLIARD_PAYMENT',
+    });
+    const opened = await handoff.markPaymentOpened('checkout-1');
+    await handoff.beginTender('checkout-1', opened.token!);
+    const record = createBilliardHandoffRepo(h.database).get('checkout-1')!;
+    const { createOrderRepo } = await import('../src/renderer/android-pos/shim/db/order-repo');
+    const { order, items } = committedOrderFrom(record);
+    createOrderRepo(h.database).create(order, items);
+
+    await expect(handoff.complete('checkout-1', record.orderId)).resolves.toMatchObject({
+      success: true,
+      paymentCommitted: true,
+      restored: true,
+      restoredHoldId: holdId,
+    });
+    expect(h.posStore.getState().cart.items.map((item) => item.name)).toEqual(['Piwo']);
+    expect(h.posStore.getState().checkoutDraft.restoredInterruption).toMatchObject({
+      holdId,
+      checkoutId: 'checkout-1',
+      tenderState: 'READY',
+    });
+    expect(createHoldOrderRepo(h.database).get(holdId)?.payload).toMatchObject({
+      restoreState: 'ACTIVE_CART_BACKUP',
+      restoredCheckout: { state: 'READY' },
+    });
+  });
+
+  test('stages protected restoration, flushes, and only then clears/activates live state', async () => {
+    const h = await tendered();
+    const { createOrderRepo } = await import('../src/renderer/android-pos/shim/db/order-repo');
+    const { order, items } = committedOrderFrom(h.record);
+    createOrderRepo(h.database).create(order, items);
+    const events: string[] = [];
+    const realFlush = h.database.flush.bind(h.database);
+    (h.database as any).flush = async () => { events.push('flush'); await realFlush(); };
+    const handoff = createBilliardHandoff({
+      configStore: h.configStore,
+      posStore: h.posStore,
+      db: async () => h.database,
+      isFiscalPrinterAssigned: async () => false,
+      isPrintAgentConnected: () => false,
+      restoredCartRecoveryAvailable: true,
+      stageRestoredCartAfterCommit: () => {
+        events.push('stage');
+        expect(h.posStore.getState().checkoutDraft.billiard).toBeTruthy();
+        return { held: {} as any, payload: {} as any, checkoutId: 'checkout-1' };
+      },
+      activateStagedRestoredCart: () => {
+        events.push('activate');
+        expect(h.posStore.getState().checkoutDraft.billiard).toBeUndefined();
+        return true;
+      },
+    });
+
+    await expect(handoff.complete('checkout-1', h.record.orderId)).resolves.toMatchObject({
+      success: true,
+      paymentCommitted: true,
+      restored: true,
+    });
+    expect(events).toEqual(['stage', 'flush', 'activate']);
+  });
+
+  test('a failed paid/restored flush reports committed money and keeps the frozen cart', async () => {
+    const h = await tendered();
+    const { createOrderRepo } = await import('../src/renderer/android-pos/shim/db/order-repo');
+    const { order, items } = committedOrderFrom(h.record);
+    createOrderRepo(h.database).create(order, items);
+    (h.database as any).flush = async () => { throw new Error('disk unavailable'); };
+    const activate = vi.fn();
+    const handoff = createBilliardHandoff({
+      configStore: h.configStore,
+      posStore: h.posStore,
+      db: async () => h.database,
+      isFiscalPrinterAssigned: async () => false,
+      isPrintAgentConnected: () => false,
+      restoredCartRecoveryAvailable: true,
+      stageRestoredCartAfterCommit: () => null,
+      activateStagedRestoredCart: activate,
+    });
+
+    await expect(handoff.complete('checkout-1', h.record.orderId)).resolves.toMatchObject({
+      success: false,
+      paymentCommitted: true,
+      durabilityError: 'disk unavailable',
+    });
+    expect(activate).not.toHaveBeenCalled();
+    expect(h.posStore.getState().checkoutDraft.billiard).toBeTruthy();
+    expect(h.posStore.getState().cart.items).toHaveLength(2);
   });
 
   test('an order whose TOTAL differs from the frozen bill refuses — and keeps the cart', async () => {

@@ -222,7 +222,12 @@ describe('Android shell ↔ shared renderer prop parity', () => {
     // frozen cart with no way to complete it.
     await bootIntoBilliard();
     const props = capturedPos.props!;
-    for (const name of ['onBilliardPaymentIntentConsumed', 'onBilliardTenderResolved', 'onRestoredTenderResolved']) {
+    for (const name of [
+      'onBilliardPaymentIntentConsumed',
+      'onBilliardTenderResolved',
+      'onRestoredCartTenderOutcomeUncertain',
+      'onRestoredTenderResolved',
+    ]) {
       expect(typeof props[name], `POSLayout is missing ${name}`).toBe('function');
     }
     expect(props).toHaveProperty('billiardPaymentIntent');
@@ -250,7 +255,7 @@ describe('Android shell ↔ shared renderer prop parity', () => {
       userId: 'android-user-1',
       registerId: 'android-register-1',
       roleRevision: 'STAFF',
-      platformRevision: '{"loyaltyLookup":false}',
+      platformRevision: '{"loyaltyLookup":false,"restoredCartTender":false}',
     });
     expect(host.policyInputs).toBe(RUNTIME_ONLY_POS_CAPABILITY_POLICY_INPUTS);
     for (const axis of Object.values(host.policyInputs!)) {
@@ -266,6 +271,155 @@ describe('Android shell ↔ shared renderer prop parity', () => {
     expect((manifest as any).outcomes).toEqual(ANDROID_POS_CAPABILITY_OUTCOMES);
     expect((manifest as any).outcomes.customerDisplay.state).toBe('unsupported');
     expect((manifest as any).outcomes.labelPrint.state).toBe('unsupported');
+  });
+
+  it('publishes restoredCartTender only when the real Android runtime advertises the full wave', async () => {
+    const api: any = makeApi();
+    api.pos.runtimeCapabilities = { loyaltyLookup: true, restoredCartTender: true };
+    (globalThis as any).electronAPI = api;
+    (globalThis as any).window = globalThis;
+    await act(async () => {
+      root = createRoot(container);
+      root.render(createElement(AndroidBootApp));
+    });
+    await settle();
+    const host = capturedPos.props!.capabilityHost as PosCapabilityHost;
+    const manifest = await host.resolvePlatformManifest({
+      salonId: 'android-salon-1',
+      userId: 'android-user-1',
+      registerId: 'android-register-1',
+      authEpoch: 1,
+    });
+    expect((manifest as any).outcomes.restoredCartTender).toEqual({
+      state: 'supported',
+      reasonCode: 'AVAILABLE',
+    });
+  });
+
+  it('recovers protected ownership before ordinary hydrate, then arms the writer and syncs', async () => {
+    const events: string[] = [];
+    let resolveRecovery!: (value: unknown) => void;
+    const recovery = new Promise((resolve) => { resolveRecovery = resolve; });
+    const api: any = makeApi();
+    api.pos.shift.getActive = async () => { events.push('shift'); return { success: false }; };
+    api.pos.getState = async () => { events.push('state'); return { session: { isOpen: false }, cart: { items: [] } }; };
+    api.pos.billiardCheckout.recover = () => { events.push('recover'); return recovery; };
+    api.pos.snapshot.load = async () => { events.push('snapshot-load'); return JSON.stringify({ cart: { items: [{ id: 'stale' }] } }); };
+    api.pos.snapshot.clear = async () => { events.push('snapshot-clear'); };
+    api.pos.onStateChanged = () => { events.push('writer-arm'); return () => {}; };
+    api.pos.sync.products = async () => { events.push('sync'); };
+    (globalThis as any).electronAPI = api;
+    (globalThis as any).window = globalThis;
+    await act(async () => {
+      root = createRoot(container);
+      root.render(createElement(AndroidBootApp));
+    });
+    await settle();
+    expect(events).toEqual(['shift', 'state', 'recover']);
+
+    await act(async () => {
+      resolveRecovery({ success: true, intent: null, restoredCart: true });
+      await Promise.resolve();
+    });
+    await settle();
+    expect(events).toEqual(['shift', 'state', 'recover', 'snapshot-clear', 'writer-arm', 'sync']);
+    expect(events).not.toContain('snapshot-load');
+  });
+
+  it('treats paymentCommitted recovery as protected ownership and never hydrates ordinary snapshot', async () => {
+    const events: string[] = [];
+    const api: any = makeApi();
+    api.pos.billiardCheckout.recover = async () => ({
+      success: true,
+      intent: null,
+      paymentCommitted: true,
+      restoredCart: false,
+    });
+    api.pos.snapshot.load = async () => { events.push('snapshot-load'); return '{}'; };
+    api.pos.snapshot.clear = async () => { events.push('snapshot-clear'); };
+    api.pos.onStateChanged = () => { events.push('writer-arm'); return () => {}; };
+    api.pos.sync.products = async () => { events.push('sync'); };
+    (globalThis as any).electronAPI = api;
+    (globalThis as any).window = globalThis;
+    await act(async () => {
+      root = createRoot(container);
+      root.render(createElement(AndroidBootApp));
+    });
+    await settle();
+    expect(events).toEqual(['snapshot-clear', 'writer-arm', 'sync']);
+    expect(events).not.toContain('snapshot-load');
+  });
+
+  it('stops protected boot when snapshot clear is not durable and retries clear before the next writer', async () => {
+    const events: string[] = [];
+    let clearAttempts = 0;
+    const api: any = makeApi();
+    api.pos.billiardCheckout.recover = async () => ({
+      success: true,
+      intent: null,
+      paymentCommitted: true,
+      restoredCart: false,
+    });
+    api.pos.snapshot.load = async () => { events.push('snapshot-load'); return '{"owner":"stale"}'; };
+    api.pos.snapshot.clear = async () => {
+      clearAttempts += 1;
+      events.push(`snapshot-clear-${clearAttempts}`);
+      if (clearAttempts === 1) throw new Error('disk full');
+    };
+    api.pos.onStateChanged = () => { events.push('writer-arm'); return () => {}; };
+    api.pos.sync.products = async () => { events.push('sync'); };
+    (globalThis as any).electronAPI = api;
+    (globalThis as any).window = globalThis;
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(createElement(AndroidBootApp));
+    });
+    await settle();
+    expect(events).toEqual(['snapshot-clear-1']);
+
+    act(() => { root.unmount(); });
+    container.remove();
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    await act(async () => {
+      root = createRoot(container);
+      root.render(createElement(AndroidBootApp));
+    });
+    await settle();
+    expect(events).toEqual(['snapshot-clear-1', 'snapshot-clear-2', 'writer-arm', 'sync']);
+    expect(events).not.toContain('snapshot-load');
+  });
+
+  it('cancels the whole boot sequence on auth expiry while protected recovery is pending', async () => {
+    const events: string[] = [];
+    let expire!: () => void;
+    let resolveRecovery!: (value: unknown) => void;
+    const recovery = new Promise((resolve) => { resolveRecovery = resolve; });
+    const api: any = makeApi();
+    api.auth.onExpired = (callback: () => void) => { expire = callback; return () => {}; };
+    api.pos.billiardCheckout.recover = () => { events.push('recover'); return recovery; };
+    api.pos.snapshot.load = async () => { events.push('snapshot-load'); return null; };
+    api.pos.snapshot.clear = async () => { events.push('snapshot-clear'); };
+    api.pos.onStateChanged = () => { events.push('writer-arm'); return () => {}; };
+    api.pos.sync.products = async () => { events.push('sync'); };
+    (globalThis as any).electronAPI = api;
+    (globalThis as any).window = globalThis;
+    await act(async () => {
+      root = createRoot(container);
+      root.render(createElement(AndroidBootApp));
+    });
+    await settle();
+    expect(events).toEqual(['recover']);
+
+    await act(async () => { expire(); });
+    await act(async () => {
+      resolveRecovery({ success: true, intent: null, restoredCart: false });
+      await Promise.resolve();
+    });
+    await settle();
+    expect(events).toEqual(['recover']);
+    expect(container.querySelector('[data-testid="login-screen"]')).not.toBeNull();
   });
 
   it('keeps BOTH tabs mounted across a switch (3c2f020 parity)', async () => {

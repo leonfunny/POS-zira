@@ -79,6 +79,18 @@ type ReceiptRecovery = {
   nextAction: 'close' | 'fiscalPrompt';
 };
 
+type ProtectedCreateOrderFailure = {
+  outcomeUncertain?: boolean;
+  restoredCartReconciliation?: RestoredCartReconciliation;
+  protectedInterruptionRecoveryRequired?: {
+    durable: boolean;
+    count: number;
+    holdId: string;
+    checkoutId?: string;
+    message: string;
+  };
+};
+
 type LoyaltyLookupState = 'idle' | 'loading' | 'found' | 'not_found' | 'error';
 
 function normalizeNipInput(value: unknown): string {
@@ -371,7 +383,7 @@ export default function PaymentModal({
             setError(boundary.error || 'Payment is already recorded locally. Do not charge again.');
             return;
           }
-          if (boundary?.outcomeUncertain) {
+          if (boundary?.outcomeUncertain === true) {
             const message = boundary.error
               || 'Payment outcome is uncertain. Do not charge again. Reconcile cash/card and POS Order History with the owner.';
             completedOrderIdRef.current = orderAttemptIdRef.current;
@@ -764,8 +776,17 @@ export default function PaymentModal({
       // It derives the drawer decision from the canonical tender, so renderer
       // input can never open the drawer for a non-cash sale.
       queueInitialReceipt: printOrderCopy,
-    });
+    }) as Awaited<ReturnType<typeof window.electronAPI.pos.orders.create>> & ProtectedCreateOrderFailure;
     if (result && !result.success) {
+      const recoveryRequired = result.protectedInterruptionRecoveryRequired;
+      if (recoveryRequired) {
+        // This is a protected owner/scope diagnostic, not a synthetic money
+        // reconciliation. Lock the attempt and surface the exact durable
+        // diagnostic; boot/owner recovery must resolve the real row.
+        completedOrderIdRef.current = result.id || orderId;
+        setError(recoveryRequired.message);
+        return;
+      }
       if (result.paymentCommitted) {
         // Main crossed the local money boundary. Lock this modal permanently
         // against a second tender even when the disk verification response is
@@ -778,15 +799,21 @@ export default function PaymentModal({
         );
         return;
       }
-      if (protectedTender && tenderBoundaryCrossedRef.current) {
-        const message =
-          'Payment outcome is uncertain. Do not charge again. Reconcile the cash/card terminal and POS Order History with the owner.';
+      if (result.outcomeUncertain === true) {
+        const message = result.error
+          || 'Payment outcome is uncertain. Do not charge again. Reconcile the cash/card terminal and POS Order History with the owner.';
         completedOrderIdRef.current = orderId;
         setError(message);
         onTenderOutcomeUncertain?.(
           message,
-          buildImmediateRestoredCartReconciliation(checkoutDraft?.restoredInterruption, message),
+          result.restoredCartReconciliation
+            ?? buildImmediateRestoredCartReconciliation(checkoutDraft?.restoredInterruption, message),
         );
+        return;
+      }
+      if (protectedTender && tenderBoundaryCrossedRef.current) {
+        completedOrderIdRef.current = orderId;
+        setError(result.error || 'Recovery required. Do not charge again; restart POS to verify the protected checkout.');
         return;
       }
       throw new Error(result.error || 'Failed to save order');
@@ -1048,25 +1075,19 @@ export default function PaymentModal({
       await saveOrderAndFinish(orderId, submission);
     } catch (err) {
       rlog.error('[PaymentModal] Failed to complete payment:', err);
+      const rawMessage = err instanceof Error
+        ? err.message
+        : (typeof err === 'string' ? err : '');
+      const message = rawMessage.trim();
       if (
         protectedTender
         && tenderBoundaryCrossedRef.current
         && !completedOrderIdRef.current
       ) {
-        const message =
-          'Payment outcome is uncertain. Do not charge again. Reconcile the cash/card terminal and POS Order History with the owner.';
         completedOrderIdRef.current = orderAttemptIdRef.current;
-        setError(message);
-        onTenderOutcomeUncertain?.(
-          message,
-          buildImmediateRestoredCartReconciliation(checkoutDraft?.restoredInterruption, message),
-        );
+        setError(message || 'Recovery required. Do not charge again; restart POS to verify the protected checkout.');
         return;
       }
-      const rawMessage = err instanceof Error
-        ? err.message
-        : (typeof err === 'string' ? err : '');
-      const message = rawMessage.trim();
       if (/active shift staff|local active shift/i.test(message)) {
         setError(tOr('pos.shift.staffMissing', 'Shift is open but missing staff. Close and reopen the shift before payment.'));
       } else {

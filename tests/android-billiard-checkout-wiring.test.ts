@@ -44,6 +44,7 @@ describe('pos.billiardCheckout delegates to the transport', () => {
       billiardRecover: record('recover'),
       billiardMarkPaymentOpened: record('markPaymentOpened'),
       billiardBeginTender: record('beginTender'),
+      billiardBeginRestoredTender: record('beginRestoredTender'),
       billiardComplete: record('complete'),
       billiardResolveUncertainTender: record('resolveUncertainTender'),
     };
@@ -54,6 +55,7 @@ describe('pos.billiardCheckout delegates to the transport', () => {
     await expect(api.pos.billiardCheckout.recover()).resolves.toMatchObject({ from: 'recover' });
     await expect(api.pos.billiardCheckout.markPaymentOpened('co1')).resolves.toMatchObject({ from: 'markPaymentOpened' });
     await expect(api.pos.billiardCheckout.beginTender('co1', 'tok')).resolves.toMatchObject({ from: 'beginTender' });
+    await expect(api.pos.billiardCheckout.beginRestoredTender('hold-1', 'restored-tok')).resolves.toMatchObject({ from: 'beginRestoredTender' });
     await expect(api.pos.billiardCheckout.complete('co1', 'ord1')).resolves.toMatchObject({ from: 'complete' });
     await expect(api.pos.billiardCheckout.resolveUncertainTender({ reason: 'x' })).resolves.toMatchObject({ from: 'resolveUncertainTender' });
 
@@ -62,6 +64,7 @@ describe('pos.billiardCheckout delegates to the transport', () => {
     expect(calls.prepare).toEqual([{ posCheckout: { a: 1 } }]);
     expect(calls.markPaymentOpened).toEqual(['co1']);
     expect(calls.beginTender).toEqual(['co1', 'tok']);
+    expect(calls.beginRestoredTender).toEqual(['hold-1', 'restored-tok']);
     expect(calls.complete).toEqual(['co1', 'ord1']);
     expect(calls.resolveUncertainTender).toEqual([{ reason: 'x' }]);
   });
@@ -72,16 +75,19 @@ describe('pos.billiardCheckout delegates to the transport', () => {
     await expect(api.pos.billiardCheckout.prepare({})).resolves.toMatchObject({ success: false });
     await expect(api.pos.billiardCheckout.markPaymentOpened('co1')).resolves.toMatchObject({ success: false });
     await expect(api.pos.billiardCheckout.beginTender('co1', 't')).resolves.toMatchObject({ success: false });
+    await expect(api.pos.billiardCheckout.beginRestoredTender('hold-1', 't')).resolves.toMatchObject({ success: false });
     await expect(api.pos.billiardCheckout.complete('co1', 'o')).resolves.toMatchObject({ success: false });
     await expect(api.pos.billiardCheckout.resolveUncertainTender({})).resolves.toMatchObject({ success: false });
     // recover() is the one that may legitimately say "nothing to resume".
     await expect(api.pos.billiardCheckout.recover()).resolves.toEqual({ success: true, intent: null });
   });
 
-  test('beginRestoredTender refuses on BOTH transports — it is not ported yet', async () => {
-    const withOrchestration = install({ billiardPreflight: vi.fn(async () => ({ success: true })) });
+  test('beginRestoredTender never aliases ordinary Billiard tender and has no fake fallback', async () => {
+    const ordinary = vi.fn(async () => ({ success: true }));
+    const withOrchestration = install({ billiardBeginTender: ordinary });
     await expect(withOrchestration.api.pos.billiardCheckout.beginRestoredTender('hold-1', 'tok'))
-      .resolves.toMatchObject({ success: false, error: expect.stringMatching(/Windows counter/i) });
+      .resolves.toMatchObject({ success: false, error: expect.stringMatching(/durable Android transport/i) });
+    expect(ordinary).not.toHaveBeenCalled();
   });
 
   test('installShim hands the POS store to a transport that asks for it', () => {
