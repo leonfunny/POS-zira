@@ -29,7 +29,7 @@ describe('retail POS long-press label printing', () => {
     expect(retailTemplate).toContain('priceText,');
     expect(retailTemplate).toContain('sku: product.sku?.trim() || undefined');
     expect(retailTemplate).toContain('quantity: options.quantity');
-    expect(retailTemplate).toContain('onLongPressProduct={handlePrintProductCode}');
+    expect(retailTemplate).toContain('onLongPressProduct={canUseLabelPrint ? handlePrintProductCode : undefined}');
   });
 
   it('reuses the same label print path from the cart print button', () => {
@@ -40,7 +40,7 @@ describe('retail POS long-press label printing', () => {
     expect(retailTemplate).toContain('const handlePrintCartItemCode = useCallback(async (item: CartItem) => {');
     expect(retailTemplate).toContain('window.electronAPI.pos.products.getById(item.variantId)');
     expect(retailTemplate).toContain('return handlePrintProductCode(product, { quantity: labelCopiesForCartItem(item) });');
-    expect(retailTemplate).toContain('onPrintItemLabel={handlePrintCartItemCode}');
+    expect(retailTemplate).toContain('onPrintItemLabel={canUseLabelPrint ? handlePrintCartItemCode : undefined}');
   });
 
   it('supports the 00000000 scan command for printing the last scanned cart item quantity', () => {
@@ -55,7 +55,7 @@ describe('retail POS long-press label printing', () => {
     expect(posLayout).toContain('const lastLabelVariantIdRef = useRef<string | null>(null);');
     expect(posLayout).toContain('rememberLastLabelVariant(result.item.variantId);');
     expect(posLayout).toContain('onLastLabelVariantChange={rememberLastLabelVariant}');
-    expect(posLayout).toContain('onPrintLastCartLabelCommand={handlePrintLastCartLabelCommand}');
+    expect(posLayout).toContain('onPrintLastCartLabelCommand={canUseLabelPrint ? handlePrintLastCartLabelCommand : undefined}');
     expect(retailTemplate).toContain('commandBarcodes={RETAIL_SCAN_COMMANDS}');
     expect(searchBar).toContain('commandBarcodes?: string[]');
     expect(searchBar).toContain('if (code && commandBarcodeSetRef.current.has(code)) {');
