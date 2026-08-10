@@ -297,7 +297,8 @@ describe("ZplFormatter.formatLabel", () => {
     expect(printedTitle).toBe(productName);
     expect(textBounds.length).toBeGreaterThanOrEqual(5);
     for (const field of textBounds) {
-      expect(field.x + Array.from(field.text).length * field.width).toBeLessThanOrEqual(400);
+      const estimatedPrintedWidth = Array.from(field.text).length * field.width * 0.32;
+      expect(field.x + estimatedPrintedWidth).toBeLessThanOrEqual(400);
       expect(field.y + field.height).toBeLessThanOrEqual(240);
     }
     const titleBounds = textBounds.filter((field) => !["8802241901267", "123.45 PLN/kg"].includes(field.text));
@@ -348,19 +349,61 @@ describe("ZplFormatter.formatLabel", () => {
     const titleFields = lines
       .slice(0, barcodeIndex)
       .filter((line) => line.startsWith("^FD") && line.endsWith("^FS"));
-    const titleFontSizes = titleFields.map((field) => {
+    const titleFonts = titleFields.map((field) => {
       const fieldIndex = lines.indexOf(field);
-      return Number(lines[fieldIndex - 1]?.match(/\^A0,(\d+),(\d+)/)?.[1] || 0);
+      const font = lines[fieldIndex - 1]?.match(/\^A0,(\d+),(\d+)/);
+      return { height: Number(font?.[1] || 0), width: Number(font?.[2] || 0) };
     });
 
     expect(titleFields).toEqual([
       "^FDChipsy karbowane o smaku^FS",
       "^FDpikantnych Latiao LAY'S 70g^FS",
     ]);
-    expect(titleFontSizes).toEqual([28, 28]);
+    expect(titleFonts.every((font) => font.height >= 35 && font.width >= 34)).toBe(true);
     expect(zpl).not.toContain("…");
     expect(zpl).toContain("^FD14,58 zl^FS");
     expect(zpl).toContain("^BY3");
+  });
+
+  it("prints the photographed HAIDILAO title and EAN large with visible spacing", () => {
+    const f = new ZplFormatter(50, 30);
+    const barcode = "5060786250193";
+    const zpl = f.formatLabel({
+      barcode,
+      barcodeType: "EAN13",
+      text1: "Baza do hot pot o smaku grzybowym HAIDILAO 150g",
+      text2: "28,50 zl",
+      quantity: 1,
+    });
+    const lines = zpl.split("\n");
+    const barcodeIndex = lines.findIndex((line) => line.startsWith("^BE,"));
+    const titleFields = lines
+      .slice(0, barcodeIndex)
+      .filter((line) => line.startsWith("^FD") && line.endsWith("^FS"));
+    const titleMetrics = titleFields.map((field) => {
+      const fieldIndex = lines.indexOf(field);
+      const origin = lines[fieldIndex - 2]?.match(/\^FO(\d+),(\d+)/);
+      const font = lines[fieldIndex - 1]?.match(/\^A0,(\d+),(\d+)/);
+      return {
+        y: Number(origin?.[2] || 0),
+        height: Number(font?.[1] || 0),
+        width: Number(font?.[2] || 0),
+      };
+    });
+    const eanFieldIndex = lines.lastIndexOf(`^FD${barcode}^FS`);
+    const eanFont = lines[eanFieldIndex - 1]?.match(/\^A0,(\d+),(\d+)/);
+    const titleLineGap = titleMetrics[1].y - (titleMetrics[0].y + titleMetrics[0].height);
+
+    expect(titleFields).toEqual([
+      "^FDBaza do hot pot o smaku^FS",
+      "^FDgrzybowym HAIDILAO 150g^FS",
+    ]);
+    expect(titleMetrics.every((font) => font.height >= 35 && font.width >= 40)).toBe(true);
+    expect(titleLineGap).toBeGreaterThanOrEqual(6);
+    expect(Number(eanFont?.[1] || 0)).toBeGreaterThanOrEqual(24);
+    expect(Number(eanFont?.[2] || 0)).toBeGreaterThanOrEqual(28);
+    expect(zpl).toContain("^FD28,50 zl^FS");
+    expect(zpl).not.toContain("…");
   });
 });
 

@@ -137,10 +137,11 @@ export class ZplFormatter {
   }
 
   /**
-   * Font 0 uses the explicit ^A0 width as the character-cell width. Keeping it
-   * equal to the height makes a 30-40 character title nearly twice as wide as
-   * a 50mm label. Fit the cell width to the 40mm printable band while retaining
-   * a readable proportional width for shorter text.
+   * GK420d Font 0 glyphs occupy only about one third of the requested ^A0
+   * width. Treating that width as a full character cell made titles and EANs
+   * visibly condensed even though most of the 40mm printable band stayed
+   * empty. Size against the measured glyph ratio and retain a slightly wide,
+   * readable aspect ratio whenever the line has room.
    */
   private fittedTextWidthMm(
     text: string,
@@ -148,8 +149,10 @@ export class ZplFormatter {
     maxWidthMm: number,
   ): number {
     const glyphCount = Math.max(1, Array.from(text).length);
-    const proportionalWidthMm = fontHeightMm * 0.6;
-    return Math.max(0.6, Math.min(proportionalWidthMm, maxWidthMm / glyphCount));
+    const measuredGlyphWidthRatio = 0.32;
+    const readableCellWidthMm = fontHeightMm * 1.15;
+    const fittedCellWidthMm = maxWidthMm / (glyphCount * measuredGlyphWidthRatio);
+    return Math.max(0.9, Math.min(readableCellWidthMm, fittedCellWidthMm));
   }
 
   /**
@@ -248,14 +251,14 @@ export class ZplFormatter {
     // Adaptive vertical budget based on configured label height (mm).
     const H = this.labelHeight;
     const compactShelfLabel = this.labelWidth >= 45 && this.labelWidth <= 55 && H <= 35;
-    const topMarginMm = compactShelfLabel ? 1.4 : Math.max(2, H * 0.07);
+    const topMarginMm = compactShelfLabel ? 1.1 : Math.max(2, H * 0.07);
     const baseBarcodeHeightMm = Math.max(10, Math.min(15, H * 0.42));
     const text2FontMm = compactShelfLabel ? 5.6 : Math.max(4.2, Math.min(5.8, H * 0.16));
     const text2GapMm = text2FontMm + 0.1;
     const text3FontMm = Math.max(1.8, Math.min(3, H * 0.072));
-    const barcodeValueFontMm = compactShelfLabel ? 2.4 : Math.max(2.2, Math.min(3, H * 0.075));
+    const barcodeValueFontMm = compactShelfLabel ? 3 : Math.max(2.2, Math.min(3, H * 0.075));
     const barcodeToValueGapMm = 0.25;
-    const valueToPriceGapMm = 0.35;
+    const valueToPriceGapMm = compactShelfLabel ? 0.4 : 0.35;
 
     // Helper: returns true if a text field at yDots with given font height would still fit
     const labelHeightDots = this.mmToDots(this.labelHeight);
@@ -307,26 +310,38 @@ export class ZplFormatter {
       if (text1Lines.length > maxReadableTitleLines) {
         throw new Error(`Product name needs ${text1Lines.length} lines; ${maxReadableTitleLines} fit readably on this label`);
       }
-      const text1FontMm = text1Lines.length >= 3
-        ? compactShelfLabel ? 2.4 : Math.max(2.4, Math.min(2.8, H * 0.072))
-        : text1Lines.length > 1
-          ? useLargeCompactTitle
-            ? Math.max(3.2, Math.min(3.6, H * 0.115))
-            : compactShelfLabel ? 2.8 : Math.max(2.4, Math.min(3.1, H * 0.09))
-          : Math.max(3, Math.min(4.1, H * 0.115));
-      const text1GapMm = text1FontMm + (compactShelfLabel ? 0.15 : 0.25);
+      const text1FontMm = compactShelfLabel
+        ? text1Lines.length >= 4
+          ? 2.2
+          : text1Lines.length === 3
+            ? 2.6
+            : text1Lines.length > 1
+              ? useLargeCompactTitle ? Math.max(4.2, Math.min(4.5, H * 0.147)) : 3.6
+              : 4.8
+        : text1Lines.length >= 3
+          ? Math.max(2.4, Math.min(2.8, H * 0.072))
+          : text1Lines.length > 1
+            ? Math.max(2.4, Math.min(3.1, H * 0.09))
+            : Math.max(3, Math.min(4.1, H * 0.115));
+      const titleLineGapMm = compactShelfLabel
+        ? text1Lines.length >= 3 ? 0.3 : useLargeCompactTitle ? 0.75 : 0.55
+        : 0.25;
 
-      for (const textLine of text1Lines) {
+      for (let lineIndex = 0; lineIndex < text1Lines.length; lineIndex += 1) {
+        const textLine = text1Lines[lineIndex];
         if (!wouldFit(currentY, text1FontMm)) break;
         const text1WidthMm = this.fittedTextWidthMm(textLine, text1FontMm, this.labelWidth - 10);
         lines.push(`^FO${barcodeX},${currentY}`);
         lines.push(`^A0,${this.mmToDots(text1FontMm)},${this.mmToDots(text1WidthMm)}`);
         lines.push(`^FD${textLine}^FS`);
-        currentY += this.mmToDots(text1GapMm);
+        currentY += this.mmToDots(text1FontMm);
+        if (lineIndex < text1Lines.length - 1) {
+          currentY += this.mmToDots(titleLineGapMm);
+        }
       }
 
       if (text1Lines.length > 0) {
-        currentY += this.mmToDots(compactShelfLabel ? 0.3 : 0.4);
+        currentY += this.mmToDots(compactShelfLabel ? 0.35 : 0.4);
       }
 
       // Linear barcode (CODE128 or EAN13). Let long product names and the
