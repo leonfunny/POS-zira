@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { chromium } from 'playwright';
 import {
@@ -14,6 +15,46 @@ import {
   loadAuthenticatedFixture,
   submitRealLogin,
 } from './verify-android-authenticated-responsive.mjs';
+
+export function parseCurrentWebViewPackage(output) {
+  const match = String(output).match(
+    /^\s*Current WebView package \(name, version\):\s*\(([^,\s()]+),\s*((\d+)(?:\.\d+){1,3}(?:[-+._A-Za-z0-9]*))\)\s*$/m,
+  );
+  if (!match) return null;
+  return Object.freeze({ packageName: match[1], version: match[2], major: Number(match[3]) });
+}
+
+export function webViewHelpSupportsCurrentPackageCommand(helpOutput) {
+  return /(?:^|\s)getCurrentWebViewPackage(?:\s|$)/.test(String(helpOutput));
+}
+
+export function discoverCurrentWebViewPackage(adb) {
+  let helpOutput = '';
+  try {
+    helpOutput = adb('shell', 'cmd', 'webviewupdate', 'help');
+  } catch {
+    // Older Android builds may not expose command help. dumpsys remains the
+    // read-only source of truth and does not change the selected provider.
+  }
+
+  if (webViewHelpSupportsCurrentPackageCommand(helpOutput)) {
+    try {
+      const commandOutput = adb('shell', 'cmd', 'webviewupdate', 'getCurrentWebViewPackage');
+      const current = parseCurrentWebViewPackage(commandOutput);
+      if (current) return Object.freeze({ ...current, source: 'cmd webviewupdate getCurrentWebViewPackage' });
+    } catch {
+      // A command advertised by help can still be unavailable on vendor
+      // builds. Fall through to the read-only service dump.
+    }
+  }
+
+  const dumpsysOutput = adb('shell', 'dumpsys', 'webviewupdate');
+  const current = parseCurrentWebViewPackage(dumpsysOutput);
+  assert.ok(current, `Could not parse current WebView package/version from dumpsys webviewupdate: ${dumpsysOutput}`);
+  return Object.freeze({ ...current, source: 'dumpsys webviewupdate' });
+}
+
+async function main() {
 
 const serial = String(process.env.ANDROID_SERIAL || '').trim();
 assert.ok(serial && !/\s/.test(serial), 'ANDROID_SERIAL must be one exact adb serial');
@@ -34,10 +75,8 @@ const deviceRow = execFileSync('adb', ['devices'], { encoding: 'utf8' })
   .find(([id]) => id === serial);
 assert.deepEqual(deviceRow, [serial, 'device'], `ANDROID_SERIAL ${serial} is not one connected, authorized device`);
 
-const currentWebView = adb('shell', 'cmd', 'webviewupdate', 'getCurrentWebViewPackage');
-const versionMatch = currentWebView.match(/\(([^,]+),\s*((\d+)\.[^)]+)\)/);
-assert.ok(versionMatch, `Could not derive the current WebView package/version for ${serial}: ${currentWebView}`);
-assert.equal(Number(versionMatch[3]), 83, `SUNMI acceptance requires WebView major 83, got ${versionMatch[2]}`);
+const currentWebView = discoverCurrentWebViewPackage(adb);
+assert.equal(currentWebView.major, 83, `SUNMI acceptance requires WebView major 83, got ${currentWebView.version}`);
 
 assert.match(adb('shell', 'pm', 'path', packageName), /^package:/, `Exact dev package ${packageName} is not installed`);
 adb('shell', 'am', 'force-stop', packageName);
@@ -105,8 +144,11 @@ try {
   assert.ok(router.hits.includes('POST /api/v1/auth/login'), 'Real Login form did not issue the allowlisted login request after intercepted reload');
   assert.deepEqual(router.unexpected, [], `SUNMI outbound request outside exact allowlist: ${router.unexpected.join(' | ')}`);
   assert.deepEqual(errors, [], `SUNMI console/CSP errors: ${errors.join(' | ')}`);
-  console.log(`PASS SUNMI ${serial}: WebView ${versionMatch[1]} ${versionMatch[2]}, exact package ${packageName}, authenticated screenshots captured`);
+  console.log(`PASS SUNMI ${serial}: WebView ${currentWebView.packageName} ${currentWebView.version} via ${currentWebView.source}, exact package ${packageName}, authenticated screenshots captured`);
 } finally {
   if (browser) await browser.close();
   execFileSync('adb', ['-s', serial, 'forward', '--remove', `tcp:${localPort}`], { stdio: 'ignore' });
 }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

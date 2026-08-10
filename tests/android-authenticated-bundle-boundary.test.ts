@@ -47,12 +47,70 @@ describe('authenticated visual harness production boundary', () => {
     }
   });
 
+  test('SUNMI WebView discovery uses the supported command or read-only dumpsys fallback', async () => {
+    const {
+      discoverCurrentWebViewPackage,
+      parseCurrentWebViewPackage,
+    } = await import('../scripts/verify-android-sunmi-authenticated.mjs');
+    const dump = `
+      WebView Update Service state
+      Current WebView package (name, version): (com.android.webview, 83.0.4103.120)
+      Minimum WebView version code: 410412000
+    `;
+    expect(parseCurrentWebViewPackage(dump)).toEqual({
+      packageName: 'com.android.webview',
+      version: '83.0.4103.120',
+      major: 83,
+    });
+    expect(parseCurrentWebViewPackage('Unknown command: getCurrentWebViewPackage')).toBeNull();
+
+    const legacyCalls: string[] = [];
+    const legacyAdb = (...args: string[]) => {
+      legacyCalls.push(args.join(' '));
+      if (args.at(-1) === 'help') return 'help\nset-webview-implementation\nenable-redundant-packages\ndisable-redundant-packages';
+      if (args.join(' ') === 'shell dumpsys webviewupdate') return dump;
+      throw new Error(`unexpected legacy adb call: ${args.join(' ')}`);
+    };
+    expect(discoverCurrentWebViewPackage(legacyAdb)).toEqual({
+      packageName: 'com.android.webview',
+      version: '83.0.4103.120',
+      major: 83,
+      source: 'dumpsys webviewupdate',
+    });
+    expect(legacyCalls).toEqual([
+      'shell cmd webviewupdate help',
+      'shell dumpsys webviewupdate',
+    ]);
+
+    const supportedCalls: string[] = [];
+    const supportedAdb = (...args: string[]) => {
+      supportedCalls.push(args.join(' '));
+      if (args.at(-1) === 'help') return 'help\ngetCurrentWebViewPackage';
+      if (args.at(-1) === 'getCurrentWebViewPackage') {
+        return 'Current WebView package (name, version): (com.google.android.webview, 83.0.4103.120)';
+      }
+      throw new Error(`unexpected supported adb call: ${args.join(' ')}`);
+    };
+    expect(discoverCurrentWebViewPackage(supportedAdb)).toEqual({
+      packageName: 'com.google.android.webview',
+      version: '83.0.4103.120',
+      major: 83,
+      source: 'cmd webviewupdate getCurrentWebViewPackage',
+    });
+    expect(supportedCalls).toEqual([
+      'shell cmd webviewupdate help',
+      'shell cmd webviewupdate getCurrentWebViewPackage',
+    ]);
+  });
+
   test('SUNMI acceptance is pinned to exact serial, package, WebView 83 and PID-scoped CDP', () => {
     const script = readFileSync(resolve(root, 'scripts/verify-android-sunmi-authenticated.mjs'), 'utf8');
     expect(script).toContain('process.env.ANDROID_SERIAL');
     expect(script).toContain("['-s', serial");
     expect(script).toContain("'getCurrentWebViewPackage'");
-    expect(script).toContain("assert.equal(Number(versionMatch[3]), 83");
+    expect(script).toContain("adb('shell', 'dumpsys', 'webviewupdate')");
+    expect(script).toContain('assert.equal(currentWebView.major, 83');
+    expect(script).not.toMatch(/webviewupdate',\s*'(?:set|enable|disable)/);
     expect(script).toContain("const packageName = 'com.ziraai.posdiagnostics.dev.live'");
     expect(script).toContain('process.env.ANDROID_W6_CLEAR_DEV_PACKAGE');
     expect(script).toContain("const clearAcknowledgement = 'I_ACKNOWLEDGE_CLEAR_DEV_PACKAGE'");
