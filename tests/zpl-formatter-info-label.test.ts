@@ -180,6 +180,7 @@ describe("ZplFormatter.formatLabel", () => {
     expect(zpl).not.toContain("^PW609");
     expect(zpl).not.toContain("^LL");
     expect(zpl).toContain("Bánh mì");
+    expect(zpl).toContain("^A0,32,32\n^FDBánh mì^FS");
   });
 
   it("puts a wrapped product title above a 50x30 linear barcode", () => {

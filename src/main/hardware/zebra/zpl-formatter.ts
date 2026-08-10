@@ -343,9 +343,7 @@ export class ZplFormatter {
           ? 2.2
           : text1Lines.length === 3
             ? 2.6
-            : text1Lines.length > 1
-              ? 4
-              : 4.1
+            : 4
         : text1Lines.length >= 3
           ? Math.max(2.4, Math.min(2.8, H * 0.072))
           : text1Lines.length > 1
