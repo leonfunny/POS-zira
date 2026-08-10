@@ -1097,16 +1097,25 @@ export default function ProductEditForm({
         ) : null}
 
         {supportsItemType && itemType === 'stockable' ? (
-          <label className="flex min-h-11 items-center gap-3 rounded-md border border-slate-300 bg-white px-3 py-2">
+          <label className="flex min-h-11 items-start gap-3 rounded-md border border-slate-300 bg-white px-3 py-2">
             <input
               type="checkbox"
               checked={trackInventory}
               onChange={(event) => setTrackInventory(event.target.checked)}
               disabled={!canChangeInventoryMode}
-              className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 disabled:cursor-not-allowed"
+              className="mt-1 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500 disabled:cursor-not-allowed"
             />
-            <span className="text-sm font-semibold text-slate-800">
-              {tOr(t, 'products.edit.trackInventory', 'Track inventory')}
+            <span className="min-w-0">
+              <span className="block text-sm font-semibold text-slate-800">
+                {tOr(t, 'products.edit.trackInventory', 'Track inventory')}
+              </span>
+              <span className="mt-0.5 block text-xs leading-5 text-slate-500">
+                {tOr(
+                  t,
+                  'products.edit.trackInventoryHint',
+                  'When enabled, sales deduct stock; when disabled, stock quantities do not change.',
+                )}
+              </span>
             </span>
           </label>
         ) : null}
