@@ -288,7 +288,20 @@ export class ZplFormatter {
     } else {
       // Product title first: the old order wasted the whole upper half of
       // 50x30mm product labels by placing every text line below the barcode.
-      const titleCharsPerLine = Math.max(22, Math.floor((this.labelWidth - 10) / 1.1));
+      const standardTitleCharsPerLine = Math.max(22, Math.floor((this.labelWidth - 10) / 1.1));
+      const largeCompactTitleCharsPerLine = Math.max(22, Math.floor((this.labelWidth - 10) / 1.35));
+      const normalizedTitleLength = data.text1
+        ? data.text1.replace(/\r\n?/g, '\n').replace(/\s+/g, ' ').trim().length
+        : 0;
+      // A medium title on the common 50x30 stock fits cleanly on two lines.
+      // Use fewer characters per line so both lines can be materially larger;
+      // genuinely long names retain the denser layout instead of being clipped.
+      const useLargeCompactTitle = compactShelfLabel
+        && normalizedTitleLength > largeCompactTitleCharsPerLine + 10
+        && normalizedTitleLength <= largeCompactTitleCharsPerLine * 2;
+      const titleCharsPerLine = useLargeCompactTitle
+        ? largeCompactTitleCharsPerLine
+        : standardTitleCharsPerLine;
       const text1Lines = data.text1 ? this.wrapLabelText(data.text1, titleCharsPerLine) : [];
       const maxReadableTitleLines = compactShelfLabel ? 4 : Math.max(4, Math.floor(H / 8));
       if (text1Lines.length > maxReadableTitleLines) {
@@ -297,7 +310,9 @@ export class ZplFormatter {
       const text1FontMm = text1Lines.length >= 3
         ? compactShelfLabel ? 2.4 : Math.max(2.4, Math.min(2.8, H * 0.072))
         : text1Lines.length > 1
-          ? compactShelfLabel ? 2.8 : Math.max(2.4, Math.min(3.1, H * 0.09))
+          ? useLargeCompactTitle
+            ? Math.max(3.2, Math.min(3.6, H * 0.115))
+            : compactShelfLabel ? 2.8 : Math.max(2.4, Math.min(3.1, H * 0.09))
           : Math.max(3, Math.min(4.1, H * 0.115));
       const text1GapMm = text1FontMm + (compactShelfLabel ? 0.15 : 0.25);
 

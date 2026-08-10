@@ -332,6 +332,36 @@ describe("ZplFormatter.formatLabel", () => {
     expect(zpl).toContain("^PW400");
     expect(zpl).toContain("^BY2");
   });
+
+  it("uses the spare 50x30 title area for a larger two-line grocery name", () => {
+    const f = new ZplFormatter(50, 30);
+    const zpl = f.formatLabel({
+      barcode: "6924743935396",
+      barcodeType: "EAN13",
+      text1: "Chipsy karbowane o smaku pikantnych Latiao LAY'S 70g",
+      text2: "14,58 zl",
+      text3: "SKU EAN-6924743935396",
+      quantity: 1,
+    });
+    const lines = zpl.split("\n");
+    const barcodeIndex = lines.findIndex((line) => line.startsWith("^BE,"));
+    const titleFields = lines
+      .slice(0, barcodeIndex)
+      .filter((line) => line.startsWith("^FD") && line.endsWith("^FS"));
+    const titleFontSizes = titleFields.map((field) => {
+      const fieldIndex = lines.indexOf(field);
+      return Number(lines[fieldIndex - 1]?.match(/\^A0,(\d+),(\d+)/)?.[1] || 0);
+    });
+
+    expect(titleFields).toEqual([
+      "^FDChipsy karbowane o smaku^FS",
+      "^FDpikantnych Latiao LAY'S 70g^FS",
+    ]);
+    expect(titleFontSizes).toEqual([28, 28]);
+    expect(zpl).not.toContain("…");
+    expect(zpl).toContain("^FD14,58 zl^FS");
+    expect(zpl).toContain("^BY3");
+  });
 });
 
 describe("ZplFormatter.formatKitchenPaymentLabel", () => {
