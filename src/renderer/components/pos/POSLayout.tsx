@@ -1595,7 +1595,7 @@ function POSLayoutContent({
 
   if (!state) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-600">
+      <div className="zira-pos-layout-root min-h-screen bg-slate-50 flex items-center justify-center text-slate-600">
         {/* Hidden barcode input must exist even during loading so scanner keystrokes are captured */}
         <input
           ref={barcodeRef}
@@ -1618,7 +1618,7 @@ function POSLayoutContent({
   const visiblePickups = pickupOrders.filter((o) => o.id !== activePickup?.id);
 
   return (
-    <div className={`${embedded ? 'h-full' : 'h-screen'} bg-slate-50 text-slate-900 flex flex-col overflow-hidden`}>
+    <div className={`zira-pos-layout-root ${embedded ? 'h-full' : 'h-screen'} bg-slate-50 text-slate-900 flex flex-col overflow-hidden`}>
       {/* Hidden barcode capture input for USB HID scanners */}
       <input
         ref={barcodeRef}
