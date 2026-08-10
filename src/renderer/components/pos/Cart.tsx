@@ -81,7 +81,7 @@ function OverflowMenu({ hasItems, confirmClear, onRequestClear, onCancelClear, o
       </button>
       {open && (
         <>
-          <div className="fixed inset-0 z-30" onClick={closeMenu} aria-hidden="true" />
+          <div className="fixed top-0 right-0 bottom-0 left-0 z-30" onClick={closeMenu} aria-hidden="true" />
           <div
             role="menu"
             className="absolute right-0 top-full mt-1 z-40 bg-white border border-slate-200 rounded-lg shadow-lg py-1 min-w-[200px] overflow-hidden"
@@ -92,12 +92,12 @@ function OverflowMenu({ hasItems, confirmClear, onRequestClear, onCancelClear, o
                   type="button"
                   role="menuitem"
                   onClick={() => { onConfirmClear(); setOpen(false); }}
-                  className="w-full px-4 py-3 text-left text-sm font-bold text-white bg-red-600 hover:bg-red-700 active:bg-red-800 flex items-center gap-2.5 cursor-pointer touch-manipulation"
+                  className="w-full px-4 py-3 text-left text-sm font-bold text-white bg-red-600 hover:bg-red-700 active:bg-red-800 flex items-center space-x-2.5 cursor-pointer touch-manipulation"
                 >
                   <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M5 13l4 4L19 7" />
                   </svg>
-                  {tOr('pos.cart.confirmClear', 'Confirm clear')}
+                  <span>{tOr('pos.cart.confirmClear', 'Confirm clear')}</span>
                 </button>
                 <button
                   type="button"
@@ -114,12 +114,12 @@ function OverflowMenu({ hasItems, confirmClear, onRequestClear, onCancelClear, o
                 role="menuitem"
                 onClick={onRequestClear}
                 disabled={!hasItems}
-                className="w-full px-4 py-3 text-left text-sm font-bold text-red-700 hover:bg-red-50 disabled:text-slate-300 disabled:cursor-not-allowed disabled:hover:bg-transparent cursor-pointer touch-manipulation flex items-center gap-2.5"
+                className="w-full px-4 py-3 text-left text-sm font-bold text-red-700 hover:bg-red-50 disabled:text-slate-300 disabled:cursor-not-allowed disabled:hover:bg-transparent cursor-pointer touch-manipulation flex items-center space-x-2.5"
               >
                 <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3" />
                 </svg>
-                {t('pos.cart.clear')}
+                <span>{t('pos.cart.clear')}</span>
               </button>
             )}
           </div>
@@ -256,7 +256,7 @@ function DiscountPopup({
 
   return (
     <>
-      <div className="fixed inset-0 z-40 bg-slate-950/20" onClick={onClose} aria-hidden="true" />
+      <div className="fixed top-0 right-0 bottom-0 left-0 z-40 bg-slate-950/20" onClick={onClose} aria-hidden="true" />
       <div
         role="dialog"
         aria-modal="true"
@@ -302,7 +302,7 @@ function DiscountPopup({
           </div>
 
           <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-2">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center space-x-2">
               <div className="flex h-10 shrink-0 overflow-hidden rounded-lg border border-slate-300 bg-white">
                 <button
                   type="button"
@@ -368,7 +368,7 @@ function DiscountPopup({
             </span>
           </button>
 
-          <div className="mt-3 flex gap-2">
+          <div className="mt-3 flex space-x-2">
             {currentDiscount > 0 && (
               <button
                 type="button"
@@ -460,7 +460,7 @@ function PricePopup({ item, currency, onApply, onUpdateBackendPrice, onClose, tO
 
   return (
     <>
-      <div className="fixed inset-0 z-40 bg-slate-950/20" onClick={onClose} aria-hidden="true" />
+      <div className="fixed top-0 right-0 bottom-0 left-0 z-40 bg-slate-950/20" onClick={onClose} aria-hidden="true" />
       <div
         role="dialog"
         aria-modal="true"
@@ -487,7 +487,7 @@ function PricePopup({ item, currency, onApply, onUpdateBackendPrice, onClose, tO
         <div className="p-4">
           <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
             <p className="text-xs font-bold text-slate-600">{tOr('pos.price.new', 'New price')}</p>
-            <div className="mt-1 flex items-baseline justify-between gap-3">
+            <div className="mt-1 flex items-baseline justify-between space-x-3">
               <span className="min-w-0 flex-1 truncate text-3xl font-black tabular-nums text-slate-950">
                 {buffer || '0'}
               </span>
@@ -540,7 +540,7 @@ function PricePopup({ item, currency, onApply, onUpdateBackendPrice, onClose, tO
             </p>
           )}
 
-          <div className="mt-3 flex gap-2">
+          <div className="mt-3 flex space-x-2">
             <button
               type="button"
               onClick={onClose}
@@ -806,9 +806,9 @@ export default function Cart({
           glance. Held-cart count surfaces here too (sourced from
           RetailTemplate). Destructive actions live behind the
           overflow menu to keep the strip clean. */}
-      <div className="px-3 py-2 border-b border-slate-200 shrink-0 flex items-center justify-between gap-2">
+      <div className="px-3 py-2 border-b border-slate-200 shrink-0 flex items-center justify-between space-x-2">
         <div className="min-w-0 flex-1">
-          <h2 className="flex min-w-0 items-baseline gap-1.5 text-sm font-extrabold text-slate-950">
+          <h2 className="flex min-w-0 items-baseline space-x-1.5 text-sm font-extrabold text-slate-950">
             <span className="shrink-0">{t('pos.cart')}</span>
             <span className="shrink-0 text-slate-300" aria-hidden="true">–</span>
             {hasItems ? (
@@ -824,7 +824,7 @@ export default function Cart({
             )}
           </h2>
           {heldCartsCount > 0 && (
-            <p className="text-[11px] font-bold text-amber-700 mt-0.5 flex items-center gap-1">
+            <p className="text-[11px] font-bold text-amber-700 mt-0.5 flex items-center space-x-1">
               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.4} d="M10 9v6m4-6v6m5 4H5a2 2 0 01-2-2V7a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2z" />
               </svg>
@@ -855,7 +855,7 @@ export default function Cart({
         }}
       >
         {!hasItems ? (
-          <div className="flex flex-col items-center justify-center h-full gap-4 text-center px-4 py-8">
+          <div className="flex flex-col items-center justify-center h-full space-y-4 text-center px-4 py-8">
             <div className="w-16 h-16 rounded-lg bg-white border border-slate-200 flex items-center justify-center shadow-sm">
               <svg className="w-8 h-8 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
@@ -913,7 +913,7 @@ export default function Cart({
           (industry pattern: Square / Shopify POS / Toast). Discount
           opens a preset popup instead of the inline numpad. */}
       {hasItems && showOrderActionChips && (
-        <div className="relative shrink-0 px-2 py-1.5 flex items-center gap-1.5 border-t border-slate-200 bg-white overflow-x-auto scrollbar-hide">
+        <div className="relative shrink-0 px-2 py-1.5 flex items-center border-t border-slate-200 bg-white overflow-x-auto scrollbar-hide">
           <button
             type="button"
             onClick={() => {
@@ -921,7 +921,7 @@ export default function Cart({
               setDiscountPopupOpen(true);
             }}
             aria-pressed={discountPopupOpen || isDiscountActive || cart.discount > 0}
-            className={`shrink-0 h-10 px-2.5 rounded-lg border text-xs font-bold transition-colors cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 flex items-center gap-1.5 ${
+            className={`mr-1.5 shrink-0 h-10 px-2.5 rounded-lg border text-xs font-bold transition-colors cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 flex items-center space-x-1.5 ${
               discountPopupOpen || isDiscountActive || cart.discount > 0
                 ? 'bg-brand-50 text-brand-800 border-brand-400'
                 : 'bg-white text-slate-700 border-slate-300 hover:border-brand-400 hover:bg-brand-50 hover:text-brand-700'
@@ -930,7 +930,7 @@ export default function Cart({
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5a1.99 1.99 0 011.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
             </svg>
-            {tOr('pos.numpad.discount', 'Discount')}
+            <span>{tOr('pos.numpad.discount', 'Discount')}</span>
           </button>
           {discountPopupOpen && (
             <DiscountPopup
@@ -962,12 +962,12 @@ export default function Cart({
             <button
               type="button"
               onClick={onHold}
-              className="shrink-0 h-10 px-2.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-xs font-bold hover:border-amber-400 hover:bg-amber-50 hover:text-amber-800 transition-colors cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-200 flex items-center gap-1.5"
+              className="shrink-0 h-10 px-2.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-xs font-bold hover:border-amber-400 hover:bg-amber-50 hover:text-amber-800 transition-colors cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-200 flex items-center space-x-1.5"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              {tOr('pos.holdCart', 'Hold')}
+              <span>{tOr('pos.holdCart', 'Hold')}</span>
             </button>
           )}
         </div>
@@ -1015,7 +1015,7 @@ export default function Cart({
                   {t('pos.cart.discount')}
                   {cart.discountType === 'percentage' && cart.discountPercent ? ` (${cart.discountPercent}%)` : ''}
                 </span>
-                <span className="flex items-center gap-1">
+                <span className="flex items-center space-x-1">
                   <span className="text-emerald-700 font-bold tabular-nums">−{(cart.discount / 100).toFixed(2)} {currency}</span>
                   <button
                     type="button"
@@ -1048,7 +1048,7 @@ export default function Cart({
           </div>
 
           {!shiftOpen && (
-            <div className="flex items-center gap-2 px-3 py-2.5 mb-2.5 bg-amber-50 border border-amber-300 rounded-lg">
+            <div className="flex items-center space-x-2 px-3 py-2.5 mb-2.5 bg-amber-50 border border-amber-300 rounded-lg">
               <svg className="w-5 h-5 text-amber-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
               </svg>
@@ -1071,11 +1071,11 @@ export default function Cart({
           warning at the bottom so it's not lost in the scroll area. */}
       {!hasItems && !shiftOpen && (
         <div className="shrink-0 px-4 py-3 bg-amber-50 border-t border-amber-200">
-          <p className="text-xs font-bold text-amber-900 flex items-center gap-2">
+          <p className="text-xs font-bold text-amber-900 flex items-center space-x-2">
             <svg className="w-4 h-4 text-amber-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
             </svg>
-            {shiftWarning}
+            <span>{shiftWarning}</span>
           </p>
         </div>
       )}

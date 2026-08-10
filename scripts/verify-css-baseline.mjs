@@ -72,6 +72,10 @@ function isAspectUtility(base) {
   return /^aspect-/.test(base);
 }
 
+function isInsetUtility(base) {
+  return base === 'inset-0';
+}
+
 function walk(dir, out = []) {
   if (!existsSync(dir)) return out;
   for (const entry of readdirSync(dir)) {
@@ -127,12 +131,81 @@ function lineOf(source, index) {
  * examined per branch rather than as one soup — that avoids calling a grid
  * branch a flex violation.
  */
+function templateParts(value) {
+  const source = value.trim();
+  if (!source.startsWith('`') || !source.endsWith('`')) return null;
+
+  let staticText = '';
+  const expressions = [];
+  for (let i = 1; i < source.length - 1; i += 1) {
+    if (source[i] !== '$' || source[i + 1] !== '{') {
+      staticText += source[i];
+      continue;
+    }
+
+    const start = i + 2;
+    let depth = 1;
+    let quote = null;
+    let j = start;
+    for (; j < source.length - 1; j += 1) {
+      const ch = source[j];
+      if (quote) {
+        if (ch === '\\') j += 1;
+        else if (ch === quote) quote = null;
+        continue;
+      }
+      if (ch === "'" || ch === '"' || ch === '`') {
+        quote = ch;
+        continue;
+      }
+      if (ch === '{') depth += 1;
+      else if (ch === '}' && --depth === 0) break;
+    }
+    if (depth !== 0) return null;
+    expressions.push(source.slice(start, j));
+    staticText += ' ';
+    i = j;
+  }
+  return { staticText, expressions };
+}
+
 function branchesOf(value) {
+  const template = templateParts(value);
+  if (template) {
+    // Combine the always-present template tokens with each possible literal
+    // branch independently. Separate interpolations are handled conservatively
+    // by templateHasCrossInterpolationAmbiguity below; their runtime correlation
+    // cannot be proven from a class string.
+    const branches = [template.staticText];
+    for (const expression of template.expressions) {
+      const literals = [...expression.matchAll(/(['"])(.*?)\1/gs)].map((m) => m[2]);
+      for (const literal of literals) branches.push(`${template.staticText} ${literal}`);
+    }
+    return branches;
+  }
   const literals = [...value.matchAll(/['"`]([^'"`]*)['"`]/g)].map((m) => m[1]);
   return literals.length ? literals : [value];
 }
 
-const violations = { flexGap: [], aspect: [], ambiguous: [] };
+function templateHasCrossInterpolationAmbiguity(value) {
+  const template = templateParts(value);
+  if (!template || template.expressions.length < 2) return false;
+
+  const emissions = template.expressions.map((expression) => {
+    const literals = [...expression.matchAll(/(['"])(.*?)\1/gs)].map((m) => m[2]);
+    return literals.flatMap((literal) => literal.split(/\s+/).filter(Boolean).map(baseUtility));
+  });
+  const flexExpressions = emissions
+    .map((tokens, index) => tokens.some((token) => FLEX_DISPLAY.has(token)) ? index : -1)
+    .filter((index) => index !== -1);
+  const gapExpressions = emissions
+    .map((tokens, index) => tokens.some(isGapUtility) ? index : -1)
+    .filter((index) => index !== -1);
+
+  return flexExpressions.some((flexIndex) => gapExpressions.some((gapIndex) => gapIndex !== flexIndex));
+}
+
+const violations = { flexGap: [], aspect: [], inset: [], ambiguous: [] };
 
 // `--dir=` overrides the named scopes. Tests point it at a fixture tree; it is
 // also handy for checking one component while refactoring it.
@@ -147,20 +220,35 @@ for (const file of files) {
   const rel = relative(ROOT, file);
   for (const { text, index } of extractClassValues(source)) {
     const line = lineOf(source, index);
+    let insetRecorded = false;
+    let ambiguousRecorded = false;
+    if (templateHasCrossInterpolationAmbiguity(text)) {
+      violations.ambiguous.push({ rel, line, tokens: 'separate template interpolations may combine flex + gap-*' });
+      ambiguousRecorded = true;
+    }
     for (const branch of branchesOf(text)) {
       const tokens = branch.split(/\s+/).filter(Boolean).map(baseUtility);
       const hasFlex = tokens.some((t) => FLEX_DISPLAY.has(t));
       const hasGrid = tokens.some((t) => GRID_DISPLAY.has(t));
       const gaps = tokens.filter(isGapUtility);
       const aspects = tokens.filter(isAspectUtility);
+      const insets = tokens.filter(isInsetUtility);
 
       if (aspects.length) {
         violations.aspect.push({ rel, line, tokens: aspects.join(' ') });
       }
+      if (insets.length && !insetRecorded) {
+        violations.inset.push({ rel, line, tokens: insets.join(' ') });
+        insetRecorded = true;
+      }
       if (gaps.length && hasFlex) {
         // A branch carrying both display utilities cannot be judged statically.
-        if (hasGrid) violations.ambiguous.push({ rel, line, tokens: gaps.join(' ') });
-        else violations.flexGap.push({ rel, line, tokens: gaps.join(' ') });
+        if (hasGrid) {
+          if (!ambiguousRecorded) {
+            violations.ambiguous.push({ rel, line, tokens: gaps.join(' ') });
+            ambiguousRecorded = true;
+          }
+        } else violations.flexGap.push({ rel, line, tokens: gaps.join(' ') });
       }
     }
   }
@@ -183,6 +271,7 @@ if (scanCss && existsSync(cssDir)) {
       [':is(', /:is\(/g, 'the whole rule is discarded on Chromium 83'],
       [':has(', /:has\(/g, 'needs Chromium 105'],
       ['aspect-ratio', /aspect-ratio\s*:/g, 'ignored; the box gets no intrinsic height'],
+      ['inset:', /(?:^|[;{])\s*inset\s*:/g, 'shorthand is ignored; use explicit physical sides'],
       ['color-mix(', /color-mix\(/g, 'needs Chromium 111'],
       ['@container', /@container/g, 'needs Chromium 105'],
       ['dynamic viewport unit', /(?:^|[^\w-])(?:\d*\.?\d+)(?:dvh|dvw|svh|svw|lvh|lvw)\b/g, 'needs Chromium 108'],
@@ -220,9 +309,17 @@ if (violations.aspect.length) {
   console.log(`   fix: set an explicit height, or use the padding-top percentage trick`);
   console.log('');
 }
+if (violations.inset.length) {
+  console.log(`inset-0      ${violations.inset.length} site(s)  -> shorthand is not in the Chrome 83 authoring contract`);
+  for (const [file, n] of byFile(violations.inset).slice(0, 8)) console.log(`   ${String(n).padStart(4)}  ${file}`);
+  if (byFile(violations.inset).length > 8) console.log(`   ...and ${byFile(violations.inset).length - 8} more files`);
+  console.log(`   fix: use top-0 right-0 bottom-0 left-0`);
+  console.log('');
+}
 if (violations.ambiguous.length) {
-  console.log(`ambiguous     ${violations.ambiguous.length} site(s)  -> class list carries BOTH flex and grid; check by hand`);
+  console.log(`ambiguous     ${violations.ambiguous.length} site(s)  -> runtime classes cannot prove Chrome 83-safe flex spacing`);
   for (const [file, n] of byFile(violations.ambiguous).slice(0, 6)) console.log(`   ${String(n).padStart(4)}  ${file}`);
+  console.log(`   fix: keep display and spacing in one provable branch, or use Chrome 83-safe margins`);
   console.log('');
 }
 if (cssFindings.length) {
@@ -234,7 +331,7 @@ if (cssFindings.length) {
   console.log('');
 }
 
-const total = violations.flexGap.length + violations.aspect.length + cssFindings.reduce((s, f) => s + f.n, 0);
+const total = violations.flexGap.length + violations.aspect.length + violations.inset.length + violations.ambiguous.length + cssFindings.reduce((s, f) => s + f.n, 0);
 if (total === 0) {
   console.log('PASS css baseline: nothing that Chromium 83 would drop.');
   process.exit(0);

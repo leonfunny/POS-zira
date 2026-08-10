@@ -202,9 +202,9 @@ function PrintBadge({ label, view }: { label: string; view: PrintBadgeView }) {
     : view.tone === 'warn' ? 'border-amber-200 bg-amber-50 text-amber-800'
     : 'border-slate-200 bg-slate-50 text-slate-500';
   return (
-    <div className="flex items-center gap-2 text-xs">
+    <div className="flex items-center space-x-2 text-xs">
       <span className="w-12 shrink-0 font-bold uppercase tracking-wide text-slate-400">{label}</span>
-      <span className={`inline-flex min-w-0 items-center gap-1 rounded-full border px-2 py-0.5 font-medium ${tone}`}>
+      <span className={`inline-flex min-w-0 items-center space-x-1 rounded-full border px-2 py-0.5 font-medium ${tone}`}>
         {view.tone === 'ok' && <span aria-hidden="true">✓</span>}
         <span className="truncate">{view.text}</span>
       </span>
@@ -462,7 +462,7 @@ function DialogShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-3" onClick={onClose}>
+    <div className="fixed top-0 right-0 bottom-0 left-0 z-50 flex items-center justify-center bg-slate-950/45 p-3" onClick={onClose}>
       <div
         role="dialog"
         aria-modal="true"
@@ -912,7 +912,7 @@ function RefundPanel({
                     className="ml-auto h-11 w-28 rounded-md border border-slate-300 bg-white px-3 text-right text-sm font-extrabold tabular-nums text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
                   />
                 ) : (
-                  <div className="ml-auto flex items-center gap-2">
+                  <div className="ml-auto flex items-center space-x-2">
                     <button onClick={() => setItemQty(item.id, qty - 1, item.maxQty)}
                       disabled={qty <= 0}
                       className="w-11 h-11 rounded-md border border-slate-300 bg-white text-slate-700 font-bold text-lg disabled:opacity-30 hover:bg-slate-50">
@@ -960,10 +960,10 @@ function RefundPanel({
             ))}
           </select>
         </div>
-        <label className="flex min-h-12 cursor-pointer items-center gap-3 self-end rounded-lg border border-slate-200 bg-slate-50 px-4 text-sm font-bold text-slate-700">
+        <label className="flex min-h-12 cursor-pointer items-center space-x-3 self-end rounded-lg border border-slate-200 bg-slate-50 px-4 text-sm font-bold text-slate-700">
           <input type="checkbox" checked={effectiveRestock} disabled={isBilliardOrder} onChange={e => { resetRefundRequestId(); setRestock(e.target.checked); }}
             className="h-5 w-5 rounded border-slate-300 text-brand-600 focus:ring-brand-200" />
-          {isBilliardOrder ? 'Billiard refunds never restock inventory' : tOr(t, 'pos.refund.restock', 'Restock items to inventory')}
+          <span>{isBilliardOrder ? 'Billiard refunds never restock inventory' : tOr(t, 'pos.refund.restock', 'Restock items to inventory')}</span>
         </label>
       </div>
 
@@ -1056,7 +1056,7 @@ function SyncFailurePanel({
 
   return (
     <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 space-y-2">
-      <div className="flex items-start gap-2">
+      <div className="flex items-start space-x-2">
         <svg className="w-4 h-4 mt-0.5 flex-shrink-0 text-amber-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
         </svg>
@@ -1078,7 +1078,7 @@ function SyncFailurePanel({
         <button
           onClick={handleRetry}
           disabled={retrying}
-          className="w-full flex items-center justify-center gap-2 rounded-md border border-amber-400 bg-white px-3 py-2 text-sm font-bold text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+          className="w-full flex items-center justify-center rounded-md border border-amber-400 bg-white px-3 py-2 text-sm font-bold text-amber-900 hover:bg-amber-100 disabled:opacity-50"
         >
           {retrying ? 'Retrying...' : 'Retry sync'}
         </button>
@@ -1185,7 +1185,7 @@ function ServerActionsPanel({
       <button
         onClick={handleDownload}
         disabled={busy !== null || isMirroring}
-        className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 text-sm font-extrabold text-slate-800 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+        className="mt-3 flex min-h-11 w-full items-center justify-center rounded-lg border border-slate-300 bg-white px-4 text-sm font-extrabold text-slate-800 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
       >
         {busy === 'download' ? '...' : tOr(t, hasInvoice ? 'pos.history.server.downloadInvoice' : 'pos.history.server.downloadReceipt', hasInvoice ? 'Download Invoice PDF' : 'Download Receipt PDF')}
       </button>
@@ -1195,7 +1195,7 @@ function ServerActionsPanel({
           <label className="block text-xs font-bold uppercase tracking-wide text-slate-500">
             {tOr(t, 'pos.history.server.nipLabel', 'Add VAT invoice (NIP)')}
           </label>
-          <div className="mt-2 flex gap-2">
+          <div className="mt-2 flex space-x-2">
             <input
               type="text"
               inputMode="numeric"
@@ -1387,7 +1387,7 @@ function BilliardOwnerCorrectionPanel({
               'This reverses only the Zira ledger. It does not cancel an external card-terminal transaction or a fiscal receipt. Complete the terminal and fiscal correction separately.',
             )}
           </div>
-          <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-md border border-amber-300 bg-white px-3 py-3 text-xs font-bold text-slate-800">
+          <label className="mt-3 flex cursor-pointer items-start space-x-3 rounded-md border border-amber-300 bg-white px-3 py-3 text-xs font-bold text-slate-800">
             <input
               type="checkbox"
               checked={externalReversalAcknowledged}
@@ -2220,19 +2220,19 @@ export default function OrderHistoryModal({
     return (
       <>
       <DialogShell onClose={onClose}>
-        <div className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4">
-          <div className="flex min-w-0 items-center gap-3">
+        <div className="flex shrink-0 items-center justify-between space-x-4 border-b border-slate-200 bg-white px-5 py-4">
+          <div className="flex min-w-0 items-center space-x-3">
             <button
               onClick={() => { setDetail(null); setShowRefund(false); setReprintStatus(null); setDeleteStatus(null); setCancelStatus(null); }}
-              className="flex h-11 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-sm font-extrabold text-slate-700 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+              className="flex h-11 items-center space-x-2 rounded-lg border border-slate-300 bg-white px-3 text-sm font-extrabold text-slate-700 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
             >
               <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M15 19l-7-7 7-7" />
               </svg>
-              {tOr(t, 'pos.history.title', 'History')}
+              <span>{tOr(t, 'pos.history.title', 'History')}</span>
             </button>
             <div className="min-w-0">
-              <div className="flex min-w-0 items-center gap-2">
+              <div className="flex min-w-0 items-center space-x-2">
                 <h2 className="truncate text-xl font-extrabold text-slate-950">{getOrderLabel(order)}</h2>
                 <StatusBadge order={order} t={t} />
               </div>
@@ -2319,7 +2319,7 @@ export default function OrderHistoryModal({
 
             {(order.refund_amount ?? 0) > 0 && (
               <section className="mt-4 overflow-hidden rounded-lg border border-amber-200 bg-white shadow-sm">
-                <div className="flex items-start justify-between gap-4 border-b border-amber-200 bg-amber-50 px-4 py-3">
+                <div className="flex items-start justify-between space-x-4 border-b border-amber-200 bg-amber-50 px-4 py-3">
                   <h3 className="text-sm font-extrabold text-slate-950">{tOr(t, 'pos.history.refundHistory', 'Refund history')}</h3>
                   <div className="text-right">
                     <div className="text-xs font-bold uppercase tracking-wide text-red-600">{tOr(t, 'pos.history.refundedTotal', 'Refunded')}</div>
@@ -2335,16 +2335,16 @@ export default function OrderHistoryModal({
                       const restockValues = event.lines.map((line) => line.restock).filter((value): value is boolean => typeof value === 'boolean');
                       return (
                         <div key={event.key} className="overflow-hidden rounded-lg border border-slate-200 bg-white">
-                          <div className="flex items-start justify-between gap-4 border-b border-slate-100 bg-slate-50 px-4 py-3">
+                          <div className="flex items-start justify-between space-x-4 border-b border-slate-100 bg-slate-50 px-4 py-3">
                             <div>
                               <div className="text-sm font-extrabold text-slate-900">
                                 {tOr(t, 'pos.history.refundEvent', 'Refund')} #{eventIndex + 1}
                               </div>
-                              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs font-medium text-slate-500">
-                                {eventTime && <span>{formatDate(eventTime)} {formatTime(eventTime)}</span>}
-                                {event.refundMethod && <span>{paymentLabel(event.refundMethod, t)}</span>}
+                              <div className="mt-1 -mr-3 -mb-1 flex flex-wrap text-xs font-medium text-slate-500">
+                                {eventTime && <span className="mr-3 mb-1">{formatDate(eventTime)} {formatTime(eventTime)}</span>}
+                                {event.refundMethod && <span className="mr-3 mb-1">{paymentLabel(event.refundMethod, t)}</span>}
                                 {restockValues.length > 0 && (
-                                  <span>{restockValues.every(Boolean)
+                                  <span className="mr-3 mb-1">{restockValues.every(Boolean)
                                     ? tOr(t, 'pos.refund.restocked', 'Restocked')
                                     : restockValues.every((value) => !value)
                                       ? tOr(t, 'pos.refund.notRestocked', 'Not restocked')
@@ -2388,15 +2388,15 @@ export default function OrderHistoryModal({
             <section className="mt-4 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
               <h3 className="text-sm font-extrabold text-slate-900">{tOr(t, 'pos.history.paymentAndTotals', 'Payment and totals')}</h3>
               <div className="mt-3 grid grid-cols-2 gap-x-8 gap-y-2 text-sm">
-                <div className="flex justify-between gap-4">
+                <div className="flex justify-between space-x-4">
                   <span className="font-medium text-slate-500">{tOr(t, 'pos.cart.subtotal', 'Subtotal')}</span>
                   <span className="font-bold tabular-nums text-slate-900">{formatMoney(order.subtotal, currency)}</span>
                 </div>
-                <div className="flex justify-between gap-4">
+                <div className="flex justify-between space-x-4">
                   <span className="font-medium text-slate-500">{tOr(t, 'pos.cart.inclVat', 'Incl. VAT')}</span>
                   <span className="font-bold tabular-nums text-slate-900">{formatMoney(order.tax, currency)}</span>
                 </div>
-                <div className="flex justify-between gap-4">
+                <div className="flex justify-between space-x-4">
                   <span className="font-medium text-slate-500">{tOr(t, 'pos.cart.discount', 'Discount')}</span>
                   <span className="font-bold tabular-nums text-emerald-700">
                     {order.discount > 0 ? `-${formatMoney(order.discount, currency)}` : formatMoney(0, currency)}
@@ -2410,7 +2410,7 @@ export default function OrderHistoryModal({
                       <div className="space-y-1">
                         <span className="font-medium text-slate-500">{tOr(t, 'pos.history.paymentSplit', 'Payment split')}</span>
                         {tenders.map((tender, i) => (
-                          <div key={i} className="flex justify-between gap-4 pl-2">
+                          <div key={i} className="flex justify-between space-x-4 pl-2">
                             <span className="text-slate-600">{paymentLabel(tender.method, t)}</span>
                             <span className="font-bold tabular-nums text-slate-900">{formatMoney(tender.amount, currency)}</span>
                           </div>
@@ -2419,17 +2419,17 @@ export default function OrderHistoryModal({
                     );
                   }
                   return (
-                    <div className="flex justify-between gap-4">
+                    <div className="flex justify-between space-x-4">
                       <span className="font-medium text-slate-500">{tOr(t, 'pos.history.method', 'Method')}</span>
                       <span className="font-bold text-slate-900">{paymentLabel(order.payment_method, t)}</span>
                     </div>
                   );
                 })()}
-                <div className="flex justify-between gap-4">
+                <div className="flex justify-between space-x-4">
                   <span className="font-medium text-slate-500">{tOr(t, 'pos.history.paidAmount', 'Paid amount')}</span>
                   <span className="font-bold tabular-nums text-slate-900">{formatMoney(order.payment_amount, currency)}</span>
                 </div>
-                <div className="flex justify-between gap-4">
+                <div className="flex justify-between space-x-4">
                   <span className="font-medium text-slate-500">{tOr(t, 'pos.payment.change', 'Change')}</span>
                   <span className="font-bold tabular-nums text-slate-900">{formatMoney(order.change_amount, currency)}</span>
                 </div>
@@ -2532,12 +2532,12 @@ export default function OrderHistoryModal({
                 <button
                   onClick={async () => { if (await ensureMirrored(order)) handleReprint(order.id, order); }}
                   disabled={reprinting || printingFiscal || isMirroring}
-                  className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-slate-900 px-4 text-sm font-extrabold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-200 disabled:text-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+                  className="mt-4 flex min-h-12 w-full items-center justify-center space-x-2 rounded-lg border border-slate-300 bg-slate-900 px-4 text-sm font-extrabold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-200 disabled:text-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
                 >
                   {(reprinting || isMirroring) && (
                     <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true" />
                   )}
-                  {reprinting ? 'Sending...' : 'Print order'}
+                  <span>{reprinting ? 'Sending...' : 'Print order'}</span>
                 </button>
 
                 {reconcilable && (
@@ -2548,7 +2548,7 @@ export default function OrderHistoryModal({
                     <p className="mt-1 text-xs font-medium text-amber-800">
                       {tOr(t, 'pos.history.reconcilePrompt', 'Lần in trước không xác nhận được. Kiểm tra MÁY fiskal: hóa đơn cho đơn này đã in ra giấy chưa? In lại có thể tạo hóa đơn trùng.')}
                     </p>
-                    <div className="mt-3 flex gap-2">
+                    <div className="mt-3 flex space-x-2">
                       <button
                         onClick={() => handleReconcileFiscal(order.id, true)}
                         disabled={reconciling}
@@ -2570,12 +2570,12 @@ export default function OrderHistoryModal({
                 <button
                   onClick={async () => { if (await ensureMirrored(order)) handlePrintFiscal(order.id); }}
                   disabled={printingFiscal || reprinting || isMirroring || refundStatus !== 'none' || !!reconcilable}
-                  className="mt-3 flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-4 text-sm font-extrabold text-emerald-800 transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200"
+                  className="mt-3 flex min-h-12 w-full items-center justify-center space-x-2 rounded-lg border border-emerald-300 bg-emerald-50 px-4 text-sm font-extrabold text-emerald-800 transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200"
                 >
                   {(printingFiscal || isMirroring) && (
                     <span className="h-4 w-4 animate-spin rounded-full border-2 border-emerald-300 border-t-emerald-800" aria-hidden="true" />
                   )}
-                  {printingFiscal ? 'Sending...' : 'Print fiscal receipt'}
+                  <span>{printingFiscal ? 'Sending...' : 'Print fiscal receipt'}</span>
                 </button>
 
                 {refundStatus !== 'none' && (
@@ -2710,7 +2710,7 @@ export default function OrderHistoryModal({
   return (
     <>
     <DialogShell onClose={onClose}>
-      <div className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4">
+      <div className="flex shrink-0 items-center justify-between space-x-4 border-b border-slate-200 bg-white px-5 py-4">
         <div className="min-w-0">
           <h2 className="truncate text-xl font-extrabold text-slate-950">{tOr(t, 'pos.history.title', 'Order History')}</h2>
           <p className="mt-1 text-sm font-medium text-slate-500">
@@ -2718,9 +2718,9 @@ export default function OrderHistoryModal({
             <span className="ml-2 font-bold text-slate-600">
               {tOr(t, 'pos.history.originalShort', 'Original')} {formatMoney(pageOriginalTotal, currency)} · {tOr(t, 'pos.history.refundedShort', 'Refunded')} -{formatMoney(pageRefundedTotal, currency)} · {tOr(t, 'pos.history.remainingShort', 'Remaining')} {formatMoney(pageRemainingTotal, currency)}
             </span>
-            <span className={`ml-2 inline-flex items-center gap-1 text-xs font-bold ${dataSource === 'local+server' ? 'text-emerald-600' : dataSource === 'server-unreachable' ? 'text-amber-600' : 'text-slate-400'}`}>
+            <span className={`ml-2 inline-flex items-center space-x-1 text-xs font-bold ${dataSource === 'local+server' ? 'text-emerald-600' : dataSource === 'server-unreachable' ? 'text-amber-600' : 'text-slate-400'}`}>
               <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: 'currentColor' }} />
-              {dataSource === 'local+server' ? 'Local + Server' : dataSource === 'server-unreachable' ? 'Server unreachable — showing local data' : 'Local only (offline)'}
+              <span>{dataSource === 'local+server' ? 'Local + Server' : dataSource === 'server-unreachable' ? 'Server unreachable — showing local data' : 'Local only (offline)'}</span>
             </span>
           </p>
         </div>
@@ -2728,7 +2728,7 @@ export default function OrderHistoryModal({
       </div>
 
       <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-5 py-3">
-        <div className="flex flex-wrap items-end gap-3">
+        <div className="grid [grid-template-columns:repeat(auto-fit,minmax(168px,1fr))] items-end gap-3">
           <label className="min-w-[168px] flex-1 text-xs font-bold uppercase tracking-wide text-slate-600">
             Period
             <select
@@ -2794,9 +2794,9 @@ export default function OrderHistoryModal({
         <div className="min-h-0 flex-1 overflow-y-auto">
           {loading ? (
             <div className="flex h-full min-h-[260px] items-center justify-center">
-              <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-600 shadow-sm">
+              <div className="flex items-center space-x-3 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-600 shadow-sm">
                 <span className="h-5 w-5 animate-spin rounded-full border-2 border-brand-200 border-t-brand-600" aria-hidden="true" />
-                Loading orders...
+                <span>Loading orders...</span>
               </div>
             </div>
           ) : loadError ? (
@@ -2881,11 +2881,11 @@ export default function OrderHistoryModal({
           )}
         </div>
 
-        <div className="flex shrink-0 items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-5 py-3">
+        <div className="flex shrink-0 items-center justify-between space-x-3 border-t border-slate-200 bg-slate-50 px-5 py-3">
           <div className="text-sm font-bold text-slate-600">
             {tOr(t, 'pos.history.pageTotals', 'This page')}: {tOr(t, 'pos.history.originalShort', 'Original')} {formatMoney(pageOriginalTotal, currency)} · {tOr(t, 'pos.history.refundedShort', 'Refunded')} -{formatMoney(pageRefundedTotal, currency)} · {tOr(t, 'pos.history.remainingShort', 'Remaining')} {formatMoney(pageRemainingTotal, currency)}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center space-x-2">
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page <= 1}

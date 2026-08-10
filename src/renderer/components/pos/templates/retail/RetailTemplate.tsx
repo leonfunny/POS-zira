@@ -1240,12 +1240,12 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
       {/* Main content */}
       <div className="flex-1 flex overflow-hidden bg-slate-100">
         {/* Left: Products */}
-        <div className="flex-1 min-w-0 flex flex-col p-3 gap-3 overflow-hidden">
+        <div className="flex-1 min-w-0 flex flex-col p-3 space-y-3 overflow-hidden">
           {/* Toolbar: search + category pills.
               Borderless / no surface — elements float directly on the page bg
               so the eye sees content first, not chrome. */}
           <div className="shrink-0">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center space-x-3">
               <div className="w-[min(380px,44%)] min-w-[310px] shrink-0">
               <SearchBar
                 value={searchQuery}
@@ -1268,7 +1268,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
                 }}
                 aria-pressed={autoCameraEnabled}
                 title={tOr('pos.autoCamera.toggle', 'Auto camera search')}
-                className={`shrink-0 min-h-11 px-3 rounded-lg border inline-flex items-center gap-2 text-xs font-extrabold transition-colors duration-150 cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 ${
+                className={`shrink-0 min-h-11 px-3 rounded-lg border inline-flex items-center space-x-2 text-xs font-extrabold transition-colors duration-150 cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 ${
                   autoCameraEnabled
                     ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
                     : 'bg-white text-slate-700 border-slate-300 hover:border-brand-400 hover:text-brand-700 hover:bg-brand-50'
@@ -1295,7 +1295,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
               {voiceStatus !== 'idle' && (
                 <span
                   role="status"
-                  className={`shrink-0 max-w-32 inline-flex items-center gap-1 truncate rounded-md border px-2 py-1 text-[11px] font-bold ${
+                  className={`shrink-0 max-w-32 inline-flex items-center space-x-1 truncate rounded-md border px-2 py-1 text-[11px] font-bold ${
                     voiceStatus === 'error'
                       ? 'border-red-200 bg-red-50 text-red-700'
                       : 'border-sky-200 bg-sky-50 text-sky-700'
@@ -1352,7 +1352,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
                 </button>
                 <div
                   ref={categoryScrollRef}
-                  className="flex items-center gap-2 overflow-x-auto scrollbar-hide scroll-smooth"
+                  className="flex items-center space-x-2 overflow-x-auto scrollbar-hide scroll-smooth"
                 >
                   <button
                     type="button"
@@ -1416,7 +1416,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
                           if (searchQuery) return;
                           setActiveCategoryId(isActive ? null : cat.id);
                         }}
-                        className={`shrink-0 min-h-11 px-4 rounded-lg text-sm font-bold whitespace-nowrap transition-colors duration-150 cursor-pointer touch-manipulation border flex items-center gap-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 ${
+                        className={`shrink-0 min-h-11 px-4 rounded-lg text-sm font-bold whitespace-nowrap transition-colors duration-150 cursor-pointer touch-manipulation border flex items-center space-x-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 ${
                           isActive
                             ? 'bg-brand-600 text-white border-brand-600 shadow-sm'
                             : 'bg-white text-slate-700 border-slate-300 hover:border-brand-400 hover:text-brand-700 hover:bg-brand-50'
@@ -1427,7 +1427,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
                           style={{ backgroundColor: isActive ? '#ffffff' : (cat.color || '#da7756') }}
                           aria-hidden="true"
                         />
-                        {resolveName(cat, lang)}
+                        <span>{resolveName(cat, lang)}</span>
                         <span
                           className={`text-[11px] font-extrabold tabular-nums ${
                             isActive ? 'text-white/85' : 'text-slate-500'
@@ -1468,7 +1468,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
             />
           ) : showCategoryGallery ? (
             <div className="flex-1 min-h-0 overflow-y-auto bg-white rounded-lg">
-              <div className="flex items-baseline justify-between gap-3 px-4 py-3 border-b border-slate-100 sticky top-0 bg-white z-[1]">
+              <div className="flex items-baseline justify-between space-x-3 px-4 py-3 border-b border-slate-100 sticky top-0 bg-white z-[1]">
                 <h2 className="text-base font-extrabold text-slate-950">
                   {tOr('pos.categories.title', 'Categories')}
                 </h2>
@@ -1506,17 +1506,17 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
                         onClick={() => setActiveCategoryId(cat.id)}
                         className="group relative flex flex-col overflow-hidden rounded-2xl bg-white border-2 border-slate-100 hover:border-brand-500 active:scale-[0.98] transition-all duration-150 cursor-pointer touch-manipulation text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-300"
                       >
-                        <div className="relative w-full overflow-hidden bg-slate-100 aspect-[4/3]">
+                        <div className="relative w-full overflow-hidden bg-slate-100" style={{ paddingTop: '75%' }}>
                           {catImg ? (
                             <img
                               src={catImg}
                               alt={displayName}
                               loading="lazy"
-                              className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
+                              className="absolute top-0 right-0 bottom-0 left-0 w-full h-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
                             />
                           ) : (
                             <div
-                              className="w-full h-full flex items-center justify-center font-extrabold text-3xl"
+                              className="absolute top-0 right-0 bottom-0 left-0 flex items-center justify-center font-extrabold text-3xl"
                               style={{ backgroundColor: `${bg}2E`, color: bg }}
                               aria-hidden="true"
                             >
@@ -1584,13 +1584,13 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
         {/* Right: Cart sidebar */}
         <div className="w-80 xl:w-96 border-l border-slate-300 flex flex-col bg-white shrink-0">
           {restoredCart && (
-            <div className="bg-amber-50 border-b border-amber-200 px-3 py-2 text-xs text-amber-700 flex items-center gap-1.5">
+            <div className="bg-amber-50 border-b border-amber-200 px-3 py-2 text-xs text-amber-700 flex items-center space-x-1.5">
               <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20 10 10 0 000-20z" /></svg>
-              Cart restored from previous session
+              <span>Cart restored from previous session</span>
             </div>
           )}
           {restoredPaymentBlocked && (
-            <div className="flex items-start gap-2 border-b border-amber-300 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-950" role="alert">
+            <div className="flex items-start space-x-2 border-b border-amber-300 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-950" role="alert">
               <svg className="mt-0.5 h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v4m0 4h.01M10.3 3.7L2.4 17.4A2 2 0 004.1 20h15.8a2 2 0 001.7-2.6L13.7 3.7a2 2 0 00-3.4 0z" /></svg>
               <span>{shiftBlockedMessage}</span>
             </div>

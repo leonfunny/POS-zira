@@ -436,7 +436,7 @@ export default function SalonTemplate({ state, dispatch, t, language, session, o
         {/* ── Left panel ── */}
         <div className="flex-1 flex flex-col overflow-hidden min-w-0">
 
-          <div className="flex items-center gap-2 border-b border-slate-200 bg-white px-4 py-3 shrink-0">
+          <div className="flex items-center space-x-2 border-b border-slate-200 bg-white px-4 py-3 shrink-0">
             <button
               type="button"
               onClick={() => setActiveView('sale')}
@@ -460,7 +460,7 @@ export default function SalonTemplate({ state, dispatch, t, language, session, o
               Lich tho
             </button>
             {activeView === 'schedule' && (
-              <div className="ml-auto flex items-center gap-2">
+              <div className="ml-auto flex items-center space-x-2">
                 <button
                   type="button"
                   onClick={() => setScheduleDay(isoDate(new Date()))}
@@ -502,7 +502,7 @@ export default function SalonTemplate({ state, dispatch, t, language, session, o
 
           {activeView === 'schedule' && scheduleWeek?.schedules?.length ? (
             <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-2">
-              <div className="flex gap-2 overflow-x-auto no-scrollbar">
+              <div className="flex space-x-2 overflow-x-auto no-scrollbar">
                 {scheduleWeek.schedules.map((day) => {
                   const selected = day.business_date === scheduleDate;
                   return (
@@ -528,7 +528,7 @@ export default function SalonTemplate({ state, dispatch, t, language, session, o
           ) : null}
 
           {/* Toolbar: search + category pills */}
-          <div className={`items-center gap-2.5 px-4 pt-4 pb-2 shrink-0 ${activeView === 'sale' ? 'flex' : 'hidden'}`}>
+          <div className={`items-center px-4 pt-4 pb-2 shrink-0 ${activeView === 'sale' ? 'flex space-x-2.5' : 'hidden'}`}>
             {/* Search */}
             <div className="w-56 shrink-0">
               <SearchBar
@@ -540,7 +540,7 @@ export default function SalonTemplate({ state, dispatch, t, language, session, o
             </div>
 
             {/* Category pills */}
-            <div className="flex-1 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+            <div className="flex-1 flex items-center space-x-1.5 overflow-x-auto no-scrollbar">
               <button
                 onClick={() => setActiveCategoryId(null)}
                 className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all duration-150 cursor-pointer touch-manipulation border ${
@@ -574,7 +574,7 @@ export default function SalonTemplate({ state, dispatch, t, language, session, o
 
           {activeView === 'sale' && nailTurnBoard && !nailTurnUnavailable && (
             <div className="mx-4 mb-2 shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-sm">
-              <div className="mb-2 flex items-center justify-between gap-3">
+              <div className="mb-2 flex items-center justify-between space-x-3">
                 <div className="min-w-0">
                   <div className="text-xs font-bold uppercase tracking-normal text-slate-500">
                     {tOr('pos.salon.turnBoard', 'Lượt thợ')}
@@ -600,7 +600,7 @@ export default function SalonTemplate({ state, dispatch, t, language, session, o
                   </svg>
                 </button>
               </div>
-              <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+              <div className="flex space-x-2 overflow-x-auto pb-1 no-scrollbar">
                 {(nailTurnBoard.staff || []).map((staff: NailTurnStaffSummary) => {
                   const active = (nailTurnBoard.active_assignments || []).find((a) => a.staff_profile_id === staff.staff_profile_id);
                   return (
@@ -608,7 +608,7 @@ export default function SalonTemplate({ state, dispatch, t, language, session, o
                       key={staff.staff_profile_id}
                       className={`min-w-[148px] rounded-md border px-3 py-2 ${turnStatusClasses(staff.status)}`}
                     >
-                      <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center justify-between space-x-2">
                         <span className="truncate text-sm font-bold">{staff.queue_position ? `${staff.queue_position}. ` : ''}{staff.name || '-'}</span>
                         <span className="shrink-0 text-[11px] font-bold uppercase">{turnStatusLabel(staff.status)}</span>
                       </div>
@@ -625,7 +625,7 @@ export default function SalonTemplate({ state, dispatch, t, language, session, o
           {activeView === 'schedule' && (
             <div className="flex-1 min-h-0 overflow-hidden px-4 pb-4">
               <div className="grid h-full min-h-0 grid-cols-[280px_minmax(0,1fr)] gap-3">
-                <aside className="flex min-h-0 flex-col gap-3 overflow-y-auto">
+                <aside className="flex min-h-0 flex-col space-y-3 overflow-y-auto">
                   <section className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
                     <div className="mb-2 text-xs font-bold uppercase text-slate-500">Luot tiep theo</div>
                     <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3">
@@ -814,16 +814,16 @@ export default function SalonTemplate({ state, dispatch, t, language, session, o
                       className="bg-white border border-slate-100 rounded-xl overflow-hidden shadow-sm hover:shadow-md hover:border-brand-200 transition-all duration-200 group"
                     >
                       {/* Image / placeholder */}
-                      <div className="relative aspect-[3/2] w-full overflow-hidden bg-slate-50">
+                      <div className="relative w-full overflow-hidden bg-slate-50" style={{ paddingTop: '66.6667%' }}>
                         {product.image_url ? (
                           <img
                             src={product.image_url}
                             alt={displayName}
                             loading="lazy"
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                            className="absolute top-0 right-0 bottom-0 left-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                           />
                         ) : (
-                          <div className={`w-full h-full flex items-center justify-center text-2xl font-bold ${colorClass}`}>
+                          <div className={`absolute top-0 right-0 bottom-0 left-0 flex items-center justify-center text-2xl font-bold ${colorClass}`}>
                             {displayName.charAt(0).toUpperCase()}
                           </div>
                         )}
@@ -891,7 +891,7 @@ export default function SalonTemplate({ state, dispatch, t, language, session, o
                 const displayName = resolveName(item, lang) || item.name;
                 return (
                   <div key={item.id} className="px-4 py-3">
-                    <div className="flex items-start gap-3">
+                    <div className="flex items-start space-x-3">
                       {/* Thumbnail */}
                       <div className="w-10 h-10 rounded-lg overflow-hidden shrink-0">
                         {item.imageUrl ? (
@@ -935,7 +935,7 @@ export default function SalonTemplate({ state, dispatch, t, language, session, o
                     </div>
 
                     {/* Qty controls */}
-                    <div className="flex items-center gap-2 mt-2 pl-[52px]">
+                    <div className="flex items-center space-x-2 mt-2 pl-[52px]">
                       <button
                         onClick={() => {
                           if (item.quantity <= 1) {
@@ -1005,7 +1005,7 @@ export default function SalonTemplate({ state, dispatch, t, language, session, o
           {/* PAY button */}
           <div className="px-4 pb-4 pt-1 shrink-0">
             {!shiftPaymentOpen && (
-              <div className="flex items-center gap-2 px-3 py-2 mb-2 bg-amber-50 border border-amber-200 rounded-xl">
+              <div className="flex items-center space-x-2 px-3 py-2 mb-2 bg-amber-50 border border-amber-200 rounded-xl">
                 <svg className="w-4 h-4 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
                 </svg>

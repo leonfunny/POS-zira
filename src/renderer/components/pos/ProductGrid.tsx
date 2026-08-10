@@ -28,11 +28,11 @@ function ProductGridSkeleton() {
     <div className="grid [grid-template-columns:repeat(auto-fill,minmax(154px,1fr))] 2xl:[grid-template-columns:repeat(auto-fill,minmax(172px,1fr))] gap-2 p-1 pb-2">
       {Array.from({ length: 8 }).map((_, index) => (
         <div key={index} className="bg-white rounded-lg p-1.5 h-full min-h-[196px] flex flex-col animate-pulse">
-          <div className="rounded-md bg-slate-200 shrink-0 aspect-[3/2] w-full" />
-          <div className="flex flex-1 flex-col gap-2 px-1 pt-3 pb-1">
+          <div className="w-full shrink-0 rounded-md bg-slate-200" style={{ paddingTop: '66.6667%' }} />
+          <div className="flex flex-1 flex-col space-y-2 px-1 pt-3 pb-1">
             <div className="h-4 w-full rounded bg-slate-200" />
             <div className="h-4 w-3/4 rounded bg-slate-100" />
-            <div className="mt-auto flex items-center justify-between gap-2 pt-2">
+            <div className="mt-auto flex items-center justify-between space-x-2 pt-2">
               <div className="h-6 w-20 rounded bg-slate-200" />
               <div className="h-5 w-12 rounded bg-slate-100" />
             </div>

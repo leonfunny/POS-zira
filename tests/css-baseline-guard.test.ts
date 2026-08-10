@@ -79,6 +79,41 @@ describe('css baseline guard', () => {
     rmSync(join(dir, 'cond.tsx'));
   });
 
+  test('combines static template tokens with each conditional display branch', () => {
+    writeFileSync(join(dir, 'template-static.tsx'), `
+      export const A = ({ active }: { active: boolean }) => (
+        <div className={\`items-center gap-2.5 \${active ? 'flex' : 'hidden'}\`}>x</div>
+      );
+    `);
+    const { out } = run();
+    expect(out).toMatch(/flex \+ gap-\*\s+1 site/);
+    rmSync(join(dir, 'template-static.tsx'));
+  });
+
+  test('fails closed when correlated-looking template interpolations may combine flex and gap', () => {
+    writeFileSync(join(dir, 'template-correlated.tsx'), `
+      export const A = ({ active }: { active: boolean }) => (
+        <div className={\`items-center \${active ? 'flex' : 'grid'} \${active ? '' : 'gap-2'}\`}>x</div>
+      );
+    `);
+    const { out, status } = run(['--strict']);
+    expect(status).toBe(1);
+    expect(out).toMatch(/ambiguous\s+1 site/);
+    rmSync(join(dir, 'template-correlated.tsx'));
+  });
+
+  test('fails closed for independent flex and gap template interpolations', () => {
+    writeFileSync(join(dir, 'template-independent.tsx'), `
+      export const A = ({ active, spaced }: { active: boolean; spaced: boolean }) => (
+        <div className={\`items-center \${active ? 'flex' : 'hidden'} \${spaced ? 'gap-2' : ''}\`}>x</div>
+      );
+    `);
+    const { out, status } = run(['--strict']);
+    expect(status).toBe(1);
+    expect(out).toMatch(/ambiguous\s+1 site/);
+    rmSync(join(dir, 'template-independent.tsx'));
+  });
+
   test('catches aspect-* — unsupported until Chromium 88', () => {
     writeFileSync(join(dir, 'aspect.tsx'), `
       export const A = () => <div className="w-full aspect-[3/2]">x</div>;
@@ -86,6 +121,20 @@ describe('css baseline guard', () => {
     const { out } = run();
     expect(out).toMatch(/aspect-\*\s+1 site/);
     rmSync(join(dir, 'aspect.tsx'));
+  });
+
+  test('catches inset-0 and accepts explicit physical inset sides', () => {
+    writeFileSync(join(dir, 'inset.tsx'), `
+      export const Bad = () => <div className="fixed inset-0">bad</div>;
+    `);
+    expect(run().out).toMatch(/inset-0\s+1 site/);
+    rmSync(join(dir, 'inset.tsx'));
+
+    writeFileSync(join(dir, 'physical-inset.tsx'), `
+      export const Good = () => <div className="fixed top-0 right-0 bottom-0 left-0">good</div>;
+    `);
+    expect(run().out).toContain('PASS css baseline');
+    rmSync(join(dir, 'physical-inset.tsx'));
   });
 
   test('finds violations in nested directories', () => {
@@ -125,6 +174,7 @@ describe('css baseline guard', () => {
       :where(.button) { color: color-mix(in srgb, red 50%, blue); }
       .card:has(img) { min-height: 100dvh; }
       .grid { grid-template-columns: subgrid; }
+      .overlay { inset: 0; }
       @container pane (min-width: 20rem) { .child { display: block; } }
     `);
     const { out, status } = run([`--css=${cssDir}`, '--strict']);
@@ -135,12 +185,13 @@ describe('css baseline guard', () => {
     expect(out).toContain('@container');
     expect(out).toContain('dynamic viewport unit');
     expect(out).toContain('subgrid');
+    expect(out).toContain('inset:');
   });
 
   test('accepts emitted CSS using Chrome 83-safe grid gaps and fixed viewport units', () => {
     const cssDir = join(dir, 'safe-css');
     mkdirSync(cssDir, { recursive: true });
-    writeFileSync(join(cssDir, 'safe.css'), '.grid { display: grid; gap: 12px; min-height: 100vh; }');
+    writeFileSync(join(cssDir, 'safe.css'), '.grid { display: grid; gap: 12px; min-height: 100vh; } .overlay { top: 0; right: 0; bottom: 0; left: 0; }');
     const { out, status } = run([`--css=${cssDir}`, '--strict']);
     expect(status).toBe(0);
     expect(out).toContain('PASS css baseline');

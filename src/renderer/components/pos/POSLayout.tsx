@@ -246,7 +246,7 @@ function ManualWeightModal({ prompt, tOr, onClose, onSubmit }: ManualWeightModal
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-slate-950/45 flex items-center justify-center p-4"
+      className="fixed top-0 right-0 bottom-0 left-0 z-50 bg-slate-950/45 flex items-center justify-center p-4"
       style={{ paddingBottom: 'calc(var(--touch-keyboard-inset, 0px) + 1rem)' }}
     >
       <form
@@ -254,7 +254,7 @@ function ManualWeightModal({ prompt, tOr, onClose, onSubmit }: ManualWeightModal
         className="w-full max-w-sm rounded-lg bg-white shadow-xl border border-slate-200 p-4 overflow-y-auto"
         style={{ maxHeight: 'calc(100dvh - var(--touch-keyboard-inset, 0px) - 2rem)' }}
       >
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start justify-between space-x-3">
           <div className="min-w-0">
             <h2 className="text-base font-extrabold text-slate-900">{tOr('pos.scale.manualWeightTitle', 'Manual weight')}</h2>
             <p className="mt-1 text-sm font-semibold text-slate-700 truncate">{prompt.displayName}</p>
@@ -287,7 +287,7 @@ function ManualWeightModal({ prompt, tOr, onClose, onSubmit }: ManualWeightModal
 
         {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
 
-        <div className="mt-4 flex justify-end gap-2">
+        <div className="mt-4 flex justify-end space-x-2">
           <button
             type="button"
             onClick={onClose}
@@ -493,12 +493,16 @@ function POSLayoutContent({
 
   const focusBarcode = useCallback(() => {
     // Back off entirely while any modal-style overlay is on screen. The
-    // app's modals all share the `.fixed.inset-0.z-50` backdrop pattern
-    // (Payment, History, ScanImport, Shift, QuickAdd, etc.). Keeping the
+    // Core modals use explicit physical sides for Chrome 83; legacy modules
+    // may still use the `.fixed.inset-0.z-50` backdrop pattern. Keeping the
     // search input focused behind a modal would double-process scanner
     // wedge keystrokes — once through the focused input, once through the
     // IPC `barcode-scanned` listener that SearchBar still subscribes to.
-    if (document.querySelector('.fixed.inset-0.z-50:not([aria-hidden="true"])')) return;
+    const modalOverlaySelector = [
+      '.fixed.top-0.right-0.bottom-0.left-0.z-50:not([aria-hidden="true"])',
+      '.fixed.inset-0.z-50:not([aria-hidden="true"])',
+    ].join(', ');
+    if (document.querySelector(modalOverlaySelector)) return;
 
     const active = document.activeElement as HTMLElement | null;
 
@@ -1645,7 +1649,7 @@ function POSLayoutContent({
       )}
       {/* Fiscal UNKNOWN alert — persistent until dismissed; prompts reconciliation */}
       {fiscalAlert && (
-        <div className="fixed top-0 left-0 right-0 z-50 flex items-center justify-center gap-3 bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-lg">
+        <div className="fixed top-0 left-0 right-0 z-50 flex items-center justify-center space-x-3 bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-lg">
           <span>
             {tOr('pos.fiscal.unknownAlert', 'Hóa đơn fiskal')}
             {fiscalAlert.orderNumber ? ` ${fiscalAlert.orderNumber}` : ''}
@@ -1694,7 +1698,7 @@ function POSLayoutContent({
         />
       )}
       {(nativeProductCreateOpen || nativeProductEditId) && hasAndroidNativeProductPath && (
-        <div className="fixed inset-0 z-[70] bg-slate-50">
+        <div className="fixed top-0 right-0 bottom-0 left-0 z-[70] bg-slate-50">
           <ProductModule
             language={language}
             openCreate={nativeProductCreateOpen}
@@ -1731,7 +1735,7 @@ function POSLayoutContent({
       {/* Sync conflict banner (Path B) */}
       <SyncConflictBanner />
       {dispatchError && (
-        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-red-300 bg-red-50 px-5 py-2 text-sm font-bold text-red-900" role="alert">
+        <div className="flex shrink-0 items-center justify-between space-x-3 border-b border-red-300 bg-red-50 px-5 py-2 text-sm font-bold text-red-900" role="alert">
           <span>{dispatchError}</span>
           <button type="button" onClick={clearDispatchError} className="min-h-9 rounded-md border border-red-300 bg-white px-3 text-xs font-bold text-red-800 hover:bg-red-100">
             Dismiss
@@ -1740,7 +1744,7 @@ function POSLayoutContent({
       )}
       {restoredCartReconciliation && (
         <div className="shrink-0 border-b border-amber-300 bg-amber-50 px-5 py-2.5 text-amber-950" role="alert">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
             <div>
               <div className="text-sm font-extrabold">Restored POS cart · payment reconciliation required</div>
               <div className="mt-0.5 text-xs font-bold">{restoredCartReconciliation.message}</div>
@@ -1764,9 +1768,9 @@ function POSLayoutContent({
             ? 'border-amber-300 bg-amber-50 text-amber-950'
             : 'border-blue-200 bg-blue-50 text-blue-950'
         }`}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
             <div className="min-w-0">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center space-x-2">
                 <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-white ${
                   activeBilliardIntent.tenderOutcomeUncertain ? 'bg-amber-700' : 'bg-blue-700'
                 }`}>
@@ -1817,11 +1821,11 @@ function POSLayoutContent({
       )}
       {/* Header - shared across all modes */}
       <div className="flex items-center justify-between px-5 py-2.5 border-b border-slate-200 bg-white shrink-0">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center space-x-3">
           <button
             type="button"
             onClick={handleHomeReset}
-            className="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-base font-bold tracking-wide text-brand-600 hover:bg-brand-50 active:bg-brand-100 transition-colors cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+            className="inline-flex items-center space-x-2 rounded-lg px-2 py-1.5 text-base font-bold tracking-wide text-brand-600 hover:bg-brand-50 active:bg-brand-100 transition-colors cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
             aria-label={tOr('pos.homeReset', 'Reset POS home')}
             title={tOr('pos.homeReset', 'Reset POS home')}
           >
@@ -1853,7 +1857,7 @@ function POSLayoutContent({
             </button>
           )}
         </div>
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center space-x-2.5">
           {/* Current time */}
           <div className="text-right">
             <span className="block text-xs font-semibold uppercase tracking-[0.15em] text-slate-600">{clock.toLocaleDateString(language === 'vi' ? 'vi-VN' : language === 'pl' ? 'pl-PL' : language === 'zh' ? 'zh-CN' : 'en-US', { weekday: 'short', day: 'numeric', month: 'short' })}</span>
@@ -1886,7 +1890,7 @@ function POSLayoutContent({
             </button>
             {headerMenuOpen && (
               <>
-                <div className="fixed inset-0 z-20" onClick={() => setHeaderMenuOpen(false)} aria-hidden="true" />
+                <div className="fixed top-0 right-0 bottom-0 left-0 z-20" onClick={() => setHeaderMenuOpen(false)} aria-hidden="true" />
                 <div
                   role="menu"
                   onClick={() => setHeaderMenuOpen(false)}
@@ -1896,7 +1900,7 @@ function POSLayoutContent({
                     type="button"
                     role="menuitem"
                     onClick={() => setShowDebt(true)}
-                    className="flex min-h-11 w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-bold text-amber-700 hover:bg-amber-50 active:bg-amber-100 cursor-pointer touch-manipulation"
+                    className="flex min-h-11 w-full items-center space-x-2.5 px-3 py-2.5 text-left text-sm font-bold text-amber-700 hover:bg-amber-50 active:bg-amber-100 cursor-pointer touch-manipulation"
                     title={tOr('pos.header.debt', 'So no')}
                   >
                     <ReceiptText size={17} aria-hidden="true" className="shrink-0" />
@@ -1906,7 +1910,7 @@ function POSLayoutContent({
                     type="button"
                     role="menuitem"
                     onClick={() => setPickupPanelOpen((v) => !v)}
-                    className="flex min-h-11 w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-bold text-orange-700 hover:bg-orange-50 active:bg-orange-100 cursor-pointer touch-manipulation"
+                    className="flex min-h-11 w-full items-center space-x-2.5 px-3 py-2.5 text-left text-sm font-bold text-orange-700 hover:bg-orange-50 active:bg-orange-100 cursor-pointer touch-manipulation"
                     title={tOr('pos.header.pickupQueue', 'Đơn bếp')}
                   >
                     <ShoppingCart size={17} aria-hidden="true" className="shrink-0" />
@@ -1922,7 +1926,7 @@ function POSLayoutContent({
                       type="button"
                       role="menuitem"
                       onClick={onFullscreen}
-                      className="flex min-h-11 w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 active:bg-slate-100 cursor-pointer touch-manipulation"
+                      className="flex min-h-11 w-full items-center space-x-2.5 px-3 py-2.5 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 active:bg-slate-100 cursor-pointer touch-manipulation"
                       title={tOr('pos.header.fullscreen', 'Enter fullscreen mode')}
                     >
                       <Maximize2 size={17} aria-hidden="true" className="shrink-0" />
@@ -1933,7 +1937,7 @@ function POSLayoutContent({
                     type="button"
                     role="menuitem"
                     onClick={() => setLangOpen(!langOpen)}
-                    className="flex min-h-11 w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 active:bg-slate-100 cursor-pointer touch-manipulation"
+                    className="flex min-h-11 w-full items-center space-x-2.5 px-3 py-2.5 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 active:bg-slate-100 cursor-pointer touch-manipulation"
                     title={tOr('pos.header.language', 'Change language')}
                   >
                     <Languages size={17} aria-hidden="true" className="shrink-0" />
@@ -1945,7 +1949,7 @@ function POSLayoutContent({
             )}
             {canUsePickupOrders && pickupPanelOpen && (
               <>
-                <div className="fixed inset-0 z-20" onClick={() => setPickupPanelOpen(false)} />
+                <div className="fixed top-0 right-0 bottom-0 left-0 z-20" onClick={() => setPickupPanelOpen(false)} />
                 <div className="absolute right-0 top-full mt-1 z-30 w-80 max-h-[70vh] overflow-y-auto bg-white rounded-xl border border-slate-200 shadow-lg py-2">
                   {visiblePickups.length === 0 ? (
                     <div className="px-4 py-6 text-center text-sm text-slate-600">Chưa có đơn bếp chờ thu</div>
@@ -1955,12 +1959,12 @@ function POSLayoutContent({
                       const claimedElsewhere = o.status === 'CLAIMED' && !mine;
                       const kitchenBadge = getPickupKitchenPrintBadge(o.kitchenPrintStatus);
                       return (
-                        <div key={o.id} className="flex items-center gap-1 px-2">
+                        <div key={o.id} className="flex items-center space-x-1 px-2">
                           <button
                             type="button"
                             disabled={claimedElsewhere}
                             onClick={() => openPickupOrder(o)}
-                            className={`flex-1 px-2 py-3 flex items-center justify-between gap-3 text-left rounded-lg transition-colors ${
+                            className={`flex-1 px-2 py-3 flex items-center justify-between space-x-3 text-left rounded-lg transition-colors ${
                               claimedElsewhere ? 'opacity-50 cursor-not-allowed' : 'hover:bg-orange-50 cursor-pointer'
                             }`}
                           >
@@ -1998,7 +2002,7 @@ function POSLayoutContent({
             )}
             {langOpen && (
               <>
-                <div className="fixed inset-0 z-20" onClick={() => setLangOpen(false)} />
+                <div className="fixed top-0 right-0 bottom-0 left-0 z-20" onClick={() => setLangOpen(false)} />
                 <div className="absolute right-0 top-full mt-1 z-30 bg-white rounded-xl border border-slate-200 shadow-lg py-1 min-w-[120px]">
                   {POS_LANGS.map((l) => (
                     <button
@@ -2019,7 +2023,7 @@ function POSLayoutContent({
 
           {/* Active pickup banner — đơn bếp đang xử lý ở máy này */}
           {canUsePickupOrders && activePickup && (
-            <div className="inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold text-orange-800 bg-orange-100 border border-orange-300 rounded-lg">
+            <div className="inline-flex items-center space-x-2 px-3 py-2 text-sm font-semibold text-orange-800 bg-orange-100 border border-orange-300 rounded-lg">
               <span className="tabular-nums">🍽 Đang xử lý: {activePickup.orderNumber}</span>
               <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold ${getPickupKitchenPrintBadge(activePickup.kitchenPrintStatus).className}`}>
                 {getPickupKitchenPrintBadge(activePickup.kitchenPrintStatus).text}
@@ -2036,11 +2040,11 @@ function POSLayoutContent({
           )}
 
           {/* Connection status */}
-          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${
+          <span className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${
             isOnline ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-red-50 text-red-600 border-red-200'
           }`}>
             <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-emerald-500' : 'bg-red-500'}`} />
-            {isOnline ? t('pos.online') : t('pos.offline')}
+            <span>{isOnline ? t('pos.online') : t('pos.offline')}</span>
           </span>
         </div>
       </div>
@@ -2130,7 +2134,7 @@ function POSLayoutContent({
         />
       )}
       {tenderResolutionTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4" role="dialog" aria-modal="true" aria-labelledby="tender-resolution-title">
+        <div className="fixed top-0 right-0 bottom-0 left-0 z-50 flex items-center justify-center bg-slate-950/60 p-4" role="dialog" aria-modal="true" aria-labelledby="tender-resolution-title">
           <div className="w-full max-w-xl rounded-xl border border-amber-300 bg-white p-5 shadow-2xl">
             <h2 id="tender-resolution-title" className="text-lg font-extrabold text-slate-950">
               Confirm no payment remains
@@ -2155,7 +2159,7 @@ function POSLayoutContent({
               className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-950 focus:border-amber-600 focus:outline-none focus:ring-2 focus:ring-amber-100 disabled:bg-slate-100"
             />
             <div className="mt-1 text-right text-[11px] font-semibold text-slate-500">{tenderResolutionReason.trim().length}/500</div>
-            <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-bold text-amber-950">
+            <label className="mt-3 flex cursor-pointer items-start space-x-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-bold text-amber-950">
               <input
                 type="checkbox"
                 checked={tenderResolutionConfirmed}

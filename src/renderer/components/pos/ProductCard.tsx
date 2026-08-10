@@ -177,17 +177,17 @@ function ProductCard({ product, onAdd, onLongPress, t, allowOversell = false, la
           : 'hover:shadow-md cursor-pointer touch-manipulation'
       }`}
     >
-      <div className="relative rounded-md overflow-hidden bg-slate-100 shrink-0 aspect-[3/2] w-full">
+      <div className="relative w-full shrink-0 overflow-hidden rounded-md bg-slate-100" style={{ paddingTop: '66.6667%' }}>
         {showImage ? (
           <img
             src={imgSrc!}
             alt={displayName}
             loading="lazy"
             onError={() => setImgError(true)}
-            className={`w-full h-full object-cover ${soldOut ? 'grayscale' : ''}`}
+            className={`absolute top-0 right-0 bottom-0 left-0 w-full h-full object-cover ${soldOut ? 'grayscale' : ''}`}
           />
         ) : (
-          <div className={`w-full h-full flex flex-col items-center justify-center gap-1 text-lg font-bold ${colorClass}`}>
+          <div className={`absolute top-0 right-0 bottom-0 left-0 flex flex-col items-center justify-center space-y-1 text-lg font-bold ${colorClass}`}>
             <svg className="w-5 h-5 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M20 7v10a2 2 0 01-2 2H6a2 2 0 01-2-2V7m16 0a2 2 0 00-2-2H6a2 2 0 00-2 2m16 0H4m5 4h6" />
             </svg>
@@ -195,7 +195,7 @@ function ProductCard({ product, onAdd, onLongPress, t, allowOversell = false, la
           </div>
         )}
         {soldOut && (
-          <div className="absolute inset-0 bg-white/60 flex items-center justify-center">
+          <div className="absolute top-0 right-0 bottom-0 left-0 bg-white/60 flex items-center justify-center">
             <span className="text-xs text-red-700 bg-red-50 border border-red-300 px-3 py-1.5 rounded font-extrabold leading-none shadow-sm">
               {t?.('pos.product.soldOut') ?? 'Sold out'}
             </span>
@@ -228,7 +228,7 @@ function ProductCard({ product, onAdd, onLongPress, t, allowOversell = false, la
         )}
         {longPressState !== 'idle' && (
           <div
-            className={`absolute inset-0 flex items-center justify-center px-3 text-center text-xs font-extrabold ${
+            className={`absolute top-0 right-0 bottom-0 left-0 flex items-center justify-center px-3 text-center text-xs font-extrabold ${
               longPressState === 'error'
                 ? 'bg-red-900/70 text-white'
                 : longPressState === 'printed'
@@ -245,7 +245,7 @@ function ProductCard({ product, onAdd, onLongPress, t, allowOversell = false, la
         <p className="text-sm font-bold text-slate-900 leading-snug line-clamp-2">{displayName}</p>
       </div>
 
-      <div className="flex items-end justify-between gap-1.5 shrink-0">
+      <div className="flex items-end justify-between space-x-1.5 shrink-0">
         <span className="text-lg font-extrabold text-slate-900 leading-tight tabular-nums min-w-0">
           {(product.retail_price / 100).toFixed(2)}&nbsp;{currency}{saleClass.priceSuffix}
         </span>

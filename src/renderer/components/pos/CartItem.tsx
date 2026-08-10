@@ -118,17 +118,17 @@ export default function CartItemRow({
     <div className={`px-3 py-2 border-b border-slate-100 last:border-b-0 transition-colors ${
       isActive ? 'bg-brand-50' : ''
     } ${fresh ? 'sc-cart-item-fresh pos-cart-item-fresh' : ''}`}>
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex items-start justify-between space-x-3">
         <div className="min-w-0 flex-1">
           <p className="text-sm font-extrabold text-slate-950 leading-snug line-clamp-2">
             {resolveName(item, lang)}
           </p>
           {item.locked && item.billiard && (
-            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide">
-              <span className="rounded-full bg-blue-50 px-2 py-0.5 text-blue-700">Billiard · {item.billiard.kind}</span>
-              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">Locked</span>
+            <div className="mt-1 -mr-1.5 -mb-1.5 flex flex-wrap items-center text-[10px] font-bold uppercase tracking-wide">
+              <span className="mr-1.5 mb-1.5 rounded-full bg-blue-50 px-2 py-0.5 text-blue-700">Billiard · {item.billiard.kind}</span>
+              <span className="mr-1.5 mb-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">Locked</span>
               {item.billiard.durationMinutes != null && (
-                <span className="normal-case text-slate-500 tabular-nums">{item.billiard.durationMinutes} min</span>
+                <span className="mr-1.5 mb-1.5 normal-case text-slate-500 tabular-nums">{item.billiard.durationMinutes} min</span>
               )}
             </div>
           )}
@@ -138,7 +138,7 @@ export default function CartItemRow({
         </span>
       </div>
 
-      <div className="mt-0.5 flex items-center justify-between gap-2">
+      <div className="mt-0.5 flex items-center justify-between">
         <button
           type="button"
           onClick={() => { if (!item.locked) (onEditPrice ? onEditPrice(item) : onSelectField?.(item.id, 'price')); }}
@@ -154,8 +154,8 @@ export default function CartItemRow({
         </button>
       </div>
 
-      <div className="mt-1.5 flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-1.5">
+      <div className="mt-1.5 flex items-center justify-between space-x-2">
+        <div className="flex min-w-0 items-center space-x-1.5">
           {sellBy === 'WEIGHT' && onReadScale && (
             <button
               type="button"
@@ -211,7 +211,7 @@ export default function CartItemRow({
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-1.5">
+        <div className="flex shrink-0 items-center space-x-1.5">
           {!item.locked && onPrintLabel && !editingNotes ? (
             <>
               <button
@@ -220,7 +220,7 @@ export default function CartItemRow({
                 disabled={labelState === 'printing'}
                 aria-label={tOr('pos.cart.printLabel', 'Print label')}
                 title={tOr('pos.cart.printLabel', 'Print label')}
-                className={`h-11 rounded-lg border px-2 text-xs font-bold cursor-pointer touch-manipulation transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 inline-flex items-center gap-1.5 ${
+                className={`h-11 rounded-lg border px-2 text-xs font-bold cursor-pointer touch-manipulation transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 inline-flex items-center space-x-1.5 ${
                   labelState === 'printing'
                     ? 'border-slate-200 text-slate-400 bg-slate-100 cursor-wait'
                     : 'border-slate-200 bg-white text-slate-600 hover:border-brand-300 hover:text-brand-800 hover:bg-brand-50'
@@ -235,7 +235,7 @@ export default function CartItemRow({
               type="button"
               onClick={() => setEditingNotes(true)}
               aria-label={item.notes ? tOr('pos.note', 'Note') : tOr('pos.addNote', 'Add note')}
-              className={`h-11 rounded-lg border px-2 text-xs font-bold cursor-pointer touch-manipulation transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 inline-flex items-center gap-1.5 ${
+              className={`h-11 rounded-lg border px-2 text-xs font-bold cursor-pointer touch-manipulation transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 inline-flex items-center space-x-1.5 ${
                 item.notes
                   ? 'border-brand-300 text-brand-800 bg-brand-50 hover:bg-brand-100'
                   : 'border-slate-200 bg-white text-slate-600 hover:border-brand-300 hover:text-brand-800 hover:bg-brand-50'
@@ -264,7 +264,7 @@ export default function CartItemRow({
             type="button"
             onClick={() => onRemove(item.id)}
             aria-label={tOr('pos.cart.removeItem', 'Remove item')}
-            className="h-11 rounded-lg border border-red-100 bg-white px-2 text-xs font-bold text-red-600 hover:border-red-200 hover:bg-red-50 active:bg-red-100 cursor-pointer touch-manipulation shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-200 inline-flex items-center gap-1.5"
+            className="h-11 rounded-lg border border-red-100 bg-white px-2 text-xs font-bold text-red-600 hover:border-red-200 hover:bg-red-50 active:bg-red-100 cursor-pointer touch-manipulation shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-200 inline-flex items-center space-x-1.5"
           >
             <Trash2 size={14} strokeWidth={2.4} aria-hidden="true" />
             <span>{tOr('pos.cart.remove', 'Remove')}</span>
@@ -298,7 +298,7 @@ export default function CartItemRow({
             placeholder={tOr('pos.addNote', 'Add note')}
             autoFocus
           />
-          <div className="mt-2 flex gap-2">
+          <div className="mt-2 flex space-x-2">
             <button
               type="button"
               onClick={handleSaveNotes}

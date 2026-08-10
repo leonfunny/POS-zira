@@ -1357,7 +1357,7 @@ export default function PaymentModal({
 
   const fiscalPromptOverlay = fiscalPrompt && (
     <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/70 p-4"
+      className="fixed top-0 right-0 bottom-0 left-0 z-[60] flex items-center justify-center bg-slate-950/70 p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="fiscal-prompt-title"
@@ -1400,7 +1400,7 @@ export default function PaymentModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/55 p-2 sm:p-3"
+      className="fixed top-0 right-0 bottom-0 left-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/55 p-2 sm:p-3"
       onClick={closeBlocked ? undefined : onClose}
     >
       {fiscalPromptOverlay}
@@ -1411,12 +1411,12 @@ export default function PaymentModal({
         className="flex max-h-[calc(100vh-1.5rem)] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-slate-300 bg-white shadow-2xl"
         onClick={e => e.stopPropagation()}
       >
-        <div className="shrink-0 flex items-center justify-between gap-4 border-b border-slate-200 bg-white px-4 py-3">
+        <div className="shrink-0 flex items-center justify-between space-x-4 border-b border-slate-200 bg-white px-4 py-3">
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase text-slate-500">{activeMethodLabel}</p>
             <h2 id="payment-modal-title" className="truncate text-xl font-semibold text-slate-950">{t('pos.payment')}</h2>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center space-x-2">
             <button
               type="button"
               onClick={() => { setSplitMode(!splitMode); setTenders([]); setSplitAmount(''); }}
@@ -1481,7 +1481,7 @@ export default function PaymentModal({
                   type="button"
                   onClick={handleNipToggle}
                   aria-expanded={nipOpen}
-                  className={`flex h-11 min-w-0 items-center justify-center gap-2 rounded-full border px-4 text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 ${
+                  className={`flex h-11 min-w-0 items-center justify-center space-x-2 rounded-full border px-4 text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 ${
                     nipOpen
                       ? 'border-brand-700 bg-brand-50 text-brand-800 shadow-sm'
                       : 'border-slate-300 bg-white text-slate-700 hover:border-brand-500 hover:text-brand-700'
@@ -1499,7 +1499,7 @@ export default function PaymentModal({
                   type="button"
                   onClick={() => setLoyaltyOpen(open => !open)}
                   aria-expanded={loyaltyOpen}
-                  className={`flex h-11 min-w-0 items-center justify-center gap-2 rounded-full border px-4 text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 ${
+                  className={`flex h-11 min-w-0 items-center justify-center space-x-2 rounded-full border px-4 text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 ${
                     loyaltyOpen
                       ? 'border-brand-700 bg-brand-50 text-brand-800 shadow-sm'
                       : 'border-slate-300 bg-white text-slate-700 hover:border-brand-500 hover:text-brand-700'
@@ -1527,7 +1527,7 @@ export default function PaymentModal({
                         type="button"
                         onClick={() => !disabled && setMethod(pm)}
                         disabled={saving || disabled}
-                        className={`flex min-h-[60px] min-w-0 items-center gap-2 rounded-md border p-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed ${
+                        className={`flex min-h-[60px] min-w-0 items-center space-x-2 rounded-md border p-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed ${
                           selected
                             ? 'border-brand-700 bg-brand-50 text-brand-900 shadow-sm'
                             : disabled
@@ -1554,7 +1554,7 @@ export default function PaymentModal({
 
               {canUseLoyaltyLookup && loyaltyOpen && (
               <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center justify-between space-x-2">
                   <div>
                     <p className="text-xs font-semibold uppercase text-slate-500">
                       {tOr('pos.loyalty.title', 'Customer loyalty')}
@@ -1570,7 +1570,7 @@ export default function PaymentModal({
                   )}
                 </div>
 
-                <div className="mt-3 flex gap-2">
+                <div className="mt-3 flex space-x-2">
                   <input
                     type="tel"
                     inputMode="tel"
@@ -1623,7 +1623,7 @@ export default function PaymentModal({
                 {loyaltyStatus === 'found' && loyaltyResult?.found && (
                   <div className="mt-3 space-y-3">
                     <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
-                      <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start justify-between space-x-3">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-bold text-slate-950">
                             {loyaltyOwner?.fullName || tOr('pos.loyalty.customer', 'Customer')}
@@ -1686,15 +1686,15 @@ export default function PaymentModal({
                       </div>
                     </div>
 
-                    <div className="flex flex-wrap gap-2 text-xs font-semibold">
-                      <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">
+                    <div className="-mr-2 -mb-2 flex flex-wrap text-xs font-semibold">
+                      <span className="mr-2 mb-2 rounded-full bg-slate-100 px-2 py-1 text-slate-600">
                         {tOr('pos.loyalty.lifetime', 'Lifetime')}: {loyalty?.lifetimePoints ?? 0}
                       </span>
-                      <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-600">
+                      <span className="mr-2 mb-2 rounded-full bg-slate-100 px-2 py-1 text-slate-600">
                         {tOr('pos.loyalty.pending', 'Pending')}: {loyalty?.pendingRedemptions ?? 0}
                       </span>
                       {loyaltyRiskTotal > 0 && (
-                        <span className="rounded-full bg-amber-100 px-2 py-1 text-amber-800">
+                        <span className="mr-2 mb-2 rounded-full bg-amber-100 px-2 py-1 text-amber-800">
                           {tOr('pos.loyalty.risk', 'Risk')}: {loyaltyRiskTotal}
                         </span>
                       )}
@@ -1706,7 +1706,7 @@ export default function PaymentModal({
 
               {nipOpen && (
               <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center justify-between space-x-2">
                   <span id="payment-customer-nip-label" className="text-sm font-semibold text-slate-900">
                     {tOr('pos.payment.customerNipLabel', 'Buyer NIP (optional)')}
                   </span>
@@ -1831,7 +1831,7 @@ export default function PaymentModal({
                   ? 'border-red-300 bg-red-50'
                   : splitComplete ? 'border-emerald-300 bg-emerald-50' : 'border-amber-300 bg-amber-50'
               }`}>
-                <div className="flex flex-wrap items-end justify-between gap-3">
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3">
                   <div>
                     <p className={`text-sm font-semibold ${splitOverpaid ? 'text-red-800' : splitComplete ? 'text-emerald-800' : 'text-amber-800'}`}>
                       {splitOverpaid
@@ -1914,7 +1914,7 @@ export default function PaymentModal({
               {!splitComplete && renderNumericKeypad('remaining')}
 
               <div className="rounded-lg border border-slate-200 bg-white">
-                <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
+                <div className="flex items-center justify-between space-x-3 border-b border-slate-200 px-4 py-3">
                   <p className="text-sm font-semibold text-slate-900">{tOr('pos.split.toggle', 'Split')}</p>
                   <p className="text-sm font-semibold text-slate-700">{money(tendersTotal)}</p>
                 </div>
@@ -1925,15 +1925,15 @@ export default function PaymentModal({
                 ) : (
                   <div className="divide-y divide-slate-200">
                     {tenders.map((tender, idx) => (
-                      <div key={`${tender.method}-${idx}`} className="flex items-center justify-between gap-3 px-4 py-3">
-                        <div className="flex min-w-0 items-center gap-3">
+                      <div key={`${tender.method}-${idx}`} className="flex items-center justify-between space-x-3 px-4 py-3">
+                        <div className="flex min-w-0 items-center space-x-3">
                           <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-slate-600">{PM_ICONS[tender.method]}</span>
                           <div className="min-w-0">
                             <p className="truncate text-sm font-semibold text-slate-950">{methodLabel(tender.method)}</p>
                             <p className="text-xs text-slate-500">{idx + 1}</p>
                           </div>
                         </div>
-                        <div className="flex shrink-0 items-center gap-2">
+                        <div className="flex shrink-0 items-center space-x-2">
                           <p className="text-lg font-semibold text-slate-950">{money(tender.amount)}</p>
                           <button
                             type="button"
@@ -1983,7 +1983,7 @@ export default function PaymentModal({
                       ? 'border-emerald-200 bg-emerald-50'
                       : 'border-slate-200 bg-slate-50'
               }`}>
-                <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
                   <div>
                     <p className={`text-sm font-semibold ${
                       cashStatusTone === 'shortfall'
@@ -2089,7 +2089,7 @@ export default function PaymentModal({
               {method === 'CARD' && (
                 <>
                   <div className="rounded-lg border border-slate-800 bg-slate-950 p-5 text-white shadow-sm">
-                    <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start justify-between space-x-4">
                       <div>
                         <p className="text-xs font-semibold uppercase text-slate-300">{t('pos.payment.card')}</p>
                         <p className="mt-2 text-5xl font-semibold leading-none">{money(grandTotal)}</p>
@@ -2123,7 +2123,7 @@ export default function PaymentModal({
 
               {method !== 'CARD' && (
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-5">
-                  <div className="flex items-start gap-4">
+                  <div className="flex items-start space-x-4">
                     <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-700">{PM_ICONS[method]}</span>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-lg font-semibold text-slate-950">{methodLabel(method)}</p>
@@ -2166,7 +2166,7 @@ export default function PaymentModal({
             </div>
           )}
           {error && (
-            <div aria-live="assertive" className="flex items-center gap-3 rounded-md border border-red-200 bg-red-50 px-3 py-3">
+            <div aria-live="assertive" className="flex items-center space-x-3 rounded-md border border-red-200 bg-red-50 px-3 py-3">
               <svg className="h-5 w-5 shrink-0 text-red-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
@@ -2174,26 +2174,26 @@ export default function PaymentModal({
             </div>
           )}
           {printWarning && (
-            <div aria-live="polite" className="flex items-center gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-3">
+            <div aria-live="polite" className="flex items-center space-x-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-3">
               <svg className="h-5 w-5 shrink-0 text-amber-700" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v3m0 4h.01M10.29 3.86l-8.53 14.78A2 2 0 003.5 21.5h17a2 2 0 001.74-2.86L13.71 3.86a2 2 0 00-3.42 0z" />
               </svg>
               <p className="text-sm font-semibold text-amber-900">{printWarning}</p>
             </div>
           )}
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col space-y-3 sm:flex-row sm:items-center sm:justify-between sm:space-x-3 sm:space-y-0">
             {method === 'CASH' && !splitMode && !receiptRecovery ? (
               <div className="min-w-0 flex-1">
-                <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-600">
-                  <p className="whitespace-nowrap">
+                <div className="-mr-4 -mb-1 flex min-w-0 flex-wrap items-center text-sm text-slate-600">
+                  <p className="mr-4 mb-1 whitespace-nowrap">
                     <span className="font-semibold text-slate-500">{t('pos.cart.total')}:</span>{' '}
                     <span className="font-bold tabular-nums text-slate-950">{money(grandTotal)}</span>
                   </p>
-                  <p className="whitespace-nowrap">
+                  <p className="mr-4 mb-1 whitespace-nowrap">
                     <span className="font-semibold text-slate-500">{t('pos.payment.received')}:</span>{' '}
                     <span className="font-bold tabular-nums text-slate-950">{money(displayCashAmountGrosze)}</span>
                   </p>
-                  <p className={`min-w-0 max-w-full break-words text-lg font-bold tabular-nums ${
+                  <p className={`mr-4 mb-1 min-w-0 max-w-full break-words text-lg font-bold tabular-nums ${
                     cashStatusTone === 'shortfall'
                       ? 'text-red-700'
                       : cashStatusTone === 'change'
@@ -2217,7 +2217,7 @@ export default function PaymentModal({
               </div>
             )}
             {receiptRecovery ? (
-              <div className="flex w-full flex-col gap-2 sm:w-auto sm:min-w-[360px] sm:flex-row">
+              <div className="flex w-full flex-col space-y-2 sm:w-auto sm:min-w-[360px] sm:flex-row sm:space-x-2 sm:space-y-0">
                 <button
                   type="button"
                   onClick={handleRetryReceipt}

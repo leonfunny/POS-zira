@@ -261,7 +261,7 @@ export default function QuickAddCameraModal({
   return (
     <>
     <div
-      className={`fixed inset-0 z-50 flex items-center justify-center bg-black/75 ${
+      className={`fixed top-0 right-0 bottom-0 left-0 z-50 flex items-center justify-center bg-black/75 ${
         open ? '' : 'pointer-events-none opacity-0'
       }`}
       style={open ? undefined : { transform: 'translateX(-120vw)' }}
@@ -298,22 +298,22 @@ export default function QuickAddCameraModal({
                 muted
                 playsInline
                 onLoadedMetadata={() => setCameraReady(true)}
-                className="aspect-video h-full w-full object-cover"
+                className="h-64 w-full object-cover md:h-full"
               />
               {!cameraReady && !error && (
-                <div className="absolute inset-0 flex items-center justify-center text-sm text-slate-400">
+                <div className="absolute top-0 right-0 bottom-0 left-0 flex items-center justify-center text-sm text-slate-400">
                   {tOr('pos.quickAdd.cameraStarting', 'Starting camera…')}
                 </div>
               )}
             </div>
 
-            <div className="flex flex-col gap-3">
+            <div className="flex flex-col space-y-3">
               <div className="grid grid-cols-3 gap-2">
                 {Array.from({ length: 3 }).map((_, index) => {
                   const image = images[index];
                   return image ? (
-                    <div key={index} className="relative overflow-hidden rounded-lg border border-slate-700">
-                      <img src={image.dataUrl} alt={`capture-${index + 1}`} className="aspect-square h-full w-full object-cover" />
+                    <div key={index} className="relative w-full overflow-hidden rounded-lg border border-slate-700" style={{ paddingTop: '100%' }}>
+                      <img src={image.dataUrl} alt={`capture-${index + 1}`} className="absolute top-0 right-0 bottom-0 left-0 h-full w-full object-cover" />
                       <button
                         type="button"
                         onClick={() => setImages((prev) => prev.filter((_, i) => i !== index))}
@@ -324,8 +324,8 @@ export default function QuickAddCameraModal({
                       </button>
                     </div>
                   ) : (
-                    <div key={index} className="flex aspect-square items-center justify-center rounded-lg border border-dashed border-slate-700 text-xs text-slate-500">
-                      {index + 1}
+                    <div key={index} className="relative w-full rounded-lg border border-dashed border-slate-700 text-xs text-slate-500" style={{ paddingTop: '100%' }}>
+                      <span className="absolute top-0 right-0 bottom-0 left-0 flex items-center justify-center">{index + 1}</span>
                     </div>
                   );
                 })}
@@ -378,7 +378,7 @@ export default function QuickAddCameraModal({
                                 ? `${p.packageQuantity}${p.packageUnit || ''}`
                                 : '';
                           return (
-                            <div key={i} className="flex items-start justify-between gap-2 border-b border-slate-800 pb-1 last:border-0">
+                            <div key={i} className="flex items-start justify-between space-x-2 border-b border-slate-800 pb-1 last:border-0">
                               <div className="min-w-0">
                                 <div className="truncate font-semibold text-white">
                                   {p?.name || p?.productType || '—'}
@@ -401,10 +401,10 @@ export default function QuickAddCameraModal({
         ) : (
           <div className="grid gap-5 p-5 md:grid-cols-[220px_minmax(0,1fr)]">
             <div className="space-y-2">
-              <img src={images[0]?.dataUrl} alt={prepared.analysis.name || 'product'} className="aspect-square w-full rounded-xl border border-slate-700 object-cover" />
+              <img src={images[0]?.dataUrl} alt={prepared.analysis.name || 'product'} className="h-52 w-full rounded-xl border border-slate-700 object-cover md:h-[220px]" />
               <div className="grid grid-cols-3 gap-2">
                 {images.map((image, index) => (
-                  <img key={index} src={image.dataUrl} alt={`capture-${index + 1}`} className="aspect-square rounded-lg border border-slate-700 object-cover" />
+                  <img key={index} src={image.dataUrl} alt={`capture-${index + 1}`} className="h-16 w-full rounded-lg border border-slate-700 object-cover" />
                 ))}
               </div>
             </div>
