@@ -181,9 +181,12 @@ if (scanCss && existsSync(cssDir)) {
     const checks = [
       [':where(', /:where\(/g, 'the whole rule is discarded on Chromium 83'],
       [':is(', /:is\(/g, 'the whole rule is discarded on Chromium 83'],
+      [':has(', /:has\(/g, 'needs Chromium 105'],
       ['aspect-ratio', /aspect-ratio\s*:/g, 'ignored; the box gets no intrinsic height'],
       ['color-mix(', /color-mix\(/g, 'needs Chromium 111'],
       ['@container', /@container/g, 'needs Chromium 105'],
+      ['dynamic viewport unit', /(?:^|[^\w-])(?:\d*\.?\d+)(?:dvh|dvw|svh|svw|lvh|lvw)\b/g, 'needs Chromium 108'],
+      ['subgrid', /grid-template-(?:columns|rows)\s*:\s*subgrid/g, 'needs Chromium 117'],
     ];
     for (const [label, re, why] of checks) {
       const n = (css.match(re) ?? []).length;

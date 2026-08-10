@@ -117,4 +117,32 @@ describe('css baseline guard', () => {
     expect(out).toContain('PASS css baseline');
     rmSync(join(dir, 'clean.tsx'));
   });
+
+  test('scans emitted CSS for selectors and values Chromium 83 discards', () => {
+    const cssDir = join(dir, 'css');
+    mkdirSync(cssDir, { recursive: true });
+    writeFileSync(join(cssDir, 'bad.css'), `
+      :where(.button) { color: color-mix(in srgb, red 50%, blue); }
+      .card:has(img) { min-height: 100dvh; }
+      .grid { grid-template-columns: subgrid; }
+      @container pane (min-width: 20rem) { .child { display: block; } }
+    `);
+    const { out, status } = run([`--css=${cssDir}`, '--strict']);
+    expect(status).toBe(1);
+    expect(out).toContain(':where(');
+    expect(out).toContain(':has(');
+    expect(out).toContain('color-mix(');
+    expect(out).toContain('@container');
+    expect(out).toContain('dynamic viewport unit');
+    expect(out).toContain('subgrid');
+  });
+
+  test('accepts emitted CSS using Chrome 83-safe grid gaps and fixed viewport units', () => {
+    const cssDir = join(dir, 'safe-css');
+    mkdirSync(cssDir, { recursive: true });
+    writeFileSync(join(cssDir, 'safe.css'), '.grid { display: grid; gap: 12px; min-height: 100vh; }');
+    const { out, status } = run([`--css=${cssDir}`, '--strict']);
+    expect(status).toBe(0);
+    expect(out).toContain('PASS css baseline');
+  });
 });

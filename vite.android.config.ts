@@ -19,6 +19,10 @@ export default defineConfig({
     },
   },
   build: {
+    // The fixed SUNMI System WebView is Chromium 83. Pin both transforms: a JS
+    // target alone does not constrain Lightning CSS/esbuild's CSS lowering.
+    target: 'chrome83',
+    cssTarget: 'chrome83',
     outDir: resolve(__dirname, 'dist/android-web'),
     emptyOutDir: true,
     modulePreload: false,
