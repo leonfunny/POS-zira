@@ -291,20 +291,11 @@ export class ZplFormatter {
     } else {
       // Product title first: the old order wasted the whole upper half of
       // 50x30mm product labels by placing every text line below the barcode.
-      const standardTitleCharsPerLine = Math.max(22, Math.floor((this.labelWidth - 10) / 1.1));
-      const largeCompactTitleCharsPerLine = Math.max(22, Math.floor((this.labelWidth - 10) / 1.35));
-      const normalizedTitleLength = data.text1
-        ? data.text1.replace(/\r\n?/g, '\n').replace(/\s+/g, ' ').trim().length
-        : 0;
-      // A medium title on the common 50x30 stock fits cleanly on two lines.
-      // Use fewer characters per line so both lines can be materially larger;
-      // genuinely long names retain the denser layout instead of being clipped.
-      const useLargeCompactTitle = compactShelfLabel
-        && normalizedTitleLength > largeCompactTitleCharsPerLine + 10
-        && normalizedTitleLength <= largeCompactTitleCharsPerLine * 2;
-      const titleCharsPerLine = useLargeCompactTitle
-        ? largeCompactTitleCharsPerLine
-        : standardTitleCharsPerLine;
+      // Keep 50x30 shelf titles at no more than 28 characters per line. The
+      // previous 36-character single-line path overflowed real LAY'S labels.
+      const titleCharsPerLine = compactShelfLabel
+        ? Math.max(22, Math.floor((this.labelWidth - 10) / 1.4))
+        : Math.max(22, Math.floor((this.labelWidth - 10) / 1.1));
       const text1Lines = data.text1 ? this.wrapLabelText(data.text1, titleCharsPerLine) : [];
       const maxReadableTitleLines = compactShelfLabel ? 4 : Math.max(4, Math.floor(H / 8));
       if (text1Lines.length > maxReadableTitleLines) {
@@ -316,21 +307,24 @@ export class ZplFormatter {
           : text1Lines.length === 3
             ? 2.6
             : text1Lines.length > 1
-              ? useLargeCompactTitle ? Math.max(4.2, Math.min(4.5, H * 0.147)) : 3.6
-              : 4.8
+              ? 4
+              : 4.1
         : text1Lines.length >= 3
           ? Math.max(2.4, Math.min(2.8, H * 0.072))
           : text1Lines.length > 1
             ? Math.max(2.4, Math.min(3.1, H * 0.09))
             : Math.max(3, Math.min(4.1, H * 0.115));
       const titleLineGapMm = compactShelfLabel
-        ? text1Lines.length >= 3 ? 0.3 : useLargeCompactTitle ? 0.75 : 0.55
+        ? text1Lines.length >= 3 ? 0.3 : 0.65
         : 0.25;
 
       for (let lineIndex = 0; lineIndex < text1Lines.length; lineIndex += 1) {
         const textLine = text1Lines[lineIndex];
         if (!wouldFit(currentY, text1FontMm)) break;
-        const text1WidthMm = this.fittedTextWidthMm(textLine, text1FontMm, this.labelWidth - 10);
+        const fittedTitleWidthMm = this.fittedTextWidthMm(textLine, text1FontMm, this.labelWidth - 10);
+        const text1WidthMm = compactShelfLabel
+          ? Math.min(fittedTitleWidthMm, text1FontMm)
+          : fittedTitleWidthMm;
         lines.push(`^FO${barcodeX},${currentY}`);
         lines.push(`^A0,${this.mmToDots(text1FontMm)},${this.mmToDots(text1WidthMm)}`);
         lines.push(`^FD${textLine}^FS`);

@@ -219,7 +219,7 @@ describe("ZplFormatter.formatLabel", () => {
     expect(zpl).toContain("^BE,");
   });
 
-  it("keeps medium product names on two larger title lines and enlarges the price", () => {
+  it("keeps medium product names complete across readable lines and enlarges the price", () => {
     const f = new ZplFormatter(50, 30);
     const zpl = f.formatLabel({
       barcode: "5901234123457",
@@ -240,15 +240,16 @@ describe("ZplFormatter.formatLabel", () => {
     const titleLines = lines
       .slice(0, barcodeIndex)
       .filter((line) => line.startsWith("^FD") && line.endsWith("^FS"));
-    const titleFont = lines[lines.indexOf("^FDMieszanka do sma\u017cenia banan\u00f3w Lobo^FS") - 1]?.match(/\^A0,(\d+),(\d+)/);
+    const titleFont = lines[lines.indexOf("^FDMieszanka do sma\u017cenia^FS") - 1]?.match(/\^A0,(\d+),(\d+)/);
 
     expect(titleLines).toEqual([
-      "^FDMieszanka do sma\u017cenia banan\u00f3w Lobo^FS",
-      "^FDBanana Fritter Batter Mix 85g^FS",
+      "^FDMieszanka do sma\u017cenia^FS",
+      "^FDbanan\u00f3w Lobo Banana Fritter^FS",
+      "^FDBatter Mix 85g^FS",
     ]);
     expect(zpl).not.toContain("\u2026");
     expect(priceIndex).toBeGreaterThan(0);
-    expect(Number(titleFont?.[1] || 0)).toBeGreaterThanOrEqual(22);
+    expect(Number(titleFont?.[1] || 0)).toBeGreaterThanOrEqual(21);
     expect(Number(priceFont?.[1] || 0)).toBeGreaterThanOrEqual(44);
     expect(Number(barcodeValueFont?.[1] || 0)).toBeGreaterThanOrEqual(19);
     expect(priceY - (barcodeY + barcodeHeight)).toBeGreaterThanOrEqual(24);
@@ -359,7 +360,10 @@ describe("ZplFormatter.formatLabel", () => {
       "^FDChipsy karbowane o smaku^FS",
       "^FDpikantnych Latiao LAY'S 70g^FS",
     ]);
-    expect(titleFonts.every((font) => font.height >= 35 && font.width >= 34)).toBe(true);
+    expect(titleFonts).toEqual([
+      { height: 32, width: 32 },
+      { height: 32, width: 32 },
+    ]);
     expect(zpl).not.toContain("…");
     expect(zpl).toContain("^FD14,58 zl^FS");
     expect(zpl).toContain("^BY3");
@@ -398,12 +402,52 @@ describe("ZplFormatter.formatLabel", () => {
       "^FDBaza do hot pot o smaku^FS",
       "^FDgrzybowym HAIDILAO 150g^FS",
     ]);
-    expect(titleMetrics.every((font) => font.height >= 35 && font.width >= 40)).toBe(true);
-    expect(titleLineGap).toBeGreaterThanOrEqual(6);
+    expect(titleMetrics.every((font) => font.height === 32 && font.width === 32)).toBe(true);
+    expect(titleLineGap).toBeGreaterThanOrEqual(5);
     expect(Number(eanFont?.[1] || 0)).toBeGreaterThanOrEqual(24);
     expect(Number(eanFont?.[2] || 0)).toBeGreaterThanOrEqual(28);
     expect(zpl).toContain("^FD28,50 zl^FS");
     expect(zpl).not.toContain("…");
+  });
+
+  it("wraps the photographed LAY'S names before they can overflow the right edge", () => {
+    const f = new ZplFormatter(50, 30);
+    const samples = [
+      {
+        barcode: "6924743935990",
+        name: "Chipsy o smaku awokado LAY'S 90g",
+      },
+      {
+        barcode: "6924743936027",
+        name: "Chipsy o smaku smietany i cebuli LAY'S 90g",
+      },
+    ];
+
+    for (const sample of samples) {
+      const zpl = f.formatLabel({
+        barcode: sample.barcode,
+        barcodeType: "EAN13",
+        text1: sample.name,
+        text2: "12,00 zl",
+        quantity: 1,
+      });
+      const lines = zpl.split("\n");
+      const barcodeIndex = lines.findIndex((line) => line.startsWith("^BE,"));
+      const titleFields = lines
+        .slice(0, barcodeIndex)
+        .filter((line) => line.startsWith("^FD") && line.endsWith("^FS"));
+      const printedName = titleFields.map((line) => line.slice(3, -3)).join(" ");
+      const titleFonts = titleFields.map((field) => {
+        const fieldIndex = lines.indexOf(field);
+        return lines[fieldIndex - 1];
+      });
+
+      expect(printedName).toBe(sample.name);
+      expect(titleFields).toHaveLength(2);
+      expect(titleFields.every((line) => Array.from(line.slice(3, -3)).length <= 28)).toBe(true);
+      expect(titleFonts).toEqual(["^A0,32,32", "^A0,32,32"]);
+      expect(zpl).not.toContain("…");
+    }
   });
 });
 
