@@ -231,6 +231,39 @@ export class ZplFormatter {
   }
 
   /**
+   * When a compact shelf title fits on two lines, choose the word boundary
+   * that makes those lines as even as possible. This avoids a full-width first
+   * line followed by only a size/weight token and gives the physical printer
+   * considerably more right-edge tolerance.
+   */
+  private wrapCompactShelfTitle(text: string, maxCharsPerLine: number): string[] {
+    const defaultLines = this.wrapLabelText(text, maxCharsPerLine);
+    if (/\r|\n/.test(text) || defaultLines.length <= 1) return defaultLines;
+
+    const words = text.trim().split(/\s+/).filter(Boolean);
+    let best: { lines: [string, string]; difference: number } | null = null;
+
+    for (let splitIndex = 1; splitIndex < words.length; splitIndex += 1) {
+      const first = words.slice(0, splitIndex).join(' ');
+      const second = words.slice(splitIndex).join(' ');
+      const firstLength = Array.from(first).length;
+      const secondLength = Array.from(second).length;
+      if (firstLength > maxCharsPerLine || secondLength > maxCharsPerLine) continue;
+
+      const difference = Math.abs(firstLength - secondLength);
+      if (!best || difference < best.difference) {
+        best = { lines: [first, second], difference };
+      }
+    }
+
+    if (!best) {
+      return defaultLines;
+    }
+
+    return best.lines.map((line) => this.sanitizeText(line, maxCharsPerLine));
+  }
+
+  /**
    * Format label with barcode
    */
   formatLabel(data: LabelData): string {
@@ -296,7 +329,11 @@ export class ZplFormatter {
       const titleCharsPerLine = compactShelfLabel
         ? Math.max(22, Math.floor((this.labelWidth - 10) / 1.4))
         : Math.max(22, Math.floor((this.labelWidth - 10) / 1.1));
-      const text1Lines = data.text1 ? this.wrapLabelText(data.text1, titleCharsPerLine) : [];
+      const text1Lines = data.text1
+        ? compactShelfLabel
+          ? this.wrapCompactShelfTitle(data.text1, titleCharsPerLine)
+          : this.wrapLabelText(data.text1, titleCharsPerLine)
+        : [];
       const maxReadableTitleLines = compactShelfLabel ? 4 : Math.max(4, Math.floor(H / 8));
       if (text1Lines.length > maxReadableTitleLines) {
         throw new Error(`Product name needs ${text1Lines.length} lines; ${maxReadableTitleLines} fit readably on this label`);

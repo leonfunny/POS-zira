@@ -192,8 +192,8 @@ describe("ZplFormatter.formatLabel", () => {
       quantity: 1,
     });
 
-    const firstLineIndex = zpl.indexOf("Pra\u017cone wodorosty Yangban");
-    const secondLineIndex = zpl.indexOf("Korea 30g");
+    const firstLineIndex = zpl.indexOf("Pra\u017cone wodorosty");
+    const secondLineIndex = zpl.indexOf("Yangban Korea 30g");
     const barcodeIndex = zpl.indexOf("^BE,");
 
     expect(firstLineIndex).toBeGreaterThan(-1);
@@ -416,10 +416,12 @@ describe("ZplFormatter.formatLabel", () => {
       {
         barcode: "6924743935990",
         name: "Chipsy o smaku awokado LAY'S 90g",
+        expectedLines: ["Chipsy o smaku", "awokado LAY'S 90g"],
       },
       {
         barcode: "6924743936027",
         name: "Chipsy o smaku smietany i cebuli LAY'S 90g",
+        expectedLines: ["Chipsy o smaku smietany", "i cebuli LAY'S 90g"],
       },
     ];
 
@@ -444,6 +446,7 @@ describe("ZplFormatter.formatLabel", () => {
 
       expect(printedName).toBe(sample.name);
       expect(titleFields).toHaveLength(2);
+      expect(titleFields.map((line) => line.slice(3, -3))).toEqual(sample.expectedLines);
       expect(titleFields.every((line) => Array.from(line.slice(3, -3)).length <= 28)).toBe(true);
       expect(titleFonts).toEqual(["^A0,32,32", "^A0,32,32"]);
       expect(zpl).not.toContain("…");
