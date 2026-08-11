@@ -35,6 +35,11 @@ import RestaurantTemplate from './templates/restaurant/RestaurantTemplate';
 import PaymentModal from './PaymentModal';
 import SyncConflictBanner from './SyncConflictBanner';
 import ScanImportModal, { type ScanImportCategoryOption, type ScanImportDraftPreview } from './ScanImportModal';
+import {
+  bareScanCreateIdempotencyKey,
+  buildBareScanImportPreview,
+  isBareCreateSource,
+} from './scan-import-bare';
 import QuickAddCameraModal, {
   QuickAddCapturedImage,
   QuickAddFinalizeInput,
@@ -719,9 +724,10 @@ export default function POSLayout({
       }
 
       if (!preview) {
-        setScanImport({ open: false, ean: code, preview: null, loading: false, error: null });
-        showScanToast(`Barcode not found: ${code}`, 'err');
-        return;
+        // Nothing local, nothing in the master catalog, nothing external —
+        // fall through to the bare-create form (name = scanned code) so the
+        // cashier can price it and sell it right now.
+        preview = buildBareScanImportPreview(code);
       }
 
       const categoryRows = await categoryRowsPromise;
@@ -750,10 +756,12 @@ export default function POSLayout({
           });
       }
     } catch (err: any) {
+      // Lookup infrastructure failed (e.g. offline). Still open the
+      // bare-create form — the confirm itself surfaces a clear error if the
+      // backend stays unreachable.
       rlog.warn('[POSLayout] scan-import lookup failed', err?.message);
       setScanImportCategories([]);
-      setScanImport({ open: false, ean: code, preview: null, loading: false, error: null });
-      showScanToast(`Barcode not found: ${code}`, 'err');
+      setScanImport({ open: true, ean: code, preview: buildBareScanImportPreview(code), loading: false, error: null });
     }
   }, [showScanToast]);
 
@@ -846,26 +854,65 @@ export default function POSLayout({
     retailPriceGrosze: number,
     categoryId: string | undefined,
     stockQty: number,
+    vatRate: number,
   ) => {
     const ean = scanImport.ean;
     if (!ean) return;
     setScanImport((s) => ({ ...s, loading: true, error: null }));
     try {
+      const isBare = isBareCreateSource(scanImport.preview?.source);
       const isExternal = isExternalScanImportSource(scanImport.preview?.source);
       const draftPayload = categoryId
         ? { ean, retailPriceGrosze, categoryId, stockQty }
         : { ean, retailPriceGrosze, stockQty };
       // Drafts keep their existing local-first path. External EAN hits go
-      // through backend quick-add so the new product exists online too.
-      const result = isExternal
-        ? await window.electronAPI.pos.masterCatalog.importExternal({ ean, retailPriceGrosze, quantity: 1 })
-        : await window.electronAPI.pos.masterCatalog.importDraft(draftPayload);
+      // through backend quick-add so the new product exists online too. A
+      // bare create goes through scan-create with createIfMiss so an EAN
+      // nobody has ever catalogued becomes sellable on the spot (online-only).
+      const result = isBare
+        ? await window.electronAPI.pos.masterCatalog.scanCreate({
+          ean,
+          retailPrice: retailPriceGrosze / 100,
+          stockQty,
+          taxRate: vatRate,
+          categoryId: categoryId ?? null,
+          createIfMiss: true,
+          idempotencyKey: bareScanCreateIdempotencyKey({
+            ean,
+            retailPriceGrosze,
+            vatRate,
+            stockQty,
+            categoryId: categoryId ?? null,
+          }),
+        })
+        : isExternal
+          ? await window.electronAPI.pos.masterCatalog.importExternal({ ean, retailPriceGrosze, quantity: 1 })
+          : await window.electronAPI.pos.masterCatalog.importDraft(draftPayload);
       if (!result?.ok) {
         setScanImport((s) => ({ ...s, loading: false, error: result?.error || 'Import failed' }));
         return;
       }
-      const variant = result.variant
+      let variant = result.variant
         ?? (await window.electronAPI.pos.products.getByBarcode(ean));
+      if (!variant && isBare && result?.variantId) {
+        // Server committed but the local mirror hasn't caught up yet — build
+        // the cart line from what the cashier just typed so the sale continues.
+        variant = {
+          id: result.variantId,
+          name: result.productName || ean,
+          sku: `QS-${ean.toUpperCase()}`,
+          barcode: ean,
+          retail_price: retailPriceGrosze,
+          available_qty: stockQty,
+          in_stock: stockQty,
+          vat_rate: vatRate,
+          image_url: null,
+          sell_by: 'PIECE',
+          track_inventory: 1,
+          is_active: 1,
+          name_translations: null,
+        };
+      }
       if (variant && dispatch) {
         const sellError = canSellImportedVariant(variant, allowOversell);
         if (sellError) {
@@ -1320,7 +1367,7 @@ export default function POSLayout({
           } else {
             // Unknown EAN — try the master catalog. openScanImport opens the
             // preview modal if a draft exists locally or remotely; otherwise
-            // it falls back to the "Barcode not found" toast.
+            // it falls back to the bare-create form (name = scanned code).
             await openScanImport(code);
           }
         } catch (err) {

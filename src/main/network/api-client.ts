@@ -3732,6 +3732,7 @@ export class ApiClient {
       taxRate?: number;
       warehouseId?: string;
       categoryId?: string | null;
+      createIfMiss?: boolean;
       idempotencyKey?: string;
     },
   ): Promise<{
@@ -3768,6 +3769,7 @@ export class ApiClient {
     if (payload.warehouseId) body.warehouseId = payload.warehouseId;
     const categoryId = String(payload.categoryId ?? '').trim();
     if (categoryId) body.categoryId = categoryId;
+    if (payload.createIfMiss === true) body.createIfMiss = true;
 
     const response = await fetchWithTimeout(url, {
       method: 'POST',

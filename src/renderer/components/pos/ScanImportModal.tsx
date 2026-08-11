@@ -1,5 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useKeyboardAwareFocus } from '../../hooks/useKeyboardAwareFocus';
+import {
+  BARE_CREATE_DEFAULT_STOCK,
+  BARE_CREATE_DEFAULT_VAT,
+  BARE_CREATE_VAT_OPTIONS,
+  isBareCreateSource,
+} from './scan-import-bare';
 
 export interface ScanImportDraftPreview {
   id?: string;
@@ -34,6 +40,7 @@ interface ScanImportModalProps {
     retailPriceGrosze: number,
     categoryId: string | undefined,
     stockQty: number,
+    vatRate: number,
   ) => void | Promise<void>;
   onCancel: () => void;
   loading?: boolean;
@@ -92,6 +99,7 @@ export default function ScanImportModal({
   const [priceInput, setPriceInput] = useState('');
   const [stockInput, setStockInput] = useState('');
   const [selectedCategoryId, setSelectedCategoryId] = useState('');
+  const [selectedVatRate, setSelectedVatRate] = useState<number>(BARE_CREATE_DEFAULT_VAT);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const handleKeyboardAwareFocus = useKeyboardAwareFocus(panelRef, open);
 
@@ -99,9 +107,12 @@ export default function ScanImportModal({
     if (!open) return;
     setClosing(false);
     setPriceInput('');
-    setStockInput('');
+    setStockInput(
+      isBareCreateSource(preview?.source) ? String(BARE_CREATE_DEFAULT_STOCK) : '',
+    );
+    setSelectedVatRate(BARE_CREATE_DEFAULT_VAT);
     setSelectedCategoryId(resolveInitialScanImportCategoryId(preview, categoryOptions));
-  }, [open, preview?.id, preview?.barcode, preview?.suggestedCategoryId, categoryOptions]);
+  }, [open, preview?.id, preview?.barcode, preview?.source, preview?.suggestedCategoryId, categoryOptions]);
 
   if (!open) return null;
 
@@ -118,7 +129,8 @@ export default function ScanImportModal({
 
   const retailPriceGrosze = parsePriceInput(priceInput);
   const stockQty = parseOptionalScanImportStock(stockInput);
-  const vatText = preview ? `VAT ${preview.vat_rate}%` : '';
+  const isBare = !!preview && isBareCreateSource(preview.source);
+  const vatText = preview && !isBare ? `VAT ${preview.vat_rate}%` : '';
   const showDraftFields =
     !!preview && isDraftCategorySelectionSource(preview.source);
   const showCategorySelect =
@@ -139,7 +151,9 @@ export default function ScanImportModal({
       >
         <div className="px-5 py-4 border-b border-slate-700 bg-gradient-to-r from-emerald-700/30 to-brand-700/30">
           <div className="text-xs uppercase tracking-wider text-emerald-300 font-semibold">
-            {tOr('pos.scanImport.title', 'New product from catalog')}
+            {isBare
+              ? tOr('pos.scanImport.bareTitle', 'Tạo nhanh SP mới từ mã vạch')
+              : tOr('pos.scanImport.title', 'New product from catalog')}
           </div>
           <div className="mt-1 text-xs text-slate-400 font-mono">{ean}</div>
         </div>
@@ -164,6 +178,11 @@ export default function ScanImportModal({
               <div className="flex-1 min-w-0">
                 <div className="text-lg font-semibold text-white truncate">{preview.name}</div>
                 <div className="mt-1 text-xs text-slate-400">{vatText}</div>
+                {isBare ? (
+                  <div className="mt-1 text-xs text-amber-300">
+                    {tOr('pos.scanImport.bareHint', 'SP chưa có trong hệ thống — tên tạm là mã vạch, sửa tên sau trong dashboard.')}
+                  </div>
+                ) : null}
                 {preview.status ? (
                   <div className="mt-2 inline-flex px-2 py-0.5 rounded-md bg-brand-900/40 border border-brand-500/30 text-[10px] uppercase tracking-wide text-brand-300">
                     {preview.status}
@@ -187,6 +206,29 @@ export default function ScanImportModal({
                 {tOr('pos.scanImport.salePriceHint', 'This price will be saved to the product and used for this cart line.')}
               </div>
             </label>
+            {isBare ? (
+              <div className="mt-4">
+                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-emerald-300">
+                  {tOr('pos.scanImport.vat', 'VAT')}
+                </span>
+                <div className="flex gap-2">
+                  {BARE_CREATE_VAT_OPTIONS.map((rate) => (
+                    <button
+                      key={rate}
+                      type="button"
+                      onClick={() => setSelectedVatRate(rate)}
+                      className={`h-11 flex-1 rounded-lg border text-base font-semibold ${
+                        selectedVatRate === rate
+                          ? 'border-emerald-400 bg-emerald-600 text-white'
+                          : 'border-slate-600 bg-slate-900 text-slate-200 hover:bg-slate-700/60'
+                      }`}
+                    >
+                      {rate}%
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             {showDraftFields ? (
               <label className="mt-4 block">
                 <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-emerald-300">
@@ -214,7 +256,11 @@ export default function ScanImportModal({
                   onChange={(event) => setSelectedCategoryId(event.target.value)}
                   className="h-11 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 text-base font-semibold text-white outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-500/30"
                 >
-                  <option value="">{tOr('pos.scanImport.defaultCategory', 'Chưa phân loại (mặc định)')}</option>
+                  <option value="">
+                    {isBare
+                      ? tOr('pos.scanImport.bareDefaultCategory', 'SP quét nhanh (mặc định)')
+                      : tOr('pos.scanImport.defaultCategory', 'Chưa phân loại (mặc định)')}
+                  </option>
                   {categoryOptions.map((category) => (
                     <option key={category.id} value={category.id}>
                       {category.name}
@@ -254,6 +300,7 @@ export default function ScanImportModal({
                 retailPriceGrosze,
                 selectedCategoryId || undefined,
                 stockQty,
+                selectedVatRate,
               );
             }}
             disabled={

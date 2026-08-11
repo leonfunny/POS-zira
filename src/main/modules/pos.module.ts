@@ -5041,6 +5041,7 @@ export class PosModule extends BaseModule {
         taxRate?: number;
         warehouseId?: string;
         categoryId?: string | null;
+        createIfMiss?: boolean;
         idempotencyKey?: string;
       }) => {
         const token = getSecureAuthToken();
@@ -5052,6 +5053,47 @@ export class PosModule extends BaseModule {
             categoryId: categoryResolution.ok ? categoryResolution.categoryId : null,
           });
           logger.info(`[PosModule] scan-create OK outcome=${result?.outcome} productId=${result?.productId ?? result?.product?.id ?? 'n/a'} variantId=${result?.variantId ?? result?.variant?.id ?? 'n/a'}`);
+          if (result?.mode === 'CREATED' && result?.variantId) {
+            // Bare create: the backend just minted this variant. Mirror it
+            // locally right away — the deltaSync below is best-effort and the
+            // cashier will re-scan this EAN for the next customer long before
+            // a periodic sync runs.
+            try {
+              const grosze = Math.round((Number(payload?.retailPrice) || 0) * 100);
+              const vat = Number(payload?.taxRate) || 0;
+              const qty = Number(payload?.stockQty) || 0;
+              const priceNet = Math.round(grosze * 100 / (100 + vat));
+              productRepo.upsertMany([{
+                id: result.variantId,
+                template_id: result.productId ?? null,
+                name: result.productName || payload.ean,
+                sku: `QS-${String(payload.ean).toUpperCase()}`,
+                barcode: payload.ean,
+                retail_price: grosze,
+                category_id: categoryResolution.ok ? categoryResolution.categoryId : null,
+                image_url: null,
+                in_stock: qty,
+                vat_rate: vat,
+                is_active: 1,
+                updated_at: new Date().toISOString(),
+                available_qty: qty,
+                price_gross: grosze,
+                price_net: priceNet,
+                vat_amount: grosze - priceNet,
+                is_on_sale: 0,
+                thumbnail_url: null,
+                sale_unit: null,
+                sell_by: 'PIECE',
+                name_translations: null,
+                item_type: 'stockable',
+                track_inventory: 1,
+              }]);
+              database.markDirty();
+              notifyPosRenderers(this.container, 'pos:products-synced');
+            } catch (mirrorErr: any) {
+              logger.warn(`[PosModule] scan-create local mirror upsert failed: ${mirrorErr?.message ?? mirrorErr}`);
+            }
+          }
           // Pull fresh products + drafts so renderer can see the new variant.
           try {
             const syncMod = this.container.getOptional<any>(SERVICE_TOKENS.PRODUCT_SYNC);
