@@ -284,6 +284,29 @@ function validateCartItemCatalogPrice(item: CartItem): boolean {
 
 interface PosReducerOptions {
   customerDisplayProfile?: LiveCustomerDisplayProfile;
+  /** Resolved whole-receipt auto discount percent (1-100), or null when inactive. */
+  autoOrderDiscountPercent?: number | null;
+}
+
+/**
+ * Resolve the configured automatic whole-receipt discount to an active percent,
+ * or null when disabled, malformed, or past its end date (end date is inclusive,
+ * compared against the machine's local calendar day).
+ */
+export function resolveAutoOrderDiscountPercent(
+  cfg: AgentConfig['autoOrderDiscount'] | undefined,
+  now: Date = new Date(),
+): number | null {
+  if (!cfg?.enabled) return null;
+  const percent = Number(cfg.percent);
+  if (!Number.isFinite(percent) || percent <= 0 || percent > 100) return null;
+  const endDate = (cfg.endDate || '').trim();
+  if (endDate) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(endDate)) return null;
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    if (today > endDate) return null;
+  }
+  return percent;
 }
 
 function posReducer(
@@ -333,7 +356,20 @@ function posReducer(
         : preserveSelfService
           ? currentMode
           : 'cart';
-      return { ...state, cart: recalcCart({ ...state.cart, items }), display: { ...state.display, mode: nextMode } };
+      // Opening-week style promo: when a fresh cart gets its first line and the
+      // cashier has not touched discounts yet, apply the configured automatic
+      // whole-receipt percentage. recalcCart keeps it tracking the subtotal;
+      // an explicit clear by the cashier stays cleared for the rest of the order.
+      const autoPercent = options.autoOrderDiscountPercent ?? null;
+      const applyAutoDiscount =
+        autoPercent != null
+        && state.cart.items.length === 0
+        && state.cart.discount === 0
+        && state.cart.discountType === undefined;
+      const cartBase = applyAutoDiscount
+        ? { ...state.cart, items, discountType: 'percentage' as const, discountPercent: autoPercent }
+        : { ...state.cart, items };
+      return { ...state, cart: recalcCart(cartBase), display: { ...state.display, mode: nextMode } };
     }
 
     case 'cart/removeItem': {
@@ -633,6 +669,7 @@ export class PosStore {
     this.transitionVersion++;
     this.state = posReducer(this.state, action, {
       customerDisplayProfile: this.getCustomerDisplayProfile(),
+      autoOrderDiscountPercent: resolveAutoOrderDiscountPercent(getConfigValue('autoOrderDiscount')),
     });
     this.broadcast();
 

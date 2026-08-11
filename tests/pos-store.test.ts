@@ -502,3 +502,89 @@ describe('Tip management', () => {
     store.destroy();
   });
 });
+
+describe('Automatic whole-receipt discount (autoOrderDiscount)', () => {
+  it('applies configured percent when a fresh cart gets its first item', () => {
+    mockConfig.autoOrderDiscount = { enabled: true, percent: 5 };
+    const store = new PosStore();
+    store.dispatch({ type: 'cart/addItem', payload: sampleItem() }); // 1000
+    const cart = store.getState().cart;
+    expect(cart.discountType).toBe('percentage');
+    expect(cart.discountPercent).toBe(5);
+    expect(cart.discount).toBe(50);
+    expect(cart.total).toBe(950);
+    store.destroy();
+  });
+
+  it('keeps tracking the subtotal as more items are added', () => {
+    mockConfig.autoOrderDiscount = { enabled: true, percent: 5 };
+    const store = new PosStore();
+    store.dispatch({ type: 'cart/addItem', payload: sampleItem() });
+    store.dispatch({ type: 'cart/addItem', payload: sampleItem({ id: 'item-2', variantId: 'var-2' }) });
+    const cart = store.getState().cart;
+    expect(cart.subtotal).toBe(2000);
+    expect(cart.discount).toBe(100);
+    expect(cart.total).toBe(1900);
+    store.destroy();
+  });
+
+  it('does not apply when config is absent or disabled', () => {
+    const store = new PosStore();
+    store.dispatch({ type: 'cart/addItem', payload: sampleItem() });
+    expect(store.getState().cart.discount).toBe(0);
+    store.destroy();
+
+    mockConfig.autoOrderDiscount = { enabled: false, percent: 5 };
+    const store2 = new PosStore();
+    store2.dispatch({ type: 'cart/addItem', payload: sampleItem() });
+    expect(store2.getState().cart.discount).toBe(0);
+    store2.destroy();
+  });
+
+  it('stays cleared for the rest of the order after cashier clears it', () => {
+    mockConfig.autoOrderDiscount = { enabled: true, percent: 5 };
+    const store = new PosStore();
+    store.dispatch({ type: 'cart/addItem', payload: sampleItem() });
+    store.dispatch({ type: 'cart/clearDiscount' });
+    store.dispatch({ type: 'cart/addItem', payload: sampleItem({ id: 'item-2', variantId: 'var-2' }) });
+    const cart = store.getState().cart;
+    expect(cart.discount).toBe(0);
+    expect(cart.discountType).toBeUndefined();
+    store.destroy();
+  });
+
+  it('re-applies on the next order after checkout clears the cart', () => {
+    mockConfig.autoOrderDiscount = { enabled: true, percent: 5 };
+    const store = new PosStore();
+    store.dispatch({ type: 'cart/addItem', payload: sampleItem() });
+    store.dispatch({ type: 'cart/clear' });
+    store.dispatch({ type: 'cart/addItem', payload: sampleItem({ id: 'item-3', variantId: 'var-3' }) });
+    expect(store.getState().cart.discount).toBe(50);
+    store.destroy();
+  });
+
+  it('does not override a discount the cashier already set', () => {
+    mockConfig.autoOrderDiscount = { enabled: true, percent: 5 };
+    const store = new PosStore();
+    store.dispatch({ type: 'cart/addItem', payload: sampleItem() });
+    store.dispatch({ type: 'cart/applyDiscount', payload: { amount: 10, discountType: 'percentage' } });
+    store.dispatch({ type: 'cart/addItem', payload: sampleItem({ id: 'item-2', variantId: 'var-2' }) });
+    const cart = store.getState().cart;
+    expect(cart.discountPercent).toBe(10);
+    expect(cart.discount).toBe(200);
+    store.destroy();
+  });
+
+  it('stops after the configured end date (inclusive)', async () => {
+    const mod = await import('../src/main/pos/pos-store');
+    const resolve = mod.resolveAutoOrderDiscountPercent;
+    const cfg = { enabled: true, percent: 5, endDate: '2026-08-18' };
+    expect(resolve(cfg, new Date(2026, 7, 18, 23, 59))).toBe(5);  // last day still active
+    expect(resolve(cfg, new Date(2026, 7, 19, 0, 1))).toBeNull(); // day after -> off
+    expect(resolve({ enabled: true, percent: 5, endDate: '' }, new Date(2030, 0, 1))).toBe(5);
+    expect(resolve({ enabled: true, percent: 0 }, new Date())).toBeNull();
+    expect(resolve({ enabled: true, percent: 101 }, new Date())).toBeNull();
+    expect(resolve({ enabled: true, percent: 5, endDate: 'nonsense' }, new Date())).toBeNull();
+    expect(resolve(undefined, new Date())).toBeNull();
+  });
+});

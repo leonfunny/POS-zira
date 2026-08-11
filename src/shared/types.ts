@@ -586,6 +586,11 @@ export interface AgentConfig {
   posMode?: 'retail' | 'salon' | 'b2b' | 'restaurant';  // POS mode (default: 'retail')
     allowOversell?: boolean;             // Allow retail/self-checkout sale when tracked stock is <= 0. Default false.
     fiscalOnCashSale?: 'always' | 'never' | 'ask'; // Fiscal receipt behavior after CASH/BLIK order-copy print. Default ask.
+    autoOrderDiscount?: {
+      enabled: boolean;
+      percent: number;            // whole-receipt percentage, 1-100
+      endDate?: string | null;    // 'YYYY-MM-DD' local date, inclusive; empty = no end
+    };
     labelModuleProductIds?: string[];    // Product IDs shown in the quick label-printing module
     labelModuleCategoryIds?: string[];    // Category IDs shown in the quick label-printing module
     labelModuleLanguage?: 'vi' | 'pl';    // Label content language; independent from the POS UI language

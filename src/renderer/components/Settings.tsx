@@ -594,6 +594,9 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   const [posLanguage, setPosLanguage] = useState<Language | ''>(config?.posLanguage || '');
   const [allowOversell, setAllowOversell] = useState(config?.allowOversell ?? false);
   const [fiscalOnCashSale, setFiscalOnCashSale] = useState<FiscalOnCashSaleMode>(config?.fiscalOnCashSale || 'ask');
+  const [autoDiscountEnabled, setAutoDiscountEnabled] = useState(config?.autoOrderDiscount?.enabled ?? false);
+  const [autoDiscountPercent, setAutoDiscountPercent] = useState(String(config?.autoOrderDiscount?.percent || 5));
+  const [autoDiscountEndDate, setAutoDiscountEndDate] = useState(config?.autoOrderDiscount?.endDate || '');
   const [scaleConnection, setScaleConnection] = useState<ScaleConnectionMode>(deriveScaleConnection(config?.scale));
   const [scalePort, setScalePort] = useState(config?.scale?.port || '');
   const [scaleShareEnabled, setScaleShareEnabled] = useState(config?.scale?.share?.enabled ?? false);
@@ -811,6 +814,11 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
     posLanguage: (posLanguage || '') as AgentConfig['posLanguage'],
     allowOversell,
     fiscalOnCashSale,
+    autoOrderDiscount: {
+      enabled: autoDiscountEnabled,
+      percent: Math.min(100, Math.max(0, Number(autoDiscountPercent) || 0)),
+      endDate: autoDiscountEndDate.trim() || null,
+    },
     scale: {
       enabled: scaleConnection !== 'none',
       connection: scaleConnection,
@@ -845,6 +853,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   }), [
     name, autoStart, language,
     posEnabled, posMode, posLanguage, allowOversell, fiscalOnCashSale,
+    autoDiscountEnabled, autoDiscountPercent, autoDiscountEndDate,
     scaleConnection, scalePort, scaleShareEnabled, scaleSharePort, scaleShareToken,
     scaleRemoteHost, scaleRemotePort, scaleRemoteToken,
     receiptSellerName, receiptSellerAddress, receiptSellerNip,
@@ -1118,6 +1127,9 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
       setPosLanguage(config.posLanguage || '');
       setAllowOversell(config.allowOversell ?? false);
       setFiscalOnCashSale(config.fiscalOnCashSale || 'ask');
+      setAutoDiscountEnabled(config.autoOrderDiscount?.enabled ?? false);
+      setAutoDiscountPercent(String(config.autoOrderDiscount?.percent || 5));
+      setAutoDiscountEndDate(config.autoOrderDiscount?.endDate || '');
       setScaleConnection(deriveScaleConnection(config.scale));
       setScalePort(config.scale?.port || '');
       setScaleShareEnabled(config.scale?.share?.enabled ?? false);
@@ -2424,6 +2436,8 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
     t('settings.allowOversell'), 'Allow oversell',
     tOr('settings.fiscalOnCashSale', 'Fiscal receipt on cash/BLIK sale'),
     ...FISCAL_ON_CASH_SALE_OPTIONS.map(option => tOr(option.labelKey, option.fallback)),
+    tOr('settings.autoOrderDiscount', 'Automatic discount on every order'),
+    'auto discount', 'promotion', 'rabat',
     'Category priority ranking',
     'Staff Management',
     'Scale',
@@ -4907,6 +4921,67 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                   );
                 })}
               </div>
+            </div>
+
+            <div className="rounded-lg border border-slate-200 bg-white p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <label className="block text-sm font-semibold text-slate-700">
+                    {tOr('settings.autoOrderDiscount', 'Automatic discount on every order')}
+                  </label>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {tOr('settings.autoOrderDiscount.hint', 'Applied to the whole receipt when a new cart starts. Cashier can still clear it per order.')}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={autoDiscountEnabled}
+                  aria-label={tOr('settings.autoOrderDiscount', 'Automatic discount on every order')}
+                  onClick={() => setAutoDiscountEnabled(!autoDiscountEnabled)}
+                  className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+                    autoDiscountEnabled ? 'bg-brand-600' : 'bg-slate-300'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                      autoDiscountEnabled ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </div>
+              {autoDiscountEnabled && (
+                <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600">
+                      {tOr('settings.autoOrderDiscount.percent', 'Discount (%)')}
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      inputMode="numeric"
+                      value={autoDiscountPercent}
+                      onChange={(e) => setAutoDiscountPercent(e.target.value)}
+                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600">
+                      {tOr('settings.autoOrderDiscount.endDate', 'Last day (optional)')}
+                    </label>
+                    <input
+                      type="date"
+                      value={autoDiscountEndDate}
+                      onChange={(e) => setAutoDiscountEndDate(e.target.value)}
+                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
+                    />
+                    <p className="mt-1 text-xs text-slate-500">
+                      {tOr('settings.autoOrderDiscount.endDateHint', 'Discount stops automatically after this day.')}
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Category priority ranking — retail browse order + size */}
