@@ -21,6 +21,10 @@ import LoginScreen from './LoginScreen';
 import POSLayout from '../components/pos/POSLayout';
 import BilliardFloorPlan from '../components/billiard/BilliardFloorPlan';
 import SettingsScreen from './SettingsScreen';
+import AndroidCustomerCheckinShell from './AndroidCustomerCheckinShell';
+import CheckinWizard from '../components/checkin/CheckinWizard';
+import { CheckinRuntimeProvider } from '../components/checkin/runtime';
+import { createAndroidCheckinRuntime } from './checkin-runtime';
 import type { Language } from '../i18n/translations';
 import type {
   BilliardPaymentIntent,
@@ -28,6 +32,8 @@ import type {
 } from '../../shared/billiard-pos-handoff';
 import type { ProtectedInterruptionRecoveryRequired } from './shim/restored-cart-handoff';
 import { STORAGE_AT_RISK_MESSAGE, getStorageDurability } from './shim/storage-durability';
+import { setCustomerCheckinKioskActive } from './shim/kiosk-state';
+import { KioskExitPinStore } from './shim/kiosk-exit-pin';
 import {
   RUNTIME_ONLY_POS_CAPABILITY_POLICY_INPUTS,
   resolveAndroidPosCapabilityManifest,
@@ -35,7 +41,7 @@ import {
 } from '../components/pos/capabilities/PosCapabilityProvider';
 
 type BootState = 'checking' | 'login' | 'pos';
-type PosMode = 'pos' | 'billiard' | 'settings';
+type PosMode = 'pos' | 'billiard' | 'checkin' | 'settings';
 
 // Persists the Android shell's active POS/Bi-a mode across restarts.
 const MODE_STORAGE_KEY = 'android.pos.mode';
@@ -81,8 +87,13 @@ export default function AndroidBootApp() {
   const [capabilityRuntime, setCapabilityRuntime] = useState({
     loyaltyLookup: false,
     restoredCartTender: false,
+    customerCheckin: false,
   });
   const [capabilityConfigSignal, setCapabilityConfigSignal] = useState(0);
+  // This store has no browser/localStorage fallback. Check-in stays hidden
+  // until an OWNER/MANAGER configures the device-local SecureKV-backed PIN.
+  const kioskExitPinStore = useMemo(() => new KioskExitPinStore(), []);
+  const [kioskExitPinReady, setKioskExitPinReady] = useState(false);
   // Guards every async handoff result: a response that belongs to a previous
   // cashier must not land in this one's screen.
   const billiardGenerationRef = useRef(0);
@@ -93,6 +104,7 @@ export default function AndroidBootApp() {
       value: authRevisionRef.current.value + 1,
     };
   }
+  const authRevision = authRevisionRef.current.value;
 
   const capabilityEntitlementRevision = capabilityRevision(
     capabilityEntitlements?.features ?? null,
@@ -126,6 +138,18 @@ export default function AndroidBootApp() {
         capabilityConfigSignal,
       ])
     : '';
+  const customerCheckinRuntime = useMemo(() => {
+    const salonId = capabilityConfig?.salonId || capabilityUser?.salonId;
+    if (state !== 'pos' || !salonId || !capabilityUser?.id || !registerId) return null;
+    return createAndroidCheckinRuntime(undefined, {
+      session: {
+        // A logout/login cycle must never restore the previous customer's
+        // in-memory wizard snapshot, even when the same employee signs in.
+        scopeKey: JSON.stringify([salonId, capabilityUser.id, registerId, authRevision]),
+        inactivityResetMs: 90_000,
+      },
+    });
+  }, [authRevision, capabilityConfig?.salonId, capabilityUser?.id, capabilityUser?.salonId, registerId, state]);
   const posCapabilityHost = useMemo<PosCapabilityHost>(() => ({
     session: {
       authenticated: state === 'pos',
@@ -195,7 +219,7 @@ export default function AndroidBootApp() {
       setCapabilityUser(null);
       setCapabilityConfig(null);
       setCapabilityEntitlements(null);
-      setCapabilityRuntime({ loyaltyLookup: false, restoredCartTender: false });
+      setCapabilityRuntime({ loyaltyLookup: false, restoredCartTender: false, customerCheckin: false });
       setState('login');
     });
     return () => {
@@ -220,6 +244,7 @@ export default function AndroidBootApp() {
     setCapabilityRuntime({
       loyaltyLookup: runtime?.loyaltyLookup === true,
       restoredCartTender: runtime?.restoredCartTender === true,
+      customerCheckin: runtime?.customerCheckin === true,
     });
   }, [state]);
 
@@ -236,7 +261,7 @@ export default function AndroidBootApp() {
       setCapabilityUser(null);
       setCapabilityConfig(null);
       setCapabilityEntitlements(null);
-      setCapabilityRuntime({ loyaltyLookup: false, restoredCartTender: false });
+      setCapabilityRuntime({ loyaltyLookup: false, restoredCartTender: false, customerCheckin: false });
       setIsOwner(false);
       setCanOpenSettings(false);
       return;
@@ -312,10 +337,54 @@ export default function AndroidBootApp() {
   }, [mode]);
 
   useEffect(() => {
+    setCustomerCheckinKioskActive(state === 'pos' && mode === 'checkin');
+    return () => setCustomerCheckinKioskActive(false);
+  }, [mode, state]);
+
+  useEffect(() => {
     if (!canOpenSettings && mode === 'settings') {
       setMode('pos');
     }
   }, [canOpenSettings, mode]);
+
+  const refreshKioskExitPinReadiness = useCallback(() => {
+    void kioskExitPinStore.status().then((pinStatus) => {
+      setKioskExitPinReady(pinStatus.available && pinStatus.configured);
+    }).catch(() => {
+      setKioskExitPinReady(false);
+    });
+  }, [kioskExitPinStore]);
+
+  useEffect(() => {
+    if (state !== 'pos' || !canOpenSettings) {
+      setKioskExitPinReady(false);
+      return;
+    }
+    refreshKioskExitPinReadiness();
+  }, [canOpenSettings, refreshKioskExitPinReadiness, state]);
+
+  const customerCheckinEnabled = canOpenSettings
+    && capabilityRuntime.customerCheckin
+    && capabilityConfig?.posMode === 'salon'
+    && capabilityEntitlements?.features?.checkin?.enabled === true
+    && kioskExitPinReady
+    && !protectedInterruptionRecoveryRequired
+    && !restoredCartReconciliation
+    && !billiardPaymentIntent;
+
+  useEffect(() => {
+    if (!customerCheckinEnabled && mode === 'checkin') setMode('pos');
+  }, [customerCheckinEnabled, mode]);
+
+  const openCustomerCheckin = async () => {
+    try {
+      const current = await (window as any).electronAPI.pos.getState();
+      if ((current?.cart?.items?.length || 0) > 0) return;
+      switchMode('checkin');
+    } catch {
+      // Unknown cart ownership must never open a customer kiosk over the till.
+    }
+  };
 
   // One cancellable boot orchestrator owns every local-cart source. Protected
   // recovery always wins; ordinary snapshot hydration/writes cannot race it.
@@ -498,10 +567,16 @@ export default function AndroidBootApp() {
   if (state === 'login') {
     return (
       <LoginScreen
-        onLoggedIn={() => {
-          setCapabilityUser(null);
+        onLoggedIn={(user) => {
+          // The validated login result is the freshest role identity. Publish
+          // it synchronously so OWNER/MANAGER shell controls do not stay stuck
+          // on the pre-login synthetic STAFF snapshot while getConfig refreshes.
+          setCapabilityUser(user);
           setCapabilityConfig(null);
           setCapabilityEntitlements(null);
+          const role = String(user?.role || '').toUpperCase();
+          setIsOwner(role === 'OWNER');
+          setCanOpenSettings(role === 'OWNER' || role === 'MANAGER');
           setState('pos');
         }}
       />
@@ -511,7 +586,7 @@ export default function AndroidBootApp() {
   // otherwise render the plain POSLayout exactly as before.
   return (
     <div className="h-screen flex flex-col">
-      {storageAtRisk && (
+      {storageAtRisk && mode !== 'checkin' && (
         <div
           role="status"
           className="shrink-0 bg-amber-500 px-3 py-2 text-center text-xs font-semibold text-amber-950"
@@ -534,11 +609,11 @@ export default function AndroidBootApp() {
           </div>
         </div>
       )}
-      {(billiardEnabled || canOpenSettings) && (
+      {mode !== 'checkin' && (billiardEnabled || customerCheckinEnabled || canOpenSettings) && (
         <nav
           className="grid shrink-0 border-b bg-white"
           aria-label="POS mode"
-          style={{ gridTemplateColumns: canOpenSettings ? (billiardEnabled ? '1fr 1fr 1fr' : '1fr 1fr') : '1fr' }}
+          style={{ gridTemplateColumns: `repeat(${1 + Number(customerCheckinEnabled) + Number(billiardEnabled) + Number(canOpenSettings)}, minmax(0, 1fr))` }}
         >
           <button
             type="button"
@@ -547,6 +622,16 @@ export default function AndroidBootApp() {
           >
             POS
           </button>
+          {customerCheckinEnabled && (
+            <button
+              type="button"
+              data-testid="android-customer-checkin-entry"
+              className="py-3 text-sm font-semibold text-gray-500"
+              onClick={() => { void openCustomerCheckin(); }}
+            >
+              Check-in
+            </button>
+          )}
           {billiardEnabled && (
             <button
               type="button"
@@ -598,7 +683,24 @@ export default function AndroidBootApp() {
         </div>
         {canOpenSettings && (
           <div className={mode === 'settings' ? 'h-full' : 'hidden'}>
-            <SettingsScreen />
+            <SettingsScreen
+              canManageKioskExitPin={canOpenSettings}
+              kioskExitPinStore={kioskExitPinStore}
+              onKioskExitPinUpdated={refreshKioskExitPinReadiness}
+            />
+          </div>
+        )}
+        {customerCheckinEnabled && customerCheckinRuntime && mode === 'checkin' && (
+          <div className="h-full">
+            <AndroidCustomerCheckinShell
+              language={language}
+              verifyStaffExit={(pin) => kioskExitPinStore.verify(pin)}
+              onStaffExit={() => switchMode('pos')}
+            >
+              <CheckinRuntimeProvider runtime={customerCheckinRuntime}>
+                <CheckinWizard />
+              </CheckinRuntimeProvider>
+            </AndroidCustomerCheckinShell>
           </div>
         )}
         {billiardEnabled && billiardVisited && (

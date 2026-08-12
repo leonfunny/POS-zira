@@ -32,6 +32,7 @@ const captured = vi.hoisted(() => ({ billiardProps: null as Record<string, unkno
 const capturedPos = vi.hoisted(() => ({ props: null as Record<string, unknown> | null }));
 /** Props the shared retail toolbar received after applying platform capabilities. */
 const capturedRetail = vi.hoisted(() => ({ quickActionsProps: null as Record<string, unknown> | null }));
+const loginFixture = vi.hoisted(() => ({ user: null as Record<string, unknown> | null }));
 
 // AndroidBootApp mounts POSLayout DIRECTLY (POSApp takes no props and is shared
 // with the Windows shell), so the mock has to follow the real import — the real
@@ -52,7 +53,11 @@ vi.mock('../src/renderer/components/billiard/BilliardFloorPlan', () => ({
 }));
 vi.mock('../src/renderer/android-pos/LoginScreen', () => ({
   __esModule: true,
-  default: () => createElement('div', { 'data-testid': 'login-screen' }, 'LOGIN'),
+  default: ({ onLoggedIn }: { onLoggedIn: (user: Record<string, unknown> | null) => void }) => createElement(
+    'button',
+    { 'data-testid': 'login-screen', onClick: () => onLoggedIn(loginFixture.user) },
+    'LOGIN',
+  ),
 }));
 vi.mock('../src/renderer/hooks/useConfig', () => ({
   useConfig: () => ({ config: {} }),
@@ -71,6 +76,8 @@ vi.mock('../src/renderer/components/pos/templates/retail/QuickActions', () => ({
 }));
 
 import AndroidBootApp from '../src/renderer/android-pos/AndroidBootApp';
+import { isCustomerCheckinKioskActive } from '../src/renderer/android-pos/shim/kiosk-state';
+import { KioskExitPinStore } from '../src/renderer/android-pos/shim/kiosk-exit-pin';
 import RetailTemplate from '../src/renderer/components/pos/templates/retail/RetailTemplate';
 import {
   ANDROID_POS_CAPABILITY_OUTCOMES,
@@ -150,10 +157,12 @@ describe('Android shell ↔ shared renderer prop parity', () => {
   let container: HTMLDivElement;
   let root: Root;
   const previousElectronAPI = (globalThis as any).electronAPI;
+  const previousCapacitor = (globalThis as any).Capacitor;
 
   beforeEach(() => {
     captured.billiardProps = null;
     capturedPos.props = null;
+    loginFixture.user = null;
     container = document.createElement('div');
     document.body.appendChild(container);
     localStorage.clear();
@@ -164,6 +173,7 @@ describe('Android shell ↔ shared renderer prop parity', () => {
     act(() => { root.unmount(); });
     container.remove();
     (globalThis as any).electronAPI = previousElectronAPI;
+    (globalThis as any).Capacitor = previousCapacitor;
   });
 
   /** Boot into the POS state and switch to the Bi-a tab so the floor plan mounts. */
@@ -247,6 +257,7 @@ describe('Android shell ↔ shared renderer prop parity', () => {
 
   it('hands POSLayout a host-owned Android capability profile bound to this session', async () => {
     await bootIntoBilliard();
+    expect(container.querySelector('[data-testid="android-customer-checkin-entry"]')).toBeNull();
     const host = capturedPos.props!.capabilityHost as PosCapabilityHost;
 
     expect(host.session).toMatchObject({
@@ -255,7 +266,7 @@ describe('Android shell ↔ shared renderer prop parity', () => {
       userId: 'android-user-1',
       registerId: 'android-register-1',
       roleRevision: 'STAFF',
-      platformRevision: '{"loyaltyLookup":false,"restoredCartTender":false}',
+      platformRevision: '{"loyaltyLookup":false,"restoredCartTender":false,"customerCheckin":false}',
     });
     expect(host.policyInputs).toBe(RUNTIME_ONLY_POS_CAPABILITY_POLICY_INPUTS);
     for (const axis of Object.values(host.policyInputs!)) {
@@ -430,6 +441,129 @@ describe('Android shell ↔ shared renderer prop parity', () => {
     expect(pos, 'POSLayout was unmounted on the tab switch').not.toBeNull();
     expect(pos!.parentElement!.className).toContain('hidden');
     expect(captured.billiardProps!.active).toBe(true);
+  });
+
+  it('offers the customer check-in screen only to an authorized salon host with the real runtime', async () => {
+    const api: any = makeApi();
+    let expire!: () => void;
+    const owner = {
+      id: 'owner-1', email: 'owner@example.test', firstName: 'Owner', lastName: 'One',
+      role: 'OWNER', salonId: 'android-salon-1',
+    };
+    api.auth.getUser = async () => ({ data: { isAuthenticated: true, user: owner } });
+    api.auth.onExpired = (callback: () => void) => { expire = callback; return () => {}; };
+    api.getConfig = async () => ({
+      language: 'pl', posMode: 'salon', salonId: owner.salonId,
+      salonName: 'Salon Zira', registerCode: 'android-register-1', authUser: owner,
+    });
+    api.entitlements.get = async () => ({ salonCode: '9001', features: { billiard: { enabled: false }, checkin: { enabled: true } } });
+    api.pos.runtimeCapabilities = { customerCheckin: true };
+    api.pos.checkin = {
+      searchBookings: vi.fn().mockResolvedValue({ success: true, bookings: [] }),
+      arrive: vi.fn(),
+      getCustomer: vi.fn().mockResolvedValue({
+        success: true,
+        customer: { id: 'customer-1', name: 'Sensitive Customer', phone: '500600700', visit_count: 1 },
+      }),
+      createCustomer: vi.fn(),
+    };
+    api.pos.products = { getAll: vi.fn().mockResolvedValue([]) };
+    api.pos.categories = { getAll: vi.fn().mockResolvedValue([]) };
+    api.pos.staff = { getAll: vi.fn().mockResolvedValue([]) };
+    const secureValues = new Map<string, string>();
+    (globalThis as any).Capacitor = {
+      Plugins: {
+        SecureKV: {
+          get: async ({ key }: { key: string }) => ({ value: secureValues.get(key) ?? null }),
+          set: async ({ key, value }: { key: string; value: string }) => { secureValues.set(key, value); },
+          remove: async () => {},
+          clear: async () => { secureValues.clear(); },
+        },
+      },
+    };
+    await new KioskExitPinStore().configure('2468');
+    (globalThis as any).electronAPI = api;
+    (globalThis as any).window = globalThis;
+    await act(async () => {
+      root = createRoot(container);
+      root.render(createElement(AndroidBootApp));
+    });
+    await settle();
+
+    const entry = container.querySelector('[data-testid="android-customer-checkin-entry"]') as HTMLButtonElement | null;
+    expect(entry, 'authorized salon owner should see customer Check-in').not.toBeNull();
+    await act(async () => { entry!.click(); });
+    await settle();
+    expect(container.querySelector('[data-testid="customer-checkin-screen"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="shared-checkin-wizard"]')?.getAttribute('data-presentation')).toBe('customer-kiosk');
+    expect(isCustomerCheckinKioskActive()).toBe(true);
+
+    const clickExact = async (label: string) => {
+      const button = Array.from(container.querySelectorAll('button'))
+        .find((candidate) => candidate.textContent?.includes(label)) as HTMLButtonElement | undefined;
+      expect(button, `button ${label} was not rendered`).toBeTruthy();
+      await act(async () => { button!.click(); });
+      await settle();
+    };
+    await clickExact('Choose services');
+    for (const digit of ['5', '0', '0', '6', '0', '0', '7', '0', '0']) await clickExact(digit);
+    await clickExact('Enter');
+    expect(container.textContent).toContain('Sensitive Customer');
+
+    // The same employee signs out and back in. Auth revision is part of the
+    // runtime scope, so the previous customer's in-memory wizard snapshot is
+    // not eligible for restoration.
+    await act(async () => { expire(); });
+    await settle();
+    expect(container.querySelector('[data-testid="login-screen"]')).not.toBeNull();
+    await act(async () => { (container.querySelector('[data-testid="login-screen"]') as HTMLButtonElement).click(); });
+    await settle(10);
+    const reentry = container.querySelector('[data-testid="android-customer-checkin-entry"]') as HTMLButtonElement;
+    expect(reentry).not.toBeNull();
+    await act(async () => { reentry.click(); });
+    await settle();
+    expect(container.querySelector('[data-testid="shared-checkin-wizard"]')).not.toBeNull();
+    expect(container.textContent).not.toContain('Sensitive Customer');
+    expect(container.querySelector('[data-testid="checkin-booking-search"]')).toBeNull();
+
+    act(() => { root.unmount(); });
+    expect(isCustomerCheckinKioskActive()).toBe(false);
+    api.pos.getState = async () => ({ session: { isOpen: true }, cart: { items: [{ id: 'active-line' }] } });
+    await act(async () => {
+      root = createRoot(container);
+      root.render(createElement(AndroidBootApp));
+    });
+    await settle();
+    const blockedEntry = container.querySelector('[data-testid="android-customer-checkin-entry"]') as HTMLButtonElement;
+    await act(async () => { blockedEntry.click(); });
+    await settle();
+    expect(container.querySelector('[data-testid="customer-checkin-screen"]')).toBeNull();
+  });
+
+  it('publishes the validated login role before a delayed config refresh', async () => {
+    const api: any = makeApi();
+    const owner = {
+      id: 'fresh-owner', email: 'fresh-owner@example.test', firstName: 'Fresh', lastName: 'Owner',
+      role: 'OWNER', salonId: 'android-salon-1',
+    };
+    api.auth.getUser = async () => ({ data: { isAuthenticated: false } });
+    api.getConfig = () => new Promise(() => {});
+    api.entitlements.get = async () => ({ features: { billiard: { enabled: false }, checkin: { enabled: true } } });
+    loginFixture.user = owner;
+    (globalThis as any).electronAPI = api;
+    (globalThis as any).window = globalThis;
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(createElement(AndroidBootApp));
+    });
+    await settle();
+    const login = container.querySelector('[data-testid="login-screen"]') as HTMLButtonElement;
+    expect(login).not.toBeNull();
+    await act(async () => { login.click(); });
+    await settle();
+
+    expect(container.querySelector('[data-testid="android-settings-entry"]')).not.toBeNull();
   });
 });
 

@@ -1,6 +1,7 @@
 package com.ziraai.posdiagnostics.dev;
 
 import android.content.SharedPreferences;
+import android.util.Base64;
 
 import androidx.security.crypto.EncryptedSharedPreferences;
 import androidx.security.crypto.MasterKey;
@@ -12,6 +13,9 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 import org.json.JSONObject;
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 
 /**
  * SecureKV — Keystore-backed encrypted key/value store for the Android POS shim.
@@ -34,6 +38,7 @@ import org.json.JSONObject;
  *   set({key,value})  -> {}                       (both strings required)
  *   remove({key})     -> {}
  *   clear()           -> {}                       (wipes every key in the file)
+ *   sha256({value})   -> {value: base64Digest}    (live-debug WebView fallback)
  *
  * The encrypted prefs file is the ONLY thing this plugin writes. It lives under
  * the app's `sharedpref` backup domain, which is already excluded by
@@ -159,6 +164,24 @@ public class SecureKVPlugin extends Plugin {
             call.resolve();
         } catch (Exception ex) {
             call.reject("secure-storage-clear-failed", ex);
+        }
+    }
+
+    @PluginMethod
+    public void sha256(PluginCall call) {
+        String value = call.getString("value");
+        if (value == null) {
+            call.reject("value is required");
+            return;
+        }
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] bytes = digest.digest(value.getBytes(StandardCharsets.UTF_8));
+            JSObject result = new JSObject();
+            result.put("value", Base64.encodeToString(bytes, Base64.NO_WRAP));
+            call.resolve(result);
+        } catch (Exception ex) {
+            call.reject("sha256-unavailable", ex);
         }
     }
 }

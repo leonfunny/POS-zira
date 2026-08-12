@@ -29,6 +29,7 @@ import { TokenStore } from './shim/token-store';
 import { createRealTransport } from './shim/real-transport';
 import { initStorageDurability } from './shim/storage-durability';
 import { installBackGuard, nativeExitApp } from './shim/back-guard';
+import { isCustomerCheckinKioskActive } from './shim/kiosk-state';
 import AndroidBootApp from './AndroidBootApp';
 
 const configStore = new ShimConfigStore();
@@ -55,6 +56,7 @@ void initStorageDurability();
 // a word. The cart itself is already snapshotted, so this is about not
 // surprising the cashier — not about losing the money.
 installBackGuard(window, {
+  isExitBlocked: isCustomerCheckinKioskActive,
   getCartItemCount: () => shim.posStore.getState().cart.items.length,
   confirm: (message) => window.confirm(message),
   exitApp: nativeExitApp,

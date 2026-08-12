@@ -44,6 +44,12 @@ import type {
   PosScheduleWeekIpcResult,
 } from '../../../shared/types';
 import type { ProductAdminSurface } from './product-admin';
+import type { ArriveRequest, ArriveResponse } from '../../../shared/checkin-contract';
+import type {
+  KioskBookingSearchRow,
+  KioskCustomerCreateResult,
+  KioskCustomerProfile,
+} from '../port/api-client';
 
 /** A sanitized product row (mirrors the SQL.js PosProduct; see S1 §2.D). */
 export interface ShimPosProduct {
@@ -186,7 +192,7 @@ export interface RemotePrinterStatus {
  */
 export interface ShimTransport {
   /** Explicit host-owned facts; renderer must not infer support from method names. */
-  runtimeCapabilities?: { loyaltyLookup?: boolean; restoredCartTender?: boolean };
+  runtimeCapabilities?: { loyaltyLookup?: boolean; restoredCartTender?: boolean; customerCheckin?: boolean };
   /** Product/stock/category admin surface (E-PARITY-3, owner-only). */
   productAdmin?: ProductAdminSurface;
 
@@ -205,6 +211,36 @@ export interface ShimTransport {
   searchProducts?(query: string): Promise<ShimPosProduct[]>;
   getCategories?(): Promise<ShimPosCategory[]>;
   loyaltyLookupCustomer?(phone: string): Promise<PosLoyaltyLookupIpcResult>;
+  arriveCustomerCheckin?(request: ArriveRequest): Promise<{
+    success: boolean;
+    result?: ArriveResponse;
+    unavailable?: boolean;
+    error?: string;
+    code?: string;
+  }>;
+  /** Server-filtered customer kiosk booking search. This surface never
+   * returns phone, owner id, email or customer notes. */
+  searchCustomerCheckinBookings?(query: string): Promise<{
+    success: boolean;
+    bookings?: KioskBookingSearchRow[];
+    unavailable?: boolean;
+    error?: string;
+    code?: string;
+  }>;
+  getCustomerCheckinCustomer?(phone: string): Promise<{
+    success: boolean;
+    customer?: KioskCustomerProfile | null;
+    unavailable?: boolean;
+    error?: string;
+    code?: string;
+  }>;
+  createCustomerCheckinCustomer?(input: { name: string; phone: string }): Promise<{
+    success: boolean;
+    result?: KioskCustomerCreateResult;
+    unavailable?: boolean;
+    error?: string;
+    code?: string;
+  }>;
 
   /** CASH order create (local-first; S8 ports the exact DTO + order-sync). */
   createOrder?(order: any, items: any[]): Promise<{

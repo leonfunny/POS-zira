@@ -18,6 +18,8 @@
  */
 
 export interface BackGuardDeps {
+  /** True while a customer-facing kiosk owns the screen. */
+  isExitBlocked?: () => boolean;
   /** Number of lines in the authoritative cart right now. */
   getCartItemCount: () => number;
   /** Blocking confirm. Injected so tests do not need a real dialog. */
@@ -28,6 +30,13 @@ export interface BackGuardDeps {
 
 /** Decide what a single back press should do. Pure apart from the injected effects. */
 export function handleBackPress(deps: BackGuardDeps): 'exited' | 'kept' {
+  try {
+    if (deps.isExitBlocked?.()) return 'kept';
+  } catch {
+    // An unreadable shell mode is not permission to escape a customer kiosk.
+    return 'kept';
+  }
+
   let count: number;
   try {
     count = deps.getCartItemCount();

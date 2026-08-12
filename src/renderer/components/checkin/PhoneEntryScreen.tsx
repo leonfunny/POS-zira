@@ -6,6 +6,7 @@ interface Props {
   onSkip: () => void;
   onBack: () => void;
   isLoading: boolean;
+  minPhoneDigits?: number;
 }
 
 function formatPhoneDisplay(phone: string): string {
@@ -30,8 +31,9 @@ const KEYPAD = [
   ['0', '+', 'DEL'],
 ];
 
-export default function PhoneEntryScreen({ t, onSubmit, onSkip, onBack, isLoading }: Props) {
+export default function PhoneEntryScreen({ t, onSubmit, onSkip, onBack, isLoading, minPhoneDigits = 3 }: Props) {
   const [phone, setPhone] = useState('');
+  const digitCount = phone.replace(/\D/g, '').length;
 
   const handleKey = useCallback((key: string) => {
     if (key === 'DEL') {
@@ -42,7 +44,7 @@ export default function PhoneEntryScreen({ t, onSubmit, onSkip, onBack, isLoadin
   }, []);
 
   const handleSubmit = () => {
-    if (phone.length >= 3) onSubmit(phone);
+    if (digitCount >= minPhoneDigits) onSubmit(phone);
   };
 
   return (
@@ -51,8 +53,8 @@ export default function PhoneEntryScreen({ t, onSubmit, onSkip, onBack, isLoadin
       <div className="shrink-0 mb-2">
         <button
           onClick={onBack}
-          aria-label="Go back"
-          className="p-2 hover:bg-stone-100 rounded-lg transition-colors duration-150 cursor-pointer"
+          aria-label={t('common.back')}
+          className="flex min-h-12 min-w-12 items-center justify-center hover:bg-stone-100 rounded-lg transition-colors duration-150 cursor-pointer"
         >
           <svg className="w-5 h-5 text-stone-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
@@ -70,7 +72,7 @@ export default function PhoneEntryScreen({ t, onSubmit, onSkip, onBack, isLoadin
 
         <div style={{ width: '22rem' }}>
           {/* Phone display */}
-          <div className="bg-white border-2 border-stone-200 rounded-2xl px-5 py-4 mb-5 flex items-center gap-3 shadow-sm">
+          <div className="bg-white border-2 border-stone-200 rounded-2xl px-5 py-4 mb-5 flex items-center space-x-3 shadow-sm">
             <svg className="w-5 h-5 text-stone-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 002.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 01-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 00-1.091-.852H4.5A2.25 2.25 0 002.25 4.5v2.25z" />
             </svg>
@@ -82,7 +84,7 @@ export default function PhoneEntryScreen({ t, onSubmit, onSkip, onBack, isLoadin
               )}
             </div>
             {phone.length > 0 && (
-              <span className="text-xs text-stone-400 shrink-0">{phone.replace(/\D/g, '').length}</span>
+              <span className="text-xs text-stone-400 shrink-0">{digitCount}</span>
             )}
           </div>
 
@@ -110,11 +112,11 @@ export default function PhoneEntryScreen({ t, onSubmit, onSkip, onBack, isLoadin
           {/* Submit */}
           <button
             onClick={handleSubmit}
-            disabled={phone.length < 3 || isLoading}
+            disabled={digitCount < minPhoneDigits || isLoading}
             className="w-full py-4 bg-brand-600 text-white text-base font-bold rounded-xl hover:bg-brand-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-150 cursor-pointer shadow-sm"
           >
             {isLoading ? (
-              <span className="flex items-center justify-center gap-2">
+              <span className="flex items-center justify-center space-x-2">
                 <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />

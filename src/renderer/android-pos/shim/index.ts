@@ -154,7 +154,22 @@ export function installShim(options: InstallShimOptions = {}): InstalledShim {
     runtimeCapabilities: Object.freeze({
       loyaltyLookup: transport.runtimeCapabilities?.loyaltyLookup === true,
       restoredCartTender: transport.runtimeCapabilities?.restoredCartTender === true,
+      customerCheckin: transport.runtimeCapabilities?.customerCheckin === true,
     }),
+    checkin: {
+      searchBookings: async (query: string) => (transport.searchCustomerCheckinBookings
+        ? transport.searchCustomerCheckinBookings(query)
+        : { success: false, unavailable: true, error: 'customer-checkin-search-unavailable' }),
+      getCustomer: async (phone: string) => (transport.getCustomerCheckinCustomer
+        ? transport.getCustomerCheckinCustomer(phone)
+        : { success: false, unavailable: true, error: 'customer-checkin-customer-unavailable' }),
+      createCustomer: async (input: { name: string; phone: string }) => (transport.createCustomerCheckinCustomer
+        ? transport.createCustomerCheckinCustomer(input)
+        : { success: false, unavailable: true, error: 'customer-checkin-customer-unavailable' }),
+      arrive: async (request: any) => (transport.arriveCustomerCheckin
+        ? transport.arriveCustomerCheckin(request)
+        : { success: false, unavailable: true, error: 'customer-checkin-unavailable' }),
+    },
     ...buildExcludedPosNamespaces(stubDeps),
   };
 

@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { BooksyBookingSummary } from '../../../shared/types';
+import type { CheckinBookingSummary } from './runtime';
 import type { SalonCustomerData, ServiceRecommendation } from '../../hooks/useCheckinWizard';
 
 interface Props {
   t: (key: string) => string;
   customer: SalonCustomerData;
   recommendations: ServiceRecommendation[];
-  todayBookings: BooksyBookingSummary[];
+  todayBookings: CheckinBookingSummary[];
   onContinue: () => void;
   onBack: () => void;
 }
@@ -24,8 +24,8 @@ export default function CustomerProfileScreen({ t, customer, recommendations, to
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="flex items-center gap-3 mb-4">
-        <button onClick={onBack} className="p-2 hover:bg-slate-100 rounded-lg transition-colors">
+      <div className="flex items-center space-x-3 mb-4">
+        <button onClick={onBack} className="flex min-h-12 min-w-12 items-center justify-center hover:bg-slate-100 rounded-lg transition-colors">
           <svg className="w-5 h-5 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
           </svg>
@@ -36,7 +36,7 @@ export default function CustomerProfileScreen({ t, customer, recommendations, to
       <div className="flex-1 flex flex-col items-center justify-center max-w-lg mx-auto w-full">
         {/* Customer card */}
         <div className="bg-white rounded-xl border border-slate-200 p-6 w-full mb-4">
-          <div className="flex items-center gap-4 mb-4">
+          <div className="flex items-center space-x-4 mb-4">
             <div className="w-14 h-14 rounded-full bg-brand-100 flex items-center justify-center">
               <span className="text-xl font-bold text-brand-600">
                 {customer.name.charAt(0).toUpperCase()}
@@ -74,9 +74,9 @@ export default function CustomerProfileScreen({ t, customer, recommendations, to
           {recommendations.length > 0 && (
             <div>
               <div className="text-xs font-medium text-slate-500 uppercase mb-2">{t('wizard.favoriteServices')}</div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap -mx-1">
                 {recommendations.map((r, i) => (
-                  <span key={i} className="px-2 py-1 bg-brand-50 text-brand-700 text-xs rounded-full">
+                  <span key={i} className="mx-1 mb-2 px-2 py-1 bg-brand-50 text-brand-700 text-xs rounded-full">
                     {r.service_name} ({r.count}x)
                   </span>
                 ))}
@@ -88,7 +88,7 @@ export default function CustomerProfileScreen({ t, customer, recommendations, to
         {/* Booking detected popup */}
         {todayBooking && !showBookingPopup && (
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 w-full mb-4">
-            <div className="flex items-center gap-2 mb-2">
+            <div className="flex items-center space-x-2 mb-2">
               <svg className="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
               </svg>
@@ -97,10 +97,10 @@ export default function CustomerProfileScreen({ t, customer, recommendations, to
             <p className="text-xs text-amber-700 mb-3">
               {todayBooking.serviceName} &middot; {todayBooking.staffName}
             </p>
-            <div className="flex gap-2">
+            <div className="flex space-x-2">
               <button
                 onClick={() => setShowBookingPopup(true)}
-                className="text-xs px-3 py-1.5 bg-amber-600 text-white rounded-lg hover:bg-amber-700"
+                className="min-h-11 px-3 py-1.5 text-xs bg-amber-600 text-white rounded-lg hover:bg-amber-700"
               >
                 {t('wizard.continueWalkIn')}
               </button>

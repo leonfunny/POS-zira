@@ -3,7 +3,11 @@ import { mergeConfig, type Plugin } from 'vite';
 import androidConfig from './vite.android.config';
 
 const LIVE_HOST = '100.72.205.122';
-const LIVE_PORT = 5173;
+const requestedLivePort = Number(process.env.ANDROID_LIVE_PORT || 5173);
+if (!Number.isInteger(requestedLivePort) || requestedLivePort < 1024 || requestedLivePort > 65_535) {
+  throw new Error(`ANDROID_LIVE_PORT must be an integer from 1024 to 65535; received ${process.env.ANDROID_LIVE_PORT}`);
+}
+const LIVE_PORT = requestedLivePort;
 const LIVE_BOOTSTRAP_ID = '/@android-live-bootstrap';
 const RESOLVED_LIVE_BOOTSTRAP_ID = `\0${LIVE_BOOTSTRAP_ID}`;
 

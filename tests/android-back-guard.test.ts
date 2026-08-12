@@ -13,6 +13,10 @@
 import { describe, expect, test, vi } from 'vitest';
 
 import { handleBackPress, installBackGuard } from '../src/renderer/android-pos/shim/back-guard';
+import {
+  isCustomerCheckinKioskActive,
+  setCustomerCheckinKioskActive,
+} from '../src/renderer/android-pos/shim/kiosk-state';
 
 describe('handleBackPress', () => {
   test('exits without asking when the cart is empty', () => {
@@ -22,6 +26,37 @@ describe('handleBackPress', () => {
     expect(outcome).toBe('exited');
     expect(confirm).not.toHaveBeenCalled();
     expect(exitApp).toHaveBeenCalledTimes(1);
+  });
+
+  test('never exits while the customer check-in kiosk owns the screen', () => {
+    const exitApp = vi.fn();
+    const confirm = vi.fn(() => true);
+    setCustomerCheckinKioskActive(true);
+    try {
+      const outcome = handleBackPress({
+        isExitBlocked: isCustomerCheckinKioskActive,
+        getCartItemCount: () => 0,
+        confirm,
+        exitApp,
+      });
+      expect(outcome).toBe('kept');
+      expect(confirm).not.toHaveBeenCalled();
+      expect(exitApp).not.toHaveBeenCalled();
+    } finally {
+      setCustomerCheckinKioskActive(false);
+    }
+  });
+
+  test('fails closed when kiosk ownership cannot be read', () => {
+    const exitApp = vi.fn();
+    const outcome = handleBackPress({
+      isExitBlocked: () => { throw new Error('shell state unavailable'); },
+      getCartItemCount: () => 0,
+      confirm: () => true,
+      exitApp,
+    });
+    expect(outcome).toBe('kept');
+    expect(exitApp).not.toHaveBeenCalled();
   });
 
   test('asks before exiting when the cart has lines', () => {

@@ -8,12 +8,14 @@ interface Props {
   initialPhone: string;
   onSubmit: (form: { name: string; phone: string; birthday?: string; notes?: string; marketingConsent?: boolean }) => void;
   onBack: () => void;
+  minimalProfile?: boolean;
+  isSubmitting?: boolean;
 }
 
 // Approximate keyboard heights by mode (for scroll-padding)
 const KB_HEIGHT = { alpha: 248, full: 356 };
 
-export default function NewCustomerScreen({ t, initialPhone, onSubmit, onBack }: Props) {
+export default function NewCustomerScreen({ t, initialPhone, onSubmit, onBack, minimalProfile = false, isSubmitting = false }: Props) {
   const [name, setName] = useState('');
   const [phone] = useState(initialPhone);
   const [birthday, setBirthday] = useState('');
@@ -43,7 +45,13 @@ export default function NewCustomerScreen({ t, initialPhone, onSubmit, onBack }:
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSubmit({ name: name.trim(), phone: phone.trim(), birthday: birthday || undefined, notes: notes || undefined, marketingConsent });
+    if (isSubmitting) return;
+    const trimmedName = name.trim();
+    const trimmedPhone = phone.trim();
+    if (minimalProfile && (!trimmedName || !trimmedPhone)) return;
+    onSubmit(minimalProfile
+      ? { name: trimmedName, phone: trimmedPhone }
+      : { name: trimmedName, phone: trimmedPhone, birthday: birthday || undefined, notes: notes || undefined, marketingConsent });
   };
 
   const handleKey = useCallback((key: string) => {
@@ -74,11 +82,12 @@ export default function NewCustomerScreen({ t, initialPhone, onSubmit, onBack }:
   return (
     <div className="h-full flex flex-col relative overflow-hidden" onPointerDown={handleContainerTap}>
       {/* Header */}
-      <div className="flex items-center gap-3 px-1 pt-2 pb-3 shrink-0">
+      <div className="flex items-center space-x-3 px-1 pt-2 pb-3 shrink-0">
         <button
           onClick={onBack}
-          aria-label="Go back"
-          className="p-2 hover:bg-stone-100 rounded-lg transition-colors cursor-pointer"
+          disabled={isSubmitting}
+          aria-label={t('common.back')}
+          className="flex min-h-11 min-w-11 items-center justify-center rounded-lg transition-colors hover:bg-stone-100 cursor-pointer"
         >
           <svg className="w-5 h-5 text-stone-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
@@ -106,8 +115,8 @@ export default function NewCustomerScreen({ t, initialPhone, onSubmit, onBack }:
               <label className="block text-[10px] font-bold text-stone-400 uppercase tracking-wider mb-2">
                 {t('wizard.phone')}
               </label>
-              <div className="flex items-center gap-2">
-                <div className={`flex-1 flex items-center gap-2 px-4 py-3 border-2 rounded-xl font-mono text-base font-bold tracking-wider ${
+              <div className="flex items-center space-x-2">
+                <div className={`flex-1 flex items-center space-x-2 px-4 py-3 border-2 rounded-xl font-mono text-base font-bold tracking-wider ${
                   phone
                     ? 'bg-brand-50 border-brand-200 text-brand-700'
                     : 'bg-stone-100 border-stone-200 text-stone-400'
@@ -120,8 +129,10 @@ export default function NewCustomerScreen({ t, initialPhone, onSubmit, onBack }:
                 <button
                   type="button"
                   onClick={onBack}
-                  className="p-2.5 text-stone-400 hover:text-stone-600 hover:bg-stone-100 rounded-xl transition-colors cursor-pointer"
-                  title="Edit phone"
+                  disabled={isSubmitting}
+                  className="flex min-h-11 min-w-11 items-center justify-center rounded-xl text-stone-400 transition-colors hover:bg-stone-100 hover:text-stone-600 cursor-pointer"
+                  title={`${t('common.edit')} ${t('wizard.phone')}`}
+                  aria-label={`${t('common.edit')} ${t('wizard.phone')}`}
                 >
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
@@ -131,12 +142,14 @@ export default function NewCustomerScreen({ t, initialPhone, onSubmit, onBack }:
             </div>
 
             {/* Name + Birthday — 2-column grid */}
-            <div className="grid grid-cols-2 gap-4 mb-4">
+            <div className={`${minimalProfile ? '' : 'grid grid-cols-2 gap-4'} mb-4`}>
               {/* Name */}
               <div>
                 <label htmlFor="nc-name" className="block text-[10px] font-bold text-stone-400 uppercase tracking-wider mb-2">
                   {t('wizard.customerName')}
-                  <span className="ml-1 normal-case font-normal text-stone-400">({t('wizard.optional')})</span>
+                  {minimalProfile
+                    ? <span className="ml-1 text-red-500" aria-hidden="true">*</span>
+                    : <span className="ml-1 normal-case font-normal text-stone-400">({t('wizard.optional')})</span>}
                 </label>
                 <div className="relative">
                   <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-300 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -146,6 +159,7 @@ export default function NewCustomerScreen({ t, initialPhone, onSubmit, onBack }:
                     ref={nameRef}
                     id="nc-name"
                     type="text"
+                    required={minimalProfile}
                     value={name}
                     readOnly
                     onFocus={() => setActiveField('name')}
@@ -160,7 +174,7 @@ export default function NewCustomerScreen({ t, initialPhone, onSubmit, onBack }:
               </div>
 
               {/* Birthday */}
-              <div>
+              {!minimalProfile && <div>
                 <label htmlFor="nc-birthday" className="block text-[10px] font-bold text-stone-400 uppercase tracking-wider mb-2">
                   {t('wizard.birthday')}
                   <span className="ml-1 normal-case font-normal text-stone-400">({t('wizard.optional')})</span>
@@ -178,14 +192,14 @@ export default function NewCustomerScreen({ t, initialPhone, onSubmit, onBack }:
                     className="w-full pl-9 pr-3 py-3 text-sm border-2 border-stone-200 bg-white rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-400 transition-all hover:border-stone-300"
                   />
                 </div>
-                <p className="text-[10px] text-brand-500 mt-1.5 flex items-center gap-1">
+                <p className="text-[10px] text-brand-500 mt-1.5 flex items-center space-x-1">
                   <span>🎂</span> {t('wizard.birthdayHint')}
                 </p>
-              </div>
+              </div>}
             </div>
 
             {/* Notes */}
-            <div className="mb-4">
+            {!minimalProfile && <div className="mb-4">
               <label htmlFor="nc-notes" className="block text-[10px] font-bold text-stone-400 uppercase tracking-wider mb-2">
                 {t('wizard.notes')}
                 <span className="ml-1 normal-case font-normal text-stone-400">({t('wizard.optional')})</span>
@@ -204,10 +218,10 @@ export default function NewCustomerScreen({ t, initialPhone, onSubmit, onBack }:
                 }`}
                 placeholder={t('wizard.notesPlaceholder') || 'Allergies, preferences...'}
               />
-            </div>
+            </div>}
 
             {/* Marketing consent */}
-            <label className="flex items-start gap-3 mb-5 cursor-pointer select-none" onClick={() => setMarketingConsent(!marketingConsent)}>
+            {!minimalProfile && <label className="flex items-start space-x-3 mb-5 cursor-pointer select-none" onClick={() => setMarketingConsent(!marketingConsent)}>
               <div className={`mt-0.5 w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-all ${
                 marketingConsent
                   ? 'bg-brand-600 border-brand-600'
@@ -220,11 +234,13 @@ export default function NewCustomerScreen({ t, initialPhone, onSubmit, onBack }:
                 )}
               </div>
               <span className="text-xs text-stone-600 leading-relaxed">{t('wizard.marketingConsent')}</span>
-            </label>
+            </label>}
 
             <button
               type="submit"
-              className="w-full py-4 bg-brand-600 text-white text-sm font-bold rounded-xl hover:bg-brand-700 transition-colors cursor-pointer shadow-sm"
+              disabled={isSubmitting || (minimalProfile && (!name.trim() || !phone.trim()))}
+              aria-busy={isSubmitting}
+              className="w-full py-4 bg-brand-600 text-white text-sm font-bold rounded-xl hover:bg-brand-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer shadow-sm"
             >
               {t('wizard.createAndContinue')}
             </button>

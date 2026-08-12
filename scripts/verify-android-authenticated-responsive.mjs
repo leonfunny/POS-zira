@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { mkdir, readFile, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -33,7 +34,7 @@ export async function loadAuthenticatedFixture() {
   return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 }
 
-export function createFixtureRouter(fixtureModule, appOrigin) {
+export function createFixtureRouter(fixtureModule, appOrigin, { allowMissingPostData = false } = {}) {
   const fixture = fixtureModule.authenticatedFixture;
   const unexpected = [];
   const hits = [];
@@ -50,6 +51,23 @@ export function createFixtureRouter(fixtureModule, appOrigin) {
     ['GET /api/v1/staff', (route) => json(route, [{ id: 'fixture-owner-1', user_id: 'fixture-owner-1', name: 'Fixture Owner', role: 'OWNER', active: true }])],
     ['GET /api/v1/warehouse/product-admin/capabilities', (route) => json(route, { canCreateProduct: false, canUpdateProduct: false, canAdjustStock: false })],
     ['GET /api/v1/warehouse/public/categories', (route) => json(route, fixture.categories)],
+    ['POST /api/v1/checkin/arrive', (route) => {
+      const body = route.request().postDataJSON();
+      if (body == null && allowMissingPostData) {
+        json(route, fixture.checkin.arrived);
+        return;
+      }
+      assert.equal(body.mode, 'BOOKING');
+      assert.equal(body.booking_id, fixture.checkin.arrived.booking_id);
+      assert.equal(body.source_device, 'POS_ANDROID');
+      assert.equal(body.assign.type, 'STAFF');
+      assert.equal(body.assign.staff_profile_id, fixture.checkin.arrived.assigned_staff.profile_id);
+      assert.equal(body.assign.client_requested, true);
+      assert.equal(body.expected_booked_staff_profile_id, fixture.checkin.arrived.assigned_staff.profile_id);
+      assert.equal(typeof body.idempotency_key, 'string');
+      assert.ok(body.idempotency_key.length > 8);
+      json(route, fixture.checkin.arrived);
+    }],
     ['POST /api/v1/pos/shifts/open', (route) => json(route, { shiftId: 'fixture-backend-shift-1' })],
     ['GET /api/v1/billiard/dashboard', (route) => json(route, fixture.billiard.dashboard)],
     ['GET /api/v1/billiard/floor-plans', (route) => json(route, [fixture.billiard.floorPlan])],
@@ -61,17 +79,31 @@ export function createFixtureRouter(fixtureModule, appOrigin) {
     const request = route.request();
     const url = new URL(request.url());
     const requestOrigin = url.origin === 'null' ? `${url.protocol}//${url.host}` : url.origin;
-    if (requestOrigin === appOrigin) {
+    const key = `${request.method()} ${url.pathname}`;
+    // liveDebug intentionally serves both the renderer and its API override
+    // from the Vite origin. Static assets may continue, but API traffic must
+    // still pass through the exact allowlist below.
+    if (requestOrigin === appOrigin && !url.pathname.startsWith('/api/v1/')) {
       await route.continue();
       return;
     }
-    const key = `${request.method()} ${url.pathname}`;
     hits.push(`${key}${url.search}`);
     if (key === 'GET /api/v1/warehouse/public/products/sync-v2') {
       const allowed = [...url.searchParams.keys()].every((name) => ['limit', 'syncCursor', 'pageCursor'].includes(name))
         && url.searchParams.get('limit') === '100';
       if (allowed) {
         await json(route, fixture.products);
+        return;
+      }
+    }
+    if (key === 'POST /api/v1/checkin/kiosk-search') {
+      const body = request.postDataJSON();
+      const allowed = url.search === ''
+        && (body == null
+          ? allowMissingPostData
+          : Object.keys(body).every((name) => name === 'query') && body.query === 'Anna');
+      if (allowed) {
+        await json(route, fixture.checkin.search);
         return;
       }
     }
@@ -106,7 +138,12 @@ export async function seedAndroidConfig(context, posMode) {
   assert.ok(posMode === 'retail' || posMode === 'salon');
   // This is intentionally configuration-only. Auth identity/tokens are never
   // seeded: every scenario below must render and submit the real Login form.
-  await context.addInitScript(({ storageKey, mode }) => {
+  const salt = Buffer.from('fixture-kiosk-salt').toString('base64');
+  const digest = createHash('sha256').update(`${salt}:2468`).digest('base64');
+  const pinRecord = JSON.stringify({
+    version: 1, salt, digest, failedAttempts: 0, lockedUntil: null,
+  });
+  await context.addInitScript(({ storageKey, mode, securePinRecord }) => {
     localStorage.setItem(storageKey, JSON.stringify({
       posMode: mode,
       language: 'pl',
@@ -115,10 +152,20 @@ export async function seedAndroidConfig(context, posMode) {
       agentId: 'fixture-agent-1',
       registerCode: 'fixture-register-1',
     }));
-  }, { storageKey: CONFIG_STORAGE_KEY, mode: posMode });
+    const secureValues = new Map([['kiosk_exit_pin_v1', securePinRecord]]);
+    const capacitor = window.Capacitor || {};
+    capacitor.Plugins = capacitor.Plugins || {};
+    capacitor.Plugins.SecureKV = {
+      get: async ({ key }) => ({ value: secureValues.get(key) ?? null }),
+      set: async ({ key, value }) => { secureValues.set(key, value); },
+      remove: async ({ key }) => { secureValues.delete(key); },
+      clear: async () => { secureValues.clear(); },
+    };
+    window.Capacitor = capacitor;
+  }, { storageKey: CONFIG_STORAGE_KEY, mode: posMode, securePinRecord: pinRecord });
 }
 
-async function assertViewportLayout(page, viewport, locator, name) {
+export async function assertViewportLayout(page, viewport, locator, name) {
   const metrics = await page.evaluate(() => ({
     clientWidth: document.documentElement.clientWidth,
     scrollWidth: document.documentElement.scrollWidth,
@@ -131,7 +178,14 @@ async function assertViewportLayout(page, viewport, locator, name) {
   assert.ok(box.height >= 44 && box.width >= 44, `${viewport.name}: ${name} touch target is ${box.width}x${box.height}`);
 }
 
-export async function submitRealLogin(page, viewport, fixtureModule, screenshotRoot, screenshotName) {
+export async function submitRealLogin(
+  page,
+  viewport,
+  fixtureModule,
+  screenshotRoot,
+  screenshotName,
+  clickSubmit = (locator) => locator.click(),
+) {
   const fixture = fixtureModule.authenticatedFixture;
   const identifier = page.locator('input[autocomplete="username"]');
   await identifier.waitFor({ state: 'visible', timeout: 20000 });
@@ -143,7 +197,7 @@ export async function submitRealLogin(page, viewport, fixtureModule, screenshotR
     await mkdir(screenshotRoot, { recursive: true });
     await page.screenshot({ path: resolve(screenshotRoot, `${screenshotName}.png`), fullPage: true });
   }
-  await loginSubmit.click();
+  await clickSubmit(loginSubmit);
 }
 
 export async function assertAuthenticatedViewport(page, viewport, fixtureModule, screenshotRoot = SCREENSHOT_ROOT, login = true) {
@@ -243,6 +297,31 @@ async function assertSalonPos(page, viewport) {
   await captureNamedScreen(page, viewport, SCREENSHOT_ROOT, 'salon-pos', salesTab);
 }
 
+async function assertCustomerCheckin(page, viewport) {
+  const entry = page.getByTestId('android-customer-checkin-entry');
+  await entry.waitFor({ state: 'visible', timeout: 25000 });
+  await assertViewportLayout(page, viewport, entry, 'customer Check-in tab');
+  await entry.click();
+  assert.equal(await page.getByRole('button', { name: 'POS', exact: true }).count(), 0, 'customer kiosk exposed the POS navigation');
+  assert.equal(await page.getByTestId('android-settings-entry').count(), 0, 'customer kiosk exposed Settings');
+  await page.getByRole('button', { name: /Mam umówioną wizytę/ }).click();
+  const search = page.getByTestId('checkin-booking-search');
+  await search.waitFor({ state: 'visible', timeout: 10000 });
+  await search.fill('Anna');
+  const appointment = page.getByRole('button', { name: /Anna Kowalska/ });
+  await appointment.waitFor({ state: 'visible' });
+  await assertViewportLayout(page, viewport, appointment, 'customer appointment result');
+  await captureNamedScreen(page, viewport, SCREENSHOT_ROOT, 'customer-checkin-search', appointment);
+  await appointment.click();
+  const confirm = page.getByRole('button', { name: 'Potwierdź rejestrację', exact: true });
+  await confirm.waitFor({ state: 'visible' });
+  await assertViewportLayout(page, viewport, confirm, 'customer check-in confirmation');
+  await confirm.click();
+  const success = page.getByText('Zarejestrowano!', { exact: true });
+  await success.waitFor({ state: 'visible' });
+  await captureNamedScreen(page, viewport, SCREENSHOT_ROOT, 'customer-checkin-success', success);
+}
+
 async function assertSettings(page, viewport) {
   await page.getByTestId('android-settings-entry').click();
   const salonMode = page.getByTestId('settings-pos-mode-salon');
@@ -297,6 +376,9 @@ async function main() {
       });
     }
     await runScenario({ browser, url, fixtureModule, viewport: AUTHENTICATED_VIEWPORTS[1], posMode: 'salon', name: 'salon-pos', assertion: assertSalonPos });
+    for (const viewport of AUTHENTICATED_VIEWPORTS) {
+      await runScenario({ browser, url, fixtureModule, viewport, posMode: 'salon', name: 'customer-checkin', assertion: assertCustomerCheckin });
+    }
     await runScenario({ browser, url, fixtureModule, viewport: AUTHENTICATED_VIEWPORTS[0], posMode: 'retail', name: 'settings', assertion: assertSettings });
     await runScenario({ browser, url, fixtureModule, viewport: AUTHENTICATED_VIEWPORTS[2], posMode: 'retail', name: 'billiard', assertion: assertBilliard });
     await runScenario({ browser, url, fixtureModule, viewport: AUTHENTICATED_VIEWPORTS[1], posMode: 'retail', name: 'cart-shift-payment-modal', assertion: assertCartShiftPayment });
@@ -306,7 +388,7 @@ async function main() {
     await browser.close();
     await new Promise((ok, fail) => server.close((error) => error ? fail(error) : ok()));
   }
-  console.log(`PASS Login + Retail POS at ${AUTHENTICATED_VIEWPORTS.map((v) => `${v.width}x${v.height}`).join(', ')}; Salon POS + Settings + Billiard + cart/shift/PaymentModal named flows`);
+  console.log(`PASS Login + Retail POS at ${AUTHENTICATED_VIEWPORTS.map((v) => `${v.width}x${v.height}`).join(', ')}; Salon POS + customer Check-in + Settings + Billiard + cart/shift/PaymentModal named flows`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

@@ -45,6 +45,7 @@ import type {
   PosLoyaltyLookupResponse,
   SalonPrinterAssignmentsResponse,
 } from '../../../shared/types';
+import type { ArriveRequest, ArriveResponse } from '../../../shared/checkin-contract';
 
 // ─── Constants (ported from api-client.ts:130-132) ─────────────────────────
 const DEFAULT_TIMEOUT = 30000;
@@ -186,6 +187,32 @@ export interface ServerOrdersResult {
   total: number;
   page: number;
   limit: number;
+}
+
+/** Minimal customer-kiosk booking row. Deliberately excludes phone, email,
+ * owner id and customer notes; the backend caps this search at eight rows. */
+export interface KioskBookingSearchRow {
+  booking_id: string;
+  starts_at: string;
+  ends_at: string;
+  customer_name: string;
+  service_name: string | null;
+  staff_name: string | null;
+  staff_profile_id: string | null;
+  status: 'BOOKED' | 'PENDING';
+}
+
+/** Minimal exact-phone customer profile for the owner/manager kiosk flow. */
+export interface KioskCustomerProfile {
+  id: string;
+  name: string;
+  phone: string;
+  visit_count: number;
+}
+
+export interface KioskCustomerCreateResult {
+  created: boolean;
+  customer: KioskCustomerProfile;
 }
 
 /** Envelope returned by getPosProducts. Matches the shape Windows returns
@@ -933,6 +960,52 @@ export class PosApiClient {
     return text ? JSON.parse(text) as PosLoyaltyLookupResponse : null;
   }
 
+  // ════════════════════════════════════════════════════════════════════════
+  // Customer check-in kiosk (staff JWT, tenant derived from the token)
+  // ════════════════════════════════════════════════════════════════════════
+
+  /** Server-filtered, capped kiosk search. The backend enforces a normalized
+   * query of at least two characters and returns only the minimal row shape. */
+  async searchCustomerCheckinBookings(query: string): Promise<KioskBookingSearchRow[]> {
+    const normalized = String(query ?? '').normalize('NFKC').trim().replace(/\s+/g, ' ');
+    if (normalized.length < 2) {
+      throw new Error('CHECKIN_SEARCH_QUERY_TOO_SHORT');
+    }
+    const rows = await this.request(
+      'POST',
+      '/checkin/kiosk-search',
+      { query: normalized },
+    );
+    if (!Array.isArray(rows)) throw new Error('INVALID_CHECKIN_KIOSK_SEARCH_RESPONSE');
+    return rows as KioskBookingSearchRow[];
+  }
+
+  /** Exact-phone lookup; never downloads a customer directory. */
+  async getCustomerCheckinCustomer(phone: string): Promise<KioskCustomerProfile | null> {
+    const normalized = String(phone ?? '').trim();
+    if (!normalized) throw new Error('CHECKIN_CUSTOMER_PHONE_REQUIRED');
+    return this.request(
+      'POST',
+      '/checkin/kiosk-customer/lookup',
+      { phone: normalized },
+    ) as Promise<KioskCustomerProfile | null>;
+  }
+
+  /** Minimal customer creation. The backend returns an exact-phone existing
+   * profile on retry, avoiding duplicate customer records. */
+  async createCustomerCheckinCustomer(input: {
+    name: string;
+    phone: string;
+  }): Promise<KioskCustomerCreateResult> {
+    return this.request('POST', '/checkin/kiosk-customer', input) as Promise<KioskCustomerCreateResult>;
+  }
+
+  /** Authoritative idempotent arrival endpoint. The backend validates booking
+   * ownership/status, walk-in service cardinality and staff assignment. */
+  async arriveCustomerCheckin(input: ArriveRequest): Promise<ArriveResponse> {
+    return this.request('POST', '/checkin/arrive', input) as Promise<ArriveResponse>;
+  }
+
   /**
    * GET /api/v1/b2b/pos/orders. Ported from api-client.ts:3096-3125. Builds the
    * exact query string Windows builds and returns the `{ orders, total, page,
@@ -1363,8 +1436,9 @@ export class PosApiClient {
     });
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      const error = new Error(errorData?.message || `HTTP ${response.status}`) as Error & { status?: number };
+      const error = new Error(errorData?.message || `HTTP ${response.status}`) as Error & { status?: number; code?: string };
       error.status = response.status;
+      if (typeof errorData?.code === 'string') error.code = errorData.code;
       throw error;
     }
     const text = await response.text();

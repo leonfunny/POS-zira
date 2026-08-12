@@ -125,14 +125,21 @@ describe('TokenStore — native SecureKV path', () => {
     expect(plugin.remove).toHaveBeenCalledWith({ key: 'refresh_token' });
   });
 
-  it('clear() calls SecureKV.clear()', async () => {
+  it('clear() removes only session secrets and preserves device-owned SecureKV values', async () => {
     plugin.map.set('access_token', 'a');
     plugin.map.set('refresh_token', 'r');
+    plugin.map.set('printAgentKey', 'pa_test');
+    plugin.map.set('kiosk_exit_pin_v1', 'device-owned-pin-digest');
     const store = new TokenStore();
 
     await store.clear();
 
-    expect(plugin.clear).toHaveBeenCalledTimes(1);
+    expect(plugin.clear).not.toHaveBeenCalled();
+    expect(plugin.remove).toHaveBeenCalledTimes(3);
+    expect(plugin.remove).toHaveBeenCalledWith({ key: 'access_token' });
+    expect(plugin.remove).toHaveBeenCalledWith({ key: 'refresh_token' });
+    expect(plugin.remove).toHaveBeenCalledWith({ key: 'printAgentKey' });
+    expect(plugin.map.get('kiosk_exit_pin_v1')).toBe('device-owned-pin-digest');
     expect(await store.getAccessToken()).toBeNull();
     expect(await store.getRefreshToken()).toBeNull();
   });

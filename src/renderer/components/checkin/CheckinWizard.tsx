@@ -12,6 +12,7 @@ import CustomerProfileScreen from './CustomerProfileScreen';
 import NewCustomerScreen from './NewCustomerScreen';
 import ServiceSelectionScreen from './ServiceSelectionScreen';
 import ConfirmationScreen from './ConfirmationScreen';
+import { translateCheckinError } from './checkin-error-message';
 
 const STATUS_COLORS: Record<string, string> = {
   waiting: 'bg-amber-100 text-amber-700',
@@ -22,22 +23,26 @@ const STATUS_COLORS: Record<string, string> = {
 
 const CHECKIN_LANGS: Language[] = ['en', 'vi', 'pl', 'ru', 'uk', 'tr', 'zh'];
 
-function getStepInfo(step: string, flow: string | null): { current: number; total: number; label: string } | null {
+function getStepInfo(
+  step: string,
+  flow: string | null,
+  t: (key: string) => string,
+): { current: number; total: number; label: string } | null {
   if (step === 'entry' || step === 'done') return null;
   if (flow === 'booking') {
     const steps = [
-      { key: 'booking-list', label: 'Select' },
-      { key: 'booking-detail', label: 'Confirm' },
+      { key: 'booking-list', label: t('wizard.selectBooking') },
+      { key: 'booking-detail', label: t('wizard.confirmation') },
     ];
     const idx = steps.findIndex((s) => s.key === step);
     return idx >= 0 ? { current: idx + 1, total: steps.length, label: steps[idx].label } : null;
   }
   if (flow === 'walkin') {
     const steps = [
-      { key: 'phone-entry', label: 'Phone' },
-      { key: 'customer-found', label: 'Profile' },
-      { key: 'service-select', label: 'Services' },
-      { key: 'confirm', label: 'Confirm' },
+      { key: 'phone-entry', label: t('wizard.phone') },
+      { key: 'customer-found', label: t('wizard.customerProfile') },
+      { key: 'service-select', label: t('wizard.services') },
+      { key: 'confirm', label: t('wizard.confirmation') },
     ];
     const normalized = step === 'new-customer' ? 'customer-found' : step;
     const idx = steps.findIndex((s) => s.key === normalized);
@@ -73,8 +78,6 @@ export default function CheckinWizard({ onFullscreen }: CheckinWizardProps = {})
   const [lang, setLang] = useState<Language>((config?.language as Language) || 'en');
   const [confirmingNoShow, setConfirmingNoShow] = useState<string | null>(null);
   const [langOpen, setLangOpen] = useState(false);
-  const showStatsBar = config?.checkinShowStatsBar ?? true;
-  const showQueue = config?.checkinShowQueue ?? true;
   const clock = useLiveClock();
 
   // Sync language from persisted config once it loads
@@ -86,36 +89,46 @@ export default function CheckinWizard({ onFullscreen }: CheckinWizardProps = {})
   const { t } = useTranslation(lang);
   const wizard = useCheckinWizard();
   const { state } = wizard;
+  const isCustomerKiosk = wizard.presentation.audience === 'customer-kiosk';
+  const showStatsBar = wizard.presentation.showStats && (config?.checkinShowStatsBar ?? true);
+  const showQueue = wizard.presentation.showQueue && (config?.checkinShowQueue ?? true);
   const activeCheckins = state.checkins.filter((c: any) => c.status === 'waiting' || c.status === 'in_service');
 
   return (
-    <div className="max-w-7xl mx-auto flex flex-col h-[calc(100vh-2rem)]">
+    <div
+      className={`max-w-7xl mx-auto flex flex-col ${isCustomerKiosk ? 'h-full' : 'h-[calc(100vh-2rem)]'}`}
+      data-testid="shared-checkin-wizard"
+      data-presentation={wizard.presentation.audience}
+    >
       {/* Top bar */}
       <div className="flex items-center justify-between mb-4 shrink-0">
         {showStatsBar ? (
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center space-x-2.5">
             <span className="text-sm text-slate-500">{state.stats.total} {t('wizard.total')}</span>
             <span className="w-px h-4 bg-slate-200" />
-            <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-100 text-amber-700 rounded-full text-xs font-semibold">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+            <span className="inline-flex items-center px-2.5 py-1 bg-amber-100 text-amber-700 rounded-full text-xs font-semibold">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 mr-1" />
               {state.stats.waiting} {t('wizard.waiting')}
             </span>
-            <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-semibold">
-              <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+            <span className="inline-flex items-center px-2.5 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-semibold">
+              <span className="w-1.5 h-1.5 rounded-full bg-blue-500 mr-1" />
               {state.stats.inService} {t('wizard.inService')}
             </span>
-            <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-100 text-emerald-700 rounded-full text-xs font-semibold">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+            <span className="inline-flex items-center px-2.5 py-1 bg-emerald-100 text-emerald-700 rounded-full text-xs font-semibold">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1" />
               {state.stats.completed} {t('wizard.completed')}
             </span>
           </div>
         ) : <div />}
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center space-x-2.5">
           {/* Current time */}
           <div className="text-right">
             <span className="block text-[9px] font-semibold uppercase tracking-[0.15em] text-slate-400">{t('wizard.currentTime')}</span>
             <span className="block text-sm font-bold text-slate-700 tabular-nums">
-              {clock.toLocaleTimeString(lang === 'vi' ? 'vi-VN' : lang === 'pl' ? 'pl-PL' : lang === 'zh' ? 'zh-CN' : 'en-US', { hour: '2-digit', minute: '2-digit' })}
+              {clock.toLocaleTimeString({
+                en: 'en-US', vi: 'vi-VN', tr: 'tr-TR', zh: 'zh-CN',
+                uk: 'uk-UA', ru: 'ru-RU', pl: 'pl-PL',
+              }[lang], { hour: '2-digit', minute: '2-digit' })}
             </span>
           </div>
 
@@ -123,7 +136,7 @@ export default function CheckinWizard({ onFullscreen }: CheckinWizardProps = {})
           {onFullscreen && (
             <button
               onClick={onFullscreen}
-              className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors duration-150 cursor-pointer"
+              className="flex min-h-11 min-w-11 items-center justify-center text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors duration-150 cursor-pointer"
               title="Enter customer kiosk mode"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -136,8 +149,9 @@ export default function CheckinWizard({ onFullscreen }: CheckinWizardProps = {})
           <div className="relative">
             <button
               onClick={() => setLangOpen(!langOpen)}
-              className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors duration-150 cursor-pointer"
-              title="Change language"
+              className="flex min-h-11 min-w-11 items-center justify-center text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors duration-150 cursor-pointer"
+              title={t('settings.language')}
+              aria-label={t('settings.language')}
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582m15.686 0A11.953 11.953 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0112 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 003 12c0-1.605.42-3.113 1.157-4.418" />
@@ -145,7 +159,7 @@ export default function CheckinWizard({ onFullscreen }: CheckinWizardProps = {})
             </button>
             {langOpen && (
               <>
-                <div className="fixed inset-0 z-20" onClick={() => setLangOpen(false)} />
+                <div className="fixed top-0 right-0 bottom-0 left-0 z-20" onClick={() => setLangOpen(false)} />
                 <div className="absolute right-0 top-full mt-1 z-30 bg-white rounded-xl border border-slate-200 shadow-lg py-1 min-w-[120px]">
                   {CHECKIN_LANGS.map((l) => (
                     <button
@@ -157,7 +171,7 @@ export default function CheckinWizard({ onFullscreen }: CheckinWizardProps = {})
                         }
                         setLangOpen(false);
                       }}
-                      className={`w-full px-3 py-2 text-left text-sm transition-colors duration-150 cursor-pointer flex items-center justify-between ${
+                      className={`flex min-h-11 w-full items-center justify-between px-3 py-2 text-left text-sm transition-colors duration-150 cursor-pointer ${
                         lang === l ? 'bg-brand-50 text-brand-700 font-semibold' : 'text-slate-600 hover:bg-slate-50'
                       }`}
                     >
@@ -173,9 +187,9 @@ export default function CheckinWizard({ onFullscreen }: CheckinWizardProps = {})
           {state.step !== 'entry' && (
             <button
               onClick={wizard.reset}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition-colors duration-150 cursor-pointer"
+              className="flex min-h-11 items-center px-3 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition-colors duration-150 cursor-pointer"
             >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-3.5 h-3.5 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" />
               </svg>
               {t('wizard.backToStart')}
@@ -186,14 +200,15 @@ export default function CheckinWizard({ onFullscreen }: CheckinWizardProps = {})
 
       {/* Error banner */}
       {state.errorMessage && (
-        <div className="mb-3 shrink-0 flex items-center gap-2 px-4 py-2.5 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+        <div className="mb-3 shrink-0 flex items-center space-x-2 px-4 py-2.5 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
           <svg className="w-4 h-4 shrink-0 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
           </svg>
-          <span className="flex-1">{state.errorMessage}</span>
+          <span className="flex-1">{translateCheckinError(state.errorMessage, t)}</span>
           <button
             onClick={wizard.clearError}
-            className="shrink-0 text-red-400 hover:text-red-600 transition-colors"
+            className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg text-red-400 transition-colors hover:bg-red-100 hover:text-red-600"
+            aria-label={t('common.close')}
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -203,15 +218,15 @@ export default function CheckinWizard({ onFullscreen }: CheckinWizardProps = {})
       )}
 
       {/* Main content */}
-      <div className="flex-1 min-h-0 flex gap-4">
+      <div className="flex-1 min-h-0 flex space-x-4">
         {/* Wizard area */}
         <div className="flex-1 min-w-0 flex flex-col">
           {/* Step progress indicator */}
           {(() => {
-            const info = getStepInfo(state.step, state.flow);
+            const info = getStepInfo(state.step, state.flow, t);
             if (!info) return null;
             return (
-              <div className="flex items-center gap-1.5 mb-3 shrink-0">
+              <div className="flex items-center space-x-1.5 mb-3 shrink-0">
                 {Array.from({ length: info.total }).map((_, i) => (
                   <div
                     key={i}
@@ -250,6 +265,12 @@ export default function CheckinWizard({ onFullscreen }: CheckinWizardProps = {})
               checkins={state.checkins}
               onSelect={wizard.selectBooking}
               onBack={wizard.reset}
+              remoteSearch={wizard.presentation.audience === 'customer-kiosk' ? {
+                query: state.bookingSearchQuery,
+                loading: state.bookingSearchLoading,
+                error: state.bookingSearchError,
+                onSearch: wizard.searchBookings,
+              } : undefined}
             />
           )}
           {state.step === 'booking-detail' && state.selectedBooking && (
@@ -258,6 +279,7 @@ export default function CheckinWizard({ onFullscreen }: CheckinWizardProps = {})
               booking={state.selectedBooking}
               staffList={state.staffList}
               isSubmitting={state.isSubmitting}
+              allowStaffOverride={wizard.presentation.allowBookingStaffOverride}
               onConfirm={wizard.confirmBookingCheckin}
               onBack={() => wizard.goTo('booking-list')}
             />
@@ -269,6 +291,7 @@ export default function CheckinWizard({ onFullscreen }: CheckinWizardProps = {})
               onSkip={wizard.skipPhone}
               onBack={wizard.reset}
               isLoading={state.isLoading}
+              minPhoneDigits={wizard.presentation.minPhoneDigits}
             />
           )}
           {state.step === 'customer-found' && state.customer && (
@@ -287,6 +310,8 @@ export default function CheckinWizard({ onFullscreen }: CheckinWizardProps = {})
               initialPhone={state.phoneNumber}
               onSubmit={wizard.createCustomer}
               onBack={() => wizard.goTo('phone-entry')}
+              minimalProfile={isCustomerKiosk}
+              isSubmitting={state.isSubmitting}
             />
           )}
           {state.step === 'service-select' && (
@@ -304,6 +329,7 @@ export default function CheckinWizard({ onFullscreen }: CheckinWizardProps = {})
               onRemoveService={wizard.removeService}
               onSelectStaff={wizard.selectStaff}
               onConfirm={wizard.goToConfirm}
+              maxSelectedServices={wizard.presentation.maxSelectedServices}
               onBack={() => {
                 if (state.isNewCustomer) wizard.goTo('new-customer');
                 else if (state.customer) wizard.goTo('customer-found');
@@ -323,7 +349,7 @@ export default function CheckinWizard({ onFullscreen }: CheckinWizardProps = {})
             />
           )}
           {state.step === 'done' && (
-            <div className="flex flex-col items-center justify-center h-full gap-4">
+            <div className="flex flex-col items-center justify-center h-full space-y-4">
               <div className="w-20 h-20 rounded-full bg-emerald-100 flex items-center justify-center">
                 <svg className="w-10 h-10 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
@@ -345,7 +371,7 @@ export default function CheckinWizard({ onFullscreen }: CheckinWizardProps = {})
         {/* Right: Active queue — staff only */}
         {showQueue && <div className={`shrink-0 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col transition-all duration-300 ${activeCheckins.length > 0 ? 'w-72' : 'w-14'}`}>
           {activeCheckins.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full gap-2 py-6">
+            <div className="flex flex-col items-center justify-center h-full space-y-2 py-6">
               <svg className="w-5 h-5 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
               </svg>
@@ -363,17 +389,17 @@ export default function CheckinWizard({ onFullscreen }: CheckinWizardProps = {})
               </span>
             </div>
             {showStatsBar && (
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded-full text-[10px] font-semibold">
-                  <span className="w-1 h-1 rounded-full bg-amber-500" />
+              <div className="flex items-center space-x-1.5 flex-wrap">
+                <span className="inline-flex items-center px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded-full text-[10px] font-semibold">
+                  <span className="w-1 h-1 rounded-full bg-amber-500 mr-1" />
                   {state.stats.waiting}
                 </span>
-                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded-full text-[10px] font-semibold">
-                  <span className="w-1 h-1 rounded-full bg-blue-500" />
+                <span className="inline-flex items-center px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded-full text-[10px] font-semibold">
+                  <span className="w-1 h-1 rounded-full bg-blue-500 mr-1" />
                   {state.stats.inService}
                 </span>
-                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded-full text-[10px] font-semibold">
-                  <span className="w-1 h-1 rounded-full bg-emerald-500" />
+                <span className="inline-flex items-center px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded-full text-[10px] font-semibold">
+                  <span className="w-1 h-1 rounded-full bg-emerald-500 mr-1" />
                   {state.stats.completed}
                 </span>
               </div>
@@ -386,15 +412,15 @@ export default function CheckinWizard({ onFullscreen }: CheckinWizardProps = {})
                 const isConfirmingThisNoShow = confirmingNoShow === c.id;
                 return (
                   <div key={c.id} className="px-3 py-3 hover:bg-slate-50 transition-colors duration-150">
-                    <div className="flex items-start gap-2.5">
+                    <div className="flex items-start space-x-2.5">
                       {/* Avatar */}
                       <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${isWaiting ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
                         {initials}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5 mb-0.5">
-                          <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-semibold rounded-full ${STATUS_COLORS[c.status] || 'bg-slate-100 text-slate-600'}`}>
-                            <span className={`w-1 h-1 rounded-full ${isWaiting ? 'bg-amber-500' : 'bg-blue-500'}`} />
+                        <div className="flex items-center space-x-1.5 mb-0.5">
+                          <span className={`inline-flex items-center px-1.5 py-0.5 text-[10px] font-semibold rounded-full ${STATUS_COLORS[c.status] || 'bg-slate-100 text-slate-600'}`}>
+                            <span className={`w-1 h-1 rounded-full mr-1 ${isWaiting ? 'bg-amber-500' : 'bg-blue-500'}`} />
                             {isWaiting ? t('wizard.waiting') : t('wizard.inService')}
                           </span>
                           {c.is_walkin === 1 && (
@@ -413,7 +439,7 @@ export default function CheckinWizard({ onFullscreen }: CheckinWizardProps = {})
                         )}
                       </div>
                     </div>
-                    <div className="flex gap-1.5 mt-2 ml-10">
+                    <div className="flex space-x-1.5 mt-2 ml-10">
                       {isWaiting && (
                         <button
                           onClick={() => wizard.startService(c.id)}
@@ -434,7 +460,7 @@ export default function CheckinWizard({ onFullscreen }: CheckinWizardProps = {})
                       )}
                       {isWaiting && (
                         isConfirmingThisNoShow ? (
-                          <div className="flex items-center gap-1">
+                          <div className="flex items-center space-x-1">
                             <span className="text-[10px] text-red-600 font-medium">Sure?</span>
                             <button
                               onClick={() => { wizard.markNoShow(c.id); setConfirmingNoShow(null); }}
@@ -465,7 +491,7 @@ export default function CheckinWizard({ onFullscreen }: CheckinWizardProps = {})
                 );
               })}
             {activeCheckins.length === 0 && (
-              <div className="flex flex-col items-center justify-center py-8 px-4 gap-3">
+              <div className="flex flex-col items-center justify-center py-8 px-4 space-y-3">
                 <div className="w-16 h-16 rounded-2xl bg-slate-50 border border-slate-100 flex items-center justify-center">
                   <svg className="w-8 h-8 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />

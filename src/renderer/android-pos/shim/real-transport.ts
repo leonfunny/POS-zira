@@ -949,7 +949,7 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
   };
 
   transport = {
-    runtimeCapabilities: Object.freeze({ loyaltyLookup: true, restoredCartTender: true }),
+    runtimeCapabilities: Object.freeze({ loyaltyLookup: true, restoredCartTender: true, customerCheckin: true }),
     // ── Billiard (Bi-a) online-only (T4) — reads + 10s poll, direct mutate,
     //    allowlisted apiCall. Spread in (no key collides with the ports below).
     ...billiard,
@@ -1950,6 +1950,61 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         return { success: true, result };
       } catch (error: any) {
         return { success: false, unavailable: true, error: error?.message || 'loyalty_lookup_failed' };
+      }
+    },
+    async arriveCustomerCheckin(request: any) {
+      try {
+        const result = await client.arriveCustomerCheckin(request);
+        if (!result?.checkin_log_id || !result?.booking_id || !result?.assignment_id) {
+          return { success: false, error: 'invalid-checkin-arrival-response' };
+        }
+        return { success: true, result };
+      } catch (error: any) {
+        return {
+          success: false,
+          unavailable: error?.status === 403 || error?.status === 404 || error?.status === 501,
+          code: error?.response?.data?.code || error?.code,
+          error: error?.message || 'customer-checkin-arrival-failed',
+        };
+      }
+    },
+    async searchCustomerCheckinBookings(query: string) {
+      try {
+        const bookings = await client.searchCustomerCheckinBookings(query);
+        return { success: true, bookings };
+      } catch (error: any) {
+        return {
+          success: false,
+          unavailable: error?.status === 403 || error?.status === 404 || error?.status === 501,
+          code: error?.code,
+          error: error?.message || 'customer-checkin-search-failed',
+        };
+      }
+    },
+    async getCustomerCheckinCustomer(phone: string) {
+      try {
+        const customer = await client.getCustomerCheckinCustomer(phone);
+        return { success: true, customer };
+      } catch (error: any) {
+        return {
+          success: false,
+          unavailable: error?.status === 403 || error?.status === 404 || error?.status === 501,
+          code: error?.code,
+          error: error?.message || 'customer-checkin-customer-load-failed',
+        };
+      }
+    },
+    async createCustomerCheckinCustomer(input: { name: string; phone: string }) {
+      try {
+        const result = await client.createCustomerCheckinCustomer(input);
+        return { success: true, result };
+      } catch (error: any) {
+        return {
+          success: false,
+          unavailable: error?.status === 403 || error?.status === 404 || error?.status === 501,
+          code: error?.code,
+          error: error?.message || 'customer-checkin-customer-create-failed',
+        };
       }
     },
     async addInvoice(

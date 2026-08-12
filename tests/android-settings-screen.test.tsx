@@ -7,6 +7,7 @@ import type { AgentConfig } from '../src/shared/types';
 import SettingsScreen from '../src/renderer/android-pos/SettingsScreen';
 import { __resetShimForTest, installShim, ShimConfigStore } from '../src/renderer/android-pos/shim';
 import { createDeviceCommandHandler, type DeviceCommandEvent } from '../src/renderer/android-pos/shim/device-command';
+import { KioskExitPinStore } from '../src/renderer/android-pos/shim/kiosk-exit-pin';
 
 const CONFIG_STORAGE_KEY = 'zira-android-pos-config';
 
@@ -34,7 +35,11 @@ type RenderResult = {
   configStore: any;
 };
 
-async function renderSettings(seed?: Partial<AgentConfig>, configStore?: ShimConfigStore): Promise<RenderResult> {
+async function renderSettings(
+  seed?: Partial<AgentConfig>,
+  configStore?: ShimConfigStore,
+  screenProps: Record<string, unknown> = {},
+): Promise<RenderResult> {
   const { api, configStore: installedConfigStore } = installShim({
     reinstall: true,
     config: seed as any,
@@ -46,7 +51,7 @@ async function renderSettings(seed?: Partial<AgentConfig>, configStore?: ShimCon
   (globalThis as any).electronAPI = api;
   (globalThis as any).window = globalThis;
   await act(async () => {
-    root.render(createElement(SettingsScreen));
+    root.render(createElement(SettingsScreen, screenProps));
   });
   await settle();
   return { root, container, api, configStore: installedConfigStore };
@@ -186,6 +191,41 @@ describe('Android SettingsScreen', () => {
       expect(container.querySelector(`[data-testid="${id}"]`)).toBeNull();
     }
     expect(configUpdates).toBe(0);
+    act(() => { root.unmount(); });
+  });
+
+  it('shows the SecureKV-backed kiosk PIN setup only to staff settings and never stores plaintext', async () => {
+    const values = new Map<string, string>();
+    const pinStore = new KioskExitPinStore({
+      secureKv: {
+        get: async ({ key }) => ({ value: values.get(key) ?? null }),
+        set: async ({ key, value }) => { values.set(key, value); },
+        remove: async ({ key }) => { values.delete(key); },
+        clear: async () => { values.clear(); },
+      },
+    });
+    const { container, root } = await renderSettings(undefined, undefined, {
+      canManageKioskExitPin: true,
+      kioskExitPinStore: pinStore,
+    });
+    const input = container.querySelector('[data-testid="settings-kiosk-exit-pin-input"]') as HTMLInputElement;
+    const confirm = container.querySelector('[data-testid="settings-kiosk-exit-pin-confirm"]') as HTMLInputElement;
+    expect(input).toBeTruthy();
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '2468');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(confirm, '2468');
+      confirm.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      (container.querySelector('[data-testid="settings-kiosk-exit-pin-save"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await settle();
+    expect(await pinStore.verify('2468')).toMatchObject({ success: true });
+    expect(Array.from(values.values()).join('')).not.toContain('2468');
+    expect((container.querySelector('[data-testid="settings-kiosk-exit-pin-input"]') as HTMLInputElement).value).toBe('');
     act(() => { root.unmount(); });
   });
 

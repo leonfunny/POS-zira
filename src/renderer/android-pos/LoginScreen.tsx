@@ -12,7 +12,7 @@
 import React, { useState } from 'react';
 
 interface LoginScreenProps {
-  onLoggedIn: () => void;
+  onLoggedIn: (user: Record<string, unknown> | null) => void;
 }
 
 export default function LoginScreen({ onLoggedIn }: LoginScreenProps) {
@@ -30,7 +30,7 @@ export default function LoginScreen({ onLoggedIn }: LoginScreenProps) {
       const api = (window as any).electronAPI;
       const result = await api.auth.loginWithEmail(email.trim(), password);
       if (result?.success) {
-        onLoggedIn();
+        onLoggedIn(result?.data?.user ?? null);
       } else {
         setError(result?.error || 'Đăng nhập thất bại');
       }

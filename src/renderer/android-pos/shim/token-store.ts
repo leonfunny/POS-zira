@@ -53,11 +53,13 @@ const PRINT_AGENT_KEY = 'printAgentKey';
 const INSECURE_PREFIX = 'zira.dev-insecure.';
 
 /** Call shape of the native SecureKV Capacitor plugin (SecureKVPlugin.java). */
-interface SecureKVPlugin {
+export interface SecureKVPlugin {
   get(opts: { key: string }): Promise<{ value: string | null }>;
   set(opts: { key: string; value: string }): Promise<void>;
   remove(opts: { key: string }): Promise<void>;
   clear(): Promise<void>;
+  /** Native SHA-256 fallback for WebView 83 live HTTP, where SubtleCrypto is unavailable. */
+  sha256?(opts: { value: string }): Promise<{ value: string }>;
 }
 
 /** Minimal KV adapter — works in a browser, jsdom, or pure-node tests. */
@@ -85,7 +87,7 @@ function defaultStorage(): TokenStoreStorage {
  * surface Capacitor injects) and falls back to a bare `globalThis.Capacitor`.
  * Pure read — safe to call from inside methods; no module-load side effect.
  */
-function nativeSecureKv(): SecureKVPlugin | null {
+export function getNativeSecureKv(): SecureKVPlugin | null {
   const g = globalThis as unknown as {
     window?: { Capacitor?: { Plugins?: { SecureKV?: unknown } } };
     Capacitor?: { Plugins?: { SecureKV?: unknown } };
@@ -122,7 +124,7 @@ export class TokenStore {
    * the plaintext localStorage fallback — callers may surface a dev warning.
    */
   get isSecure(): boolean {
-    return nativeSecureKv() !== null;
+    return getNativeSecureKv() !== null;
   }
 
   /** Current staff access token, or null when none is stored. */
@@ -167,16 +169,21 @@ export class TokenStore {
     await this.removeKey(PRINT_AGENT_KEY);
   }
 
-  /** Wipe both tokens (logout). Clears the whole SecureKV file on-device. */
+  /**
+   * Wipe only session-owned secrets on logout.
+   *
+   * SecureKV also stores device-owned material such as the kiosk exit PIN.
+   * Calling the plugin-wide `clear()` here would silently remove that device
+   * lock whenever a cashier logs out.
+   */
   async clear(): Promise<void> {
-    const plugin = nativeSecureKv();
+    const plugin = getNativeSecureKv();
     if (plugin) {
-      try {
-        await plugin.clear();
-        return;
-      } catch {
-        // Fall through to a best-effort local wipe.
-      }
+      await Promise.allSettled([
+        plugin.remove({ key: ACCESS_TOKEN_KEY }),
+        plugin.remove({ key: REFRESH_TOKEN_KEY }),
+        plugin.remove({ key: PRINT_AGENT_KEY }),
+      ]);
     }
     this.storage.removeItem(INSECURE_PREFIX + ACCESS_TOKEN_KEY);
     this.storage.removeItem(INSECURE_PREFIX + REFRESH_TOKEN_KEY);
@@ -184,7 +191,7 @@ export class TokenStore {
   }
 
   private async read(key: string): Promise<string | null> {
-    const plugin = nativeSecureKv();
+    const plugin = getNativeSecureKv();
     if (plugin) {
       try {
         const { value } = await plugin.get({ key });
@@ -198,7 +205,7 @@ export class TokenStore {
   }
 
   private async write(key: string, value: string): Promise<void> {
-    const plugin = nativeSecureKv();
+    const plugin = getNativeSecureKv();
     if (plugin) {
       await plugin.set({ key, value });
       return;
@@ -207,7 +214,7 @@ export class TokenStore {
   }
 
   private async removeKey(key: string): Promise<void> {
-    const plugin = nativeSecureKv();
+    const plugin = getNativeSecureKv();
     if (plugin) {
       try {
         await plugin.remove({ key });

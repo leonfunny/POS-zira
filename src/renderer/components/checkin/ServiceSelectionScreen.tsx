@@ -16,6 +16,7 @@ interface Props {
   onSelectStaff: (staff: StaffItem | null) => void;
   onConfirm: () => void;
   onBack: () => void;
+  maxSelectedServices?: number;
 }
 
 function formatPrice(grosze: number): string {
@@ -25,7 +26,7 @@ function formatPrice(grosze: number): string {
 export default function ServiceSelectionScreen({
   t, services, categories, staffList, selectedServices, selectedStaff,
   recommendations, bestsellers, customer, onAddService, onRemoveService,
-  onSelectStaff, onConfirm, onBack,
+  onSelectStaff, onConfirm, onBack, maxSelectedServices,
 }: Props) {
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
@@ -60,8 +61,8 @@ export default function ServiceSelectionScreen({
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="flex items-center gap-3 mb-4 shrink-0">
-        <button onClick={onBack} className="p-2 hover:bg-stone-100 rounded-lg transition-colors cursor-pointer">
+      <div className="flex items-center space-x-3 mb-4 shrink-0">
+        <button onClick={onBack} className="flex min-h-12 min-w-12 items-center justify-center hover:bg-stone-100 rounded-lg transition-colors cursor-pointer">
           <svg className="w-5 h-5 text-stone-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
           </svg>
@@ -72,9 +73,15 @@ export default function ServiceSelectionScreen({
         </h2>
       </div>
 
-      <div className="flex-1 min-h-0 flex gap-4">
+      <div className="flex-1 min-h-0 flex space-x-4">
         {/* Left: Service catalog */}
         <div className="flex-1 min-w-0 flex flex-col">
+
+          {maxSelectedServices === 1 && (
+            <div className="mb-3 shrink-0 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-800" role="note">
+              {t('wizard.oneServiceNotice')}
+            </div>
+          )}
 
           {/* Recommended chips */}
           {recommendedServices.length > 0 && (
@@ -82,12 +89,12 @@ export default function ServiceSelectionScreen({
               <div className="text-[10px] font-bold text-stone-400 uppercase tracking-wider mb-2">
                 {recommendations.length > 0 ? t('wizard.recommended') : t('wizard.popular')}
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap -mx-1">
                 {recommendedServices.slice(0, 6).map((svc) => (
                   <button
                     key={svc.id}
                     onClick={() => onAddService({ id: svc.id, name: svc.name, price: svc.retail_price })}
-                    className="px-3 py-1.5 bg-brand-50 border border-brand-200 text-brand-700 text-xs font-medium rounded-lg hover:bg-brand-100 transition-colors cursor-pointer"
+                    className="mx-1 mb-2 px-3 py-1.5 bg-brand-50 border border-brand-200 text-brand-700 text-xs font-medium rounded-lg hover:bg-brand-100 transition-colors cursor-pointer"
                   >
                     {svc.name} · {formatPrice(svc.retail_price)} zł
                   </button>
@@ -97,7 +104,7 @@ export default function ServiceSelectionScreen({
           )}
 
           {/* Search + category filters on same row */}
-          <div className="flex items-center gap-2 mb-3 shrink-0">
+          <div className="flex items-center space-x-2 mb-3 shrink-0">
             <div className="relative shrink-0 w-48">
               <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
@@ -110,7 +117,7 @@ export default function ServiceSelectionScreen({
                 className="w-full pl-9 pr-3 py-2 text-xs border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-300 focus:border-brand-300 bg-white"
               />
             </div>
-            <div className="flex gap-1.5 overflow-x-auto flex-1">
+            <div className="flex space-x-1.5 overflow-x-auto flex-1">
               <button
                 onClick={() => setSelectedCategory(null)}
                 className={`px-3 py-2 text-xs font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
@@ -151,7 +158,7 @@ export default function ServiceSelectionScreen({
                       if (isSelected) onRemoveService(svc.id);
                       else onAddService({ id: svc.id, name: svc.name, price: svc.retail_price });
                     }}
-                    className={`relative flex items-center gap-3 p-3 rounded-2xl border-2 text-left transition-all duration-150 cursor-pointer ${
+                    className={`relative flex items-center space-x-3 p-3 rounded-2xl border-2 text-left transition-all duration-150 cursor-pointer ${
                       isSelected
                         ? 'bg-brand-50 border-brand-400 shadow-sm'
                         : 'bg-white border-stone-200 hover:border-brand-300 hover:shadow-md'
@@ -204,12 +211,12 @@ export default function ServiceSelectionScreen({
             {selectedServices.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full py-8 opacity-40">
                 <div className="w-10 h-10 border-2 border-dashed border-stone-400 rounded-full mb-2" />
-                <p className="text-xs text-stone-500 text-center">No services selected</p>
+                <p className="text-xs text-stone-500 text-center">{t('wizard.noServicesSelected')}</p>
               </div>
             ) : (
               <div className="space-y-2">
                 {selectedServices.map((svc) => (
-                  <div key={svc.id} className="flex items-center gap-2 bg-white border border-stone-200 rounded-xl px-3 py-2.5">
+                  <div key={svc.id} className="flex items-center space-x-2 bg-white border border-stone-200 rounded-xl px-3 py-2.5">
                     <div className="flex-1 min-w-0">
                       <div className="text-xs font-semibold text-stone-700 truncate">{svc.name}</div>
                       <div className="text-[10px] text-brand-500 font-bold mt-0.5">{formatPrice(svc.price)} zł</div>
@@ -254,7 +261,7 @@ export default function ServiceSelectionScreen({
           {/* Total + confirm */}
           <div className="shrink-0 border-t border-stone-200 pt-3 space-y-3">
             <div className="flex justify-between items-center">
-              <span className="text-xs text-stone-500">Total Price:</span>
+              <span className="text-xs text-stone-500">{t('wizard.totalPrice')}:</span>
               <span className="text-sm font-bold text-brand-600">{formatPrice(totalPrice)} zł</span>
             </div>
             <button

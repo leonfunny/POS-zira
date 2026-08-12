@@ -22,7 +22,10 @@ export const authenticatedFixture = Object.freeze({
   }),
   entitlements: Object.freeze({
     salonId: 'fixture-salon-1', salonCode: '9001', salonName: 'Fixture Salon', plan: 'pro',
-    suggestedPosMode: 'salon', features: Object.freeze({ billiard: Object.freeze({ enabled: true }) }),
+    suggestedPosMode: 'salon', features: Object.freeze({
+      billiard: Object.freeze({ enabled: true }),
+      checkin: Object.freeze({ enabled: true }),
+    }),
   }),
   products: Object.freeze({
     items: Object.freeze([
@@ -31,6 +34,21 @@ export const authenticatedFixture = Object.freeze({
     hasMore: false, nextSyncCursor: 'fixture-cursor-1', deletedIds: Object.freeze([]), serverTime: '2026-08-10T00:00:00.000Z',
   }),
   categories: Object.freeze({ items: Object.freeze([]) }),
+  checkin: Object.freeze({
+    search: Object.freeze([Object.freeze({
+      booking_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      starts_at: '2026-08-11T10:30:00.000Z', ends_at: '2026-08-11T11:30:00.000Z', customer_name: 'Anna Kowalska',
+      service_name: 'Manicure klasyczny', staff_name: 'Fixture Owner',
+      staff_profile_id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', status: 'BOOKED',
+    })]),
+    arrived: Object.freeze({
+      checkin_log_id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+      booking_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      assignment_id: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+      assigned_staff: Object.freeze({ profile_id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', name: 'Fixture Owner' }),
+      turn_state: 'ASSIGNED', waiting_behind: 0, counts_toward_queue: true, queue_version: 2,
+    }),
+  }),
   billiard: Object.freeze({
     floorPlan: Object.freeze({
       id: 'fixture-floor-1', salonId: 'fixture-salon-1', name: 'Fixture Floor',

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { BooksyBookingSummary } from '../../../shared/types';
+import type { CheckinBookingSummary } from './runtime';
 import type { StaffItem } from '../../hooks/useCheckinWizard';
 
 function formatTime(iso: string): string {
@@ -11,22 +11,23 @@ function formatTime(iso: string): string {
 
 interface Props {
   t: (key: string) => string;
-  booking: BooksyBookingSummary;
+  booking: CheckinBookingSummary;
   staffList: StaffItem[];
   isSubmitting?: boolean;
-  onConfirm: (booking: BooksyBookingSummary, staffName?: string, staffId?: string) => void;
+  allowStaffOverride?: boolean;
+  onConfirm: (booking: CheckinBookingSummary, staffName?: string, staffId?: string) => void;
   onBack: () => void;
 }
 
-export default function BookingDetailScreen({ t, booking, staffList, isSubmitting, onConfirm, onBack }: Props) {
+export default function BookingDetailScreen({ t, booking, staffList, isSubmitting, allowStaffOverride = true, onConfirm, onBack }: Props) {
   const [selectedStaffName, setSelectedStaffName] = useState<string>(booking.staffName || '');
-  const [selectedStaffId, setSelectedStaffId] = useState<string>('');
+  const [selectedStaffId, setSelectedStaffId] = useState<string>(booking.staffProfileId || '');
 
   const handleStaffChange = (staffId: string) => {
     if (!staffId) {
       // Reset to original booking staff
       setSelectedStaffName(booking.staffName || '');
-      setSelectedStaffId('');
+      setSelectedStaffId(booking.staffProfileId || '');
       return;
     }
     const staff = staffList.find((s) => s.id === staffId);
@@ -39,8 +40,8 @@ export default function BookingDetailScreen({ t, booking, staffList, isSubmittin
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="flex items-center gap-3 mb-4">
-        <button onClick={onBack} className="p-2 hover:bg-slate-100 rounded-lg transition-colors">
+      <div className="flex items-center space-x-3 mb-4">
+        <button onClick={onBack} className="flex min-h-12 min-w-12 items-center justify-center rounded-lg hover:bg-slate-100 transition-colors">
           <svg className="w-5 h-5 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
           </svg>
@@ -74,18 +75,24 @@ export default function BookingDetailScreen({ t, booking, staffList, isSubmittin
           {/* Staff (editable) */}
           <div>
             <label className="text-xs font-medium text-slate-500 uppercase tracking-wide">{t('wizard.staff')}</label>
-            <select
-              value={selectedStaffId || ''}
-              onChange={(e) => handleStaffChange(e.target.value)}
-              className="w-full mt-1 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-300"
-            >
-              <option value="">{booking.staffName || '--'}</option>
-              {staffList
-                .filter((s) => s.name !== booking.staffName)
-                .map((s) => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-            </select>
+            {allowStaffOverride ? (
+              <select
+                value={selectedStaffId || ''}
+                onChange={(e) => handleStaffChange(e.target.value)}
+                className="w-full mt-1 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-300"
+              >
+                <option value={booking.staffProfileId || ''}>{booking.staffName || '--'}</option>
+                {staffList
+                  .filter((s) => s.id !== booking.staffProfileId)
+                  .map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+              </select>
+            ) : (
+              <div className="mt-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700">
+                {booking.staffName || t('wizard.anyStaff')}
+              </div>
+            )}
           </div>
         </div>
 
@@ -93,7 +100,7 @@ export default function BookingDetailScreen({ t, booking, staffList, isSubmittin
         <button
           onClick={() => onConfirm(booking, selectedStaffName || booking.staffName, selectedStaffId)}
           disabled={isSubmitting}
-          className="w-full mt-6 px-6 py-3 bg-brand-600 text-white text-sm font-semibold rounded-xl hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="mt-6 min-h-12 w-full px-6 py-3 bg-brand-600 text-white text-sm font-semibold rounded-xl hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           {isSubmitting ? '...' : t('wizard.confirmCheckin')}
         </button>
