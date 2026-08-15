@@ -1032,7 +1032,7 @@ interface ElectronAPI {
     masterCatalog: {
       lookupByEan: (ean: string) => Promise<{ ok: boolean; draft: any | null; error?: string }>;
       lookupExternalByEan: (ean: string) => Promise<{ ok: boolean; product: any | null; error?: string }>;
-      scanCreate: (payload: { ean: string; purchasePrice?: number; retailPrice?: number; stockQty?: number; taxRate?: number; warehouseId?: string; categoryId?: string | null; createIfMiss?: boolean; idempotencyKey?: string }) => Promise<{
+      scanCreate: (payload: { ean: string; name?: string; purchasePrice?: number; retailPrice?: number; stockQty?: number; taxRate?: number; warehouseId?: string; categoryId?: string | null; createIfMiss?: boolean; idempotencyKey?: string }) => Promise<{
         ok: boolean;
         outcome?: string;
         mode?: string;

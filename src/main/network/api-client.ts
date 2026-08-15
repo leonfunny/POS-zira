@@ -3733,6 +3733,7 @@ export class ApiClient {
       warehouseId?: string;
       categoryId?: string | null;
       createIfMiss?: boolean;
+      name?: string;
       idempotencyKey?: string;
     },
   ): Promise<{
@@ -3770,6 +3771,11 @@ export class ApiClient {
     const categoryId = String(payload.categoryId ?? '').trim();
     if (categoryId) body.categoryId = categoryId;
     if (payload.createIfMiss === true) body.createIfMiss = true;
+    // Bare-create display name. Only sent when non-blank: older backends
+    // reject unknown body fields (forbidNonWhitelisted), so the plain
+    // digits-named flow must stay byte-identical to previous builds.
+    const bareName = String(payload.name ?? '').trim();
+    if (bareName) body.name = bareName;
 
     const response = await fetchWithTimeout(url, {
       method: 'POST',

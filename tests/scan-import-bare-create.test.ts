@@ -8,6 +8,7 @@ import {
   bareScanCreateIdempotencyKey,
   buildBareScanImportPreview,
   isBareCreateSource,
+  normalizeBareCreateName,
 } from '../src/renderer/components/pos/scan-import-bare';
 
 function readSource(relativePath: string): string {
@@ -92,5 +93,63 @@ describe('bare-create wiring', () => {
     expect(posModule).toContain('createIfMiss?: boolean;');
     expect(posModule).toContain("result?.mode === 'CREATED' && result?.variantId");
     expect(posModule).toContain("sku: `QS-${String(payload.ean).toUpperCase()}`");
+  });
+});
+
+describe('bare-create custom name', () => {
+  it('normalizes the typed name and treats the untouched EAN default as absent', () => {
+    expect(normalizeBareCreateName('  Trân châu ô long  ', '5901234123457')).toBe('Trân châu ô long');
+    expect(normalizeBareCreateName('5901234123457', '5901234123457')).toBeNull();
+    expect(normalizeBareCreateName('   ', '5901234123457')).toBeNull();
+    expect(normalizeBareCreateName(undefined, '5901234123457')).toBeNull();
+  });
+
+  it('keeps the legacy key byte-identical without a custom name, distinct+stable with one', () => {
+    const base = {
+      ean: '5901234123457',
+      retailPriceGrosze: 1250,
+      vatRate: 8,
+      stockQty: 24,
+      categoryId: null,
+    };
+    expect(bareScanCreateIdempotencyKey(base)).toBe('bare-5901234123457-1250-8-24-auto');
+    expect(bareScanCreateIdempotencyKey({ ...base, name: null })).toBe('bare-5901234123457-1250-8-24-auto');
+    expect(bareScanCreateIdempotencyKey({ ...base, name: base.ean })).toBe('bare-5901234123457-1250-8-24-auto');
+    const named = bareScanCreateIdempotencyKey({ ...base, name: 'Trân châu ô long' });
+    expect(named).not.toBe(bareScanCreateIdempotencyKey(base));
+    expect(named).toBe(bareScanCreateIdempotencyKey({ ...base, name: ' Trân châu ô long ' }));
+    expect(bareScanCreateIdempotencyKey({ ...base, name: 'Khác hẳn' })).not.toBe(named);
+  });
+
+  it('keeps the name token inside the 80-char cap even with a UUID category', () => {
+    const wide = {
+      ean: '12345678901234',
+      retailPriceGrosze: 999_999_999_999,
+      vatRate: 23,
+      stockQty: 999_999_999,
+      categoryId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+    };
+    const a = bareScanCreateIdempotencyKey({ ...wide, name: 'x'.repeat(300) });
+    const b = bareScanCreateIdempotencyKey({ ...wide, name: 'y'.repeat(300) });
+    expect(a.length).toBeLessThanOrEqual(80);
+    expect(a).not.toBe(b);
+  });
+});
+
+describe('bare-create custom name wiring', () => {
+  it('lets the cashier edit the product name in the bare form', () => {
+    expect(modal).toContain('nameInput');
+    expect(modal).toContain('setNameInput(event.target.value)');
+    expect(modal).toContain('name: string,');
+  });
+
+  it('sends the custom name through scan-create end to end', () => {
+    expect(posLayout).toContain('normalizeBareCreateName(');
+    expect(posLayout).toContain('name: bareCreateName ?? undefined,');
+    expect(posLayout).toContain('result.productName || bareCreateName || ean');
+    expect(apiClient).toContain('body.name = bareName;');
+    expect(posModule).toContain('name?: string;');
+    expect(posModule).toContain('result.productName || payload.name || payload.ean');
+    expect(preload).toContain('name?: string;');
   });
 });

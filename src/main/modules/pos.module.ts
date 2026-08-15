@@ -5042,6 +5042,7 @@ export class PosModule extends BaseModule {
         warehouseId?: string;
         categoryId?: string | null;
         createIfMiss?: boolean;
+        name?: string;
         idempotencyKey?: string;
       }) => {
         const token = getSecureAuthToken();
@@ -5066,7 +5067,7 @@ export class PosModule extends BaseModule {
               productRepo.upsertMany([{
                 id: result.variantId,
                 template_id: result.productId ?? null,
-                name: result.productName || payload.ean,
+                name: result.productName || payload.name || payload.ean,
                 sku: `QS-${String(payload.ean).toUpperCase()}`,
                 barcode: payload.ean,
                 retail_price: grosze,

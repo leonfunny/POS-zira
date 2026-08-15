@@ -41,6 +41,7 @@ interface ScanImportModalProps {
     categoryId: string | undefined,
     stockQty: number,
     vatRate: number,
+    name: string,
   ) => void | Promise<void>;
   onCancel: () => void;
   loading?: boolean;
@@ -97,6 +98,7 @@ export default function ScanImportModal({
 }: ScanImportModalProps) {
   const [closing, setClosing] = useState(false);
   const [priceInput, setPriceInput] = useState('');
+  const [nameInput, setNameInput] = useState('');
   const [stockInput, setStockInput] = useState('');
   const [selectedCategoryId, setSelectedCategoryId] = useState('');
   const [selectedVatRate, setSelectedVatRate] = useState<number>(BARE_CREATE_DEFAULT_VAT);
@@ -107,6 +109,9 @@ export default function ScanImportModal({
     if (!open) return;
     setClosing(false);
     setPriceInput('');
+    setNameInput(
+      isBareCreateSource(preview?.source) ? String(preview?.name ?? '') : '',
+    );
     setStockInput(
       isBareCreateSource(preview?.source) ? String(BARE_CREATE_DEFAULT_STOCK) : '',
     );
@@ -180,7 +185,7 @@ export default function ScanImportModal({
                 <div className="mt-1 text-xs text-slate-400">{vatText}</div>
                 {isBare ? (
                   <div className="mt-1 text-xs text-amber-300">
-                    {tOr('pos.scanImport.bareHint', 'SP chưa có trong hệ thống — tên tạm là mã vạch, sửa tên sau trong dashboard.')}
+                    {tOr('pos.scanImport.bareHint', 'SP chưa có trong hệ thống — đặt tên ngay bên dưới, hoặc để mã vạch rồi sửa sau.')}
                   </div>
                 ) : null}
                 {preview.status ? (
@@ -190,6 +195,28 @@ export default function ScanImportModal({
                 ) : null}
               </div>
             </div>
+            {isBare ? (
+              <label className="mt-4 block">
+                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-emerald-300">
+                  {tOr('pos.scanImport.bareName', 'Tên sản phẩm')}
+                </span>
+                <input
+                  value={nameInput}
+                  onChange={(event) => setNameInput(event.target.value)}
+                  onFocus={(event) => {
+                    // The prefill is the scanned code; select it so the first
+                    // keystroke replaces the digits with the real name.
+                    if (event.target.value === ean) event.target.select();
+                  }}
+                  maxLength={200}
+                  className="h-11 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 text-base font-semibold text-white outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-500/30"
+                  placeholder={ean}
+                />
+                <div className="mt-1 text-xs text-slate-400">
+                  {tOr('pos.scanImport.bareNameHint', 'Để nguyên mã vạch cũng bán được — đổi tên sau trong tab Sản phẩm.')}
+                </div>
+              </label>
+            ) : null}
             <label className="mt-4 block">
               <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-emerald-300">
                 {tOr('pos.scanImport.salePrice', 'Selling price')}
@@ -301,6 +328,7 @@ export default function ScanImportModal({
                 selectedCategoryId || undefined,
                 stockQty,
                 selectedVatRate,
+                isBare ? nameInput : String(preview?.name ?? ''),
               );
             }}
             disabled={

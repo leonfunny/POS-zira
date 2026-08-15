@@ -39,6 +39,7 @@ import {
   bareScanCreateIdempotencyKey,
   buildBareScanImportPreview,
   isBareCreateSource,
+  normalizeBareCreateName,
 } from './scan-import-bare';
 import QuickAddCameraModal, {
   QuickAddCapturedImage,
@@ -855,12 +856,16 @@ export default function POSLayout({
     categoryId: string | undefined,
     stockQty: number,
     vatRate: number,
+    name: string,
   ) => {
     const ean = scanImport.ean;
     if (!ean) return;
     setScanImport((s) => ({ ...s, loading: true, error: null }));
     try {
       const isBare = isBareCreateSource(scanImport.preview?.source);
+      // Only a real edit counts — an untouched digits prefill stays "no name"
+      // so the payload and idempotency key match the pre-name builds.
+      const bareCreateName = isBare ? normalizeBareCreateName(name, ean) : null;
       const isExternal = isExternalScanImportSource(scanImport.preview?.source);
       const draftPayload = categoryId
         ? { ean, retailPriceGrosze, categoryId, stockQty }
@@ -872,6 +877,7 @@ export default function POSLayout({
       const result = isBare
         ? await window.electronAPI.pos.masterCatalog.scanCreate({
           ean,
+          name: bareCreateName ?? undefined,
           retailPrice: retailPriceGrosze / 100,
           stockQty,
           taxRate: vatRate,
@@ -883,6 +889,7 @@ export default function POSLayout({
             vatRate,
             stockQty,
             categoryId: categoryId ?? null,
+            name: bareCreateName,
           }),
         })
         : isExternal
@@ -899,7 +906,7 @@ export default function POSLayout({
         // the cart line from what the cashier just typed so the sale continues.
         variant = {
           id: result.variantId,
-          name: result.productName || ean,
+          name: result.productName || bareCreateName || ean,
           sku: `QS-${ean.toUpperCase()}`,
           barcode: ean,
           retail_price: retailPriceGrosze,

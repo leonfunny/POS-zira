@@ -232,7 +232,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     masterCatalog: {
       lookupByEan: (ean: string) => ipcRenderer.invoke('pos:master-catalog:lookup-by-ean', ean),
       lookupExternalByEan: (ean: string) => ipcRenderer.invoke('pos:master-catalog:lookup-external-by-ean', ean),
-      scanCreate: (payload: { ean: string; purchasePrice?: number; retailPrice?: number; stockQty?: number; taxRate?: number; warehouseId?: string; categoryId?: string | null; createIfMiss?: boolean; idempotencyKey?: string }) =>
+      scanCreate: (payload: { ean: string; name?: string; purchasePrice?: number; retailPrice?: number; stockQty?: number; taxRate?: number; warehouseId?: string; categoryId?: string | null; createIfMiss?: boolean; idempotencyKey?: string }) =>
         ipcRenderer.invoke('pos:master-catalog:scan-create', payload),
       importDraft: (payload: { ean: string; retailPriceGrosze?: number; categoryId?: string; stockQty?: number }) =>
         ipcRenderer.invoke('pos:master-catalog:import-draft', payload),
