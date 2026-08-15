@@ -3734,6 +3734,7 @@ export class ApiClient {
       categoryId?: string | null;
       createIfMiss?: boolean;
       name?: string;
+      attachVariantId?: string;
       idempotencyKey?: string;
     },
   ): Promise<{
@@ -3776,6 +3777,9 @@ export class ApiClient {
     // digits-named flow must stay byte-identical to previous builds.
     const bareName = String(payload.name ?? '').trim();
     if (bareName) body.name = bareName;
+    // Fix 4: same only-when-present rule for the attach target.
+    const attachVariantId = String(payload.attachVariantId ?? '').trim();
+    if (attachVariantId) body.attachVariantId = attachVariantId;
 
     const response = await fetchWithTimeout(url, {
       method: 'POST',

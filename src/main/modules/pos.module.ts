@@ -5043,6 +5043,7 @@ export class PosModule extends BaseModule {
         categoryId?: string | null;
         createIfMiss?: boolean;
         name?: string;
+        attachVariantId?: string;
         idempotencyKey?: string;
       }) => {
         const token = getSecureAuthToken();
@@ -5093,6 +5094,34 @@ export class PosModule extends BaseModule {
               notifyPosRenderers(this.container, 'pos:products-synced');
             } catch (mirrorErr: any) {
               logger.warn(`[PosModule] scan-create local mirror upsert failed: ${mirrorErr?.message ?? mirrorErr}`);
+            }
+          }
+          if (payload?.attachVariantId && result?.mode === 'RESTOCK' && result?.variantId === payload.attachVariantId) {
+            // attach-mirror: the backend just claimed this EAN for an existing
+            // variant (Fix 4). Stamp the barcode and fresh on-hand locally so
+            // the very next scan of this EAN resolves without waiting for the
+            // best-effort deltaSync below.
+            try {
+              const newOnHand = Number(result?.newOnHand);
+              database.run(
+                `UPDATE product_variants
+                 SET barcode = ?,
+                     in_stock = COALESCE(?, in_stock),
+                     available_qty = COALESCE(?, available_qty),
+                     updated_at = ?
+                 WHERE id = ?`,
+                [
+                  String(payload.ean),
+                  Number.isFinite(newOnHand) ? newOnHand : null,
+                  Number.isFinite(newOnHand) ? newOnHand : null,
+                  new Date().toISOString(),
+                  payload.attachVariantId,
+                ],
+              );
+              database.markDirty();
+              notifyPosRenderers(this.container, 'pos:products-synced');
+            } catch (mirrorErr: any) {
+              logger.warn(`[PosModule] scan-create attach-mirror update failed: ${mirrorErr?.message ?? mirrorErr}`);
             }
           }
           // Pull fresh products + drafts so renderer can see the new variant.

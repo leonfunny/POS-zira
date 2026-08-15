@@ -53,6 +53,31 @@ function nameHashToken(value: string): string {
   return hash.toString(16).padStart(8, '0');
 }
 
+export interface AttachCandidateRow {
+  id: string;
+  name: string;
+  barcode: string | null;
+  is_active: number;
+  retail_price: number;
+  in_stock: number;
+}
+
+export const ATTACH_CANDIDATE_LIMIT = 6;
+
+/**
+ * Fix 4: candidates for "gán EAN vào SP có sẵn" — active local products that
+ * carry NO barcode at all (products with an INTERNAL barcode keep their
+ * supplier-SKU upgrade lane). Input is `pos.products.search(query)` output,
+ * already active-filtered and relevance-ordered; this narrows and caps it.
+ */
+export function filterAttachCandidates<T extends AttachCandidateRow>(
+  rows: T[],
+): T[] {
+  return rows
+    .filter((row) => row.is_active === 1 && !(row.barcode ?? '').trim())
+    .slice(0, ATTACH_CANDIDATE_LIMIT);
+}
+
 /**
  * Deterministic Idempotency-Key: an identical payload always maps to the same
  * key, so a retry after a lost response replays server-side instead of
@@ -67,13 +92,16 @@ export function bareScanCreateIdempotencyKey(args: {
   stockQty: number;
   categoryId?: string | null;
   name?: string | null;
+  attachVariantId?: string | null;
 }): string {
   const category = args.categoryId ? String(args.categoryId) : 'auto';
-  // Custom name joins the key as a short hash BEFORE the category so it
-  // survives the 80-char slice even with a UUID category. No custom name →
-  // key stays byte-identical to the pre-name format.
+  // Custom name / attach target join the key as short tokens BEFORE the
+  // category so they survive the 80-char slice even with a UUID category.
+  // Neither present → key stays byte-identical to the pre-name format.
   const customName = normalizeBareCreateName(args.name, args.ean);
   const nameToken = customName ? `-n${nameHashToken(customName)}` : '';
-  const key = `bare-${args.ean}-${args.retailPriceGrosze}-${args.vatRate}-${args.stockQty}${nameToken}-${category}`;
+  const attach = String(args.attachVariantId ?? '').trim();
+  const attachToken = attach ? `-a${attach.replace(/-/g, '').slice(0, 12)}` : '';
+  const key = `bare-${args.ean}-${args.retailPriceGrosze}-${args.vatRate}-${args.stockQty}${nameToken}${attachToken}-${category}`;
   return key.slice(0, 80);
 }

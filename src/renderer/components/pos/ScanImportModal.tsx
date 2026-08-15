@@ -7,6 +7,13 @@ import {
   isBareCreateSource,
 } from './scan-import-bare';
 
+export interface ScanImportAttachCandidate {
+  id: string;
+  name: string;
+  retail_price: number;
+  in_stock: number;
+}
+
 export interface ScanImportDraftPreview {
   id?: string;
   name: string;
@@ -42,7 +49,13 @@ interface ScanImportModalProps {
     stockQty: number,
     vatRate: number,
     name: string,
+    attachVariantId: string | null,
   ) => void | Promise<void>;
+  /**
+   * Fix 4: local search for active barcode-less products the cashier can
+   * attach the scanned EAN to instead of creating a twin. Bare mode only.
+   */
+  searchAttachCandidates?: (query: string) => Promise<ScanImportAttachCandidate[]>;
   onCancel: () => void;
   loading?: boolean;
   error?: string | null;
@@ -95,11 +108,14 @@ export default function ScanImportModal({
   loading,
   error,
   t,
+  searchAttachCandidates,
 }: ScanImportModalProps) {
   const [closing, setClosing] = useState(false);
   const [priceInput, setPriceInput] = useState('');
   const [nameInput, setNameInput] = useState('');
   const [stockInput, setStockInput] = useState('');
+  const [attachTarget, setAttachTarget] = useState<ScanImportAttachCandidate | null>(null);
+  const [attachCandidates, setAttachCandidates] = useState<ScanImportAttachCandidate[]>([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState('');
   const [selectedVatRate, setSelectedVatRate] = useState<number>(BARE_CREATE_DEFAULT_VAT);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -112,12 +128,40 @@ export default function ScanImportModal({
     setNameInput(
       isBareCreateSource(preview?.source) ? String(preview?.name ?? '') : '',
     );
+    setAttachTarget(null);
+    setAttachCandidates([]);
     setStockInput(
       isBareCreateSource(preview?.source) ? String(BARE_CREATE_DEFAULT_STOCK) : '',
     );
     setSelectedVatRate(BARE_CREATE_DEFAULT_VAT);
     setSelectedCategoryId(resolveInitialScanImportCategoryId(preview, categoryOptions));
   }, [open, preview?.id, preview?.barcode, preview?.source, preview?.suggestedCategoryId, categoryOptions]);
+
+  // Fix 4: as the cashier types a real name, look for existing barcode-less
+  // products to attach the EAN to instead of creating a twin.
+  useEffect(() => {
+    if (!open || !searchAttachCandidates || attachTarget) return;
+    if (!isBareCreateSource(preview?.source)) return;
+    const query = nameInput.trim();
+    if (query.length < 2 || query === ean.trim()) {
+      setAttachCandidates([]);
+      return;
+    }
+    let stale = false;
+    const timer = setTimeout(() => {
+      searchAttachCandidates(query)
+        .then((rows) => {
+          if (!stale) setAttachCandidates(rows ?? []);
+        })
+        .catch(() => {
+          if (!stale) setAttachCandidates([]);
+        });
+    }, 250);
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
+  }, [open, nameInput, ean, attachTarget, preview?.source, searchAttachCandidates]);
 
   if (!open) return null;
 
@@ -195,7 +239,29 @@ export default function ScanImportModal({
                 ) : null}
               </div>
             </div>
-            {isBare ? (
+            {isBare && attachTarget ? (
+              <div className="mt-4 rounded-lg border border-sky-500/50 bg-sky-900/30 px-3 py-2">
+                <div className="text-xs font-semibold uppercase tracking-wide text-sky-300">
+                  {tOr('pos.scanImport.attachSelected', 'Gán mã vạch vào SP có sẵn')}
+                </div>
+                <div className="mt-1 flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="truncate text-base font-semibold text-white">{attachTarget.name}</div>
+                    <div className="text-xs text-slate-300">
+                      {(attachTarget.retail_price / 100).toFixed(2)} zł · {tOr('pos.scanImport.attachStock', 'tồn')} {attachTarget.in_stock}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAttachTarget(null)}
+                    className="shrink-0 rounded-md border border-slate-500 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700/60"
+                  >
+                    {tOr('pos.scanImport.attachClear', '✕ Bỏ chọn')}
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            {isBare && !attachTarget ? (
               <label className="mt-4 block">
                 <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-emerald-300">
                   {tOr('pos.scanImport.bareName', 'Tên sản phẩm')}
@@ -215,6 +281,28 @@ export default function ScanImportModal({
                 <div className="mt-1 text-xs text-slate-400">
                   {tOr('pos.scanImport.bareNameHint', 'Để nguyên mã vạch cũng bán được — đổi tên sau trong tab Sản phẩm.')}
                 </div>
+                {attachCandidates.length ? (
+                  <div className="mt-2 rounded-lg border border-sky-500/40 bg-slate-900/70 p-2">
+                    <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-sky-300">
+                      {tOr('pos.scanImport.attachTitle', 'SP có sẵn chưa có mã vạch — chạm để GÁN thay vì tạo mới')}
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      {attachCandidates.map((candidate) => (
+                        <button
+                          key={candidate.id}
+                          type="button"
+                          onClick={() => setAttachTarget(candidate)}
+                          className="flex items-center justify-between gap-2 rounded-md border border-slate-600 bg-slate-800 px-2 py-1.5 text-left hover:border-sky-400 hover:bg-slate-700/70"
+                        >
+                          <span className="min-w-0 truncate text-sm font-medium text-white">{candidate.name}</span>
+                          <span className="shrink-0 text-xs text-slate-300">
+                            {(candidate.retail_price / 100).toFixed(2)} zł · {candidate.in_stock}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
               </label>
             ) : null}
             <label className="mt-4 block">
@@ -233,7 +321,7 @@ export default function ScanImportModal({
                 {tOr('pos.scanImport.salePriceHint', 'This price will be saved to the product and used for this cart line.')}
               </div>
             </label>
-            {isBare ? (
+            {isBare && !attachTarget ? (
               <div className="mt-4">
                 <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-emerald-300">
                   {tOr('pos.scanImport.vat', 'VAT')}
@@ -329,6 +417,7 @@ export default function ScanImportModal({
                 stockQty,
                 selectedVatRate,
                 isBare ? nameInput : String(preview?.name ?? ''),
+                isBare ? attachTarget?.id ?? null : null,
               );
             }}
             disabled={

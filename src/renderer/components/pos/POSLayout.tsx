@@ -38,6 +38,7 @@ import ScanImportModal, { type ScanImportCategoryOption, type ScanImportDraftPre
 import {
   bareScanCreateIdempotencyKey,
   buildBareScanImportPreview,
+  filterAttachCandidates,
   isBareCreateSource,
   normalizeBareCreateName,
 } from './scan-import-bare';
@@ -857,6 +858,7 @@ export default function POSLayout({
     stockQty: number,
     vatRate: number,
     name: string,
+    attachVariantId: string | null,
   ) => {
     const ean = scanImport.ean;
     if (!ean) return;
@@ -874,22 +876,26 @@ export default function POSLayout({
       // through backend quick-add so the new product exists online too. A
       // bare create goes through scan-create with createIfMiss so an EAN
       // nobody has ever catalogued becomes sellable on the spot (online-only).
+      // Attach mode claims the EAN for an existing barcode-less product
+      // instead — never both (server 400s the combination).
       const result = isBare
         ? await window.electronAPI.pos.masterCatalog.scanCreate({
           ean,
-          name: bareCreateName ?? undefined,
+          name: attachVariantId ? undefined : bareCreateName ?? undefined,
           retailPrice: retailPriceGrosze / 100,
           stockQty,
           taxRate: vatRate,
           categoryId: categoryId ?? null,
-          createIfMiss: true,
+          createIfMiss: attachVariantId ? undefined : true,
+          attachVariantId: attachVariantId ?? undefined,
           idempotencyKey: bareScanCreateIdempotencyKey({
             ean,
             retailPriceGrosze,
             vatRate,
             stockQty,
             categoryId: categoryId ?? null,
-            name: bareCreateName,
+            name: attachVariantId ? null : bareCreateName,
+            attachVariantId,
           }),
         })
         : isExternal
@@ -900,6 +906,9 @@ export default function POSLayout({
         return;
       }
       let variant = result.variant
+        ?? (attachVariantId
+          ? await window.electronAPI.pos.products.getById(attachVariantId)
+          : null)
         ?? (await window.electronAPI.pos.products.getByBarcode(ean));
       if (!variant && isBare && result?.variantId) {
         // Server committed but the local mirror hasn't caught up yet — build
@@ -1594,6 +1603,8 @@ export default function POSLayout({
         loading={scanImport.loading}
         error={scanImport.error}
         t={t}
+        searchAttachCandidates={async (query: string) =>
+          filterAttachCandidates(await window.electronAPI.pos.products.search(query) ?? [])}
       />
       <QuickAddCameraModal
         open={showQuickAddCamera}

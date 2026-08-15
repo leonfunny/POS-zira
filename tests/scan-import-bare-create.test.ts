@@ -7,6 +7,7 @@ import {
   BARE_CREATE_VAT_OPTIONS,
   bareScanCreateIdempotencyKey,
   buildBareScanImportPreview,
+  filterAttachCandidates,
   isBareCreateSource,
   normalizeBareCreateName,
 } from '../src/renderer/components/pos/scan-import-bare';
@@ -72,7 +73,7 @@ describe('bare-create wiring', () => {
   it('sends bare creates through scan-create with createIfMiss and złoty price', () => {
     expect(posLayout).toContain('window.electronAPI.pos.masterCatalog.scanCreate({');
     expect(posLayout).toContain('retailPrice: retailPriceGrosze / 100,');
-    expect(posLayout).toContain('createIfMiss: true,');
+    expect(posLayout).toContain('createIfMiss: attachVariantId ? undefined : true,');
     expect(posLayout).toContain('taxRate: vatRate,');
     expect(posLayout).toContain('idempotencyKey: bareScanCreateIdempotencyKey({');
     // the draft and external paths are untouched
@@ -145,11 +146,89 @@ describe('bare-create custom name wiring', () => {
 
   it('sends the custom name through scan-create end to end', () => {
     expect(posLayout).toContain('normalizeBareCreateName(');
-    expect(posLayout).toContain('name: bareCreateName ?? undefined,');
+    expect(posLayout).toContain('name: attachVariantId ? undefined : bareCreateName ?? undefined,');
     expect(posLayout).toContain('result.productName || bareCreateName || ean');
     expect(apiClient).toContain('body.name = bareName;');
     expect(posModule).toContain('name?: string;');
     expect(posModule).toContain('result.productName || payload.name || payload.ean');
     expect(preload).toContain('name?: string;');
+  });
+});
+
+describe('bare-create attach-to-existing (Fix 4)', () => {
+  it('filters candidates to active products without any barcode, capped at 6', () => {
+    const mk = (id: string, name: string, barcode: string | null, is_active = 1) => ({
+      id, name, barcode, is_active, retail_price: 100, in_stock: 2,
+    });
+    const rows: any[] = [
+      mk('keep-null', 'Ngô nếp sấy giòn', null),
+      mk('keep-empty', 'Rau răm', ''),
+      mk('drop-barcode', 'Có mã', '5901234123457'),
+      mk('drop-inactive', 'Tắt rồi', null, 0),
+      mk('x1', 'a', null), mk('x2', 'b', null), mk('x3', 'c', null),
+      mk('x4', 'd', null), mk('x5', 'e', null), mk('x6', 'f', null),
+    ];
+    const out = filterAttachCandidates(rows);
+    const ids = out.map((r: any) => r.id);
+    expect(ids).toContain('keep-null');
+    expect(ids).toContain('keep-empty');
+    expect(ids).not.toContain('drop-barcode');
+    expect(ids).not.toContain('drop-inactive');
+    expect(out.length).toBeLessThanOrEqual(6);
+  });
+
+  it('mints a distinct stable key for attach mode that survives the 80-char cap', () => {
+    const base = {
+      ean: '5901234123457',
+      retailPriceGrosze: 1250,
+      vatRate: 8,
+      stockQty: 24,
+      categoryId: null,
+    };
+    const plain = bareScanCreateIdempotencyKey(base);
+    const attach = bareScanCreateIdempotencyKey({
+      ...base,
+      attachVariantId: '77777777-7777-4777-8777-777777777777',
+    });
+    expect(attach).not.toBe(plain);
+    expect(attach).toBe(bareScanCreateIdempotencyKey({
+      ...base,
+      attachVariantId: '77777777-7777-4777-8777-777777777777',
+    }));
+    expect(bareScanCreateIdempotencyKey({ ...base, attachVariantId: null })).toBe(plain);
+    const wide = bareScanCreateIdempotencyKey({
+      ean: '12345678901234',
+      retailPriceGrosze: 999_999_999_999,
+      vatRate: 23,
+      stockQty: 999_999_999,
+      categoryId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+      attachVariantId: '77777777-7777-4777-8777-777777777777',
+    });
+    const wideOther = bareScanCreateIdempotencyKey({
+      ean: '12345678901234',
+      retailPriceGrosze: 999_999_999_999,
+      vatRate: 23,
+      stockQty: 999_999_999,
+      categoryId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+      attachVariantId: '99999999-9999-4999-8999-999999999999',
+    });
+    expect(wide.length).toBeLessThanOrEqual(80);
+    expect(wide).not.toBe(wideOther);
+  });
+
+  it('modal offers the attach picker in bare mode', () => {
+    expect(modal).toContain('searchAttachCandidates');
+    expect(modal).toContain('attachTarget');
+    expect(modal).toContain('setAttachTarget');
+    expect(modal).toContain('attachVariantId: string | null');
+  });
+
+  it('carries attachVariantId end to end without createIfMiss', () => {
+    expect(posLayout).toContain('searchAttachCandidates=');
+    expect(posLayout).toContain('attachVariantId: attachVariantId ?? undefined,');
+    expect(apiClient).toContain('body.attachVariantId = attachVariantId;');
+    expect(posModule).toContain('attachVariantId?: string;');
+    expect(posModule).toContain('attach-mirror');
+    expect(preload).toContain('attachVariantId?: string');
   });
 });
