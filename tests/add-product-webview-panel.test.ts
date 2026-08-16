@@ -16,13 +16,18 @@ const posPreload = readSource('../src/preload/preload-pos.ts');
 const posModule = readSource('../src/main/modules/pos.module.ts');
 
 describe('add product webview panel', () => {
-  it('wires the create-product quick action into the POS add-product panel', () => {
+  it('keeps the create-product quick action UNWIRED while /add returns 404', () => {
+    // The embedded https://chesaigon.eshoper.pro/add page is chesaigon-only
+    // and currently 404s, so POSLayout intentionally does not pass
+    // onCreateProduct — QuickActions then hides the button entirely
+    // (2026-08-16). The plumbing stays in place for when /add comes back.
     expect(quickActions).toContain("label={tOr('pos.quickAdd.createProduct', 'Tạo sản phẩm')}");
     expect(quickActions).toContain('onClick={onCreateProduct}');
+    expect(quickActions).toContain('{onCreateProduct && (');
     expect(retailTemplate).toContain('onCreateProduct={onCreateProduct ? () => {');
     expect(retailTemplate).toContain('interruptAutoCamera();');
     expect(posLayout).toContain('const [showAddProduct, setShowAddProduct] = useState(false)');
-    expect(posLayout).toContain('onCreateProduct={() => setShowAddProduct(true)}');
+    expect(posLayout).not.toContain('onCreateProduct={() => setShowAddProduct(true)}');
     expect(posLayout).toContain('<AddProductWebviewPanel');
   });
 

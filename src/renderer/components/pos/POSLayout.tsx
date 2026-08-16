@@ -1948,6 +1948,10 @@ export default function POSLayout({
       {/* Mode-specific layout */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {posMode === 'retail' && (
+          // "Tạo sản phẩm" (onCreateProduct) is unwired: it embedded the
+          // chesaigon-only https://chesaigon.eshoper.pro/add page, which now
+          // returns 404. Product creation at the till goes through the
+          // unknown-EAN scan modal instead. Re-wire once /add is multi-salon.
           <RetailTemplate
             state={state}
             dispatch={dispatch}
@@ -1956,7 +1960,6 @@ export default function POSLayout({
             session={session}
             onUnknownBarcodeScanned={handleUnknownBarcodeScanned}
             onQuickAddCamera={() => setShowQuickAddCamera(true)}
-            onCreateProduct={() => setShowAddProduct(true)}
             onLastLabelVariantChange={rememberLastLabelVariant}
             onPrintLastCartLabelCommand={handlePrintLastCartLabelCommand}
             onManualWeightRequired={openManualWeightPrompt}
