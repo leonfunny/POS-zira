@@ -332,6 +332,11 @@ export class EscPosFormatter {
     const padding = this.charsPerLine - detail.length - letter.length;
     parts.push(this.text(detail + ' '.repeat(Math.max(1, padding)) + letter));
 
+    // Itemized manual discount under its product (Lidl/Biedronka style).
+    if (item.displayLineDiscount && item.displayLineDiscount > 0) {
+      parts.push(this.formatLine('  Rabat:', `-${this.formatMoney(item.displayLineDiscount)}`));
+    }
+
     return Buffer.concat(parts);
   }
 
@@ -486,6 +491,10 @@ export class EscPosFormatter {
       const qty = `${item.quantity} ${unit}`;
       const detail = `  ${qty} * ${this.formatMoney(item.unitPrice)} = ${this.formatMoney(item.totalPrice)}`;
       lines.push(lr(detail, this.ptuLetter(item.vatRate)));
+      // Itemized manual discount under its product (Lidl/Biedronka style).
+      if (item.displayLineDiscount && item.displayLineDiscount > 0) {
+        lines.push(lr('  Rabat:', `-${this.formatMoney(item.displayLineDiscount)}`));
+      }
     }
     lines.push({ separator: true, separatorChar: '-', text: '' });
 

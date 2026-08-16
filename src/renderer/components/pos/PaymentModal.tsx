@@ -376,7 +376,9 @@ export default function PaymentModal({
   const cashAmountGrosze = Number.isFinite(parsedCash) ? Math.round(parsedCash * 100) : 0;
   const liveChangeGrosze = method === 'CASH' && !splitMode ? Math.max(0, cashAmountGrosze - liveGrandTotal) : 0;
   const displaySubtotal = paymentSnapshot?.subtotal ?? cart.subtotal;
-  const displayDiscount = paymentSnapshot?.discount ?? cart.discount;
+  // Per-line discounts and the whole-receipt discount surface as one combined
+  // "Rabat" row here; the paper order copy itemizes line discounts per product.
+  const displayDiscount = paymentSnapshot?.discount ?? (cart.discount + (cart.lineDiscountTotal ?? 0));
   const displayTax = paymentSnapshot?.tax ?? cart.tax;
   const displayTip = paymentSnapshot?.tip ?? tip;
   const displayGrandTotal = paymentSnapshot?.grandTotal ?? liveGrandTotal;
@@ -652,7 +654,9 @@ export default function PaymentModal({
       number_series: numberSeries,
       status: 'COMPLETED',
       subtotal: cart.subtotal,
-      discount: cart.discount,
+      // orders.discount carries ALL discounts (line + whole-receipt) so the
+      // existing invariant holds: total + discount == SUM(order_items.total).
+      discount: cart.discount + (cart.lineDiscountTotal ?? 0),
       tax: cart.tax,
       total: cart.total,
       payment_method: primaryMethod,
@@ -707,8 +711,8 @@ export default function PaymentModal({
       billiard_json: item.billiard ? JSON.stringify(item.billiard) : null,
       inventory_policy: item.billiard?.inventoryPolicy ?? null,
       refund_policy: item.billiard?.refundPolicy ?? null,
-      allocated_discount: item.billiard?.allocatedDiscountGrosze ?? 0,
-      payable_total: item.billiard?.payableGrosze ?? item.total,
+      allocated_discount: item.billiard?.allocatedDiscountGrosze ?? item.lineDiscount ?? 0,
+      payable_total: item.billiard?.payableGrosze ?? (item.total - (item.lineDiscount ?? 0)),
     }));
 
     const result = await window.electronAPI.pos.orders.create(order, items, {
@@ -826,7 +830,7 @@ export default function PaymentModal({
     const outcome = deriveReceiptOutcome(printResult, t);
     setPaymentSnapshot({
       subtotal: cart.subtotal,
-      discount: cart.discount,
+      discount: cart.discount + (cart.lineDiscountTotal ?? 0),
       tax: cart.tax,
       total: cart.total,
       tip,

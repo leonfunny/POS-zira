@@ -41,6 +41,12 @@ export interface CartItem {
   course?: number;        // Restaurant: course number (1=starter, 2=main, 3=dessert)
   vatRate?: number;       // VAT rate (e.g. 23, 8, 5, 0) - from product
   name_translations?: string | null;
+  /** Cashier-entered per-line discount: how it was entered. */
+  lineDiscountType?: 'fixed' | 'percentage';
+  /** As entered: percent (0-100) or grosze, depending on lineDiscountType. */
+  lineDiscountValue?: number;
+  /** Effective per-line discount in grosze, recomputed by recalcCart. */
+  lineDiscount?: number;
   /** Frozen server-origin line. Reducer and renderer must not mutate it. */
   locked?: boolean;
   billiard?: BilliardCartLineMetadata;
@@ -52,6 +58,8 @@ export interface CartState {
   discount: number;
   discountType?: 'fixed' | 'percentage';
   discountPercent?: number;
+  /** Sum of all effective per-line discounts in grosze. */
+  lineDiscountTotal?: number;
   tax: number;
   total: number;
 }
@@ -163,6 +171,8 @@ export type PosAction =
   | { type: 'cart/completeCheckout' }
   | { type: 'cart/applyDiscount'; payload: { amount: number; discountType?: 'fixed' | 'percentage' } }
   | { type: 'cart/clearDiscount' }
+  | { type: 'cart/applyItemDiscount'; payload: { id: string; amount: number; discountType?: 'fixed' | 'percentage' } }
+  | { type: 'cart/clearItemDiscount'; payload: { id: string } }
   | { type: 'cart/setItemNotes'; payload: { id: string; notes: string } }
   | { type: 'cart/setItemPrice'; payload: { id: string; price: number } }
   | { type: 'cart/setItemStaff'; payload: { id: string; staffId: string; staffName: string } }
@@ -226,23 +236,44 @@ export function isCustomerDisplayCatalogSectionEnabled(
 
 // === Reducer ===
 
+function effectiveLineDiscount(item: CartItem): number {
+  if (item.lineDiscountType === 'percentage') {
+    const percent = Math.max(0, Math.min(Number(item.lineDiscountValue) || 0, 100));
+    return Math.min(Math.round(item.total * percent / 100), item.total);
+  }
+  if (item.lineDiscountType === 'fixed') {
+    return Math.max(0, Math.min(Math.round(Number(item.lineDiscountValue) || 0), item.total));
+  }
+  return 0;
+}
+
 function recalcCart(cart: CartState): CartState {
-  const subtotal = cart.items.reduce((sum, item) => sum + item.total, 0);
-  // Recalculate percentage discounts when cart changes; clamp to subtotal
+  // Per-line discounts track their line: percentage rescales with qty/price,
+  // fixed clamps to the (possibly shrunken) line total. item.total stays gross.
+  const items = cart.items.map((item) => {
+    const lineDiscount = effectiveLineDiscount(item);
+    if ((item.lineDiscount ?? 0) === lineDiscount) return item;
+    return { ...item, lineDiscount };
+  });
+  const subtotal = items.reduce((sum, item) => sum + item.total, 0);
+  const lineDiscountTotal = items.reduce((sum, item) => sum + (item.lineDiscount ?? 0), 0);
+  // The whole-receipt discount applies on the line-discounted base; clamp there.
+  const receiptBase = Math.max(0, subtotal - lineDiscountTotal);
   const discount = cart.discountType === 'percentage' && cart.discountPercent != null
-    ? Math.min(Math.round(subtotal * cart.discountPercent / 100), subtotal)
-    : Math.min(cart.discount, subtotal);
+    ? Math.min(Math.round(receiptBase * cart.discountPercent / 100), receiptBase)
+    : Math.min(cart.discount, receiptBase);
   // Polish tax compliance: round VAT per line item in grosze, then sum.
-  // item.total is gross (incl. VAT). VAT = gross - gross / (1 + rate/100)
-  const tax = cart.items.reduce((sum, item) => {
+  // Payable line amount is gross (incl. VAT). VAT = gross - gross / (1 + rate/100)
+  const tax = items.reduce((sum, item) => {
     const rate = item.vatRate ?? 0;
     if (rate <= 0) return sum;
+    const payable = item.total - (item.lineDiscount ?? 0);
     // Round each item's VAT independently to avoid floating-point accumulation
-    const itemVat = Math.round(item.total - item.total * 100 / (100 + rate));
+    const itemVat = Math.round(payable - payable * 100 / (100 + rate));
     return sum + itemVat;
   }, 0);
-  const total = Math.max(0, subtotal - discount);
-  return { ...cart, subtotal, discount, tax, total };
+  const total = Math.max(0, subtotal - lineDiscountTotal - discount);
+  return { ...cart, items, subtotal, discount, lineDiscountTotal, tax, total };
 }
 
 /**
@@ -459,6 +490,32 @@ function posReducer(
         discountType: undefined,
         discountPercent: undefined,
       }) };
+    }
+
+    case 'cart/applyItemDiscount': {
+      if (state.checkoutDraft.billiard) return state;
+      const existing = state.cart.items.find((item) => item.id === action.payload.id);
+      if (!existing || existing.locked) return state;
+      const discountType = action.payload.discountType ?? 'fixed';
+      const value = Math.max(0, Number(action.payload.amount) || 0);
+      if (value <= 0) return state;
+      const items = state.cart.items.map((i) =>
+        i.id === action.payload.id
+          ? { ...i, lineDiscountType: discountType, lineDiscountValue: value }
+          : i,
+      );
+      return { ...state, cart: recalcCart({ ...state.cart, items }) };
+    }
+
+    case 'cart/clearItemDiscount': {
+      if (state.checkoutDraft.billiard) return state;
+      if (state.cart.items.some((item) => item.id === action.payload.id && item.locked)) return state;
+      const items = state.cart.items.map((i) =>
+        i.id === action.payload.id
+          ? { ...i, lineDiscountType: undefined, lineDiscountValue: undefined, lineDiscount: undefined }
+          : i,
+      );
+      return { ...state, cart: recalcCart({ ...state.cart, items }) };
     }
 
     case 'cart/setItemNotes': {

@@ -45,8 +45,13 @@ export default function CartView({ cart, t, upsellItems, onRequestService }: Car
                 <span className="text-slate-400 text-sm ml-2">({item.staffName})</span>
               )}
             </span>
-            <span className="tabular-nums font-semibold text-slate-900">
-              {new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' }).format(item.total / 100)}
+            <span className="text-right tabular-nums font-semibold text-slate-900">
+              {(item.lineDiscount ?? 0) > 0 && (
+                <span className="mr-2 text-base text-slate-400 line-through">
+                  {new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' }).format(item.total / 100)}
+                </span>
+              )}
+              {new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' }).format((item.total - (item.lineDiscount ?? 0)) / 100)}
             </span>
           </div>
         ))}

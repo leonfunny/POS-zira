@@ -19,6 +19,8 @@ interface CartItemProps {
   onEditProduct?: (item: CartItemType) => void;
   onSelectField?: (id: string, field: 'qty' | 'price') => void;
   onEditPrice?: (item: CartItemType) => void;
+  /** Tap on the product name opens the per-line discount popup. */
+  onEditDiscount?: (item: CartItemType) => void;
   onReadScale?: (item: CartItemType) => void;
   scaleBusy?: boolean;
   scaleError?: string | null;
@@ -41,6 +43,7 @@ export default function CartItemRow({
   onEditProduct,
   onSelectField,
   onEditPrice,
+  onEditDiscount,
   onReadScale,
   scaleBusy,
   scaleError,
@@ -106,7 +109,16 @@ export default function CartItemRow({
     ? activeBuffer
     : (item.price / 100).toFixed(2);
   const unitPriceText = `${priceDisplay} ${currency}${perUnit}`;
-  const lineTotalText = `${(item.total / 100).toFixed(2)} ${currency}`;
+  const lineDiscount = item.lineDiscount ?? 0;
+  const grossTotalText = `${(item.total / 100).toFixed(2)} ${currency}`;
+  const lineTotalText = lineDiscount > 0
+    ? `${((item.total - lineDiscount) / 100).toFixed(2)} ${currency}`
+    : grossTotalText;
+  const lineDiscountBadge = lineDiscount > 0
+    ? (item.lineDiscountType === 'percentage'
+      ? `-${item.lineDiscountValue}%`
+      : `-${(lineDiscount / 100).toFixed(2)}`)
+    : null;
   const formulaQtyText = `${qtyDisplay}${sellBy === 'WEIGHT' ? ` ${saleUnit}` : ''}`;
   const unitPriceQtyText = `${unitPriceText} × ${formulaQtyText}`;
 
@@ -120,9 +132,26 @@ export default function CartItemRow({
     } ${fresh ? 'sc-cart-item-fresh pos-cart-item-fresh' : ''}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-extrabold text-slate-950 leading-snug line-clamp-2">
-            {resolveName(item, lang)}
-          </p>
+          {/* Product name doubles as the per-line discount entry point so the
+              crowded POS layout gains no extra button (design: 2026-08-16). */}
+          <button
+            type="button"
+            onClick={() => { if (!item.locked && onEditDiscount) onEditDiscount(item); }}
+            disabled={item.locked || !onEditDiscount}
+            title={tOr('pos.discount.lineTitle', 'Line discount')}
+            className={`block w-full text-left text-sm font-extrabold text-slate-950 leading-snug touch-manipulation ${
+              item.locked || !onEditDiscount ? 'cursor-default' : 'cursor-pointer hover:text-brand-800'
+            }`}
+          >
+            <span className="line-clamp-2">
+              {resolveName(item, lang)}
+              {lineDiscountBadge && (
+                <span className="ml-1.5 inline-block rounded-full bg-emerald-100 px-1.5 py-0.5 align-middle text-[10px] font-black text-emerald-800">
+                  {lineDiscountBadge}
+                </span>
+              )}
+            </span>
+          </button>
           {item.locked && item.billiard && (
             <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide">
               <span className="rounded-full bg-blue-50 px-2 py-0.5 text-blue-700">Billiard · {item.billiard.kind}</span>
@@ -133,8 +162,15 @@ export default function CartItemRow({
             </div>
           )}
         </div>
-        <span className="text-base font-black text-slate-950 tabular-nums leading-none shrink-0">
-          {lineTotalText}
+        <span className="shrink-0 text-right leading-none">
+          {lineDiscount > 0 && (
+            <span className="block text-[11px] font-bold text-slate-400 tabular-nums line-through">
+              {grossTotalText}
+            </span>
+          )}
+          <span className={`text-base font-black tabular-nums ${lineDiscount > 0 ? 'text-emerald-700' : 'text-slate-950'}`}>
+            {lineTotalText}
+          </span>
         </span>
       </div>
 

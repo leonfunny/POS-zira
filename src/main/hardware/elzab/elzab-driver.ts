@@ -33,6 +33,8 @@ function toFiscalSafeReceiptData(data: ReceiptData): ReceiptData {
         ...item,
         name: toFiscalSafeItemName(item.name),
         unit: unit || undefined,
+        // Copy-only itemization; never forward it to the fiscal sidecar.
+        displayLineDiscount: undefined,
       };
     }),
   };

@@ -47,7 +47,12 @@ export default function RetailAssistedCartView({ cart, t, language, paymentStatu
                   </div>
                   <div className="text-right text-3xl font-semibold tabular-nums text-slate-700">x{item.quantity}</div>
                   <div className="text-right text-3xl font-semibold tabular-nums text-slate-950">
-                    {formatDisplayCurrency(item.total, language)}
+                    {(item.lineDiscount ?? 0) > 0 && (
+                      <div className="text-xl font-medium text-slate-400 line-through">
+                        {formatDisplayCurrency(item.total, language)}
+                      </div>
+                    )}
+                    {formatDisplayCurrency(item.total - (item.lineDiscount ?? 0), language)}
                   </div>
                 </div>
               ))}

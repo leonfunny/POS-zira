@@ -275,12 +275,16 @@ export class PaymentController {
       ) {
         throw new Error(`FISCAL_BILLIARD_PAYABLE_INVALID: Invalid frozen payable amount on line ${index + 1}.`);
       }
+      // Manual cashier line discount (non-billiard): itemized on the paper
+      // order copy only; its total already sits in the receipt-level rabat.
+      const manualLineDiscount = !isBilliardOrder ? Math.max(0, Number(i.allocated_discount) || 0) : 0;
       return {
         name: this.getReceiptItemName(i),
         quantity: i.quantity,
         unitPrice,
         totalPrice,
         ...(isBilliardOrder ? { allocatedDiscount } : {}),
+        ...(manualLineDiscount > 0 ? { displayLineDiscount: manualLineDiscount } : {}),
         vatRate: i.vat_rate,
         sku: i.sku || undefined,
         unit: this.getReceiptItemUnit(i, product),

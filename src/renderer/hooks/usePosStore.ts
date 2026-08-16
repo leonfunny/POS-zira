@@ -39,6 +39,12 @@ interface CartItem {
   // cart without re-fetching products. Orders/fiscal lines still use `name`;
   // paper receipts localize separately at print time.
   name_translations?: string | null;
+  /** Cashier-entered per-line discount: how it was entered. */
+  lineDiscountType?: 'fixed' | 'percentage';
+  /** As entered: percent (0-100) or grosze, depending on lineDiscountType. */
+  lineDiscountValue?: number;
+  /** Effective per-line discount in grosze, recomputed by the main reducer. */
+  lineDiscount?: number;
   locked?: boolean;
   billiard?: BilliardCartLineMetadata;
 }
@@ -49,6 +55,8 @@ interface CartState {
   discount: number;
   discountType?: 'fixed' | 'percentage';
   discountPercent?: number;
+  /** Sum of all effective per-line discounts in grosze. */
+  lineDiscountTotal?: number;
   tax: number;
   total: number;
 }
@@ -130,6 +138,8 @@ type PosAction =
   | { type: 'cart/completeCheckout' }
   | { type: 'cart/applyDiscount'; payload: { amount: number; discountType?: 'fixed' | 'percentage' } }
   | { type: 'cart/clearDiscount' }
+  | { type: 'cart/applyItemDiscount'; payload: { id: string; amount: number; discountType?: 'fixed' | 'percentage' } }
+  | { type: 'cart/clearItemDiscount'; payload: { id: string } }
   | { type: 'cart/setItemNotes'; payload: { id: string; notes: string } }
   | { type: 'cart/setItemPrice'; payload: { id: string; price: number } }
   | { type: 'cart/setItemStaff'; payload: { id: string; staffId: string; staffName: string } }

@@ -736,6 +736,12 @@ export interface ReceiptItem {
   totalPrice: number;
   /** Absolute discount assigned to this exact line, in grosze. */
   allocatedDiscount?: number;
+  /**
+   * Manual per-line discount in grosze, shown under the item on NON-fiscal
+   * order copies only (Lidl/Biedronka style). Fiscal drivers must ignore it;
+   * its amount is already inside the receipt-level `discount`.
+   */
+  displayLineDiscount?: number;
   vatRate: number; // 23, 8, 5, 0
   sku?: string;
   unit?: string; // szt., kg, paczka, usługa

@@ -543,9 +543,14 @@ function RefundPanel({
       quantity: item.quantity,
       remainingQuantity: item.maxQty,
       total: item.total,
-      // A Billiard discount is allocated per frozen line by the server. Keep
-      // that allocation authoritative through partial and repeated refunds.
-      authoritativePayableTotal: billiardMetadata ? item.payable_total : null,
+      // A Billiard discount is allocated per frozen line by the server, and a
+      // manual cashier line discount is persisted the same way. Keep the
+      // post-discount allocation authoritative through partial and repeated
+      // refunds so a discounted line can never refund more than was paid.
+      authoritativePayableTotal:
+        billiardMetadata || Number(item.allocated_discount ?? 0) > 0
+          ? item.payable_total
+          : null,
       refundedAmount: breakdown?.refundedAmount ?? 0,
       sell_by: item.sell_by,
     });

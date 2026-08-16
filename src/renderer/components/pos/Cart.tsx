@@ -5,6 +5,7 @@ import POSNumpad from './POSNumpad';
 import { appendDecimal, appendDigit, appendDoubleZero, parseBufferGrosze, usePOSNumpadController } from '../../hooks/usePOSNumpadController';
 import { useConfig } from '../../hooks/useConfig';
 import { normalizeSellBy } from '../../../shared/pos-sale';
+import { resolveName } from '../../../shared/catalog-names';
 
 interface CartProps {
   cart: CartState;
@@ -116,9 +117,14 @@ function OverflowMenu({ hasItems, confirmClear, onRequestClear, onCancelClear, o
 }
 
 interface DiscountPopupProps {
+  /** Discount base in grosze: cart subtotal, or one line's gross total. */
   subtotal: number;
   currentDiscount: number;
   currency: string;
+  /** Popup heading; defaults to the whole-receipt "Discount" label. */
+  title?: string;
+  /** Hide the receipt-level "round down" shortcut for per-line usage. */
+  showRoundDown?: boolean;
   onApplyPercent: (percent: number) => void;
   onApplyFixed: (amount: number) => void;
   onClear: () => void;
@@ -148,6 +154,8 @@ function DiscountPopup({
   subtotal,
   currentDiscount,
   currency,
+  title,
+  showRoundDown = true,
   onApplyPercent,
   onApplyFixed,
   onClear,
@@ -246,13 +254,13 @@ function DiscountPopup({
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={tOr('pos.numpad.discount', 'Discount')}
+        aria-label={title ?? tOr('pos.numpad.discount', 'Discount')}
         style={{ top: dialogTop, maxHeight: dialogMaxHeight }}
         className="fixed left-1/2 z-50 flex w-[min(360px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-2xl"
       >
         <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-4 py-3">
           <div>
-            <p className="text-sm font-extrabold text-slate-950">{tOr('pos.numpad.discount', 'Discount')}</p>
+            <p className="text-sm font-extrabold text-slate-950">{title ?? tOr('pos.numpad.discount', 'Discount')}</p>
             <p className="mt-0.5 text-xs font-semibold text-slate-600">
               {tOr('pos.cart.subtotal', 'Subtotal')}: {formatCompactMoney(subtotal, currency)}
             </p>
@@ -340,7 +348,7 @@ function DiscountPopup({
             </div>
           </div>
 
-          <button
+          {showRoundDown && <button
             type="button"
             onClick={() => hasRoundDiscount && onApplyFixed(roundDownToTenDiscount)}
             disabled={!hasRoundDiscount}
@@ -352,7 +360,7 @@ function DiscountPopup({
             <span className="text-lg font-black tabular-nums text-emerald-800">
               -{formatCompactMoney(roundDownToTenDiscount, currency)}
             </span>
-          </button>
+          </button>}
 
           <div className="mt-3 flex gap-2">
             {currentDiscount > 0 && (
@@ -614,6 +622,38 @@ export default function Cart({
     ? cart.items.find((item) => item.id === pricePopupItemId) || null
     : null;
 
+  // Per-line discount popup, opened by tapping the product name in the cart.
+  const [lineDiscountItemId, setLineDiscountItemId] = useState<string | null>(null);
+  const lineDiscountItem = lineDiscountItemId
+    ? cart.items.find((item) => item.id === lineDiscountItemId) || null
+    : null;
+
+  const handleOpenLineDiscount = useCallback((item: CartItem) => {
+    if (item.locked) return;
+    controller.selectPayment();
+    setDiscountPopupOpen(false);
+    setPricePopupItemId(null);
+    setLineDiscountItemId(item.id);
+  }, [controller]);
+
+  const applyLineDiscountPercent = useCallback((percent: number) => {
+    if (!lineDiscountItemId) return;
+    dispatch({ type: 'cart/applyItemDiscount', payload: { id: lineDiscountItemId, amount: percent, discountType: 'percentage' } });
+    setLineDiscountItemId(null);
+  }, [dispatch, lineDiscountItemId]);
+
+  const applyLineDiscountFixed = useCallback((amount: number) => {
+    if (!lineDiscountItemId) return;
+    dispatch({ type: 'cart/applyItemDiscount', payload: { id: lineDiscountItemId, amount, discountType: 'fixed' } });
+    setLineDiscountItemId(null);
+  }, [dispatch, lineDiscountItemId]);
+
+  const clearLineDiscount = useCallback(() => {
+    if (!lineDiscountItemId) return;
+    dispatch({ type: 'cart/clearItemDiscount', payload: { id: lineDiscountItemId } });
+    setLineDiscountItemId(null);
+  }, [dispatch, lineDiscountItemId]);
+
   const handleUpdateBackendPrice = useCallback(async (item: CartItem, price: number) => {
     if (!item.variantId) {
       throw new Error(tOr('pos.price.backendMissingVariant', 'Cannot update backend price for this cart line'));
@@ -862,6 +902,7 @@ export default function Cart({
                 onEditProduct={onEditProduct}
                 onSelectField={handleSelectField}
                 onEditPrice={handleOpenPricePopup}
+                onEditDiscount={handleOpenLineDiscount}
                 onReadScale={scaleEnabled ? handleReadScale : undefined}
                 scaleBusy={scaleBusyItemId === item.id}
                 scaleError={scaleErrors[item.id] || null}
@@ -876,6 +917,21 @@ export default function Cart({
           ))
         )}
       </div>
+
+      {lineDiscountItem && (
+        <DiscountPopup
+          subtotal={lineDiscountItem.total}
+          currentDiscount={lineDiscountItem.lineDiscount ?? 0}
+          currency={currency}
+          title={resolveName(lineDiscountItem, lang)}
+          showRoundDown={false}
+          onApplyPercent={applyLineDiscountPercent}
+          onApplyFixed={applyLineDiscountFixed}
+          onClear={clearLineDiscount}
+          onClose={() => setLineDiscountItemId(null)}
+          tOr={tOr}
+        />
+      )}
 
       {pricePopupItem && !showOrderActionChips && (
         <PricePopup
@@ -993,6 +1049,16 @@ export default function Cart({
               <span className="font-bold">{t('pos.cart.subtotal')}</span>
               <span className="font-extrabold text-slate-900 tabular-nums">{subtotalStr}</span>
             </div>
+            {(cart.lineDiscountTotal ?? 0) > 0 && (
+              <div className="flex justify-between items-center min-h-6">
+                <span className="text-emerald-700 font-medium">
+                  {tOr('pos.cart.lineDiscounts', 'Product discounts')}
+                </span>
+                <span className="text-emerald-700 font-bold tabular-nums">
+                  −{((cart.lineDiscountTotal ?? 0) / 100).toFixed(2)} {currency}
+                </span>
+              </div>
+            )}
             {cart.discount > 0 && (
               <div className="flex justify-between items-center">
                 <span className="text-emerald-700 font-medium">
