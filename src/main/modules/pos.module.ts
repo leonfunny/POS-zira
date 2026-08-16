@@ -2455,7 +2455,11 @@ export class PosModule extends BaseModule {
     ipcMain.handle('pos:dispatch', async (_e, rendererAction) => {
       let authContext: PosAuthContext;
       try { authContext = this.capturePosAuthContext(); }
-      catch { return { success: false, error: 'POS authentication context is unavailable.' }; }
+      catch (err: any) {
+        // A silently swallowed dispatch loses a cashier action — always log it.
+        logger.warn(`[PosModule] pos:dispatch refused (${rendererAction?.type}): auth context unavailable: ${err?.message || err}`);
+        return { success: false, error: 'POS authentication context is unavailable.' };
+      }
       const expectedRestoredHoldId = this.posStore?.getState().checkoutDraft.restoredInterruption?.holdId ?? null;
       const execute = async () => {
         if (!this.isPosAuthContextCurrent(authContext)) {

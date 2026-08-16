@@ -196,6 +196,11 @@ async function matchAutoCameraImage(image: AutoCameraCapturedImage, language: st
   });
 }
 
+/** How long the search box must stay empty before the grid leaves search
+ *  view. Long enough to absorb the IME blur-commit '' flicker (a few ms),
+ *  short enough that tapping ✕ still feels instant. */
+const IME_EMPTY_QUERY_GRACE_MS = 250;
+
 function getVisibleSearchProducts(searchResults: Product[]): Product[] {
   const variants = searchResults.filter((product) => !product._isDraft);
   const variantBarcodes = new Set(
@@ -234,6 +239,25 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
   const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
   const [activeUnitFilter, setActiveUnitFilter] = useState<RetailUnitFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  // Vietnamese IME (Telex/UniKey) commits an in-progress composition when the
+  // search input blurs — e.g. the cashier types "kem" (no trailing space) and
+  // taps a product. The commit fires input events '' → "kem" within a few
+  // milliseconds. If the grid derived directly from searchQuery, that
+  // transient '' flipped it out of search view, unmounted every ProductCard
+  // mid-tap, and the browser never delivered the click (first-tap-after-search
+  // bug, 2026-08-16). The GRID therefore follows gridSearchQuery: non-empty
+  // values apply immediately, but '' only after the box stays empty for the
+  // grace period. The input itself still binds searchQuery, so typing and the
+  // clear button stay instant.
+  const [gridSearchQuery, setGridSearchQuery] = useState('');
+  useEffect(() => {
+    if (searchQuery) {
+      setGridSearchQuery(searchQuery);
+      return;
+    }
+    const timer = window.setTimeout(() => setGridSearchQuery(''), IME_EMPTY_QUERY_GRACE_MS);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery]);
   const [showPayment, setShowPayment] = useState(false);
   const [paymentPrefillCashGrosze, setPaymentPrefillCashGrosze] = useState<number | undefined>(undefined);
   const [paymentInitialMethod, setPaymentInitialMethod] = useState<PaymentInitialMethod>('CASH');
@@ -437,7 +461,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
     return getVisibleSearchProducts(searchResults);
   }, [searchResults]);
 
-  const visibleProducts = searchQuery ? visibleSearchProducts : visibleCategoryProducts;
+  const visibleProducts = gridSearchQuery ? visibleSearchProducts : visibleCategoryProducts;
   const visibleSearchProductsRef = useRef<Product[]>(visibleSearchProducts);
   const voiceChoicePendingRef = useRef(false);
 
@@ -496,10 +520,14 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
     if (!searchQuery) {
       searchRunIdRef.current += 1;
       if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-      setSearchResults([]);
       setSearchPending(false);
+      // Keep the previous results through the IME blur-commit '' flicker so
+      // the tiles the cashier is mid-tap on never unmount; a real clear
+      // empties them right after the same grace period as gridSearchQuery.
+      const clearTimer = window.setTimeout(() => setSearchResults([]), IME_EMPTY_QUERY_GRACE_MS);
       return () => {
         cancelled = true;
+        window.clearTimeout(clearTimer);
       };
     }
 
@@ -1132,10 +1160,10 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
   // returning from a category resets to it. Search and a picked category
   // still drive the regular ProductGrid so the cashier can browse by
   // either entry point.
-  const browseActiveCategoryId = searchQuery ? null : activeCategoryId;
-  const browseUnitFilter = searchQuery ? 'all' : activeUnitFilter;
-  const showCategoryGallery = !searchQuery && browseActiveCategoryId === null;
-  const showCatalogSkeleton = catalogLoading && allProducts.length === 0 && !searchQuery.trim();
+  const browseActiveCategoryId = gridSearchQuery ? null : activeCategoryId;
+  const browseUnitFilter = gridSearchQuery ? 'all' : activeUnitFilter;
+  const showCategoryGallery = !gridSearchQuery && browseActiveCategoryId === null;
+  const showCatalogSkeleton = catalogLoading && allProducts.length === 0 && !gridSearchQuery.trim();
 
   useEffect(() => {
     if (!homeResetKey) return;
@@ -1386,7 +1414,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
               onLongPressProduct={handlePrintProductCode}
               t={t}
               allowOversell={allowOversell}
-              resetScrollKey={`${searchQuery ? 'search' : 'browse'}:${browseActiveCategoryId ?? 'all'}:${browseUnitFilter}`}
+              resetScrollKey={`${gridSearchQuery ? 'search' : 'browse'}:${browseActiveCategoryId ?? 'all'}:${browseUnitFilter}`}
               lang={lang}
               loading
             />
@@ -1471,9 +1499,9 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
               onLongPressProduct={handlePrintProductCode}
               t={t}
               allowOversell={allowOversell}
-              resetScrollKey={`${searchQuery ? 'search' : 'browse'}:${browseActiveCategoryId ?? 'all'}:${browseUnitFilter}`}
+              resetScrollKey={`${gridSearchQuery ? 'search' : 'browse'}:${browseActiveCategoryId ?? 'all'}:${browseUnitFilter}`}
               lang={lang}
-              emptySearchQuery={searchPending ? '' : searchQuery}
+              emptySearchQuery={searchPending ? '' : gridSearchQuery}
               onClearSearch={handleClearSearch}
             />
           )}
