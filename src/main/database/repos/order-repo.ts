@@ -23,6 +23,9 @@ export interface OrderRow {
   customer_id: string | null;
   customer_name: string | null;
   customer_nip: string | null;
+  customer_phone?: string | null;
+  ksef_invoice_status?: string | null;
+  ksef_invoice_number?: string | null;
   shift_id: string | null;
   source: string;
   synced: number;
@@ -447,15 +450,15 @@ export const orderRepo = {
 
       const finalOrder = { ...order, order_number: finalOrderNumber };
       database.run(
-        `INSERT INTO orders (id, order_number, status, subtotal, discount, tax, total, payment_method, payment_amount, change_amount, staff_id, staff_name, customer_id, customer_name, customer_nip, shift_id, source, table_id, covers, order_type, tip, mode, payment_tenders, kitchen_number, client_attempt_id, billiard_origin_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO orders (id, order_number, status, subtotal, discount, tax, total, payment_method, payment_amount, change_amount, staff_id, staff_name, customer_id, customer_name, customer_nip, customer_phone, shift_id, source, table_id, covers, order_type, tip, mode, payment_tenders, kitchen_number, client_attempt_id, billiard_origin_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           finalOrder.id, finalOrder.order_number, finalOrder.status, finalOrder.subtotal ?? 0,
           finalOrder.discount ?? 0, finalOrder.tax ?? 0, finalOrder.total ?? 0,
           finalOrder.payment_method ?? null, finalOrder.payment_amount ?? 0,
           finalOrder.change_amount ?? 0, finalOrder.staff_id ?? null,
           finalOrder.staff_name ?? null, finalOrder.customer_id ?? null,
-          finalOrder.customer_name ?? null, finalOrder.customer_nip ?? null,
+          finalOrder.customer_name ?? null, finalOrder.customer_nip ?? null, finalOrder.customer_phone ?? null,
           finalOrder.shift_id ?? null, finalOrder.source ?? 'POS',
           finalOrder.table_id ?? null, finalOrder.covers ?? null,
           finalOrder.order_type ?? 'standard', finalOrder.tip ?? 0, finalOrder.mode ?? 'retail',

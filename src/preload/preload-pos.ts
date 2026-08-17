@@ -130,6 +130,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.invoke('pos:orders:downloadPdf', orderId, kind, invoiceType),
       addInvoice: (orderId: string, data: { customerNip: string; invoiceType?: 'VAT' | 'PROFORMA' }) =>
         ipcRenderer.invoke('pos:orders:addInvoice', orderId, data),
+      issueKsefInvoice: (
+        orderId: string,
+        data: { customerNip: string; customerName?: string; customerPhone?: string },
+      ) => ipcRenderer.invoke('pos:orders:issueKsefInvoice', orderId, data),
       generateProforma: (orderId: string) => ipcRenderer.invoke('pos:orders:generateProforma', orderId),
       getServerHistory: (orderId: string) => ipcRenderer.invoke('pos:orders:getServerHistory', orderId),
       cancel: (orderId: string) => ipcRenderer.invoke('pos:orders:cancel', orderId),
@@ -272,6 +276,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
       getById: (id: string) => ipcRenderer.invoke('pos:customers:getById', id),
       increaseDebt: (id: string, amount: number) => ipcRenderer.invoke('pos:customers:increaseDebt', id, amount),
       lookupNip: (nip: string) => ipcRenderer.invoke('pos:customers:lookupNip', nip),
+    },
+    ksef: {
+      getConfig: () => ipcRenderer.invoke('pos:ksef:getConfig'),
     },
     loyalty: {
       lookupCustomer: (phone: string) => ipcRenderer.invoke('pos:loyalty:lookupCustomer', phone),

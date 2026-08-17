@@ -1917,4 +1917,17 @@ export const migrations: Migration[] = [
         ON billiard_history_cache(resource_id, ended_at);
     `,
   },
+  {
+    version: 65,
+    name: 'ksef_invoice_fields',
+    // >450 zl NIP flow (KSeF 2.0): customer phone captured at payment for the
+    // SMS-delivered e-invoice, plus local mirror of the KSeF issue state so
+    // the auto-issue hook after sync is idempotent and the history UI can
+    // show progress. Backend remains the source of truth.
+    up: `
+      ALTER TABLE orders ADD COLUMN customer_phone TEXT;
+      ALTER TABLE orders ADD COLUMN ksef_invoice_status TEXT;
+      ALTER TABLE orders ADD COLUMN ksef_invoice_number TEXT;
+    `,
+  },
 ];

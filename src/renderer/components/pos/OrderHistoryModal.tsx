@@ -1111,6 +1111,20 @@ function ServerActionsPanel({
   isMirroring?: boolean;
 }) {
   const [nip, setNip] = useState((order as any).customer_nip || '');
+  const [ksefPhone, setKsefPhone] = useState('');
+  const [ksefConfig, setKsefConfig] = useState<{ enabled: boolean; thresholdGrosz: number } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    window.electronAPI?.pos?.ksef
+      ?.getConfig?.()
+      .then((res: { success: boolean; config: { enabled: boolean; thresholdGrosz: number } } | undefined) => {
+        if (alive && res?.success && res.config) setKsefConfig(res.config);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
   const [busy, setBusy] = useState<string | null>(null);
   const [status, setStatus] = useState<{ type: 'ok' | 'error'; message: string } | null>(null);
   const [gusPreview, setGusPreview] = useState<{ name?: string; address?: string } | null>(null);
@@ -1162,6 +1176,26 @@ function ServerActionsPanel({
       if (res.success) onOrderUpdated();
       return res.success
         ? { success: true, message: tOr(t, 'pos.history.server.invoiceAdded', 'Invoice attached') }
+        : { success: false, error: res.error };
+    });
+  };
+
+  const handleIssueKsef = async () => {
+    if (ensureMirrored && !(await ensureMirrored())) return;
+    run('ksef', async () => {
+      const res = await window.electronAPI.pos.orders.issueKsefInvoice(order.id, {
+        customerNip: nip,
+        customerName: gusPreview?.name || undefined,
+        customerPhone: ksefPhone.trim() || undefined,
+      });
+      if (res.success) onOrderUpdated();
+      return res.success
+        ? {
+            success: true,
+            message: `${tOr(t, 'pos.history.server.ksefIssued', 'KSeF e-invoice issued')}: ${res.invoiceNumber ?? ''}${
+              ksefPhone.trim() ? ` · ${tOr(t, 'pos.history.server.ksefSms', 'SMS will be sent')}` : ''
+            }`,
+          }
         : { success: false, error: res.error };
     });
   };
@@ -1225,13 +1259,34 @@ function ServerActionsPanel({
             </div>
           )}
 
-          <button
-            onClick={handleAddInvoice}
-            disabled={!nipValid || busy !== null || isMirroring}
-            className="mt-3 flex min-h-11 w-full items-center justify-center rounded-lg bg-brand-600 px-4 text-sm font-extrabold text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
-          >
-            {busy === 'invoice' ? '...' : tOr(t, 'pos.history.server.attachInvoice', 'Attach invoice')}
-          </button>
+          {ksefConfig?.enabled && (
+            <input
+              type="tel"
+              inputMode="tel"
+              value={ksefPhone}
+              onChange={(e) => setKsefPhone(e.target.value)}
+              placeholder={tOr(t, 'pos.history.server.ksefPhone', 'Customer phone for SMS (optional)')}
+              className="mt-2 h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-bold text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200"
+            />
+          )}
+
+          {ksefConfig?.enabled ? (
+            <button
+              onClick={handleIssueKsef}
+              disabled={!nipValid || busy !== null || isMirroring}
+              className="mt-3 flex min-h-11 w-full items-center justify-center rounded-lg bg-emerald-600 px-4 text-sm font-extrabold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200"
+            >
+              {busy === 'ksef' ? '...' : tOr(t, 'pos.history.server.issueKsef', 'Issue KSeF e-invoice')}
+            </button>
+          ) : (
+            <button
+              onClick={handleAddInvoice}
+              disabled={!nipValid || busy !== null || isMirroring}
+              className="mt-3 flex min-h-11 w-full items-center justify-center rounded-lg bg-brand-600 px-4 text-sm font-extrabold text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
+            >
+              {busy === 'invoice' ? '...' : tOr(t, 'pos.history.server.attachInvoice', 'Attach invoice')}
+            </button>
+          )}
         </div>
       )}
 

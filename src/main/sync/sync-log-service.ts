@@ -16,6 +16,7 @@ import { apiClient } from '../network/api-client';
 import { database } from '../database/database';
 import { localVariantImportsRepo } from '../database/repos/local-variant-imports-repo';
 import { billiardPosHandoffRepo } from '../database/repos/billiard-pos-handoff-repo';
+import { triggerKsefAutoIssue } from '../pos/ksef-auto-issue';
 import { getSecureAuthToken, getConfigValue } from '../config/store';
 import { syncLogRepo, type LocalSyncLogRow, type SyncConflictRow } from './sync-log-repo';
 import { applyEntry, type SyncLogEntry } from './entity-applicators';
@@ -393,6 +394,10 @@ export class SyncLogService {
                    WHERE id = ?`,
                   [backendId, entry.entity_id],
                 );
+                // >450 zl NIP flow: order just reached the backend — hand it
+                // to the KSeF auto-issue hook (no-op unless the salon enabled
+                // KSeF and the cashier captured a NIP at payment).
+                triggerKsefAutoIssue(entry.entity_id);
                 const handoff = billiardPosHandoffRepo.getByOrderId(entry.entity_id);
                 if (handoff?.state === 'POS_PAID_SYNC_PENDING') {
                   billiardPosHandoffRepo.markState(handoff.checkoutId, 'SETTLED');

@@ -146,6 +146,8 @@ export default function PaymentModal({
   const [paymentSnapshot, setPaymentSnapshot] = useState<PaymentSnapshot | null>(null);
   const initialCustomerNip = getInitialCustomerNip(checkoutDraft, extraOrderFields);
   const [customerNip, setCustomerNip] = useState(initialCustomerNip);
+  const [ksefPhone, setKsefPhone] = useState('');
+  const [ksefConfig, setKsefConfig] = useState<{ enabled: boolean; thresholdGrosz: number } | null>(null);
   const [nipOpen, setNipOpen] = useState(initialCustomerNip.length > 0 || initialMethod === 'INVOICE');
   const [loyaltyOpen, setLoyaltyOpen] = useState(false);
   const [loyaltyPhone, setLoyaltyPhone] = useState(() =>
@@ -386,6 +388,24 @@ export default function PaymentModal({
   const displayChangeGrosze = paymentSnapshot?.changeGrosze ?? liveChangeGrosze;
   const grandTotal = displayGrandTotal;
   const totalZl = grandTotal / 100;
+  // KSeF >450 zl NIP flow: per-salon flag from the backend; salons without
+  // KSeF registered keep the plain paragon-z-NIP behavior untouched.
+  useEffect(() => {
+    let alive = true;
+    window.electronAPI?.pos?.ksef
+      ?.getConfig?.()
+      .then((res: { success: boolean; config: { enabled: boolean; thresholdGrosz: number } } | undefined) => {
+        if (alive && res?.success && res.config) setKsefConfig(res.config);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const ksefActive =
+    !!ksefConfig?.enabled &&
+    customerNip.length === 10 &&
+    grandTotal >= (ksefConfig?.thresholdGrosz ?? 45000);
   const changeGrosze = displayChangeGrosze;
   const cashShortfall = method === 'CASH' && !splitMode && displayCashAmountGrosze > 0 && displayCashAmountGrosze < grandTotal
     ? grandTotal - displayCashAmountGrosze
@@ -667,6 +687,7 @@ export default function PaymentModal({
       customer_id: extraOrderFields?.customer_id ?? null,
       customer_name: extraOrderFields?.customer_name ?? null,
       customer_nip: customerNipForOrder,
+      customer_phone: ksefActive && ksefPhone.trim() ? ksefPhone.trim() : null,
       shift_id: shiftId,
       source: kitchenSelfOrderCheckout ? 'KITCHEN_SELF_ORDER' : 'POS',
       table_id: extraOrderFields?.table_id ?? null,
@@ -1739,6 +1760,29 @@ export default function PaymentModal({
                     ? tOr('pos.payment.customerNipHint', 'Add before payment if the customer needs NIP on the receipt or invoice.')
                     : tOr('pos.payment.customerNipInvalid', 'NIP must have exactly 10 digits.')}
                 </p>
+
+                {ksefActive && (
+                  <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+                    <p className="text-xs font-extrabold uppercase tracking-wide text-emerald-800">
+                      {tOr('pos.payment.ksefTitle', 'e-Faktura KSeF')}
+                    </p>
+                    <p className="mt-1 text-xs font-semibold text-emerald-700">
+                      {tOr(
+                        'pos.payment.ksefHint',
+                        'Order above the invoice threshold — a KSeF e-invoice will be issued automatically after the sale. Enter the customer phone to send the invoice link by SMS.',
+                      )}
+                    </p>
+                    <input
+                      type="tel"
+                      inputMode="tel"
+                      data-keyboard="false"
+                      value={ksefPhone}
+                      onChange={(e) => setKsefPhone(e.target.value)}
+                      placeholder={tOr('pos.payment.ksefPhonePlaceholder', 'Customer phone for SMS (optional)')}
+                      className="mt-2 h-11 w-full rounded-lg border border-emerald-300 bg-white px-3 text-sm font-bold text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300"
+                    />
+                  </div>
+                )}
               </div>
               )}
             </aside>

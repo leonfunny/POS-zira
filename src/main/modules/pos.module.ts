@@ -238,6 +238,7 @@ import { seedIfEmpty } from '../database/seed';
 import { adaptServerOrder, adaptServerOrderItem, normalizeRefundLinesJson, toGrosze } from '../sync/pos-order-adapter';
 import type { SyncLogService } from '../sync/sync-log-service';
 import { notifyPosRenderers } from '../windows/notify-pos-renderers';
+import { registerKsefAutoIssueHandler } from '../pos/ksef-auto-issue';
 import {
   writeBookingStatusChanged,
   writeBookingCancelled,
@@ -7425,6 +7426,135 @@ export class PosModule extends BaseModule {
       } catch (err: any) {
         logger.error(`[PosModule] addInvoice failed: ${err.message}`);
         return { success: false, error: err.message };
+      }
+    });
+
+    // ---- KSeF >450 zl NIP flow (feature-flagged per salon on the backend;
+    // salons without KSeF enabled see zero behavior change) ----
+
+    let ksefConfigCache: {
+      value: { enabled: boolean; thresholdGrosz: number };
+      fetchedAt: number;
+    } | null = null;
+
+    const getKsefConfig = async (): Promise<{
+      enabled: boolean;
+      thresholdGrosz: number;
+    }> => {
+      const TTL = 5 * 60 * 1000;
+      if (ksefConfigCache && Date.now() - ksefConfigCache.fetchedAt < TTL) {
+        return ksefConfigCache.value;
+      }
+      const fallback = ksefConfigCache?.value ?? {
+        enabled: false,
+        thresholdGrosz: 45000,
+      };
+      try {
+        const token = getSecureAuthToken();
+        if (!token) return fallback;
+        const settings = await apiClient.getKsefSettings(token);
+        const value = settings
+          ? {
+              enabled: settings.isEnabled,
+              thresholdGrosz: settings.invoiceThresholdGrosz,
+            }
+          : { enabled: false, thresholdGrosz: 45000 };
+        ksefConfigCache = { value, fetchedAt: Date.now() };
+        return value;
+      } catch {
+        return fallback;
+      }
+    };
+
+    ipcMain.handle('pos:ksef:getConfig', async () => {
+      const config = await getKsefConfig();
+      return { success: true, config };
+    });
+
+    const issueKsefForOrder = async (
+      orderId: string,
+      data: { customerNip: string; customerName?: string; customerPhone?: string },
+    ): Promise<{ success: boolean; error?: string; invoiceNumber?: string; ksefQueued?: boolean }> => {
+      const order = orderRepo.getById(orderId);
+      if (!order) return { success: false, error: 'Order not found' };
+      if (!order.backend_id) {
+        return { success: false, error: 'Order not synced to server yet' };
+      }
+      const token = getSecureAuthToken();
+      if (!token) return { success: false, error: 'Not authenticated' };
+
+      const nip = (data.customerNip || '').replace(/\D/g, '');
+      if (nip.length !== 10) return { success: false, error: 'NIP must be 10 digits' };
+
+      const result = await apiClient.issueKsefInvoice(token, order.backend_id, {
+        customerNip: nip,
+        customerName: data.customerName?.trim() || undefined,
+        customerPhone: data.customerPhone?.trim() || undefined,
+      });
+
+      database.run(
+        `UPDATE orders
+           SET customer_nip = ?,
+               customer_phone = COALESCE(?, customer_phone),
+               ksef_invoice_status = ?,
+               ksef_invoice_number = ?
+         WHERE id = ?`,
+        [
+          nip,
+          data.customerPhone?.trim() || null,
+          result.ksefQueued ? 'QUEUED' : 'ISSUED',
+          result.invoiceNumber,
+          orderId,
+        ],
+      );
+      database.markDirty();
+      logger.info(
+        `[PosModule] KSeF invoice ${result.invoiceNumber} for order ${order.order_number} (queued=${result.ksefQueued})`,
+      );
+      return {
+        success: true,
+        invoiceNumber: result.invoiceNumber,
+        ksefQueued: result.ksefQueued,
+      };
+    };
+
+    ipcMain.handle(
+      'pos:orders:issueKsefInvoice',
+      async (_e, orderId: string, data: { customerNip: string; customerName?: string; customerPhone?: string }) => {
+        try {
+          return await issueKsefForOrder(orderId, data);
+        } catch (err: any) {
+          logger.error(`[PosModule] issueKsefInvoice failed: ${err.message}`);
+          return { success: false, error: err.message };
+        }
+      },
+    );
+
+    // Auto-issue right after the sync layer stamps backend_id: cashier typed
+    // the NIP (and phone) at payment, nothing else to do at the till.
+    registerKsefAutoIssueHandler(async (localOrderId: string) => {
+      try {
+        const order = orderRepo.getById(localOrderId);
+        if (!order) return;
+        const nip = (order.customer_nip || '').replace(/\D/g, '');
+        if (nip.length !== 10) return;
+        if ((order as any).ksef_invoice_status) return; // already handled
+        const config = await getKsefConfig();
+        if (!config.enabled) return;
+        const totalGrosze = Math.round(Number(order.total || 0) * 100);
+        if (totalGrosze < config.thresholdGrosz) return;
+        const result = await issueKsefForOrder(localOrderId, {
+          customerNip: nip,
+          customerPhone: (order as any).customer_phone || undefined,
+          customerName: order.customer_name || undefined,
+        });
+        if (!result.success) {
+          logger.warn(
+            `[PosModule] KSeF auto-issue skipped for order ${order.order_number}: ${result.error}`,
+          );
+        }
+      } catch (err: any) {
+        logger.warn(`[PosModule] KSeF auto-issue error: ${err.message}`);
       }
     });
 

@@ -926,6 +926,10 @@ interface ElectronAPI {
       }>;
       downloadPdf: (orderId: string, kind: 'receipt' | 'invoice', invoiceType?: 'VAT' | 'PROFORMA') => Promise<{ success: boolean; filePath?: string; error?: string }>;
       addInvoice: (orderId: string, data: { customerNip: string; invoiceType?: 'VAT' | 'PROFORMA' }) => Promise<{ success: boolean; order?: any; error?: string }>;
+      issueKsefInvoice: (
+        orderId: string,
+        data: { customerNip: string; customerName?: string; customerPhone?: string },
+      ) => Promise<{ success: boolean; invoiceNumber?: string; ksefQueued?: boolean; error?: string }>;
       generateProforma: (orderId: string) => Promise<{ success: boolean; proforma?: any; error?: string }>;
       getServerHistory: (orderId: string) => Promise<{ success: boolean; history?: any[]; error?: string }>;
       cancel: (orderId: string) => Promise<{ success: boolean; error?: string }>;
@@ -1123,6 +1127,9 @@ interface ElectronAPI {
       getById: (id: string) => Promise<PosCustomer | null>;
       increaseDebt: (id: string, amount: number) => Promise<void>;
       lookupNip: (nip: string) => Promise<{ success: boolean; data?: any; error?: string }>;
+    };
+    ksef: {
+      getConfig: () => Promise<{ success: boolean; config: { enabled: boolean; thresholdGrosz: number } }>;
     };
     staff: {
       getAll: () => Promise<PosStaff[]>;

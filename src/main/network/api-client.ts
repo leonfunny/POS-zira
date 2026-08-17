@@ -2938,6 +2938,60 @@ export class ApiClient {
   }
 
   /**
+   * KSeF settings of the logged-in salon — the POS only needs the on/off
+   * flag and the >450 zl threshold. GET /api/v1/accounting/ksef/settings
+   */
+  async getKsefSettings(token: string): Promise<{
+    isEnabled: boolean;
+    invoiceThresholdGrosz: number;
+  } | null> {
+    const url = `${this.baseUrl}/api/v1/accounting/ksef/settings`;
+    const response = await fetchWithTimeout(url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) return null;
+    const body = await response.json().catch(() => null);
+    const data = body?.data;
+    if (!data) return null;
+    return {
+      isEnabled: !!data.isEnabled,
+      invoiceThresholdGrosz: Number(data.invoiceThresholdGrosz) || 45000,
+    };
+  }
+
+  /**
+   * >450 zl NIP flow: create+issue a VAT invoice from the POS order and queue
+   * KSeF delivery (customer receives an SMS link — no A4 print).
+   * POST /api/v1/b2b/pos/orders/:id/issue-ksef-invoice
+   */
+  async issueKsefInvoice(
+    token: string,
+    backendOrderId: string,
+    data: { customerNip: string; customerName?: string; customerPhone?: string },
+  ): Promise<{
+    invoiceId: string;
+    invoiceNumber: string;
+    ksefQueued: boolean;
+    thresholdGrosz: number;
+  }> {
+    const url = `${this.baseUrl}/api/v1/b2b/pos/orders/${encodeURIComponent(backendOrderId)}/issue-ksef-invoice`;
+    const response = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || `HTTP ${response.status}`);
+    }
+    return response.json();
+  }
+
+  /**
    * Attach a VAT invoice to an already-created POS order.
    * PATCH /api/v1/b2b/pos/orders/:id/add-invoice
    */
