@@ -99,6 +99,19 @@ describe('scan-wedge burst discrimination', () => {
     expect(resolveEnterSubmission(chain, value, at + 50)).toEqual({ kind: 'search-text' });
   });
 
+  it('does not mistake a fast human typing roll for a scan when Enter comes late', () => {
+    // 4 chars rolled quickly, but the hand then travels to Enter — ~200ms is
+    // a realistic human reach, while a scanner fires its Enter suffix within
+    // ~30ms of the last char. Deliberately hardcoded (not derived from
+    // SCAN_ENTER_GRACE_MS) so loosening the grace past human reach time
+    // fails this test: that exact loosening is what made quick typing +
+    // Enter submit-and-clear the search box (gm repro, 2026-08-22).
+    const chain = createScanChain();
+    const { value, at } = typeBurst(chain, '', 'caot', 10_000, 30);
+    expect(SCAN_ENTER_GRACE_MS).toBeLessThan(200);
+    expect(resolveEnterSubmission(chain, value, at + 200)).toEqual({ kind: 'search-text' });
+  });
+
   it('ignores a stale burst once the Enter grace window has passed', () => {
     const chain = createScanChain();
     const { at } = typeBurst(chain, 'dưa bao tử', EAN, 10_000);
@@ -196,7 +209,15 @@ describe('wiring: retail search clears after a manual selection', () => {
     expect(end).toBeGreaterThan(-1);
     const block = retail.slice(start, end);
     expect(block).toContain("dispatch({ type: 'cart/addItem', payload: result.item });");
-    expect(block).toMatch(/source === 'manual'[\s\S]{0,80}handleClearSearch\(\)/);
+    // The clear runs after an awaited IPC roundtrip, so it must be guarded:
+    // only when the query is still the one that produced this add. An
+    // unguarded clear wiped searches the cashier was mid-typing (gm repro,
+    // 2026-08-22).
+    expect(block).toContain('const queryAtAdd = searchQueryRef.current;');
+    expect(block).toMatch(/source === 'manual' && queryAtAdd && searchQueryRef\.current === queryAtAdd/);
+    expect(block).toContain("handleSearchChange('')");
+    // And it must never yank focus away from a field the cashier moved to.
+    expect(block).toContain('typingElsewhere');
     // The draft route hands off to the scan-import modal — the stale query
     // must not survive underneath it either (cleared without stealing focus
     // from the modal).

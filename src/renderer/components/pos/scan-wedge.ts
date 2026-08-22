@@ -17,13 +17,18 @@
  */
 
 /** Max ms between input events that still belong to one wedge burst.
- * Scanners emit chars every 1–30ms; sustained sub-80ms typing is beyond
- * human cadence. Slightly looser than HidScanner's 50ms because renderer
- * input events can jitter under load. */
-export const SCAN_CHAIN_GAP_MS = 80;
+ * Scanners emit chars every 1–30ms; sustained sub-50ms typing is beyond
+ * human cadence. Matches HidScanner's CHAR_TIMEOUT. Renderer jank only
+ * COMPRESSES gaps (queued events process back-to-back), so a tight window
+ * is safe. */
+export const SCAN_CHAIN_GAP_MS = 50;
 
-/** Max ms between the last burst char and its terminating Enter/Tab. */
-export const SCAN_ENTER_GRACE_MS = 500;
+/** Max ms between the last burst char and its terminating Enter/Tab. A
+ * scanner fires its suffix within ~30ms of the last char; a human finishing
+ * a fast typing roll and then reaching Enter takes longer. Keeping this
+ * tight is what stops quick typing + Enter from being misread as a scan
+ * (which would submit-and-clear the field mid-search). */
+export const SCAN_ENTER_GRACE_MS = 120;
 
 /** Shortest burst accepted as a scan — mirrors HidScanner.MIN_LENGTH. */
 export const MIN_SCAN_BURST_LENGTH = 4;

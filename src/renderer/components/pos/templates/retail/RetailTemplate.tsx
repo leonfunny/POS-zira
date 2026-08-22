@@ -258,6 +258,13 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
     const timer = window.setTimeout(() => setGridSearchQuery(''), IME_EMPTY_QUERY_GRACE_MS);
     return () => window.clearTimeout(timer);
   }, [searchQuery]);
+  // Live mirror of searchQuery for async callbacks: the after-add clear must
+  // only fire if the cashier hasn't typed anything new while the add was in
+  // flight — otherwise it would wipe a half-typed next search.
+  const searchQueryRef = useRef('');
+  useEffect(() => {
+    searchQueryRef.current = searchQuery;
+  }, [searchQuery]);
   const [showPayment, setShowPayment] = useState(false);
   const [paymentPrefillCashGrosze, setPaymentPrefillCashGrosze] = useState<number | undefined>(undefined);
   const [paymentInitialMethod, setPaymentInitialMethod] = useState<PaymentInitialMethod>('CASH');
@@ -683,6 +690,10 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
 
   const handleAddProduct = useCallback(async (product: Product, source: AddProductSource = 'manual') => {
     if (source === 'manual') interruptAutoCamera();
+    // Snapshot the query that led to this selection. The add below awaits an
+    // IPC roundtrip (seconds for scale reads); by the time it resolves the
+    // cashier may already be typing the next search, which must survive.
+    const queryAtAdd = searchQueryRef.current;
     // Drafts haven't been imported into product_variants yet — route through
     // the scan-import modal so the server materializes a real variant before
     // we add anything to the cart. The modal's confirm path adds to cart on
@@ -745,14 +756,25 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
       onAddProductFeedback?.(displayName);
       // Selection complete: clear the search box so the next scan starts from
       // a clean field. gridSearchQuery's grace keeps the result grid mounted
-      // long enough for a quick second tap of the same product.
-      if (source === 'manual') handleClearSearch();
+      // long enough for a quick second tap of the same product. Only clear
+      // when the query is exactly the one that produced this add — if the
+      // cashier typed anything new while the add was in flight, leave it be.
+      if (source === 'manual' && queryAtAdd && searchQueryRef.current === queryAtAdd) {
+        const active = document.activeElement as HTMLElement | null;
+        const typingElsewhere = !!active
+          && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')
+          && active.id !== 'pos-product-search';
+        handleSearchChange('');
+        // Refocus for the next scan, but never yank focus away from another
+        // field the cashier has moved on to (customer name, price, ...).
+        if (!typingElsewhere) document.dispatchEvent(new CustomEvent('pos:focus-search'));
+      }
     } catch (err: any) {
       showToolbarError(err?.message || tOr('pos.scale.failed', 'Scale did not return a weight'));
     } finally {
       if (saleClass.requiresScale) scaleReadInFlightRef.current = false;
     }
-  }, [allowOversell, config?.scale?.enabled, config?.scale?.port, dispatch, handleClearSearch, handleSearchChange, interruptAutoCamera, lang, onAddProductFeedback, onLastLabelVariantChange, onManualWeightRequired, onUnknownBarcodeScanned, showToolbarError, tOr]);
+  }, [allowOversell, config?.scale?.enabled, config?.scale?.port, dispatch, handleSearchChange, interruptAutoCamera, lang, onAddProductFeedback, onLastLabelVariantChange, onManualWeightRequired, onUnknownBarcodeScanned, showToolbarError, tOr]);
 
   const handlePrintProductCode = useCallback(async (product: Product, options: { quantity?: number } = {}) => {
     const barcode = product.barcode?.trim();
