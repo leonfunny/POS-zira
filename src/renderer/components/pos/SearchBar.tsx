@@ -1,5 +1,11 @@
 import React, { useCallback, useEffect, useImperativeHandle, useRef, forwardRef } from 'react';
 import { Loader2 } from 'lucide-react';
+import {
+  createScanChain,
+  resetScanChain,
+  resolveEnterSubmission,
+  trackScanChain,
+} from './scan-wedge';
 
 export interface SearchBarHandle {
   focus: () => void;
@@ -21,9 +27,20 @@ const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function SearchBar
   const inputRef = useRef<HTMLInputElement>(null);
   const barcodeCallbackRef = useRef(onBarcodeScanned);
   const commandBarcodeSetRef = useRef(new Set(commandBarcodes.map((code) => code.trim()).filter(Boolean)));
+  // Wedge-burst tracker: separates scanner keystrokes from human search text
+  // so Enter never submits leftover search text as a "barcode" (the
+  // dưa-bao-tử bare-create bug, 2026-08-22).
+  const scanChainRef = useRef(createScanChain());
+  const lastValueRef = useRef(value);
   const searchId = 'pos-product-search';
   barcodeCallbackRef.current = onBarcodeScanned;
   commandBarcodeSetRef.current = new Set(commandBarcodes.map((code) => code.trim()).filter(Boolean));
+
+  // Keep the diff baseline in sync with programmatic value changes (clear
+  // button, template resets) that never pass through handleInputChange.
+  useEffect(() => {
+    lastValueRef.current = value;
+  }, [value]);
 
   useImperativeHandle(ref, () => ({
     focus: () => inputRef.current?.focus(),
@@ -36,12 +53,18 @@ const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function SearchBar
 
     if (inputEl) inputEl.value = '';
     if (inputRef.current && inputRef.current !== inputEl) inputRef.current.value = '';
+    // A consumed burst must not double-fire when the scanner sends a second
+    // terminator (Tab+Enter suffix configs).
+    resetScanChain(scanChainRef.current);
+    lastValueRef.current = '';
     onChange('');
     onScan(barcode);
     return true;
   }, [onChange]);
 
   const handleInputChange = useCallback((nextValue: string) => {
+    trackScanChain(scanChainRef.current, lastValueRef.current, nextValue, performance.now());
+    lastValueRef.current = nextValue;
     const code = nextValue.trim();
     if (code && commandBarcodeSetRef.current.has(code)) {
       submitBarcode(code);
@@ -129,7 +152,19 @@ const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function SearchBar
           onChange={(e) => handleInputChange(e.target.value)}
           onKeyDown={(e) => {
             if (e.key !== 'Enter' && e.key !== 'Tab') return;
-            if (submitBarcode(e.currentTarget.value, e.currentTarget)) {
+            // An Enter that merely commits a Vietnamese IME composition is
+            // not a submission.
+            if ((e.nativeEvent as KeyboardEvent).isComposing) return;
+            // Submit only a fresh wedge burst (scanned code) or a hand-typed
+            // numeric code — leftover search text stays search text instead
+            // of becoming a fake barcode that ends in the bare-create modal.
+            const resolution = resolveEnterSubmission(
+              scanChainRef.current,
+              e.currentTarget.value,
+              performance.now(),
+            );
+            if (resolution.kind === 'search-text') return;
+            if (submitBarcode(resolution.code, e.currentTarget)) {
               e.preventDefault();
             }
           }}

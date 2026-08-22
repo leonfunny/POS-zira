@@ -26,9 +26,14 @@ describe('POS SearchBar keyboard-wedge scan handoff', () => {
     expect(helper).toContain('onScan(barcode);');
   });
 
-  it('reads Enter and Tab submissions from the live input instead of the React value prop', () => {
+  it('discriminates Enter and Tab submissions instead of submitting the raw field value', () => {
     expect(SEARCH_BAR).toContain("if (e.key !== 'Enter' && e.key !== 'Tab') return;");
-    expect(SEARCH_BAR).toContain('submitBarcode(e.currentTarget.value, e.currentTarget)');
+    // The whole-field submit is what turned leftover search text into a fake
+    // barcode (bare-create modal named after the query, 2026-08-22).
+    expect(SEARCH_BAR).not.toContain('submitBarcode(e.currentTarget.value, e.currentTarget)');
+    expect(SEARCH_BAR).toContain('resolveEnterSubmission(');
+    expect(SEARCH_BAR).toContain('e.currentTarget.value,');
+    expect(SEARCH_BAR).toContain('submitBarcode(resolution.code, e.currentTarget)');
     expect(SEARCH_BAR).not.toContain('const barcode = value.trim();');
     expect(SEARCH_BAR).not.toContain('onBarcodeScanned(barcode);');
   });

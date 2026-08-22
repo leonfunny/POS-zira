@@ -689,6 +689,10 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
     // success.
     if (product._isDraft) {
       if (product.barcode && onUnknownBarcodeScanned) {
+        // The cashier picked this result — the query served its purpose, and
+        // leaving it behind would poison the next wedge scan with stale text.
+        // No refocus here: the scan-import modal is about to take focus.
+        if (source === 'manual') handleSearchChange('');
         void onUnknownBarcodeScanned(product.barcode);
       }
       return;
@@ -739,12 +743,16 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
       lastLabelVariantIdRef.current = product.id;
       onLastLabelVariantChange?.(product.id);
       onAddProductFeedback?.(displayName);
+      // Selection complete: clear the search box so the next scan starts from
+      // a clean field. gridSearchQuery's grace keeps the result grid mounted
+      // long enough for a quick second tap of the same product.
+      if (source === 'manual') handleClearSearch();
     } catch (err: any) {
       showToolbarError(err?.message || tOr('pos.scale.failed', 'Scale did not return a weight'));
     } finally {
       if (saleClass.requiresScale) scaleReadInFlightRef.current = false;
     }
-  }, [allowOversell, config?.scale?.enabled, config?.scale?.port, dispatch, interruptAutoCamera, lang, onAddProductFeedback, onLastLabelVariantChange, onManualWeightRequired, onUnknownBarcodeScanned, showToolbarError, tOr]);
+  }, [allowOversell, config?.scale?.enabled, config?.scale?.port, dispatch, handleClearSearch, handleSearchChange, interruptAutoCamera, lang, onAddProductFeedback, onLastLabelVariantChange, onManualWeightRequired, onUnknownBarcodeScanned, showToolbarError, tOr]);
 
   const handlePrintProductCode = useCallback(async (product: Product, options: { quantity?: number } = {}) => {
     const barcode = product.barcode?.trim();

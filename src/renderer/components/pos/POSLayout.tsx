@@ -42,6 +42,7 @@ import {
   isBareCreateSource,
   normalizeBareCreateName,
 } from './scan-import-bare';
+import { isPlausibleScanCode } from './scan-wedge';
 import QuickAddCameraModal, {
   QuickAddCapturedImage,
   QuickAddFinalizeInput,
@@ -704,6 +705,18 @@ export default function POSLayout({
   const openScanImport = useCallback(async (ean: string) => {
     const code = ean.trim();
     if (!code) return;
+    // Defense in depth for the bare-create fallback: only something shaped
+    // like a real scanned code may open the import/create modal. Search text
+    // or a mixed "text+digits" field that slipped past the wedge
+    // discriminator gets a plain not-found toast instead of an offer to
+    // create a product named after it.
+    if (!isPlausibleScanCode(code)) {
+      showScanToast(
+        `${tOr('products.scan.notFound', 'Không tìm thấy sản phẩm cho mã')} ${code.slice(0, 32)}`,
+        'err',
+      );
+      return;
+    }
     setScanImportCategories([]);
     setScanImport({ open: true, ean: code, preview: null, loading: true, error: null });
     try {
@@ -765,7 +778,7 @@ export default function POSLayout({
       setScanImportCategories([]);
       setScanImport({ open: true, ean: code, preview: buildBareScanImportPreview(code), loading: false, error: null });
     }
-  }, [showScanToast]);
+  }, [showScanToast, tOr]);
 
   const closeScanImport = useCallback(() => {
     setScanImport({ open: false, ean: '', preview: null, loading: false, error: null });
