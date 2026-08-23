@@ -162,6 +162,15 @@ export function withoutRestoredInterruptionMarker(snapshot: PosCheckoutSnapshot)
   return copy;
 }
 
+/** A recall durability guard is live-process state and must never be parked. */
+export function withoutHoldRecallPendingMarker(snapshot: PosCheckoutSnapshot): PosCheckoutSnapshot {
+  const copy = JSON.parse(JSON.stringify(snapshot)) as PosCheckoutSnapshot;
+  if (copy.state.checkoutDraft) {
+    delete copy.state.checkoutDraft.holdRecallPending;
+  }
+  return copy;
+}
+
 function ordinaryCartLineProjection(item: any): Record<string, any> {
   return {
     variantId: item?.variantId,

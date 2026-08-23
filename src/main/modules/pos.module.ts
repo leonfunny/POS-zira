@@ -150,6 +150,7 @@ import {
   samePosSalonRegister,
   samePosSnapshotScope,
   withRestoredInterruptionMarker,
+  withoutHoldRecallPendingMarker,
   withoutRestoredInterruptionMarker,
   type PosSnapshotScope,
 } from '../pos/billiard-pos-handoff';
@@ -6250,7 +6251,7 @@ export class PosModule extends BaseModule {
           schemaVersion: POS_CHECKOUT_SNAPSHOT_VERSION,
           holdReason: 'MANUAL',
           protected: false,
-          snapshot: withoutRestoredInterruptionMarker(captured),
+          snapshot: withoutHoldRecallPendingMarker(withoutRestoredInterruptionMarker(captured)),
         };
         database.transaction(() => {
           holdOrderRepo.upsert(id, title, payload);
@@ -6382,7 +6383,11 @@ export class PosModule extends BaseModule {
           scope,
           String(getConfig().posMode || 'retail'),
         );
-        const pendingSnapshot = JSON.parse(JSON.stringify(held.payload.snapshot));
+        // Old builds could persist the in-flight marker if the cashier held a
+        // cart while Recall was saving. Sanitize both the pending and final
+        // snapshots so recalling one of those carts repairs it in place.
+        const recalledSnapshot = withoutHoldRecallPendingMarker(held.payload.snapshot);
+        const pendingSnapshot = JSON.parse(JSON.stringify(recalledSnapshot));
         pendingSnapshot.state.checkoutDraft = {
           ...(pendingSnapshot.state.checkoutDraft || {}),
           holdRecallPending: { holdId: held.id },
@@ -6425,7 +6430,7 @@ export class PosModule extends BaseModule {
           }
           this.posStore.dispatch({
             type: 'state/replaceCheckoutSnapshot',
-            payload: { snapshot: held.payload.snapshot },
+            payload: { snapshot: recalledSnapshot },
           });
           return { success: true };
         } finally {
