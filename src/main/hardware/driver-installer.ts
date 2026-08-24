@@ -745,6 +745,8 @@ const LABEL_PATTERNS = [
   'ql-', 'td-', 'pt-', // Brother label
   'labelwriter', // DYMO
   'xp-423', 'xp423', // Xprinter 4-inch label printers
+  'mb2', 'mb3', 'mh2', 'mh3', 'ml2', 'ml3', 'da2', 'da3', 'te2', 'te3', 'tx2', 'tx3', 'tx6', 'ttp-', // TSC label printers
+  'pc42', 'pc43', 'pm42', 'pm43', 'pd43', // Honeywell label printers
 ];
 
 /**
@@ -778,6 +780,16 @@ export function classifyPrinterCategory(device: DetectedDevice): {
   if (brand === 'ZEBRA' || device.vid === ZEBRA_VID) {
     // Zebra receipt printers are rare; default to label
     return { targetType: 'LABEL', protocol: 'ZEBRA' };
+  }
+
+  // TSC — always label
+  if (brand === 'TSC' || device.vid === '1203' || combined.includes('tsc')) {
+    return { targetType: 'LABEL', protocol: 'WINDOWS' };
+  }
+
+  // Honeywell — default to label
+  if (brand === 'HONEYWELL' || device.vid === '0C2E' || combined.includes('honeywell') || combined.includes('intermec')) {
+    return { targetType: 'LABEL', protocol: 'WINDOWS' };
   }
 
   // DYMO — always label

@@ -67,7 +67,9 @@ function knownProtocolsFor(brand: string, defaultProtocol: PrinterProtocol): Pri
       return ['THERMAL', 'WINDOWS'];
     case 'DYMO':
     case 'Brother':
-      return ['WINDOWS', 'THERMAL'];
+    case 'TSC':
+    case 'Honeywell':
+      return ['WINDOWS', 'ZEBRA', 'THERMAL'];
     case 'HP':
     case 'Canon':
     case 'Samsung':

@@ -176,6 +176,20 @@ export const BRAND_PATTERNS: BrandPattern[] = [
     defaultType: 'LABEL',
   },
   {
+    brand: 'TSC',
+    namePatterns: ['tsc', 'mb2', 'mb3', 'mh2', 'mh3', 'ml2', 'ml3', 'da2', 'da3', 'te2', 'te3', 'tx2', 'tx3', 'tx6', 'ttp-'],
+    vids: ['1203'],
+    defaultProtocol: 'WINDOWS',
+    defaultType: 'LABEL',
+  },
+  {
+    brand: 'Honeywell',
+    namePatterns: ['honeywell', 'intermec', 'pc42', 'pc43', 'pm42', 'pm43', 'pd43'],
+    vids: ['0C2E'],
+    defaultProtocol: 'WINDOWS',
+    defaultType: 'LABEL',
+  },
+  {
     brand: 'Brother',
     namePatterns: ['brother'],
     vids: ['04F9'],

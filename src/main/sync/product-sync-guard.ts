@@ -124,7 +124,8 @@ export function evaluateProductSyncGuard(input: ProductSyncGuardInput): ProductS
   }
 
   if (mode === 'full') {
-    if (baseline.activeProductCount > 0 && products.length === 0) {
+    const isOnlyDemoSeed = baseline.products.length > 0 && baseline.products.every(p => p.id.startsWith('v-') || p.id.startsWith('demo-'));
+    if (baseline.activeProductCount > 0 && products.length === 0 && !isOnlyDemoSeed) {
       return {
         allowed: false,
         stats,

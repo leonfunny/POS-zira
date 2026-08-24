@@ -323,6 +323,17 @@ export class ProductSync {
       }
       if (data.products.length > 0) {
         productRepo.upsertMany(data.products);
+      } else {
+        // If server returned 0 products and local catalog only has demo seed items,
+        // purge the demo seeds so the new salon catalog is clean.
+        const nonDemoCount = database.get<{ cnt: number }>(
+          "SELECT COUNT(*) as cnt FROM product_variants WHERE id NOT LIKE 'v-%' AND id NOT LIKE 'demo-%'",
+        )?.cnt ?? 0;
+        if (nonDemoCount === 0) {
+          database.run("DELETE FROM product_variants WHERE id LIKE 'v-%' OR id LIKE 'demo-%'");
+          database.run("DELETE FROM categories WHERE id LIKE 'cat-%' OR id LIKE 'cat-demo%'");
+          logger.info('[ProductSync] Cleared demo seeds for newly paired salon with 0 products');
+        }
       }
 
       if (data.tombstones && data.tombstones.length > 0) {

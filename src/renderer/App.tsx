@@ -604,6 +604,8 @@ export default function App() {
           language={(config?.language as Language) || 'en'}
           onLanguageChange={handleLanguageChange}
           onFullscreen={() => { setIsPosFullscreen(true); window.electronAPI.window.setKiosk(true); }}
+          salonName={config?.salonName || authUser?.salonName}
+          salonCode={config?.salonCode}
         />
 
         {/* Content */}

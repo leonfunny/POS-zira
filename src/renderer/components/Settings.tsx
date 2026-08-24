@@ -1852,15 +1852,26 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   };
 
   const isLabelDevice = (dev: DetectedPrinterDevice): boolean => {
+    if (dev.targetType === 'LABEL') return true;
     const text = deviceText(dev);
+    const brand = (dev.brand || '').toUpperCase();
+    const vid = (dev.vid || '').toUpperCase();
     return (
-      (dev.brand || '').toUpperCase() === 'ZEBRA' ||
-      (dev.vid || '').toUpperCase() === '0A5F' ||
+      brand === 'ZEBRA' ||
+      brand === 'TSC' ||
+      brand === 'HONEYWELL' ||
+      brand === 'DYMO' ||
+      vid === '0A5F' ||
+      vid === '1203' ||
+      vid === '0C2E' ||
       text.includes('zebra') ||
       text.includes('zdesigner') ||
+      text.includes('tsc') ||
+      text.includes('honeywell') ||
       text.includes('xp-423') ||
       text.includes('xp423') ||
-      text.includes('labelwriter')
+      text.includes('labelwriter') ||
+      text.includes('label')
     );
   };
 
@@ -1926,7 +1937,11 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
       const label = pickDevice(
         devices.filter(dev => !used.has(dev)),
         isLabelDevice,
-        dev => (dev.brand || '').toUpperCase() === 'ZEBRA' || (dev.vid || '').toUpperCase() === '0A5F',
+        dev => {
+          const brand = (dev.brand || '').toUpperCase();
+          const vid = (dev.vid || '').toUpperCase();
+          return brand === 'ZEBRA' || brand === 'TSC' || brand === 'HONEYWELL' || vid === '0A5F' || vid === '1203' || vid === '0C2E';
+        },
       );
       if (label) {
         assignments.push({ slot: 'LABEL', device: label });
@@ -2879,12 +2894,14 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
               const isPosnet = brand === 'POSNET' || dev.vid === '1424';
               const isZebra = brand === 'Zebra' || dev.vid === '0A5F';
               const isDymo = brand === 'DYMO';
+              const isTsc = brand === 'TSC' || dev.vid === '1203';
+              const isHoneywell = brand === 'Honeywell' || dev.vid === '0C2E';
               const isBusy = settingUpDevice === `${brand}-${i}`;
               const modelLower = model.toLowerCase();
 
               // Smart type classification (mirrors backend classifyPrinterCategory)
-              const isLabelPrinter = isZebra || isDymo ||
-                ['ql-', 'td-', 'pt-', 'labelwriter', 'label'].some(p => modelLower.includes(p));
+              const isLabelPrinter = dev.targetType === 'LABEL' || isZebra || isDymo || isTsc || isHoneywell ||
+                ['ql-', 'td-', 'pt-', 'labelwriter', 'label', 'xp-423', 'xp423', 'mb2', 'mb3', 'mh2', 'mh3', 'ml2', 'ml3', 'da2', 'da3', 'te2', 'te3', 'pc42', 'pc43'].some(p => modelLower.includes(p));
               const isThermalReceipt = !isPosnet && !isLabelPrinter && (
                 ['Epson', 'Star Micronics', 'Citizen', 'Bixolon'].includes(brand) ||
                 ['thermal', 'receipt', 'pos ', 'tm-t', 'tm-m', 'tsp', 'srp-', 'ct-s'].some(p => modelLower.includes(p))
@@ -2898,7 +2915,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                 isA4Printer ? 'A4' : 'RECEIPT';
               const fallbackTargetProtocol: PrinterProtocol = isPosnet ? 'POSNET' :
                 isZebra ? 'ZEBRA' :
-                isA4Printer ? 'WINDOWS' : 'THERMAL';
+                (isTsc || isHoneywell || isDymo || isA4Printer) ? 'WINDOWS' : 'THERMAL';
               const targetType = (dev.targetType as PrinterTypeValue) || fallbackTargetType;
               const targetProtocol = (dev.recommendedProtocol as PrinterProtocol) || fallbackTargetProtocol;
 

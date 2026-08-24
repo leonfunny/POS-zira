@@ -1741,6 +1741,12 @@ export default function POSLayout({
             <Home size={17} aria-hidden="true" />
             <span>Zira POS</span>
           </button>
+          {/* Salon Name Badge */}
+          <span className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 font-bold border border-slate-200">
+            <span className={`w-2 h-2 rounded-full shrink-0 ${isOnline ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+            <span>{config?.salonName || 'Salon'}</span>
+            {config?.salonCode && <span className="text-slate-500 font-normal">#{config.salonCode}</span>}
+          </span>
           <span className="text-xs px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 font-medium">
             {t(MODE_LABELS[posMode])}
           </span>

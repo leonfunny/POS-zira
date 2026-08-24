@@ -31,12 +31,14 @@ interface SidebarProps {
   collapsed: boolean;
   onToggleCollapse: () => void;
   connectionStatus: { connected: boolean };
-  authUser: { email?: string; firstName?: string } | null;
+  authUser: { email?: string; firstName?: string; role?: string; salonName?: string } | null;
   appVersion: string;
   onLogout: () => void;
   language: Language;
   onLanguageChange: (lang: Language) => void;
   onFullscreen: () => void;
+  salonName?: string;
+  salonCode?: string;
 }
 
 export interface MenuItem {
@@ -103,6 +105,8 @@ export default function Sidebar({
   language,
   onLanguageChange,
   onFullscreen,
+  salonName,
+  salonCode,
 }: SidebarProps) {
   const { t } = useTranslation(language);
 
@@ -232,21 +236,41 @@ export default function Sidebar({
           </div>
         )}
 
-        {/* User + sign out */}
-        <div className={`flex items-center gap-2 px-3 py-2 ${collapsed ? 'justify-center' : ''}`}>
-          {!collapsed && (
-            <span className="text-xs text-[var(--ink-muted)] truncate flex-1">
-              {authUser?.email || authUser?.firstName || '...'}
-            </span>
+        {/* User + Salon info */}
+        <div className={`px-3 py-2 ${collapsed ? 'text-center' : ''}`}>
+          {!collapsed ? (
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-bold text-[var(--ink-base)] truncate" title={salonName || authUser?.salonName || 'Salon'}>
+                  🏪 {salonName || authUser?.salonName || (authUser ? 'Salon' : t('sidebar.notConnected'))}
+                  {salonCode ? ` (#${salonCode})` : ''}
+                </div>
+                <div className="text-[11px] text-[var(--ink-muted)] truncate flex items-center gap-1.5 mt-0.5">
+                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${connectionStatus.connected ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                  <span className="truncate">
+                    {authUser?.firstName || authUser?.email || (authUser?.role ? authUser.role : (authUser ? 'User' : t('sidebar.disconnected')))}
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={onLogout}
+                className="sidebar-item p-1.5 rounded text-[var(--ink-muted)] hover:text-[var(--error)] hover:bg-red-50 transition-colors shrink-0"
+                data-tooltip={t('sidebar.signOut')}
+                title={t('sidebar.signOut')}
+              >
+                <LogOut size={14} />
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={onLogout}
+              className="sidebar-item p-1.5 rounded text-[var(--ink-muted)] hover:text-[var(--error)] hover:bg-red-50 transition-colors inline-block"
+              data-tooltip={t('sidebar.signOut')}
+              title={t('sidebar.signOut')}
+            >
+              <LogOut size={14} />
+            </button>
           )}
-          <button
-            onClick={onLogout}
-            className="sidebar-item p-1.5 rounded text-[var(--ink-muted)] hover:text-[var(--error)] hover:bg-red-50 transition-colors shrink-0"
-            data-tooltip={t('sidebar.signOut')}
-            title={t('sidebar.signOut')}
-          >
-            <LogOut size={14} />
-          </button>
         </div>
 
         {/* Version */}
