@@ -371,6 +371,14 @@ export default function App() {
     setActiveTab('products');
   }, [canEditProductsFromSale]);
 
+  const requestPosProductEdit = useCallback((variantId: string) => {
+    if (!variantId || !canEditProductsFromSale) return;
+    if (isPosFullscreen) {
+      exitPosKiosk();
+    }
+    requestProductEdit(variantId, 'pos');
+  }, [canEditProductsFromSale, exitPosKiosk, isPosFullscreen, requestProductEdit]);
+
   const exitProductEdit = useCallback(() => {
     const returnTo = productEditRequest?.returnTo;
     setProductEditRequest(null);
@@ -510,6 +518,7 @@ export default function App() {
           style={{ paddingBottom: posFullscreenKeyboardInset > 0 ? `${posFullscreenKeyboardInset}px` : '0' }}
         >
           <POSLayout
+            onEditProduct={canEditProductsFromSale ? requestPosProductEdit : undefined}
             billiardPaymentIntent={billiardPaymentIntent}
             restoredCartReconciliation={restoredCartReconciliation}
             canResolveUncertainTender={String(authUser?.role || '').toUpperCase() === 'OWNER'}
@@ -614,7 +623,7 @@ export default function App() {
               {activeTab === 'pos' && isTabAvailable('pos') && (
                 <POSLayout
                   onFullscreen={() => { setIsPosFullscreen(true); window.electronAPI.window.setKiosk(true); }}
-                  onEditProduct={canEditProductsFromSale ? (variantId) => requestProductEdit(variantId, 'pos') : undefined}
+                  onEditProduct={canEditProductsFromSale ? requestPosProductEdit : undefined}
                   billiardPaymentIntent={billiardPaymentIntent}
                   restoredCartReconciliation={restoredCartReconciliation}
                   canResolveUncertainTender={String(authUser?.role || '').toUpperCase() === 'OWNER'}

@@ -12,7 +12,9 @@ describe('product-admin capabilities hook', () => {
 
     expect(hook).toContain('useProductAdminCapabilities(enabled = true)');
     expect(hook).toContain('if (!enabled)');
-    expect(hook).toContain('cache = next.error ? null : next');
+    expect(hook).toContain('if (next.ok)');
+    expect(hook).toContain('cache = next');
+    expect(hook).toContain('scheduleRetry()');
   });
 
   it('exposes an explicit retry that clears the cache and repeats the request', () => {

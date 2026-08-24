@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ProductAdminCapabilities } from '../../shared/types';
 
 type ProductAdminCapabilitiesState = {
@@ -16,12 +16,17 @@ type ProductAdminCapabilitiesResult = {
 
 let cache: ProductAdminCapabilitiesResult | null = null;
 
+// Boot/auth/network races must stay fail-closed, but they must not permanently
+// hide every product-edit entry point until the renderer is restarted.
+export const PRODUCT_ADMIN_CAPABILITIES_RETRY_DELAYS_MS = [1_000, 5_000, 15_000, 60_000] as const;
+
 export function resetProductAdminCapabilitiesCache(): void {
   cache = null;
 }
 
 export function useProductAdminCapabilities(enabled = true): ProductAdminCapabilitiesState {
   const [requestVersion, setRequestVersion] = useState(0);
+  const retryAttemptRef = useRef(0);
   const [state, setState] = useState<Omit<ProductAdminCapabilitiesState, 'retry'>>(() => ({
     capabilities: enabled ? cache?.capabilities ?? null : null,
     error: enabled ? cache?.error ?? null : null,
@@ -29,6 +34,7 @@ export function useProductAdminCapabilities(enabled = true): ProductAdminCapabil
   }));
 
   const retry = useCallback(() => {
+    retryAttemptRef.current = 0;
     cache = null;
     setState((current) => ({ ...current, error: null, loading: enabled }));
     setRequestVersion((version) => version + 1);
@@ -36,10 +42,12 @@ export function useProductAdminCapabilities(enabled = true): ProductAdminCapabil
 
   useEffect(() => {
     if (!enabled) {
+      retryAttemptRef.current = 0;
       setState({ capabilities: null, error: null, loading: false });
       return;
     }
     if (cache) {
+      retryAttemptRef.current = 0;
       setState({
         capabilities: cache.capabilities,
         error: cache.ok ? null : cache.error || 'product-admin-unavailable',
@@ -49,6 +57,19 @@ export function useProductAdminCapabilities(enabled = true): ProductAdminCapabil
     }
 
     let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleRetry = () => {
+      const delayIndex = Math.min(
+        retryAttemptRef.current,
+        PRODUCT_ADMIN_CAPABILITIES_RETRY_DELAYS_MS.length - 1,
+      );
+      const delay = PRODUCT_ADMIN_CAPABILITIES_RETRY_DELAYS_MS[delayIndex];
+      retryAttemptRef.current += 1;
+      retryTimer = setTimeout(() => {
+        if (cancelled) return;
+        setRequestVersion((version) => version + 1);
+      }, delay);
+    };
     setState((current) => ({ ...current, loading: true }));
 
     window.electronAPI.pos.productAdmin.getCapabilities()
@@ -58,8 +79,13 @@ export function useProductAdminCapabilities(enabled = true): ProductAdminCapabil
           capabilities: response.capabilities,
           error: response.ok ? undefined : response.error || 'product-admin-unavailable',
         };
-        cache = next.error ? null : next;
         if (cancelled) return;
+        if (next.ok) {
+          cache = next;
+          retryAttemptRef.current = 0;
+        } else {
+          scheduleRetry();
+        }
         setState({
           capabilities: next.capabilities,
           error: next.error ?? null,
@@ -68,6 +94,7 @@ export function useProductAdminCapabilities(enabled = true): ProductAdminCapabil
       })
       .catch((caught: unknown) => {
         if (cancelled) return;
+        scheduleRetry();
         setState({
           capabilities: null,
           error: caught instanceof Error ? caught.message : 'product-admin-unavailable',
@@ -77,6 +104,7 @@ export function useProductAdminCapabilities(enabled = true): ProductAdminCapabil
 
     return () => {
       cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
     };
   }, [enabled, requestVersion]);
 

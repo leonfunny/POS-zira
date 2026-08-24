@@ -33,7 +33,8 @@ describe('deep-link plumbing', () => {
   it('App does not cache a pre-login no-auth capabilities response', () => {
     expect(APP).toContain('useProductAdminCapabilities(isAuthenticated)');
     expect(CAPABILITIES_HOOK).toContain('if (!enabled)');
-    expect(CAPABILITIES_HOOK).toContain('cache = next.error ? null : next');
+    expect(CAPABILITIES_HOOK).toContain('if (next.ok)');
+    expect(CAPABILITIES_HOOK).toContain('scheduleRetry()');
   });
 
   it('gates the pencil on the products tab being reachable, not just the capability', () => {
@@ -50,13 +51,23 @@ describe('deep-link plumbing', () => {
     expect(guard).toContain("visibleTabs.includes('products')");
   });
 
-  it('the kiosk fullscreen POS branch never receives onEditProduct', () => {
+  it('the fullscreen POS pencil exits kiosk before deep-linking to Products', () => {
+    const handler = APP.slice(
+      APP.indexOf('const requestPosProductEdit'),
+      APP.indexOf('const exitProductEdit'),
+    );
+    expect(handler.length).toBeGreaterThan(0);
+    expect(handler).toContain('if (isPosFullscreen)');
+    expect(handler.indexOf('exitPosKiosk()')).toBeLessThan(
+      handler.indexOf("requestProductEdit(variantId, 'pos')"),
+    );
+
     const kioskBranch = APP.slice(
       APP.indexOf('if (isPosFullscreen'),
       APP.indexOf('// Fullscreen check-in mode'),
     );
     expect(kioskBranch.length).toBeGreaterThan(0);
-    expect(kioskBranch).not.toContain('onEditProduct');
+    expect(kioskBranch).toContain('onEditProduct={canEditProductsFromSale ? requestPosProductEdit : undefined}');
   });
 
   it('the prop is threaded POSLayout -> RetailTemplate -> Cart -> CartItem', () => {
