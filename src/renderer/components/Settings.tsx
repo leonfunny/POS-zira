@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab, ALLOWED_PROTOCOLS_BY_TYPE, PrinterType, LiveCustomerDisplayProfile, PosnetDiagnoseResult, charsPerLineFor, ServerPrinterMapping, LocalPrinterMirrorRow, SalonPrinterMapping, SalonPrinterAssignment, SalonPrinterRole, ScaleConnectionMode, FiscalDailyReportPrintResponse, LanFirstKitchenNetworkInfo, LanFirstKitchenPairingStatus, LanFirstKitchenTestRouteResponse } from '../../shared/types';
+import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab, ALLOWED_PROTOCOLS_BY_TYPE, PrinterType, LiveCustomerDisplayProfile, PosnetDiagnoseResult, charsPerLineFor, ServerPrinterMapping, LocalPrinterMirrorRow, SalonPrinterMapping, SalonPrinterAssignment, SalonPrinterRole, ScaleConnectionMode, ScaleDiagnoseStep, FiscalDailyReportPrintResponse, LanFirstKitchenNetworkInfo, LanFirstKitchenPairingStatus, LanFirstKitchenTestRouteResponse } from '../../shared/types';
 import { resolveCustomerDisplayProfile } from '../../shared/customer-display-profile';
 import { DEFAULT_LAN_FIRST_KITCHEN_PORT, getReadyKitchenWifiPrinters, planLanKitchenSave, resolveLanFirstKitchenTimeoutMs } from '../../shared/lan-first-kitchen-settings';
 import { Language, languageNames, getTranslation, printerTypeIcons } from '../i18n/translations';
@@ -614,6 +614,11 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
     error?: string;
   } | null>(null);
   const [scaleTesting, setScaleTesting] = useState(false);
+  const [scaleAutoDetecting, setScaleAutoDetecting] = useState(false);
+  const [scaleChipset, setScaleChipset] = useState(config?.scale?.chipset || '');
+  const [scaleModel, setScaleModel] = useState(config?.scale?.model || 'DIBAL GDPOS Scale');
+  const [scaleDriverStatus, setScaleDriverStatus] = useState(config?.scale?.driverStatus || '');
+  const [scaleDiagnoseSteps, setScaleDiagnoseSteps] = useState<ScaleDiagnoseStep[]>([]);
   const [scaleTestResult, setScaleTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [lanKitchenReceiveEnabled, setLanKitchenReceiveEnabled] = useState(config?.lanFirstReceiver?.enabled ?? false);
   const [lanKitchenReceivePort, setLanKitchenReceivePort] = useState(String(config?.lanFirstReceiver?.port || DEFAULT_LAN_FIRST_KITCHEN_PORT));
@@ -825,6 +830,9 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
       protocol: 'DIBAL_GDPOS',
       port: scalePort,
       baudRate: 9600,
+      chipset: scaleChipset,
+      model: scaleModel,
+      driverStatus: scaleDriverStatus,
       share: {
         enabled: scaleConnection === 'local' && scaleShareEnabled,
         port: parseScalePortNumber(scaleSharePort, DEFAULT_SCALE_SHARE_PORT),
@@ -854,7 +862,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
     name, autoStart, language,
     posEnabled, posMode, posLanguage, allowOversell, fiscalOnCashSale,
     autoDiscountEnabled, autoDiscountPercent, autoDiscountEndDate,
-    scaleConnection, scalePort, scaleShareEnabled, scaleSharePort, scaleShareToken,
+    scaleConnection, scalePort, scaleChipset, scaleModel, scaleDriverStatus, scaleShareEnabled, scaleSharePort, scaleShareToken,
     scaleRemoteHost, scaleRemotePort, scaleRemoteToken,
     receiptSellerName, receiptSellerAddress, receiptSellerNip,
     customerDisplayEnabled, customerDisplayProfile, customerDisplayMonitor, customerDisplayForceKiosk,
@@ -1132,6 +1140,9 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
       setAutoDiscountEndDate(config.autoOrderDiscount?.endDate || '');
       setScaleConnection(deriveScaleConnection(config.scale));
       setScalePort(config.scale?.port || '');
+      setScaleChipset(config.scale?.chipset || '');
+      setScaleModel(config.scale?.model || 'DIBAL GDPOS Scale');
+      setScaleDriverStatus(config.scale?.driverStatus || '');
       setScaleShareEnabled(config.scale?.share?.enabled ?? false);
       setScaleSharePort(String(config.scale?.share?.port || DEFAULT_SCALE_SHARE_PORT));
       setScaleShareToken(config.scale?.share?.token || '');
@@ -1586,6 +1597,12 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
         port: scaleConnection === 'local' ? scalePort || undefined : undefined,
       });
       if (result.success) {
+        if (scaleConnection === 'local' && result.port) {
+          if (scalePort !== result.port) {
+            setScalePort(result.port);
+          }
+          setScaleDriverStatus('OK (Verified)');
+        }
         setScaleTestResult({
           success: true,
           message: `${result.weightKg.toFixed(3)} kg ${result.source === 'remote' ? `via ${result.remoteHost || 'remote scale'}` : `on ${result.port}`}`,
@@ -1603,6 +1620,66 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
       });
     } finally {
       setScaleTesting(false);
+    }
+  };
+
+  const handleAutoDetectScale = async () => {
+    if (scaleAutoDetecting) return;
+    setScaleAutoDetecting(true);
+    setScaleTestResult(null);
+    setScaleDiagnoseSteps([]);
+    try {
+      const result = await window.electronAPI.scale.autoDetect();
+      if (result.steps && Array.isArray(result.steps)) {
+        setScaleDiagnoseSteps(result.steps);
+      }
+      if (result.success && result.port) {
+        setScaleConnection('local');
+        setScalePort(result.port);
+        setScaleChipset(result.chipset || '');
+        setScaleModel(result.model || 'DIBAL GDPOS Scale');
+        setScaleDriverStatus(result.driverStatus || 'OK');
+        await Promise.resolve(onConfigChange({
+          scale: {
+            enabled: true,
+            connection: 'local',
+            port: result.port,
+            protocol: 'DIBAL_GDPOS',
+            baudRate: result.baudRate || 9600,
+            chipset: result.chipset || '',
+            model: result.model || 'DIBAL GDPOS Scale',
+            driverStatus: result.driverStatus || 'OK',
+            share: {
+              enabled: scaleShareEnabled,
+              port: parseScalePortNumber(scaleSharePort, DEFAULT_SCALE_SHARE_PORT),
+              token: scaleShareToken.trim(),
+            },
+            remote: {
+              host: scaleRemoteHost.trim(),
+              port: parseScalePortNumber(scaleRemotePort, DEFAULT_SCALE_SHARE_PORT),
+              token: scaleRemoteToken.trim(),
+              timeoutMs: DEFAULT_REMOTE_SCALE_TIMEOUT_MS,
+            },
+          },
+        }));
+        await refreshPrinterDiscovery();
+        setScaleTestResult({
+          success: true,
+          message: result.message || `Detected on ${result.port} (${result.chipset})`,
+        });
+      } else {
+        setScaleTestResult({
+          success: false,
+          message: result.message || 'No scale detected',
+        });
+      }
+    } catch (err: any) {
+      setScaleTestResult({
+        success: false,
+        message: err?.message || 'Scale auto-detection failed',
+      });
+    } finally {
+      setScaleAutoDetecting(false);
     }
   };
 
@@ -1882,6 +1959,18 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
         }
       }
 
+      // Auto-detect and configure scale if available
+      try {
+        const scaleRes = await window.electronAPI.scale.autoDetect();
+        if (scaleRes.success && scaleRes.port) {
+          setScaleConnection('local');
+          setScalePort(scaleRes.port);
+          configured.push(`Scale -> ${scaleRes.port}`);
+        }
+      } catch {
+        // best effort
+      }
+
       await refreshPrinterDiscovery();
       await refreshPrinterConfigFromStore();
 
@@ -1958,6 +2047,18 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
           configured.push(`${dev.brand} ${dev.model} -> ${printerTypeLabel(t, targetType)}`);
           claimedSlots.add(targetType);
         }
+      }
+
+      // Also auto-detect and configure scale if available
+      try {
+        const scaleRes = await window.electronAPI.scale.autoDetect();
+        if (scaleRes.success && scaleRes.port) {
+          setScaleConnection('local');
+          setScalePort(scaleRes.port);
+          configured.push(`Scale -> ${scaleRes.port}`);
+        }
+      } catch {
+        // best effort
       }
 
       // Show summary if anything was auto-configured
@@ -5032,7 +5133,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
 
               {scaleConnection === 'local' && (
                 <div className="mt-3 space-y-3">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
                     <div>
                       <label className="block text-sm font-medium text-slate-600 mb-1">
                         {tOr('settings.scalePort', 'Scale port')}
@@ -5056,10 +5157,30 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-slate-600 mb-1">
-                        {tOr('settings.protocol', 'Protocol')}
+                        {tOr('settings.protocol', 'Scale Type / Protocol')}
                       </label>
                       <div className="h-[38px] flex items-center px-3 rounded-lg border border-slate-200 bg-slate-50 text-sm font-medium text-slate-700">
-                        DIBAL_GDPOS - 9600 8N1
+                        {scaleModel || 'DIBAL GDPOS (9600 8N1)'}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-600 mb-1">
+                        USB-Serial Chipset
+                      </label>
+                      <div className="h-[38px] flex items-center px-3 rounded-lg border border-slate-200 bg-slate-50 text-xs font-mono text-slate-700 truncate" title={scaleChipset || 'Auto (FTDI / Prolific / CH340)'}>
+                        {scaleChipset || 'Auto (FTDI / Prolific / CH340)'}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-600 mb-1">
+                        Driver Status
+                      </label>
+                      <div className={`h-[38px] flex items-center px-3 rounded-lg border text-xs font-semibold ${
+                        scaleDriverStatus.includes('OK') || scalePort
+                          ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                          : 'border-slate-200 bg-slate-50 text-slate-500'
+                      }`}>
+                        {scaleDriverStatus || (scalePort ? 'Configured' : 'Not detected')}
                       </div>
                     </div>
                   </div>
@@ -5197,37 +5318,73 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
               )}
 
               {scaleConnection !== 'none' && (
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleTestScale}
-                    disabled={scaleTesting}
-                    className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                      scaleTesting
-                        ? 'bg-slate-100 text-slate-400 cursor-wait'
-                        : 'bg-emerald-600 text-white hover:bg-emerald-700'
-                    }`}
-                  >
-                    <Scale size={16} />
-                    {scaleTesting ? 'Reading...' : scaleConnection === 'remote' ? 'Test Wi-Fi scale' : 'Test scale'}
-                  </button>
-                  {scaleConnection === 'local' && (
+                <div className="mt-3 space-y-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {scaleConnection === 'local' && (
+                      <button
+                        type="button"
+                        onClick={handleAutoDetectScale}
+                        disabled={scaleAutoDetecting || scaleTesting}
+                        className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold transition-colors ${
+                          scaleAutoDetecting
+                            ? 'bg-slate-100 text-slate-400 cursor-wait'
+                            : 'bg-brand-600 text-white hover:bg-brand-700 active:bg-brand-800'
+                        }`}
+                      >
+                        <Wand2 size={16} className={scaleAutoDetecting ? 'animate-spin' : ''} />
+                        {scaleAutoDetecting ? 'Detecting scale...' : 'Auto-detect scale'}
+                      </button>
+                    )}
                     <button
                       type="button"
-                      onClick={handleRefreshPorts}
-                      className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+                      onClick={handleTestScale}
+                      disabled={scaleTesting || scaleAutoDetecting}
+                      className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                        scaleTesting
+                          ? 'bg-slate-100 text-slate-400 cursor-wait'
+                          : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                      }`}
                     >
-                      Refresh ports
+                      <Scale size={16} />
+                      {scaleTesting ? 'Reading...' : scaleConnection === 'remote' ? 'Test Wi-Fi scale' : 'Test scale'}
                     </button>
-                  )}
-                  {scaleTestResult && (
-                    <span className={`text-xs font-semibold px-2.5 py-1.5 rounded-md border ${
-                      scaleTestResult.success
-                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                        : 'bg-amber-50 text-amber-800 border-amber-200'
-                    }`}>
-                      {scaleTestResult.message}
-                    </span>
+                    {scaleConnection === 'local' && (
+                      <button
+                        type="button"
+                        onClick={handleRefreshPorts}
+                        className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+                      >
+                        Refresh ports
+                      </button>
+                    )}
+                    {scaleTestResult && (
+                      <span className={`text-xs font-semibold px-2.5 py-1.5 rounded-md border ${
+                        scaleTestResult.success
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          : 'bg-amber-50 text-amber-800 border-amber-200'
+                      }`}>
+                        {scaleTestResult.message}
+                      </span>
+                    )}
+                  </div>
+
+                  {scaleDiagnoseSteps.length > 0 && (
+                    <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-1.5">
+                      <p className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Scale Connection Diagnostics</p>
+                      {scaleDiagnoseSteps.map((step, idx) => (
+                        <div key={idx} className="flex items-start gap-2 text-xs">
+                          {step.ok ? (
+                            <CheckCircle2 size={14} className="text-emerald-600 mt-0.5 shrink-0" />
+                          ) : (
+                            <AlertTriangle size={14} className="text-amber-600 mt-0.5 shrink-0" />
+                          )}
+                          <div>
+                            <span className="font-semibold text-slate-800">{step.step}: </span>
+                            <span className="text-slate-600">{step.detail || step.error}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
               )}

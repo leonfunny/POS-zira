@@ -23,7 +23,7 @@ import { printLabelToDevice, printInfoLabelToDevice, cleanupOldLabels } from '..
 import { ThermalDriver } from '../hardware/thermal/thermal-driver';
 import { HidScanner } from '../hardware/scanner/hid-scanner';
 import { chooseScannerTargetWindow } from '../hardware/scanner/scanner-target';
-import { readScaleWeight } from '../hardware/scale/scale-reader-service';
+import { readScaleWeight, detectAndSetupScale } from '../hardware/scale/scale-reader-service';
 import { getScaleNetworkInfo, ScaleNetworkService } from '../hardware/scale/scale-network-service';
 import {
   getLanFirstKitchenNetworkInfo,
@@ -288,7 +288,23 @@ export class HardwareModule extends BaseModule {
     });
 
     ipcMain.handle(IPC_CHANNELS.SCALE_READ_WEIGHT, async (_event, options?: { port?: string; forceLocal?: boolean }) => {
-      return readScaleWeight(getConfig(), options);
+      const result = await readScaleWeight(getConfig(), options);
+      if (result.success && result.port) {
+        const currentConfig = getConfig();
+        if (currentConfig.scale?.enabled && currentConfig.scale.connection === 'local' && (!currentConfig.scale.port || currentConfig.scale.port !== result.port)) {
+          setConfig({
+            scale: {
+              ...currentConfig.scale,
+              port: result.port,
+            },
+          });
+        }
+      }
+      return result;
+    });
+
+    ipcMain.handle(IPC_CHANNELS.SCALE_AUTO_DETECT, async () => {
+      return detectAndSetupScale();
     });
 
     ipcMain.handle(IPC_CHANNELS.SCALE_GET_NETWORK_INFO, () => {

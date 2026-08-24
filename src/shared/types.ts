@@ -258,8 +258,34 @@ export interface ScaleConfig {
   protocol: ScaleProtocol;
   port: string;
   baudRate?: number;
+  chipset?: string;
+  model?: string;
+  driverStatus?: string;
   share?: ScaleShareConfig;
   remote?: ScaleRemoteConfig;
+}
+
+export interface ScaleDiagnoseStep {
+  step: string;
+  ok: boolean;
+  detail?: string;
+  error?: string;
+  durationMs?: number;
+}
+
+export interface ScaleAutoDetectResult {
+  success: boolean;
+  port?: string;
+  protocol?: string;
+  chipset?: string;
+  model?: string;
+  driverStatus?: string;
+  baudRate?: number;
+  weightKg?: number;
+  stable?: boolean;
+  rawAscii?: string;
+  steps?: ScaleDiagnoseStep[];
+  message: string;
 }
 
 export interface LanFirstReceiverConfig {
@@ -1197,6 +1223,7 @@ export const IPC_CHANNELS = {
   LIST_PORTS: 'list-ports',
   LIST_WINDOWS_PRINTERS: 'list-windows-printers',
   SCALE_READ_WEIGHT: 'scale:read-weight',
+  SCALE_AUTO_DETECT: 'scale:auto-detect',
   SCALE_GET_NETWORK_INFO: 'scale:get-network-info',
   LAN_FIRST_KITCHEN_GET_NETWORK_INFO: 'lan-first-kitchen:get-network-info',
   LAN_FIRST_KITCHEN_GET_PAIRING_STATUS: 'lan-first-kitchen:get-pairing-status',

@@ -169,6 +169,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listWindowsPrinters: () => ipcRenderer.invoke(IPC_CHANNELS.LIST_WINDOWS_PRINTERS),
   scale: {
     readWeight: (options?: { port?: string }) => ipcRenderer.invoke(IPC_CHANNELS.SCALE_READ_WEIGHT, options),
+    autoDetect: () => ipcRenderer.invoke(IPC_CHANNELS.SCALE_AUTO_DETECT),
     getNetworkInfo: () => ipcRenderer.invoke(IPC_CHANNELS.SCALE_GET_NETWORK_INFO),
   },
   lanFirstKitchen: {

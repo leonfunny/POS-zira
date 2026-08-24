@@ -35,6 +35,9 @@ const defaultConfig: AgentConfig = {
     protocol: 'DIBAL_GDPOS',
     port: '',
     baudRate: 9600,
+    chipset: '',
+    model: '',
+    driverStatus: '',
     share: {
       enabled: false,
       port: 17891,
@@ -120,6 +123,9 @@ const scaleConfigSchema = {
     protocol: { type: 'string', enum: ['DIBAL_GDPOS'], default: 'DIBAL_GDPOS' },
     port: { type: 'string', default: '' },
     baudRate: { type: 'number', default: 9600 },
+    chipset: { type: 'string', default: '' },
+    model: { type: 'string', default: '' },
+    driverStatus: { type: 'string', default: '' },
     share: {
       type: 'object',
       properties: {

@@ -124,7 +124,7 @@ export async function listSerialPorts(): Promise<string[]> {
       const hasService = svc.length > 0;
       const inWmi = wmiPorts.has(com);
       const isAcpi = iid.toUpperCase().startsWith('ACPI\\');
-      if (hasService && inWmi && !isAcpi) {
+      if (hasService && (!isAcpi || inWmi)) {
         real.push(com);
       } else {
         const reason = isAcpi ? 'acpi-motherboard' : `svc=${svc || 'none'},wmi=${inWmi}`;

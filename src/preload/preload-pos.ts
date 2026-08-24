@@ -177,6 +177,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     scale: {
       readWeight: (options?: { port?: string }) => ipcRenderer.invoke('scale:read-weight', options),
+      autoDetect: () => ipcRenderer.invoke('scale:auto-detect'),
       getNetworkInfo: () => ipcRenderer.invoke('scale:get-network-info'),
     },
     shift: {
