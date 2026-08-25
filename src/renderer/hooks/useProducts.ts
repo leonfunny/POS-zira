@@ -100,7 +100,7 @@ function matchesKind(product: ProductListItem, filter: ProductKindFilter): boole
       return !product._isDraft && isStockTracked(product) && stock > 0 && stock <= LOW_STOCK_THRESHOLD;
     case 'all':
     default:
-      return true;
+      return !product._isDraft;
   }
 }
 

@@ -488,34 +488,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
     // EAN is missing). Backed by productRepo.search() which normalises
     // Polish + Vietnamese diacritics.
     const variants: Product[] = await window.electronAPI.pos.products.search(trimmedQuery);
-
-    // Also surface master-catalog drafts that match the same code so an
-    // unimported item can be added to the cart in one tap. Clicking a
-    // draft routes through the scan-import flow (creates the variant on
-    // the server, then adds to cart). Drafts are appended after real
-    // variants so the cashier sees stocked items first.
-    const drafts: any[] = await window.electronAPI.pos.draftProducts
-      .searchByCode(trimmedQuery)
-      .catch(() => []);
-    const draftItems: Product[] = drafts
-      .map((d) => ({
-        id: `draft:${d.id}`,
-        template_id: null,
-        name: d.name,
-        sku: d.sku ?? null,
-        barcode: d.barcode ?? null,
-        retail_price: Number(d.retail_price) || 0,
-        category_id: d.category_id ?? null,
-        image_url: d.image_url ?? null,
-        in_stock: Number(d.in_stock) || 0,
-        vat_rate: Number(d.vat_rate) || 23,
-        is_active: 1,
-        updated_at: d.updated_at ?? null,
-        available_qty: Number(d.in_stock) || 0,
-        _isDraft: true,
-      }));
-
-    return [...variants, ...draftItems];
+    return variants;
   }, [searchQuery]);
 
   // Search fetch stays async because it also consults draft_products; the
