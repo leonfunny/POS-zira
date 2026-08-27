@@ -114,7 +114,12 @@ import { settlePickupOrderForSale, drainPickupSettleOutbox } from '../kitchen-se
 import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
 import { purgeLocalOrderHistoryBefore, startOfLocalDayIso } from '../database/repos/order-history-purge';
 import { eodRunRepo } from '../database/repos/eod-run-repo';
-import { isRetryDue as isEodRetryDue, purgeCutoffForBusinessDate, resolveEndOfDayTarget } from '../pos/end-of-day';
+import {
+  isRetryDue as isEodRetryDue,
+  isShiftEligibleForEndOfDay,
+  purgeCutoffForBusinessDate,
+  resolveEndOfDayTarget,
+} from '../pos/end-of-day';
 import {
   FiscalReceiptOrderPendingSyncError,
   fiscalReceiptSyncRepo,
@@ -759,6 +764,7 @@ export class PosModule extends BaseModule {
   private serverShiftMismatchError: string | null = null;
   private shiftVerificationGeneration = 0;
   private shiftVerificationInFlight: Promise<void> | null = null;
+  private shiftOpenInFlight: Promise<{ success: boolean; shiftId?: string; recovered?: boolean; error?: string }> | null = null;
   private ordinaryPaymentPreflights = new Map<string, {
     orderId: string;
     shiftId: string;
@@ -1387,6 +1393,70 @@ export class PosModule extends BaseModule {
       // verified state and preserve the existing offline-payment behavior.
       logger.debug(`[PosModule] Server shift verification skipped (offline or error): ${error?.message || error}`);
     }
+  }
+
+  private async openOrRecoverShift(data: {
+    staffId: string;
+    staffName: string;
+    openingCash: number;
+  }): Promise<{ success: boolean; shiftId?: string; recovered?: boolean; error?: string }> {
+    if (!this.shiftController) {
+      return { success: false, error: 'Shift controller not initialized' };
+    }
+
+    const localShift = recoverOpenShiftFromLocal(database, this.posStore);
+    if (localShift) {
+      void this.scheduleShiftVerification(localShift.id).catch(() => undefined);
+      logger.info(`[PosModule] Reused local open shift ${localShift.id} instead of creating a duplicate`);
+      return { success: true, shiftId: localShift.id, recovered: true };
+    }
+
+    const token = getSecureAuthToken();
+    const machineId = String(getConfigValue('machineId') ?? '').trim();
+    if (token && machineId) {
+      let serverShift: Awaited<ReturnType<typeof apiClient.getActiveShift>> | null = null;
+      try {
+        serverShift = await apiClient.getActiveShift(token, machineId);
+        if (serverShift) {
+          const pendingLocalClose = database.get<{ id: string }>(
+            `SELECT id FROM shifts
+             WHERE id = ? AND closed_at IS NOT NULL AND COALESCE(close_synced, 0) = 0`,
+            [serverShift.id],
+          );
+          if (pendingLocalClose) {
+            await this.shiftController.retryUnsyncedShifts();
+            serverShift = await apiClient.getActiveShift(token, machineId);
+          }
+        }
+      } catch (error: any) {
+        logger.debug(`[PosModule] Shift-open recovery skipped while offline: ${error?.message || error}`);
+        serverShift = null;
+      }
+
+      if (serverShift) {
+        await this.scheduleShiftVerification(null);
+        const restoredShift = recoverOpenShiftFromLocal(database, this.posStore);
+        if (restoredShift) {
+          logger.info(`[PosModule] Restored server shift ${restoredShift.id} instead of creating a duplicate`);
+          return { success: true, shiftId: restoredShift.id, recovered: true };
+        }
+        return {
+          success: false,
+          error: this.serverShiftMismatchError
+            || 'The server still has an active shift for this register. Wait for recovery before opening a new shift.',
+        };
+      }
+    }
+
+    const shiftId = this.shiftController.openShift(data.staffId, data.staffName, data.openingCash);
+    this.billiardShiftLink?.open(data.openingCash, shiftId);
+    this.posStore?.dispatch({
+      type: 'session/open',
+      payload: { shiftId, staffId: data.staffId, staffName: data.staffName },
+    });
+    this.invalidateShiftVerification();
+    this.setServerShiftMismatch(null);
+    return { success: true, shiftId };
   }
 
   private allowCustomerDisplayIpc(
@@ -8346,15 +8416,16 @@ export class PosModule extends BaseModule {
     this.billiardShiftLink = billiardShiftLink;
 
 
-    ipcMain.handle('pos:shift:open', (_e, data: { staffId: string; staffName: string; openingCash: number }) => {
+    ipcMain.handle('pos:shift:open', async (_e, data: { staffId: string; staffName: string; openingCash: number }) => {
       try {
-        if (!this.shiftController) return { success: false, error: 'Shift controller not initialized' };
-        const shiftId = this.shiftController.openShift(data.staffId, data.staffName, data.openingCash);
-        billiardShiftLink.open(data.openingCash, shiftId);
-        this.posStore?.dispatch({ type: 'session/open', payload: { shiftId, staffId: data.staffId, staffName: data.staffName } });
-        this.invalidateShiftVerification();
-        this.setServerShiftMismatch(null);
-        return { success: true, shiftId };
+        if (this.shiftOpenInFlight) return await this.shiftOpenInFlight;
+        const work = this.openOrRecoverShift(data);
+        this.shiftOpenInFlight = work;
+        try {
+          return await work;
+        } finally {
+          if (this.shiftOpenInFlight === work) this.shiftOpenInFlight = null;
+        }
       } catch (e: any) { return { success: false, error: e.message }; }
     });
 
@@ -9125,7 +9196,10 @@ export class PosModule extends BaseModule {
     }
   }
 
-  private billiardShiftLink: { close: (closingCash: number, shiftId: string) => void } | null = null;
+  private billiardShiftLink: {
+    open: (openingCash: number, shiftId: string) => void;
+    close: (closingCash: number, shiftId: string) => void;
+  } | null = null;
   private eodTimer: NodeJS.Timeout | null = null;
   private eodInFlight = false;
 
@@ -9174,9 +9248,14 @@ export class PosModule extends BaseModule {
       eodRunRepo.begin(date);
       logger.info(`[EOD] start business_date=${date} reason=${reason}${target.catchUp ? ' (catch-up)' : ''}`);
 
-      // 1. Auto-close every open shift on this device.
+      // 1. Auto-close only shifts belonging to the due business date. During
+      // startup catch-up, a shift opened today must remain visible and open.
       let shiftsClosed = 0;
-      const openShifts = database.all<{ id: string }>('SELECT id FROM shifts WHERE closed_at IS NULL ORDER BY opened_at ASC');
+      const openShifts = database
+        .all<{ id: string; opened_at: string }>(
+          'SELECT id, opened_at FROM shifts WHERE closed_at IS NULL ORDER BY opened_at ASC',
+        )
+        .filter((shift) => isShiftEligibleForEndOfDay(shift.opened_at, date));
       if (openShifts.length > 0) {
         const draft = this.posStore?.getState().checkoutDraft;
         if (draft?.billiard || draft?.restoredInterruption) {

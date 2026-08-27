@@ -174,6 +174,29 @@ describe('POS auth-boundary shift recovery', () => {
     expect(loginHandler).toContain('if (localShiftRecoverySafe) this.scheduleShiftVerification(openShift?.id ?? null)');
   });
 
+  it('recovers a local or server shift before creating a new one', () => {
+    const source = readFileSync(
+      new URL('../src/main/modules/pos.module.ts', import.meta.url),
+      'utf8',
+    );
+    const recovery = source.slice(
+      source.indexOf('private async openOrRecoverShift'),
+      source.indexOf('private allowCustomerDisplayIpc'),
+    );
+    const openHandler = source.slice(
+      source.indexOf("ipcMain.handle('pos:shift:open'"),
+      source.indexOf("ipcMain.handle('pos:shift:close'"),
+    );
+
+    expect(recovery).toContain('recoverOpenShiftFromLocal(database, this.posStore)');
+    expect(recovery).toContain('apiClient.getActiveShift(token, machineId)');
+    expect(recovery).toContain('await this.shiftController.retryUnsyncedShifts()');
+    expect(recovery.indexOf('recoverOpenShiftFromLocal(database, this.posStore)'))
+      .toBeLessThan(recovery.indexOf('this.shiftController.openShift'));
+    expect(openHandler).toContain('this.shiftOpenInFlight');
+    expect(openHandler).toContain('this.openOrRecoverShift(data)');
+  });
+
   it('freshly verifies before collection and uses the order-bound token at protected tender boundaries', () => {
     const source = readFileSync(
       new URL('../src/main/modules/pos.module.ts', import.meta.url),

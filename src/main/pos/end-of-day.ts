@@ -25,6 +25,31 @@ export function localDateKey(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+/**
+ * A catch-up run for yesterday must never close a shift opened today. SQLite
+ * stores its default timestamps as UTC without a trailing `Z`, while restored
+ * server shifts use ISO timestamps, so normalize both before comparing them
+ * with the local midnight after the target business date.
+ */
+export function isShiftEligibleForEndOfDay(openedAt: string, businessDate: string): boolean {
+  const normalizedOpenedAt = openedAt.includes('T')
+    ? openedAt
+    : `${openedAt.replace(' ', 'T')}Z`;
+  const openedAtMs = Date.parse(normalizedOpenedAt);
+  const [year, month, day] = businessDate.split('-').map(Number);
+  if (
+    !Number.isFinite(openedAtMs)
+    || !Number.isInteger(year)
+    || !Number.isInteger(month)
+    || !Number.isInteger(day)
+  ) {
+    return false;
+  }
+
+  const businessDateEnd = new Date(year, month - 1, day + 1, 0, 0, 0, 0);
+  return openedAtMs < businessDateEnd.getTime();
+}
+
 function addDays(d: Date, days: number): Date {
   const out = new Date(d);
   out.setDate(out.getDate() + days);

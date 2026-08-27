@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isShiftEligibleForEndOfDay,
   isRetryDue,
   localDateKey,
   purgeCutoffForBusinessDate,
@@ -39,6 +40,21 @@ describe('resolveEndOfDayTarget', () => {
   it('handles a month boundary for the catch-up date', () => {
     const t = resolveEndOfDayTarget({ now: at(2026, 9, 1, 9, 0), hour: 23, minute: 59, lastSuccessDate: null });
     expect(t.businessDate).toBe('2026-08-31');
+  });
+});
+
+describe('isShiftEligibleForEndOfDay', () => {
+  it('does not close a current-day shift while catching up yesterday', () => {
+    expect(isShiftEligibleForEndOfDay('2026-08-27 08:08:48', '2026-08-26')).toBe(false);
+  });
+
+  it('closes a shift that belongs to the target business date', () => {
+    expect(isShiftEligibleForEndOfDay('2026-08-27 08:08:48', '2026-08-27')).toBe(true);
+  });
+
+  it('accepts restored server ISO timestamps and fails safe on invalid values', () => {
+    expect(isShiftEligibleForEndOfDay('2026-08-26T20:00:00.000Z', '2026-08-26')).toBe(true);
+    expect(isShiftEligibleForEndOfDay('not-a-date', '2026-08-26')).toBe(false);
   });
 });
 
