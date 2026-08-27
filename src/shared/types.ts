@@ -627,6 +627,11 @@ export interface AgentConfig {
   receiptSellerAddress?: string; // Full address (e.g., "ul. Łączności 35, 32-020 Wieliczka")
   receiptSellerNip?: string;     // Tax ID (e.g., "522-005-23-49")
   allowRealFiscalPrint?: boolean; // Live fiscal receipts enabled on this POS after service-approved go-live.
+  endOfDay?: {
+    enabled?: boolean;            // Auto shift close + sync + local history purge. Default true, every POS.
+    hour?: number;                // Local hour, default 23.
+    minute?: number;              // Local minute, default 59.
+  };
   fiscalDailyReport?: {
     enabled?: boolean;            // Enable automatic fiscal daily report on this device.
     master?: boolean;             // Must be true on exactly one POS: the fiscal-printer master.

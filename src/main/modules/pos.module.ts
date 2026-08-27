@@ -113,6 +113,8 @@ import {
 import { settlePickupOrderForSale, drainPickupSettleOutbox } from '../kitchen-self-order/pickup-settle';
 import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
 import { purgeLocalOrderHistoryBefore, startOfLocalDayIso } from '../database/repos/order-history-purge';
+import { eodRunRepo } from '../database/repos/eod-run-repo';
+import { isRetryDue as isEodRetryDue, purgeCutoffForBusinessDate, resolveEndOfDayTarget } from '../pos/end-of-day';
 import {
   FiscalReceiptOrderPendingSyncError,
   fiscalReceiptSyncRepo,
@@ -8279,7 +8281,7 @@ export class PosModule extends BaseModule {
     // and the server-side billiard business shift. Gated on the billiard
     // entitlement so grocery salons are untouched. Fire-and-forget: a network
     // failure never blocks the local shift flow (the floor chip nags later).
-    const billiardShiftLink = {
+    const billiardShiftLink = this.billiardShiftLink = {
       enabled: (): boolean => {
         try {
           // Two gates, both fail-closed: the plan entitlement AND actual
@@ -9113,6 +9115,109 @@ export class PosModule extends BaseModule {
     }
   }
 
+  private billiardShiftLink: { close: (closingCash: number, shiftId: string) => void } | null = null;
+  private eodTimer: NodeJS.Timeout | null = null;
+  private eodInFlight = false;
+
+  /**
+   * End-of-day: runs on EVERY POS (fiscal master or not) at the configured
+   * local time, and catches up on boot for a business date that was missed
+   * because the device was off. Steps: auto-close open shifts (Z-report
+   * printed, closing cash = expected), push pending order/shift sync, purge
+   * local history older than the business date. Ledger: pos_eod_runs.
+   */
+  private startEndOfDayTimer(): void {
+    if (this.eodTimer) return;
+    this.eodTimer = setInterval(() => { void this.endOfDayTick('timer'); }, 60_000);
+    this.eodTimer.unref?.();
+  }
+
+  private stopEndOfDayTimer(): void {
+    if (!this.eodTimer) return;
+    clearInterval(this.eodTimer);
+    this.eodTimer = null;
+  }
+
+  private async endOfDayTick(reason: string): Promise<void> {
+    if (this.eodInFlight) return;
+    const cfg = (getConfig() as any).endOfDay as { enabled?: boolean; hour?: number; minute?: number } | undefined;
+    if (cfg?.enabled === false) return;
+    const hour = Number.isFinite(cfg?.hour) ? Number(cfg!.hour) : 23;
+    const minute = Number.isFinite(cfg?.minute) ? Number(cfg!.minute) : 59;
+    let target: ReturnType<typeof resolveEndOfDayTarget>;
+    let existing: ReturnType<typeof eodRunRepo.get>;
+    try {
+      target = resolveEndOfDayTarget({ now: new Date(), hour, minute, lastSuccessDate: eodRunRepo.latestSuccessDate() });
+      if (!target.due) return;
+      existing = eodRunRepo.get(target.businessDate);
+    } catch (error: any) {
+      logger.debug(`[EOD] tick deferred: ${error?.message || error}`);
+      return;
+    }
+    if (existing?.status === 'SUCCESS') return;
+    if (existing && existing.attempts >= 10) return;
+    if (existing && !isEodRetryDue(existing.updated_at, 5, Date.now())) return;
+
+    this.eodInFlight = true;
+    const date = target.businessDate;
+    try {
+      eodRunRepo.begin(date);
+      logger.info(`[EOD] start business_date=${date} reason=${reason}${target.catchUp ? ' (catch-up)' : ''}`);
+
+      // 1. Auto-close every open shift on this device.
+      let shiftsClosed = 0;
+      const openShifts = database.all<{ id: string }>('SELECT id FROM shifts WHERE closed_at IS NULL ORDER BY opened_at ASC');
+      if (openShifts.length > 0) {
+        const draft = this.posStore?.getState().checkoutDraft;
+        if (draft?.billiard || draft?.restoredInterruption) {
+          throw new Error('protected cart open; shift auto-close deferred');
+        }
+        if (!this.shiftController) throw new Error('shift controller not initialized');
+        const orderSync = this.container.getOptional<any>(SERVICE_TOKENS.ORDER_SYNC);
+        if (orderSync) {
+          await Promise.race([
+            orderSync.syncPendingOrders().catch(() => undefined),
+            new Promise((resolve) => setTimeout(resolve, 5_000)),
+          ]);
+        }
+        for (const shift of openShifts) {
+          const report = this.shiftController.closeShift(shift.id, null, false);
+          try { this.billiardShiftLink?.close(report.closingCash, shift.id); } catch { /* best effort */ }
+          shiftsClosed += 1;
+          await this.shiftController.printZReport(report);
+        }
+        this.posStore?.dispatch({ type: 'session/close' });
+        this.invalidateShiftVerification();
+        this.setServerShiftMismatch(null);
+      }
+
+      // 2. Push whatever sync is still pending (best effort, bounded).
+      const orderSync = this.container.getOptional<any>(SERVICE_TOKENS.ORDER_SYNC);
+      await Promise.race([
+        Promise.all([
+          orderSync ? orderSync.syncPendingOrders().catch(() => undefined) : Promise.resolve(),
+          this.shiftController ? this.shiftController.retryUnsyncedShifts().catch(() => undefined) : Promise.resolve(),
+        ]),
+        new Promise((resolve) => setTimeout(resolve, 8_000)),
+      ]);
+
+      // 3. Purge local history up to (and including) the business date.
+      const cutoff = purgeCutoffForBusinessDate(date, new Date());
+      const purge = purgeLocalOrderHistoryBefore(database, cutoff);
+
+      eodRunRepo.finish(date, { shiftsClosed, purged: purge.purged, kept: purge.kept });
+      logger.info(`[EOD] done business_date=${date} shiftsClosed=${shiftsClosed} purged=${purge.purged} kept=${purge.kept}`);
+      const flush = await database.saveCoalesced();
+      if (!flush.success) logger.warn(`[EOD] flush deferred: ${flush.error || 'unknown error'}`);
+    } catch (error: any) {
+      const message = error?.message || String(error);
+      logger.warn(`[EOD] business_date=${date} failed: ${message}`);
+      try { eodRunRepo.fail(date, message); } catch { /* ledger best effort */ }
+    } finally {
+      this.eodInFlight = false;
+    }
+  }
+
   private orderHistoryPurgeTimer: NodeJS.Timeout | null = null;
 
   /**
@@ -9203,7 +9308,9 @@ export class PosModule extends BaseModule {
       logger.debug(`[PosModule] Receipt queue retention deferred: ${error?.message || error}`);
     }
     this.startReceiptPrintReplayTimer();
-    this.runOrderHistoryPurge('startup');
+    // EOD catch-up first (may auto-close yesterday's shift), then the purge.
+    void this.endOfDayTick('startup').finally(() => this.runOrderHistoryPurge('startup'));
+    this.startEndOfDayTimer();
     this.startOrderHistoryPurgeTimer();
     // Set salon display info from config
     const config = getConfig();
@@ -9216,6 +9323,7 @@ export class PosModule extends BaseModule {
 
   async stop(): Promise<void> {
     if (this.orderHistoryPurgeTimer) { clearTimeout(this.orderHistoryPurgeTimer); this.orderHistoryPurgeTimer = null; }
+    this.stopEndOfDayTimer();
     this.stopFiscalReceiptSyncTimer();
     this.stopProductAdminMutationReplayTimer();
     this.stopReceiptPrintReplayTimer();
