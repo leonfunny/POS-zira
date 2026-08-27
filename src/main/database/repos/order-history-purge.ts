@@ -26,9 +26,25 @@ export interface PurgeDatabase {
 
 export interface OrderHistoryPurgeResult {
   purged: number;
+  /** eligible-but-not-yet-purged rows carried to the next run (maxPerRun cap) */
+  remaining: number;
+  /** older rows deliberately kept: unsynced / pending work / open shift */
   kept: number;
   cutoff: string;
 }
+
+export interface OrderHistoryPurgeOptions {
+  /** rows deleted per transaction; the main process is blocked only for one batch */
+  batchSize?: number;
+  /** cap per run so a months-old backlog never stalls the counter; rest goes to the next tick */
+  maxPerRun?: number;
+  /** yields between batches so pending IPC (scan, payment, print) can run */
+  yieldBetweenBatches?: () => Promise<void>;
+}
+
+const DEFAULT_BATCH_SIZE = 500;
+const DEFAULT_MAX_PER_RUN = 5_000;
+const defaultYield = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
 /** Local-midnight cutoff in the same `datetime('now')` / ISO shape orders use. */
 export function startOfLocalDayIso(now: Date = new Date()): string {
@@ -100,32 +116,41 @@ const OLDER_COUNT_SQL = `
   WHERE replace(substr(o.created_at, 1, 19), ' ', 'T') < substr(?, 1, 19)
 `;
 
-export function purgeLocalOrderHistoryBefore(
+export async function purgeLocalOrderHistoryBefore(
   db: PurgeDatabase,
   cutoffIso: string,
-): OrderHistoryPurgeResult {
+  options: OrderHistoryPurgeOptions = {},
+): Promise<OrderHistoryPurgeResult> {
+  const batchSize = Math.max(1, options.batchSize ?? DEFAULT_BATCH_SIZE);
+  const maxPerRun = Math.max(batchSize, options.maxPerRun ?? DEFAULT_MAX_PER_RUN);
+  const yieldBetweenBatches = options.yieldBetweenBatches ?? defaultYield;
+
   const required = ['orders', 'shifts', 'fiscal_attempts', 'fiscal_receipt_sync_queue',
     'pos_event_outbox', 'receipt_print_outbox', 'local_sync_log'];
   for (const t of required) {
     if (!tableExists(db, t)) {
       logger.debug(`[OrderHistoryPurge] table ${t} missing; skipping purge`);
-      return { purged: 0, kept: 0, cutoff: cutoffIso };
+      return { purged: 0, remaining: 0, kept: 0, cutoff: cutoffIso };
     }
   }
 
   const older = db.get<{ n: number }>(OLDER_COUNT_SQL, [cutoffIso])?.n ?? 0;
-  if (older === 0) return { purged: 0, kept: 0, cutoff: cutoffIso };
+  if (older === 0) return { purged: 0, remaining: 0, kept: 0, cutoff: cutoffIso };
 
-  const ids = db.all<{ id: string }>(ELIGIBLE_SQL, [cutoffIso]).map((r) => r.id);
-  if (ids.length === 0) {
-    return { purged: 0, kept: older, cutoff: cutoffIso };
+  const eligible = db.all<{ id: string }>(ELIGIBLE_SQL, [cutoffIso]).map((r) => r.id);
+  if (eligible.length === 0) {
+    return { purged: 0, remaining: 0, kept: older, cutoff: cutoffIso };
   }
 
+  const ids = eligible.slice(0, maxPerRun);
   const existingChildren = CHILD_TABLES.filter((c) => tableExists(db, c.table));
-  db.transaction(() => {
-    for (let i = 0; i < ids.length; i += 200) {
-      const chunk = ids.slice(i, i + 200);
-      const marks = chunk.map(() => '?').join(',');
+  let purged = 0;
+  for (let i = 0; i < ids.length; i += batchSize) {
+    const chunk = ids.slice(i, i + batchSize);
+    const marks = chunk.map(() => '?').join(',');
+    // One short transaction per batch: the event loop is blocked only for
+    // this batch, then we yield so a sale in progress is served first.
+    db.transaction(() => {
       for (const child of existingChildren) {
         db.run(`DELETE FROM ${child.table} WHERE ${child.column} IN (${marks})`, chunk);
       }
@@ -134,11 +159,14 @@ export function purgeLocalOrderHistoryBefore(
         chunk,
       );
       db.run(`DELETE FROM orders WHERE id IN (${marks})`, chunk);
-    }
-  });
-  db.markDirty?.();
+    });
+    purged += chunk.length;
+    db.markDirty?.();
+    if (i + batchSize < ids.length) await yieldBetweenBatches();
+  }
 
-  const kept = older - ids.length;
-  logger.info(`[OrderHistoryPurge] purged ${ids.length} synced order(s) before ${cutoffIso}; kept ${kept} (unsynced/pending/open-shift)`);
-  return { purged: ids.length, kept, cutoff: cutoffIso };
+  const remaining = eligible.length - purged;
+  const kept = older - eligible.length;
+  logger.info(`[OrderHistoryPurge] purged ${purged} synced order(s) before ${cutoffIso}; remaining ${remaining} (next run), kept ${kept} (unsynced/pending/open-shift)`);
+  return { purged, remaining, kept, cutoff: cutoffIso };
 }

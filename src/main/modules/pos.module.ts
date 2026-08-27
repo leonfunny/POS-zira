@@ -9204,10 +9204,14 @@ export class PosModule extends BaseModule {
 
       // 3. Purge local history up to (and including) the business date.
       const cutoff = purgeCutoffForBusinessDate(date, new Date());
-      const purge = purgeLocalOrderHistoryBefore(database, cutoff);
+      const purge = await purgeLocalOrderHistoryBefore(database, cutoff);
 
       eodRunRepo.finish(date, { shiftsClosed, purged: purge.purged, kept: purge.kept });
-      logger.info(`[EOD] done business_date=${date} shiftsClosed=${shiftsClosed} purged=${purge.purged} kept=${purge.kept}`);
+      logger.info(`[EOD] done business_date=${date} shiftsClosed=${shiftsClosed} purged=${purge.purged} remaining=${purge.remaining} kept=${purge.kept}`);
+      if (purge.remaining > 0) {
+        const t = setTimeout(() => { void this.runOrderHistoryPurge('eod-continue'); }, 30_000);
+        t.unref?.();
+      }
       const flush = await database.saveCoalesced();
       if (!flush.success) logger.warn(`[EOD] flush deferred: ${flush.error || 'unknown error'}`);
     } catch (error: any) {
@@ -9226,19 +9230,29 @@ export class PosModule extends BaseModule {
    * the device DB stays small. Runs at startup and shortly after each local
    * midnight. See order-history-purge.ts for the safety rules.
    */
-  private runOrderHistoryPurge(reason: string): void {
+  private purgeInFlight = false;
+
+  private async runOrderHistoryPurge(reason: string): Promise<void> {
+    if (this.purgeInFlight) return;
+    this.purgeInFlight = true;
     try {
-      const result = purgeLocalOrderHistoryBefore(database, startOfLocalDayIso());
+      const result = await purgeLocalOrderHistoryBefore(database, startOfLocalDayIso());
       if (result.purged > 0) {
-        logger.info(`[PosModule] Order history purge (${reason}): removed ${result.purged}, kept ${result.kept}`);
-        void database.saveCoalesced().then((flush) => {
-          if (!flush.success) {
-            logger.warn(`[PosModule] Order history purge flush deferred: ${flush.error || 'unknown error'}`);
-          }
-        });
+        logger.info(`[PosModule] Order history purge (${reason}): removed ${result.purged}, remaining ${result.remaining}, kept ${result.kept}`);
+        const flush = await database.saveCoalesced();
+        if (!flush.success) {
+          logger.warn(`[PosModule] Order history purge flush deferred: ${flush.error || 'unknown error'}`);
+        }
+      }
+      if (result.remaining > 0) {
+        // Backlog larger than one run's cap: continue shortly, still yielding.
+        const t = setTimeout(() => { void this.runOrderHistoryPurge('continue'); }, 30_000);
+        t.unref?.();
       }
     } catch (error: any) {
       logger.warn(`[PosModule] Order history purge (${reason}) failed: ${error?.message || error}`);
+    } finally {
+      this.purgeInFlight = false;
     }
   }
 
@@ -9310,7 +9324,7 @@ export class PosModule extends BaseModule {
     }
     this.startReceiptPrintReplayTimer();
     // EOD catch-up first (may auto-close yesterday's shift), then the purge.
-    void this.endOfDayTick('startup').finally(() => this.runOrderHistoryPurge('startup'));
+    void this.endOfDayTick('startup').finally(() => { void this.runOrderHistoryPurge('startup'); });
     this.startEndOfDayTimer();
     this.startOrderHistoryPurgeTimer();
     // Set salon display info from config

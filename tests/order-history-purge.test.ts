@@ -69,7 +69,7 @@ describe('purgeLocalOrderHistoryBefore', () => {
   };
   const ids = () => db.all<{ id: string }>('SELECT id FROM orders ORDER BY id').map((r) => r.id);
 
-  it('deletes synced orders from earlier days with their child rows, keeps today', () => {
+  it('deletes synced orders from earlier days with their child rows, keeps today', async () => {
     insertOrder('a');
     insertOrder('b', { created_at: OLD_ISO });
     insertOrder('today', { created_at: TODAY });
@@ -81,9 +81,9 @@ describe('purgeLocalOrderHistoryBefore', () => {
     db.run("INSERT INTO pos_event_outbox VALUES ('e1','a','acked')");
     db.run("INSERT INTO local_sync_log VALUES ('l1','order','a','synced')");
 
-    const result = purgeLocalOrderHistoryBefore(db, CUTOFF);
+    const result = await purgeLocalOrderHistoryBefore(db, CUTOFF);
 
-    expect(result).toEqual({ purged: 2, kept: 0, cutoff: CUTOFF });
+    expect(result).toEqual({ purged: 2, remaining: 0, kept: 0, cutoff: CUTOFF });
     expect(ids()).toEqual(['today']);
     for (const t of ['order_items', 'fiscal_attempts', 'print_attempts', 'receipt_print_outbox', 'pos_billiard_handoffs', 'fiscal_receipt_sync_queue', 'pos_event_outbox', 'local_sync_log']) {
       expect(db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${t}`)?.n, t).toBe(t === 'order_items' ? 1 : 0);
@@ -91,31 +91,31 @@ describe('purgeLocalOrderHistoryBefore', () => {
     expect(db.markDirty).toHaveBeenCalled();
   });
 
-  it('keeps unsynced orders and orders without backend id', () => {
+  it('keeps unsynced orders and orders without backend id', async () => {
     insertOrder('unsynced', { synced: 0, backend_id: null });
     insertOrder('inflight', { synced: 2, backend_id: 'be-inflight' }); // backend id known but push not confirmed
     insertOrder('nobackend', { synced: 1, backend_id: '' });
     insertOrder('ok');
 
-    const result = purgeLocalOrderHistoryBefore(db, CUTOFF);
+    const result = await purgeLocalOrderHistoryBefore(db, CUTOFF);
 
-    expect(result).toEqual({ purged: 1, kept: 3, cutoff: CUTOFF });
+    expect(result).toEqual({ purged: 1, remaining: 0, kept: 3, cutoff: CUTOFF });
     expect(ids()).toEqual(['inflight', 'nobackend', 'unsynced']);
   });
 
-  it('keeps orders whose shift is still open', () => {
+  it('keeps orders whose shift is still open', async () => {
     db.run("INSERT INTO shifts VALUES ('open', NULL)");
     db.run("INSERT INTO shifts VALUES ('closed', '2026-08-20 22:00:00')");
     insertOrder('in-open', { shift_id: 'open' });
     insertOrder('in-closed', { shift_id: 'closed' });
     insertOrder('shift-missing', { shift_id: 'gone' });
 
-    purgeLocalOrderHistoryBefore(db, CUTOFF);
+    await purgeLocalOrderHistoryBefore(db, CUTOFF);
 
     expect(ids()).toEqual(['in-open']);
   });
 
-  it('keeps orders with pending work: fiscal unknown, sync queue, event outbox, print outbox, sync log', () => {
+  it('keeps orders with pending work: fiscal unknown, sync queue, event outbox, print outbox, sync log', async () => {
     insertOrder('fiscal-unknown');
     db.run("INSERT INTO fiscal_attempts VALUES ('fa','fiscal-unknown','UNKNOWN_NEEDS_RECONCILIATION')");
     insertOrder('fiscal-queue');
@@ -128,17 +128,35 @@ describe('purgeLocalOrderHistoryBefore', () => {
     db.run("INSERT INTO local_sync_log VALUES ('l','order','log-pending','pending')");
     insertOrder('clean');
 
-    const result = purgeLocalOrderHistoryBefore(db, CUTOFF);
+    const result = await purgeLocalOrderHistoryBefore(db, CUTOFF);
 
     expect(result.purged).toBe(1);
     expect(result.kept).toBe(5);
     expect(ids()).toEqual(['event-pending', 'fiscal-queue', 'fiscal-unknown', 'log-pending', 'print-inflight']);
   });
 
-  it('is a no-op without older rows', () => {
+  it('is a no-op without older rows', async () => {
     insertOrder('today', { created_at: TODAY });
-    expect(purgeLocalOrderHistoryBefore(db, CUTOFF)).toEqual({ purged: 0, kept: 0, cutoff: CUTOFF });
+    expect(await purgeLocalOrderHistoryBefore(db, CUTOFF)).toEqual({ purged: 0, remaining: 0, kept: 0, cutoff: CUTOFF });
     expect(db.markDirty).not.toHaveBeenCalled();
+  });
+
+  it('deletes in batches, yields between them and caps per run, leaving the rest for the next run', async () => {
+    for (let i = 0; i < 7; i += 1) insertOrder(`o${i}`);
+    insertOrder('unsynced', { synced: 0, backend_id: null });
+    const yields: number[] = [];
+    const yieldBetweenBatches = async () => { yields.push(ids().length); };
+
+    const first = await purgeLocalOrderHistoryBefore(db, CUTOFF, { batchSize: 2, maxPerRun: 5, yieldBetweenBatches });
+
+    expect(first).toEqual({ purged: 5, remaining: 2, kept: 1, cutoff: CUTOFF });
+    // yielded after batch 1 (6 left) and batch 2 (4 left); not after the last batch
+    expect(yields).toEqual([6, 4]);
+    expect(ids()).toHaveLength(3);
+
+    const second = await purgeLocalOrderHistoryBefore(db, CUTOFF, { batchSize: 2, maxPerRun: 5, yieldBetweenBatches });
+    expect(second).toEqual({ purged: 2, remaining: 0, kept: 1, cutoff: CUTOFF });
+    expect(ids()).toEqual(['unsynced']);
   });
 
   it('startOfLocalDayIso returns local midnight', () => {
