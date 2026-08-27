@@ -844,7 +844,16 @@ export class PosModule extends BaseModule {
     }
     const authContext = this.capturePosAuthContext();
     const openShift = assertLocalOpenShiftMatchesSession(database, this.posStore);
-    await this.refreshServerShiftConsistencyForPayment(openShift.id);
+    // Ordinary (non-protected) tender: do NOT block the cashier on a fresh
+    // server round-trip. The server shift was already verified at login /
+    // shift open and after every auth or shift event, and its result lives in
+    // serverShiftMismatchError. Assert that cached verdict and refresh it in
+    // the background so the next payment sees any newer server state. (Before 2026-08-27 every payment
+    // waited on GET /pos/shifts/active — 1-2 s on a good link, up to the 30 s
+    // fetch timeout on a flapping one — while showing "Checking the POS
+    // register and shift".)
+    this.assertServerShiftConsistentForPayment();
+    void this.scheduleShiftVerification(openShift.id).catch(() => undefined);
     if (!this.isPosAuthContextCurrent(authContext)) {
       throw new Error('POS user changed while payment safety was being verified.');
     }
