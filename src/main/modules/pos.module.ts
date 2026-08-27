@@ -9280,8 +9280,15 @@ export class PosModule extends BaseModule {
         this.setServerShiftMismatch(null);
       }
 
-      // 2. Push whatever sync is still pending (best effort, bounded).
+      // 2. Push whatever sync is still pending (best effort, bounded). Orders
+      //    shelved after offline failures get one more round first.
       const orderSync = this.container.getOptional<any>(SERVICE_TOKENS.ORDER_SYNC);
+      try {
+        const requeued = orderSync?.requeueShelvedTransient?.() ?? 0;
+        if (requeued > 0) logger.info(`[EOD] re-queued ${requeued} shelved order(s) for sync`);
+      } catch (error: any) {
+        logger.debug(`[EOD] requeue shelved skipped: ${error?.message || error}`);
+      }
       await Promise.race([
         Promise.all([
           orderSync ? orderSync.syncPendingOrders().catch(() => undefined) : Promise.resolve(),
@@ -9292,7 +9299,7 @@ export class PosModule extends BaseModule {
 
       // 3. Purge local history up to (and including) the business date.
       const cutoff = purgeCutoffForBusinessDate(date, new Date());
-      const purge = await purgeLocalOrderHistoryBefore(database, cutoff);
+      const purge = await purgeLocalOrderHistoryBefore(database, cutoff, this.purgeOptions());
 
       eodRunRepo.finish(date, { shiftsClosed, purged: purge.purged, kept: purge.kept });
       logger.info(`[EOD] done business_date=${date} shiftsClosed=${shiftsClosed} purged=${purge.purged} remaining=${purge.remaining} kept=${purge.kept}`);
@@ -9320,11 +9327,39 @@ export class PosModule extends BaseModule {
    */
   private purgeInFlight = false;
 
+  private static readonly PURGE_UNSYNCED_AFTER_DAYS = 7;
+  private static readonly PURGE_STALE_FISCAL_UNKNOWN_AFTER_DAYS = 2;
+
+  private purgeOptions(): Parameters<typeof purgeLocalOrderHistoryBefore>[2] {
+    const daysAgo = (n: number): string => new Date(Date.now() - n * 86_400_000).toISOString();
+    return {
+      unsyncedOlderThanIso: daysAgo(PosModule.PURGE_UNSYNCED_AFTER_DAYS),
+      staleFiscalUnknownBeforeIso: daysAgo(PosModule.PURGE_STALE_FISCAL_UNKNOWN_AFTER_DAYS),
+      exportUnsynced: (orders) => this.exportPurgedUnsynced(orders),
+    };
+  }
+
+  /**
+   * Shelved orders (never reached the backend) are appended to a JSON-lines
+   * file before purge so the sale can still be recovered by hand.
+   * Path: <userData>/purged-unsynced/<YYYY-MM-DD>.jsonl
+   */
+  private exportPurgedUnsynced(orders: Array<{ order: Record<string, unknown>; items: Array<Record<string, unknown>> }>): void {
+    if (orders.length === 0) return;
+    const dir = path.join(app.getPath('userData'), 'purged-unsynced');
+    const fsSync = require('fs') as typeof import('fs');
+    fsSync.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `${new Date().toISOString().slice(0, 10)}.jsonl`);
+    const lines = orders.map((o) => JSON.stringify({ exportedAt: new Date().toISOString(), ...o })).join('\n') + '\n';
+    fsSync.appendFileSync(file, lines, 'utf8');
+    logger.warn(`[OrderHistoryPurge] exported ${orders.length} never-synced order(s) to ${file} before purge`);
+  }
+
   private async runOrderHistoryPurge(reason: string): Promise<void> {
     if (this.purgeInFlight) return;
     this.purgeInFlight = true;
     try {
-      const result = await purgeLocalOrderHistoryBefore(database, startOfLocalDayIso());
+      const result = await purgeLocalOrderHistoryBefore(database, startOfLocalDayIso(), this.purgeOptions());
       if (result.purged > 0) {
         logger.info(`[PosModule] Order history purge (${reason}): removed ${result.purged}, remaining ${result.remaining}, kept ${result.kept}`);
         const flush = await database.saveCoalesced();

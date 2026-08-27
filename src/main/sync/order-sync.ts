@@ -336,6 +336,31 @@ export class OrderSync {
   }
 
   /**
+   * End-of-day repair: orders shelved (synced = -1) after transient failures
+   * — "fetch failed" while the counter was offline, timeouts, 5xx — get one
+   * more full round of attempts. Business rejections stay shelved.
+   */
+  requeueShelvedTransient(): number {
+    const rows = database.all<{ id: string; sync_error: string | null }>(
+      "SELECT id, sync_error FROM orders WHERE synced = -1 AND (backend_id IS NULL OR backend_id = '')",
+    );
+    const ids = rows
+      .filter((r) => !r.sync_error || classifyError(r.sync_error).kind === 'transient')
+      .map((r) => r.id);
+    if (ids.length === 0) return 0;
+    for (let i = 0; i < ids.length; i += 200) {
+      const chunk = ids.slice(i, i + 200);
+      database.run(
+        `UPDATE orders SET synced = 0, sync_attempts = 0 WHERE id IN (${chunk.map(() => '?').join(',')})`,
+        chunk,
+      );
+    }
+    database.markDirty();
+    logger.info(`[OrderSync] Re-queued ${ids.length} shelved order(s) with transient errors for retry`);
+    return ids.length;
+  }
+
+  /**
    * One-time repair path: reset orders shelved due to INSUFFICIENT_STOCK.
    * Called manually after backend stock has been corrected.
    */

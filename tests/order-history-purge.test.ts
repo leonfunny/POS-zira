@@ -14,7 +14,7 @@ const SCHEMA = `
   CREATE TABLE orders (id TEXT PRIMARY KEY, order_number TEXT, shift_id TEXT, synced INTEGER DEFAULT 0, backend_id TEXT, created_at TEXT);
   CREATE TABLE order_items (id TEXT PRIMARY KEY, order_id TEXT NOT NULL);
   CREATE TABLE shifts (id TEXT PRIMARY KEY, closed_at TEXT);
-  CREATE TABLE fiscal_attempts (id TEXT PRIMARY KEY, order_id TEXT NOT NULL, status TEXT NOT NULL);
+  CREATE TABLE fiscal_attempts (id TEXT PRIMARY KEY, order_id TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT);
   CREATE TABLE print_attempts (id TEXT PRIMARY KEY, order_id TEXT NOT NULL);
   CREATE TABLE receipt_print_outbox (job_id TEXT PRIMARY KEY, order_id TEXT NOT NULL, status TEXT NOT NULL);
   CREATE TABLE pos_billiard_handoffs (checkout_id TEXT PRIMARY KEY, order_id TEXT NOT NULL UNIQUE);
@@ -126,13 +126,56 @@ describe('purgeLocalOrderHistoryBefore', () => {
     db.run("INSERT INTO receipt_print_outbox VALUES ('j','print-inflight','REMOTE_ACCEPTED')");
     insertOrder('log-pending');
     db.run("INSERT INTO local_sync_log VALUES ('l','order','log-pending','pending')");
+    insertOrder('log-rejected-mirror'); // rejected mirror entries are not a keep reason
+    db.run("INSERT INTO local_sync_log VALUES ('l2','order','log-rejected-mirror','rejected')");
     insertOrder('clean');
 
     const result = await purgeLocalOrderHistoryBefore(db, CUTOFF);
 
-    expect(result.purged).toBe(1);
+    expect(result.purged).toBe(2);
     expect(result.kept).toBe(5);
     expect(ids()).toEqual(['event-pending', 'fiscal-queue', 'fiscal-unknown', 'log-pending', 'print-inflight']);
+  });
+
+  it('stale fiscal UNKNOWN attempts stop blocking once older than the threshold', async () => {
+    insertOrder('old-unknown');
+    db.run("INSERT INTO fiscal_attempts VALUES ('fa1','old-unknown','UNKNOWN_NEEDS_RECONCILIATION','2026-06-20 10:00:00')");
+    insertOrder('fresh-unknown');
+    db.run("INSERT INTO fiscal_attempts VALUES ('fa2','fresh-unknown','UNKNOWN_NEEDS_RECONCILIATION','2026-08-26 10:00:00')");
+
+    await purgeLocalOrderHistoryBefore(db, CUTOFF, { staleFiscalUnknownBeforeIso: '2026-08-25T00:00:00.000Z' });
+
+    expect(ids()).toEqual(['fresh-unknown']);
+    expect(db.get<{ n: number }>('SELECT COUNT(*) AS n FROM fiscal_attempts')?.n).toBe(1);
+  });
+
+  it('purges shelved never-synced orders older than the threshold only after exporting them', async () => {
+    insertOrder('shelved-old', { synced: -1, backend_id: null, created_at: '2026-08-04 12:00:00' });
+    insertOrder('shelved-recent', { synced: -1, backend_id: null, created_at: '2026-08-25 12:00:00' });
+    const exported: any[] = [];
+
+    const withoutExportDir = await purgeLocalOrderHistoryBefore(db, CUTOFF);
+    expect(withoutExportDir.purged).toBe(0); // option absent → shelved orders are never touched
+
+    const result = await purgeLocalOrderHistoryBefore(db, CUTOFF, {
+      unsyncedOlderThanIso: '2026-08-20T00:00:00.000Z',
+      exportUnsynced: (rows) => { exported.push(...rows); },
+    });
+
+    expect(result.purged).toBe(1);
+    expect(ids()).toEqual(['shelved-recent']);
+    expect(exported).toHaveLength(1);
+    expect(exported[0].order.id).toBe('shelved-old');
+    expect(exported[0].items.map((i: any) => i.id)).toEqual(['it-shelved-old']);
+  });
+
+  it('keeps shelved orders when the exporter fails', async () => {
+    insertOrder('shelved-old', { synced: -1, backend_id: null, created_at: '2026-08-04 12:00:00' });
+    await expect(purgeLocalOrderHistoryBefore(db, CUTOFF, {
+      unsyncedOlderThanIso: '2026-08-20T00:00:00.000Z',
+      exportUnsynced: () => { throw new Error('disk full'); },
+    })).rejects.toThrow('disk full');
+    expect(ids()).toEqual(['shelved-old']);
   });
 
   it('is a no-op without older rows', async () => {

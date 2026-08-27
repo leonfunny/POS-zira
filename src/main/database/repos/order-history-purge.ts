@@ -33,7 +33,25 @@ export interface OrderHistoryPurgeResult {
   cutoff: string;
 }
 
+export interface PurgedUnsyncedOrder {
+  order: Record<string, unknown>;
+  items: Array<Record<string, unknown>>;
+}
+
 export interface OrderHistoryPurgeOptions {
+  /**
+   * Orders shelved by sync (synced = -1, never reached the backend) created
+   * before this ISO timestamp are purged too — after being handed to
+   * `exportUnsynced` so the sale is not silently lost. Omit to keep them.
+   */
+  unsyncedOlderThanIso?: string;
+  exportUnsynced?: (orders: PurgedUnsyncedOrder[]) => void;
+  /**
+   * Fiscal attempts left UNKNOWN_NEEDS_RECONCILIATION block the purge only
+   * while newer than this ISO timestamp; older ones are stale June-style
+   * leftovers nobody will reconcile. Omit to block on any age.
+   */
+  staleFiscalUnknownBeforeIso?: string;
   /** rows deleted per transaction; the main process is blocked only for one batch */
   batchSize?: number;
   /** cap per run so a months-old backlog never stalls the counter; rest goes to the next tick */
@@ -79,17 +97,21 @@ function tableExists(db: PurgeDatabase, table: string): boolean {
  * UTC) or as an ISO string; both compare correctly against an ISO cutoff after
  * normalising the separator, which the query does via replace().
  */
+// Params, in order: cutoff, unsyncedCutoff (or '' = never), staleFiscalBefore (or '' = never)
 const ELIGIBLE_SQL = `
-  SELECT o.id
+  SELECT o.id, o.synced
   FROM orders o
   LEFT JOIN shifts s ON s.id = o.shift_id
   WHERE replace(substr(o.created_at, 1, 19), ' ', 'T') < substr(?, 1, 19)
-    AND o.synced = 1
-    AND o.backend_id IS NOT NULL AND o.backend_id != ''
+    AND (
+      (o.synced = 1 AND o.backend_id IS NOT NULL AND o.backend_id != '')
+      OR (o.synced = -1 AND ? != '' AND replace(substr(o.created_at, 1, 19), ' ', 'T') < substr(?, 1, 19))
+    )
     AND (o.shift_id IS NULL OR s.id IS NULL OR s.closed_at IS NOT NULL)
     AND NOT EXISTS (
       SELECT 1 FROM fiscal_attempts fa
       WHERE fa.order_id = o.id AND fa.status = 'UNKNOWN_NEEDS_RECONCILIATION'
+        AND (? = '' OR replace(substr(COALESCE(fa.created_at, o.created_at), 1, 19), ' ', 'T') >= substr(?, 1, 19))
     )
     AND NOT EXISTS (
       SELECT 1 FROM fiscal_receipt_sync_queue q
@@ -107,9 +129,13 @@ const ELIGIBLE_SQL = `
     AND NOT EXISTS (
       SELECT 1 FROM local_sync_log l
       WHERE l.entity_type = 'order' AND l.entity_id = o.id
-        AND l.status IN ('pending', 'rejected')
+        AND l.status = 'pending'
     )
 `;
+// local_sync_log 'rejected' rows are NOT a keep reason: that channel is a
+// mirror-only event log; the server rejecting a mirror entry ("order_not_on_server",
+// duplicate source_tx) says nothing about the order itself, which is tracked by
+// orders.synced/backend_id. Chesaigon POS1 kept 74 delivered orders that way.
 
 const OLDER_COUNT_SQL = `
   SELECT COUNT(*) AS n FROM orders o
@@ -137,17 +163,38 @@ export async function purgeLocalOrderHistoryBefore(
   const older = db.get<{ n: number }>(OLDER_COUNT_SQL, [cutoffIso])?.n ?? 0;
   if (older === 0) return { purged: 0, remaining: 0, kept: 0, cutoff: cutoffIso };
 
-  const eligible = db.all<{ id: string }>(ELIGIBLE_SQL, [cutoffIso]).map((r) => r.id);
+  const unsyncedCutoff = options.unsyncedOlderThanIso ?? '';
+  const staleFiscal = options.staleFiscalUnknownBeforeIso ?? '';
+  const eligibleRows = db.all<{ id: string; synced: number }>(
+    ELIGIBLE_SQL,
+    [cutoffIso, unsyncedCutoff, unsyncedCutoff, staleFiscal, staleFiscal],
+  );
+  const eligible = eligibleRows.map((r) => r.id);
   if (eligible.length === 0) {
     return { purged: 0, remaining: 0, kept: older, cutoff: cutoffIso };
   }
 
   const ids = eligible.slice(0, maxPerRun);
+  const unsyncedIds = new Set(eligibleRows.filter((r) => r.synced !== 1).map((r) => r.id));
   const existingChildren = CHILD_TABLES.filter((c) => tableExists(db, c.table));
   let purged = 0;
   for (let i = 0; i < ids.length; i += batchSize) {
     const chunk = ids.slice(i, i + batchSize);
     const marks = chunk.map(() => '?').join(',');
+    const unsyncedInChunk = chunk.filter((id) => unsyncedIds.has(id));
+    if (unsyncedInChunk.length > 0 && options.exportUnsynced) {
+      const um = unsyncedInChunk.map(() => '?').join(',');
+      const orders = db.all<Record<string, unknown>>(`SELECT * FROM orders WHERE id IN (${um})`, unsyncedInChunk);
+      const items = db.all<Record<string, unknown> & { order_id: string }>(
+        `SELECT * FROM order_items WHERE order_id IN (${um})`, unsyncedInChunk,
+      );
+      // Export BEFORE deleting; if the exporter throws, the batch is skipped
+      // and the rows survive for the next run.
+      options.exportUnsynced(orders.map((order) => ({
+        order,
+        items: items.filter((it) => it.order_id === order.id),
+      })));
+    }
     // One short transaction per batch: the event loop is blocked only for
     // this batch, then we yield so a sale in progress is served first.
     db.transaction(() => {
