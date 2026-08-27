@@ -93,13 +93,14 @@ describe('purgeLocalOrderHistoryBefore', () => {
 
   it('keeps unsynced orders and orders without backend id', () => {
     insertOrder('unsynced', { synced: 0, backend_id: null });
+    insertOrder('inflight', { synced: 2, backend_id: 'be-inflight' }); // backend id known but push not confirmed
     insertOrder('nobackend', { synced: 1, backend_id: '' });
     insertOrder('ok');
 
     const result = purgeLocalOrderHistoryBefore(db, CUTOFF);
 
-    expect(result).toEqual({ purged: 1, kept: 2, cutoff: CUTOFF });
-    expect(ids()).toEqual(['nobackend', 'unsynced']);
+    expect(result).toEqual({ purged: 1, kept: 3, cutoff: CUTOFF });
+    expect(ids()).toEqual(['inflight', 'nobackend', 'unsynced']);
   });
 
   it('keeps orders whose shift is still open', () => {
