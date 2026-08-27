@@ -112,6 +112,7 @@ import {
 } from '../kitchen-self-order/pickup-queue-client';
 import { settlePickupOrderForSale, drainPickupSettleOutbox } from '../kitchen-self-order/pickup-settle';
 import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
+import { purgeLocalOrderHistoryBefore, startOfLocalDayIso } from '../database/repos/order-history-purge';
 import {
   FiscalReceiptOrderPendingSyncError,
   fiscalReceiptSyncRepo,
@@ -9112,6 +9113,42 @@ export class PosModule extends BaseModule {
     }
   }
 
+  private orderHistoryPurgeTimer: NodeJS.Timeout | null = null;
+
+  /**
+   * Local history keeps only today's orders; older synced rows are dropped so
+   * the device DB stays small. Runs at startup and shortly after each local
+   * midnight. See order-history-purge.ts for the safety rules.
+   */
+  private runOrderHistoryPurge(reason: string): void {
+    try {
+      const result = purgeLocalOrderHistoryBefore(database, startOfLocalDayIso());
+      if (result.purged > 0) {
+        logger.info(`[PosModule] Order history purge (${reason}): removed ${result.purged}, kept ${result.kept}`);
+        void database.saveCoalesced().then((flush) => {
+          if (!flush.success) {
+            logger.warn(`[PosModule] Order history purge flush deferred: ${flush.error || 'unknown error'}`);
+          }
+        });
+      }
+    } catch (error: any) {
+      logger.warn(`[PosModule] Order history purge (${reason}) failed: ${error?.message || error}`);
+    }
+  }
+
+  private startOrderHistoryPurgeTimer(): void {
+    if (this.orderHistoryPurgeTimer) clearTimeout(this.orderHistoryPurgeTimer);
+    const next = new Date();
+    next.setHours(24, 5, 0, 0); // 00:05 local, next day
+    const delay = Math.max(60_000, next.getTime() - Date.now());
+    this.orderHistoryPurgeTimer = setTimeout(() => {
+      this.orderHistoryPurgeTimer = null;
+      this.runOrderHistoryPurge('midnight');
+      this.startOrderHistoryPurgeTimer();
+    }, delay);
+    this.orderHistoryPurgeTimer.unref?.();
+  }
+
   private startReceiptPrintReplayTimer(): void {
     if (this.receiptPrintReplayTimer) return;
     this.receiptPrintReplayEnabled = true;
@@ -9166,6 +9203,8 @@ export class PosModule extends BaseModule {
       logger.debug(`[PosModule] Receipt queue retention deferred: ${error?.message || error}`);
     }
     this.startReceiptPrintReplayTimer();
+    this.runOrderHistoryPurge('startup');
+    this.startOrderHistoryPurgeTimer();
     // Set salon display info from config
     const config = getConfig();
     const salonSlug = config.salonSlug as string | undefined;
@@ -9176,6 +9215,7 @@ export class PosModule extends BaseModule {
   }
 
   async stop(): Promise<void> {
+    if (this.orderHistoryPurgeTimer) { clearTimeout(this.orderHistoryPurgeTimer); this.orderHistoryPurgeTimer = null; }
     this.stopFiscalReceiptSyncTimer();
     this.stopProductAdminMutationReplayTimer();
     this.stopReceiptPrintReplayTimer();
