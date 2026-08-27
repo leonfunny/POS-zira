@@ -8281,7 +8281,7 @@ export class PosModule extends BaseModule {
     // and the server-side billiard business shift. Gated on the billiard
     // entitlement so grocery salons are untouched. Fire-and-forget: a network
     // failure never blocks the local shift flow (the floor chip nags later).
-    const billiardShiftLink = this.billiardShiftLink = {
+    const billiardShiftLink = {
       enabled: (): boolean => {
         try {
           // Two gates, both fail-closed: the plan entitlement AND actual
@@ -8334,6 +8334,7 @@ export class PosModule extends BaseModule {
         })();
       },
     };
+    this.billiardShiftLink = billiardShiftLink;
 
 
     ipcMain.handle('pos:shift:open', (_e, data: { staffId: string; staffName: string; openingCash: number }) => {
