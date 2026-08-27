@@ -167,6 +167,17 @@ export async function purgeLocalOrderHistoryBefore(
 
   const remaining = eligible.length - purged;
   const kept = older - eligible.length;
+  if (remaining === 0 && purged > 0) {
+    // Deleting rows leaves free pages behind; the exported pos.db keeps its
+    // old size until the database is rewritten. One VACUUM after the last
+    // batch (on a now-small in-memory DB) shrinks the file for real.
+    try {
+      db.run('VACUUM');
+      db.markDirty?.();
+    } catch (error: any) {
+      logger.debug(`[OrderHistoryPurge] VACUUM skipped: ${error?.message || error}`);
+    }
+  }
   logger.info(`[OrderHistoryPurge] purged ${purged} synced order(s) before ${cutoffIso}; remaining ${remaining} (next run), kept ${kept} (unsynced/pending/open-shift)`);
   return { purged, remaining, kept, cutoff: cutoffIso };
 }

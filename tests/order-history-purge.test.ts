@@ -159,6 +159,21 @@ describe('purgeLocalOrderHistoryBefore', () => {
     expect(ids()).toEqual(['unsynced']);
   });
 
+  it('vacuums only after the final batch so the exported file actually shrinks', async () => {
+    const ran: string[] = [];
+    const origRun = db.run;
+    db.run = (sql, params) => { ran.push(sql); origRun(sql, params); };
+    for (let i = 0; i < 3; i += 1) insertOrder(`o${i}`);
+    ran.length = 0;
+
+    await purgeLocalOrderHistoryBefore(db, CUTOFF, { batchSize: 2, maxPerRun: 2, yieldBetweenBatches: async () => {} });
+    expect(ran.filter((s) => s === 'VACUUM')).toHaveLength(0);
+
+    await purgeLocalOrderHistoryBefore(db, CUTOFF, { batchSize: 2, maxPerRun: 2, yieldBetweenBatches: async () => {} });
+    expect(ran.filter((s) => s === 'VACUUM')).toHaveLength(1);
+    expect(db.get<{ n: number }>('SELECT freelist_count AS n FROM pragma_freelist_count')?.n).toBe(0);
+  });
+
   it('startOfLocalDayIso returns local midnight', () => {
     const iso = startOfLocalDayIso(new Date(2026, 7, 27, 15, 30));
     const back = new Date(iso);
