@@ -2786,9 +2786,6 @@ export default function OrderHistoryModal({
             <div className="mt-1.5 flex h-11 w-full items-center rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm font-bold text-slate-700">
               {tOr(t, 'pos.history.todayOnly', 'Today')} · {formatDateInput(todayISO())}
             </div>
-            <div className="mt-1 text-[11px] font-semibold normal-case tracking-normal text-slate-400">
-              {tOr(t, 'pos.history.olderOnWeb', 'Older orders: check on the web dashboard.')}
-            </div>
           </div>
 
           <label className="min-w-[184px] flex-1 text-xs font-bold uppercase tracking-wide text-slate-600">
