@@ -73,7 +73,7 @@ describe('purgeLocalOrderHistoryBefore', () => {
     insertOrder('a');
     insertOrder('b', { created_at: OLD_ISO });
     insertOrder('today', { created_at: TODAY });
-    db.run("INSERT INTO fiscal_attempts VALUES ('fa1','a','SUCCESS_CONFIRMED')");
+    db.run("INSERT INTO fiscal_attempts VALUES ('fa1','a','SUCCESS_CONFIRMED',NULL)");
     db.run("INSERT INTO print_attempts VALUES ('pa1','a')");
     db.run("INSERT INTO receipt_print_outbox VALUES ('job1','a','COMPLETED')");
     db.run("INSERT INTO pos_billiard_handoffs VALUES ('co1','a')");
@@ -117,7 +117,7 @@ describe('purgeLocalOrderHistoryBefore', () => {
 
   it('keeps orders with pending work: fiscal unknown, sync queue, event outbox, print outbox, sync log', async () => {
     insertOrder('fiscal-unknown');
-    db.run("INSERT INTO fiscal_attempts VALUES ('fa','fiscal-unknown','UNKNOWN_NEEDS_RECONCILIATION')");
+    db.run("INSERT INTO fiscal_attempts VALUES ('fa','fiscal-unknown','UNKNOWN_NEEDS_RECONCILIATION',NULL)");
     insertOrder('fiscal-queue');
     db.run("INSERT INTO fiscal_receipt_sync_queue VALUES ('q','fiscal-queue','PENDING')");
     insertOrder('event-pending');
