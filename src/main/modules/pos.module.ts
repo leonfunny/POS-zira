@@ -8925,6 +8925,18 @@ export class PosModule extends BaseModule {
     this.productAdminMutationReplayTimer = null;
   }
 
+  /**
+   * Cashier warnings only cover jobs created today (local clock). Older
+   * unresolved rows stay in the outbox for the retry loop and for Order
+   * History / the web dashboard, but they must not be replayed as toasts on
+   * every launch — a week-old ZAM row nagging the counter is noise.
+   */
+  private receiptWarningSinceIso(): string {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString();
+  }
+
   private listUnresolvedReceiptPrintStatuses(): Array<{
     jobId: string;
     orderId: string;
@@ -8943,9 +8955,10 @@ export class PosModule extends BaseModule {
          LEFT JOIN orders o ON o.id = r.order_id
          WHERE r.salon_id = ? AND r.device_id = ?
            AND r.status IN ('FAILED_SAFE', 'NEEDS_REVIEW')
+           AND r.created_at >= ?
          ORDER BY r.seq ASC
          LIMIT 100`,
-        [salonId, deviceId],
+        [salonId, deviceId, this.receiptWarningSinceIso()],
       );
       return rows.map((row) => ({
         jobId: row.job_id,
@@ -8973,9 +8986,10 @@ export class PosModule extends BaseModule {
          LEFT JOIN orders o ON o.id = r.order_id
          WHERE r.salon_id = ? AND r.device_id = ?
            AND r.status IN ('FAILED_SAFE', 'NEEDS_REVIEW', 'COMPLETED')
+           AND r.created_at >= ?
          ORDER BY r.seq DESC
          LIMIT 100`,
-        [salonId, deviceId],
+        [salonId, deviceId, this.receiptWarningSinceIso()],
       );
     } catch (error: any) {
       logger.debug(`[PosModule] Receipt queue status scan deferred: ${error?.message || error}`);

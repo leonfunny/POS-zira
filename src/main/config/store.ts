@@ -498,7 +498,7 @@ const store = new Store<AgentConfig>({
     backupRestoreLastAppliedAt: { type: 'string' },
     // POS history/statistics visibility. True preserves the legacy "show all"
     // behavior; false hides orders without a successful fiscal print.
-    showNonFiscalOrders: { type: 'boolean', default: true },
+    showNonFiscalOrders: { type: 'boolean', default: false },
     // User-hidden tabs (legacy; migrated into moduleOverrides)
     hiddenTabs: { type: 'array', items: { type: 'string' }, default: [] },
     // Per-module visibility overrides (this device only). Map of tab -> boolean.

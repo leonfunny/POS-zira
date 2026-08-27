@@ -95,7 +95,7 @@ export function createSeedConfig(overrides: Partial<AgentConfig> = {}): AgentCon
     posMode: 'salon',
     posEnabled: true,
     allowOversell: false,
-    showNonFiscalOrders: true,
+    showNonFiscalOrders: false,
     salonId: SYNTHETIC_AUTH_USER.salonId,
     salonName: SYNTHETIC_AUTH_USER.salonName,
     salonSlug: 'synthetic',

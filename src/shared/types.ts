@@ -637,7 +637,7 @@ export interface AgentConfig {
     maxAttempts?: number;         // Attempts per scheduled run, default 3.
     unconditionally?: boolean;    // Pass ELZAB "print even without sale" flag. Default false.
   };
-  showNonFiscalOrders?: boolean; // Show orders without a successful fiscal receipt in history/stats. Default true.
+  showNonFiscalOrders?: boolean; // Show orders without a successful fiscal receipt in history/stats. Default false (fiscal-only).
   posLanguage?: 'en' | 'vi' | 'tr' | 'zh' | 'uk' | 'ru' | 'pl' | '';  // POS UI language (defaults to main language)
   customerDisplayLanguage?: 'en' | 'vi' | 'tr' | 'zh' | 'uk' | 'ru' | 'pl' | ''; // Display On UI language (falls back to POS, then main language)
   customerDisplayEnabled?: boolean;    // Enable customer-facing display
