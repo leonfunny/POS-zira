@@ -112,12 +112,18 @@ export async function listSerialPorts(): Promise<string[]> {
       }
     }
 
-    // A port is REAL if ALL of these hold:
-    //   1. PnP -PresentOnly with a loaded Service (has a kernel driver)
-    //   2. Also appears in Win32_SerialPort (live hardware tree)
-    //   3. NOT an ACPI motherboard serial header (InstanceId starts with ACPI\)
-    //      — these are built-in COM ports that Windows reports as "present"
-    //      even when nothing is physically connected to the header
+    // A port is REAL when it has a loaded Service (a kernel driver is bound),
+    // AND it clears the ACPI check below.
+    //
+    // ACPI\ InstanceIds are built-in motherboard serial headers, which Windows
+    // reports as "present" even with nothing physically plugged into them. Those
+    // are only accepted when Win32_SerialPort also lists them, i.e. the live
+    // hardware tree confirms real hardware behind the header.
+    //
+    // Win32_SerialPort membership is deliberately NOT required for non-ACPI
+    // (USB-serial) ports: some driver stacks bind a working FTDI/Prolific/CH340
+    // adapter without ever publishing it to Win32_SerialPort, and requiring it
+    // dropped the scale's own port — see the COM5 regression fixed in a557e3a3.
     const real: string[] = [];
     const dropped: string[] = [];
     for (const [com, { svc, iid }] of pnpPorts) {

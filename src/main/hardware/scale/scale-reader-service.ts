@@ -29,6 +29,28 @@ const KNOWN_NON_SCALE_SERIAL_VIDS = new Set([
 const execFileAsync = promisify(execFile);
 const SCALE_PORT_CACHE_MS = 10 * 60 * 1000;
 
+// A scale that answers with UNSTABLE is physically there — the load is just still
+// settling. One short retry catches the common "customer just put the item down"
+// case. Keep this at ONE retry: every read spawns a PowerShell probe with a 4s
+// timeout, so each extra attempt adds up to 4s of latency to the POS weigh button,
+// multiplied by the number of candidate ports being probed.
+const SCALE_UNSTABLE_RETRIES = 1;
+const SCALE_UNSTABLE_RETRY_DELAY_MS = 250;
+
+async function readWithUnstableRetry(
+  read: () => Promise<ScaleReadResult>,
+): Promise<ScaleReadResult> {
+  let result = await read();
+  for (let retry = 0; retry < SCALE_UNSTABLE_RETRIES; retry++) {
+    if (result.success || result.code !== 'UNSTABLE') break;
+    await new Promise((resolve) => setTimeout(resolve, SCALE_UNSTABLE_RETRY_DELAY_MS));
+    const retryResult = await read();
+    if (retryResult.success) return retryResult;
+    result = retryResult.code === 'UNSTABLE' ? result : retryResult;
+  }
+  return result;
+}
+
 let cachedScalePort: { port: string; expiresAt: number } | null = null;
 
 function addComPort(ports: Set<string>, port?: string | null): void {
@@ -168,17 +190,7 @@ export async function detectAndSetupScale(
     const chipName = identifyScaleChipset(vid);
 
     const driver = new DibalGdposScaleDriver(candidate, baudRate);
-    let result = await driver.readWeight();
-    if (!result.success && result.code === 'UNSTABLE') {
-      for (let retry = 0; retry < 2; retry++) {
-        await new Promise((resolve) => setTimeout(resolve, 250));
-        const retryResult = await driver.readWeight();
-        if (retryResult.success) {
-          result = retryResult;
-          break;
-        }
-      }
-    }
+    const result = await readWithUnstableRetry(() => driver.readWeight());
 
     if (result.success || (result.rawAscii && result.code === 'UNSTABLE')) {
       const weight = result.success ? result.weightKg : undefined;
@@ -207,12 +219,17 @@ export async function detectAndSetupScale(
         detail: `Current reading: ${weight !== undefined ? weight.toFixed(3) + ' kg' : '0.000 kg'} (${result.success ? 'Stable' : 'Unstable'})`,
       });
 
-      // Save complete scale configuration into local machine settings
+      // Save complete scale configuration into local machine settings.
+      // A shop configured for a Wi-Fi (remote) scale keeps that mode: this routine
+      // also runs from best-effort auto-setup, and silently flipping such a shop to
+      // a local scale would point the POS at the wrong device. Record the port and
+      // hardware details either way so a later manual switch to "local" is ready.
+      const keepRemoteMode = latestConfig.scale?.connection === 'remote';
       setConfig({
         scale: {
           ...latestConfig.scale,
-          enabled: true,
-          connection: 'local',
+          enabled: keepRemoteMode ? latestConfig.scale?.enabled ?? true : true,
+          connection: keepRemoteMode ? 'remote' : 'local',
           port: candidate,
           protocol: 'DIBAL_GDPOS',
           baudRate,
@@ -272,33 +289,13 @@ export async function readScaleWeight(
   };
 
   if (explicitPort) {
-    let result = await readScale(explicitPort);
-    if (!result.success && result.code === 'UNSTABLE') {
-      for (let retry = 0; retry < 2; retry++) {
-        await new Promise((resolve) => setTimeout(resolve, 250));
-        const retryResult = await readScale(explicitPort);
-        if (retryResult.success) {
-          result = retryResult;
-          break;
-        }
-      }
-    }
+    const result = await readWithUnstableRetry(() => readScale(explicitPort));
     return rememberSuccess(result);
   }
 
   const configuredPorts = collectConfiguredSerialPorts(config);
   if (cachedScalePort && cachedScalePort.expiresAt > Date.now() && !configuredPorts.has(cachedScalePort.port)) {
-    let cachedResult = await readScale(cachedScalePort.port);
-    if (!cachedResult.success && cachedResult.code === 'UNSTABLE') {
-      for (let retry = 0; retry < 2; retry++) {
-        await new Promise((resolve) => setTimeout(resolve, 250));
-        const retryResult = await readScale(cachedScalePort.port);
-        if (retryResult.success) {
-          cachedResult = retryResult;
-          break;
-        }
-      }
-    }
+    const cachedResult = await readWithUnstableRetry(() => readScale(cachedScalePort!.port));
     if (cachedResult.success) return rememberSuccess(cachedResult);
     cachedScalePort = null;
   }
@@ -312,17 +309,7 @@ export async function readScaleWeight(
 
   let firstFailure: ScaleReadResult | null = null;
   for (const candidate of candidates) {
-    let result = await readScale(candidate);
-    if (!result.success && result.code === 'UNSTABLE') {
-      for (let retry = 0; retry < 2; retry++) {
-        await new Promise((resolve) => setTimeout(resolve, 250));
-        const retryResult = await readScale(candidate);
-        if (retryResult.success) {
-          result = retryResult;
-          break;
-        }
-      }
-    }
+    const result = await readWithUnstableRetry(() => readScale(candidate));
     if (result.success) return rememberSuccess(result);
     firstFailure ||= result;
   }

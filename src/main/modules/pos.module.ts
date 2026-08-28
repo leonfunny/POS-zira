@@ -112,6 +112,14 @@ import {
 } from '../kitchen-self-order/pickup-queue-client';
 import { settlePickupOrderForSale, drainPickupSettleOutbox } from '../kitchen-self-order/pickup-settle';
 import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
+import { purgeLocalOrderHistoryBefore, startOfLocalDayIso } from '../database/repos/order-history-purge';
+import { eodRunRepo } from '../database/repos/eod-run-repo';
+import {
+  isRetryDue as isEodRetryDue,
+  isShiftEligibleForEndOfDay,
+  purgeCutoffForBusinessDate,
+  resolveEndOfDayTarget,
+} from '../pos/end-of-day';
 import {
   FiscalReceiptOrderPendingSyncError,
   fiscalReceiptSyncRepo,
@@ -756,6 +764,7 @@ export class PosModule extends BaseModule {
   private serverShiftMismatchError: string | null = null;
   private shiftVerificationGeneration = 0;
   private shiftVerificationInFlight: Promise<void> | null = null;
+  private shiftOpenInFlight: Promise<{ success: boolean; shiftId?: string; recovered?: boolean; error?: string }> | null = null;
   private ordinaryPaymentPreflights = new Map<string, {
     orderId: string;
     shiftId: string;
@@ -841,7 +850,16 @@ export class PosModule extends BaseModule {
     }
     const authContext = this.capturePosAuthContext();
     const openShift = assertLocalOpenShiftMatchesSession(database, this.posStore);
-    await this.refreshServerShiftConsistencyForPayment(openShift.id);
+    // Ordinary (non-protected) tender: do NOT block the cashier on a fresh
+    // server round-trip. The server shift was already verified at login /
+    // shift open and after every auth or shift event, and its result lives in
+    // serverShiftMismatchError. Assert that cached verdict and refresh it in
+    // the background so the next payment sees any newer server state. (Before 2026-08-27 every payment
+    // waited on GET /pos/shifts/active — 1-2 s on a good link, up to the 30 s
+    // fetch timeout on a flapping one — while showing "Checking the POS
+    // register and shift".)
+    this.assertServerShiftConsistentForPayment();
+    void this.scheduleShiftVerification(openShift.id).catch(() => undefined);
     if (!this.isPosAuthContextCurrent(authContext)) {
       throw new Error('POS user changed while payment safety was being verified.');
     }
@@ -1375,6 +1393,70 @@ export class PosModule extends BaseModule {
       // verified state and preserve the existing offline-payment behavior.
       logger.debug(`[PosModule] Server shift verification skipped (offline or error): ${error?.message || error}`);
     }
+  }
+
+  private async openOrRecoverShift(data: {
+    staffId: string;
+    staffName: string;
+    openingCash: number;
+  }): Promise<{ success: boolean; shiftId?: string; recovered?: boolean; error?: string }> {
+    if (!this.shiftController) {
+      return { success: false, error: 'Shift controller not initialized' };
+    }
+
+    const localShift = recoverOpenShiftFromLocal(database, this.posStore);
+    if (localShift) {
+      void this.scheduleShiftVerification(localShift.id).catch(() => undefined);
+      logger.info(`[PosModule] Reused local open shift ${localShift.id} instead of creating a duplicate`);
+      return { success: true, shiftId: localShift.id, recovered: true };
+    }
+
+    const token = getSecureAuthToken();
+    const machineId = String(getConfigValue('machineId') ?? '').trim();
+    if (token && machineId) {
+      let serverShift: Awaited<ReturnType<typeof apiClient.getActiveShift>> | null = null;
+      try {
+        serverShift = await apiClient.getActiveShift(token, machineId);
+        if (serverShift) {
+          const pendingLocalClose = database.get<{ id: string }>(
+            `SELECT id FROM shifts
+             WHERE id = ? AND closed_at IS NOT NULL AND COALESCE(close_synced, 0) = 0`,
+            [serverShift.id],
+          );
+          if (pendingLocalClose) {
+            await this.shiftController.retryUnsyncedShifts();
+            serverShift = await apiClient.getActiveShift(token, machineId);
+          }
+        }
+      } catch (error: any) {
+        logger.debug(`[PosModule] Shift-open recovery skipped while offline: ${error?.message || error}`);
+        serverShift = null;
+      }
+
+      if (serverShift) {
+        await this.scheduleShiftVerification(null);
+        const restoredShift = recoverOpenShiftFromLocal(database, this.posStore);
+        if (restoredShift) {
+          logger.info(`[PosModule] Restored server shift ${restoredShift.id} instead of creating a duplicate`);
+          return { success: true, shiftId: restoredShift.id, recovered: true };
+        }
+        return {
+          success: false,
+          error: this.serverShiftMismatchError
+            || 'The server still has an active shift for this register. Wait for recovery before opening a new shift.',
+        };
+      }
+    }
+
+    const shiftId = this.shiftController.openShift(data.staffId, data.staffName, data.openingCash);
+    this.billiardShiftLink?.open(data.openingCash, shiftId);
+    this.posStore?.dispatch({
+      type: 'session/open',
+      payload: { shiftId, staffId: data.staffId, staffName: data.staffName },
+    });
+    this.invalidateShiftVerification();
+    this.setServerShiftMismatch(null);
+    return { success: true, shiftId };
   }
 
   private allowCustomerDisplayIpc(
@@ -8331,17 +8413,19 @@ export class PosModule extends BaseModule {
         })();
       },
     };
+    this.billiardShiftLink = billiardShiftLink;
 
 
-    ipcMain.handle('pos:shift:open', (_e, data: { staffId: string; staffName: string; openingCash: number }) => {
+    ipcMain.handle('pos:shift:open', async (_e, data: { staffId: string; staffName: string; openingCash: number }) => {
       try {
-        if (!this.shiftController) return { success: false, error: 'Shift controller not initialized' };
-        const shiftId = this.shiftController.openShift(data.staffId, data.staffName, data.openingCash);
-        billiardShiftLink.open(data.openingCash, shiftId);
-        this.posStore?.dispatch({ type: 'session/open', payload: { shiftId, staffId: data.staffId, staffName: data.staffName } });
-        this.invalidateShiftVerification();
-        this.setServerShiftMismatch(null);
-        return { success: true, shiftId };
+        if (this.shiftOpenInFlight) return await this.shiftOpenInFlight;
+        const work = this.openOrRecoverShift(data);
+        this.shiftOpenInFlight = work;
+        try {
+          return await work;
+        } finally {
+          if (this.shiftOpenInFlight === work) this.shiftOpenInFlight = null;
+        }
       } catch (e: any) { return { success: false, error: e.message }; }
     });
 
@@ -8925,6 +9009,18 @@ export class PosModule extends BaseModule {
     this.productAdminMutationReplayTimer = null;
   }
 
+  /**
+   * Cashier warnings only cover jobs created today (local clock). Older
+   * unresolved rows stay in the outbox for the retry loop and for Order
+   * History / the web dashboard, but they must not be replayed as toasts on
+   * every launch — a week-old ZAM row nagging the counter is noise.
+   */
+  private receiptWarningSinceIso(): string {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString();
+  }
+
   private listUnresolvedReceiptPrintStatuses(): Array<{
     jobId: string;
     orderId: string;
@@ -8943,9 +9039,10 @@ export class PosModule extends BaseModule {
          LEFT JOIN orders o ON o.id = r.order_id
          WHERE r.salon_id = ? AND r.device_id = ?
            AND r.status IN ('FAILED_SAFE', 'NEEDS_REVIEW')
+           AND r.created_at >= ?
          ORDER BY r.seq ASC
          LIMIT 100`,
-        [salonId, deviceId],
+        [salonId, deviceId, this.receiptWarningSinceIso()],
       );
       return rows.map((row) => ({
         jobId: row.job_id,
@@ -8973,9 +9070,10 @@ export class PosModule extends BaseModule {
          LEFT JOIN orders o ON o.id = r.order_id
          WHERE r.salon_id = ? AND r.device_id = ?
            AND r.status IN ('FAILED_SAFE', 'NEEDS_REVIEW', 'COMPLETED')
+           AND r.created_at >= ?
          ORDER BY r.seq DESC
          LIMIT 100`,
-        [salonId, deviceId],
+        [salonId, deviceId, this.receiptWarningSinceIso()],
       );
     } catch (error: any) {
       logger.debug(`[PosModule] Receipt queue status scan deferred: ${error?.message || error}`);
@@ -9098,6 +9196,202 @@ export class PosModule extends BaseModule {
     }
   }
 
+  private billiardShiftLink: {
+    open: (openingCash: number, shiftId: string) => void;
+    close: (closingCash: number, shiftId: string) => void;
+  } | null = null;
+  private eodTimer: NodeJS.Timeout | null = null;
+  private eodInFlight = false;
+
+  /**
+   * End-of-day: runs on EVERY POS (fiscal master or not) at the configured
+   * local time, and catches up on boot for a business date that was missed
+   * because the device was off. Steps: auto-close open shifts (Z-report
+   * printed, closing cash = expected), push pending order/shift sync, purge
+   * local history older than the business date. Ledger: pos_eod_runs.
+   */
+  private startEndOfDayTimer(): void {
+    if (this.eodTimer) return;
+    this.eodTimer = setInterval(() => { void this.endOfDayTick('timer'); }, 60_000);
+    this.eodTimer.unref?.();
+  }
+
+  private stopEndOfDayTimer(): void {
+    if (!this.eodTimer) return;
+    clearInterval(this.eodTimer);
+    this.eodTimer = null;
+  }
+
+  private async endOfDayTick(reason: string): Promise<void> {
+    if (this.eodInFlight) return;
+    const cfg = (getConfig() as any).endOfDay as { enabled?: boolean; hour?: number; minute?: number } | undefined;
+    if (cfg?.enabled === false) return;
+    const hour = Number.isFinite(cfg?.hour) ? Number(cfg!.hour) : 23;
+    const minute = Number.isFinite(cfg?.minute) ? Number(cfg!.minute) : 59;
+    let target: ReturnType<typeof resolveEndOfDayTarget>;
+    let existing: ReturnType<typeof eodRunRepo.get>;
+    try {
+      target = resolveEndOfDayTarget({ now: new Date(), hour, minute, lastSuccessDate: eodRunRepo.latestSuccessDate() });
+      if (!target.due) return;
+      existing = eodRunRepo.get(target.businessDate);
+    } catch (error: any) {
+      logger.debug(`[EOD] tick deferred: ${error?.message || error}`);
+      return;
+    }
+    if (existing?.status === 'SUCCESS') return;
+    if (existing && existing.attempts >= 10) return;
+    if (existing && !isEodRetryDue(existing.updated_at, 5, Date.now())) return;
+
+    this.eodInFlight = true;
+    const date = target.businessDate;
+    try {
+      eodRunRepo.begin(date);
+      logger.info(`[EOD] start business_date=${date} reason=${reason}${target.catchUp ? ' (catch-up)' : ''}`);
+
+      // 1. Auto-close only shifts belonging to the due business date. During
+      // startup catch-up, a shift opened today must remain visible and open.
+      let shiftsClosed = 0;
+      const openShifts = database
+        .all<{ id: string; opened_at: string }>(
+          'SELECT id, opened_at FROM shifts WHERE closed_at IS NULL ORDER BY opened_at ASC',
+        )
+        .filter((shift) => isShiftEligibleForEndOfDay(shift.opened_at, date));
+      if (openShifts.length > 0) {
+        const draft = this.posStore?.getState().checkoutDraft;
+        if (draft?.billiard || draft?.restoredInterruption) {
+          throw new Error('protected cart open; shift auto-close deferred');
+        }
+        if (!this.shiftController) throw new Error('shift controller not initialized');
+        const orderSync = this.container.getOptional<any>(SERVICE_TOKENS.ORDER_SYNC);
+        if (orderSync) {
+          await Promise.race([
+            orderSync.syncPendingOrders().catch(() => undefined),
+            new Promise((resolve) => setTimeout(resolve, 5_000)),
+          ]);
+        }
+        for (const shift of openShifts) {
+          const report = this.shiftController.closeShift(shift.id, null, false);
+          try { this.billiardShiftLink?.close(report.closingCash, shift.id); } catch { /* best effort */ }
+          shiftsClosed += 1;
+          await this.shiftController.printZReport(report);
+        }
+        this.posStore?.dispatch({ type: 'session/close' });
+        this.invalidateShiftVerification();
+        this.setServerShiftMismatch(null);
+      }
+
+      // 2. Push whatever sync is still pending (best effort, bounded). Orders
+      //    shelved after offline failures get one more round first.
+      const orderSync = this.container.getOptional<any>(SERVICE_TOKENS.ORDER_SYNC);
+      try {
+        const requeued = orderSync?.requeueShelvedTransient?.() ?? 0;
+        if (requeued > 0) logger.info(`[EOD] re-queued ${requeued} shelved order(s) for sync`);
+      } catch (error: any) {
+        logger.debug(`[EOD] requeue shelved skipped: ${error?.message || error}`);
+      }
+      await Promise.race([
+        Promise.all([
+          orderSync ? orderSync.syncPendingOrders().catch(() => undefined) : Promise.resolve(),
+          this.shiftController ? this.shiftController.retryUnsyncedShifts().catch(() => undefined) : Promise.resolve(),
+        ]),
+        new Promise((resolve) => setTimeout(resolve, 8_000)),
+      ]);
+
+      // 3. Purge local history up to (and including) the business date.
+      const cutoff = purgeCutoffForBusinessDate(date, new Date());
+      const purge = await purgeLocalOrderHistoryBefore(database, cutoff, this.purgeOptions());
+
+      eodRunRepo.finish(date, { shiftsClosed, purged: purge.purged, kept: purge.kept });
+      logger.info(`[EOD] done business_date=${date} shiftsClosed=${shiftsClosed} purged=${purge.purged} remaining=${purge.remaining} kept=${purge.kept}`);
+      if (purge.remaining > 0) {
+        const t = setTimeout(() => { void this.runOrderHistoryPurge('eod-continue'); }, 30_000);
+        t.unref?.();
+      }
+      const flush = await database.saveCoalesced();
+      if (!flush.success) logger.warn(`[EOD] flush deferred: ${flush.error || 'unknown error'}`);
+    } catch (error: any) {
+      const message = error?.message || String(error);
+      logger.warn(`[EOD] business_date=${date} failed: ${message}`);
+      try { eodRunRepo.fail(date, message); } catch { /* ledger best effort */ }
+    } finally {
+      this.eodInFlight = false;
+    }
+  }
+
+  private orderHistoryPurgeTimer: NodeJS.Timeout | null = null;
+
+  /**
+   * Local history keeps only today's orders; older synced rows are dropped so
+   * the device DB stays small. Runs at startup and shortly after each local
+   * midnight. See order-history-purge.ts for the safety rules.
+   */
+  private purgeInFlight = false;
+
+  private static readonly PURGE_UNSYNCED_AFTER_DAYS = 7;
+  private static readonly PURGE_STALE_FISCAL_UNKNOWN_AFTER_DAYS = 2;
+
+  private purgeOptions(): Parameters<typeof purgeLocalOrderHistoryBefore>[2] {
+    const daysAgo = (n: number): string => new Date(Date.now() - n * 86_400_000).toISOString();
+    return {
+      unsyncedOlderThanIso: daysAgo(PosModule.PURGE_UNSYNCED_AFTER_DAYS),
+      staleFiscalUnknownBeforeIso: daysAgo(PosModule.PURGE_STALE_FISCAL_UNKNOWN_AFTER_DAYS),
+      exportUnsynced: (orders) => this.exportPurgedUnsynced(orders),
+    };
+  }
+
+  /**
+   * Shelved orders (never reached the backend) are appended to a JSON-lines
+   * file before purge so the sale can still be recovered by hand.
+   * Path: <userData>/purged-unsynced/<YYYY-MM-DD>.jsonl
+   */
+  private exportPurgedUnsynced(orders: Array<{ order: Record<string, unknown>; items: Array<Record<string, unknown>> }>): void {
+    if (orders.length === 0) return;
+    const dir = path.join(app.getPath('userData'), 'purged-unsynced');
+    const fsSync = require('fs') as typeof import('fs');
+    fsSync.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `${new Date().toISOString().slice(0, 10)}.jsonl`);
+    const lines = orders.map((o) => JSON.stringify({ exportedAt: new Date().toISOString(), ...o })).join('\n') + '\n';
+    fsSync.appendFileSync(file, lines, 'utf8');
+    logger.warn(`[OrderHistoryPurge] exported ${orders.length} never-synced order(s) to ${file} before purge`);
+  }
+
+  private async runOrderHistoryPurge(reason: string): Promise<void> {
+    if (this.purgeInFlight) return;
+    this.purgeInFlight = true;
+    try {
+      const result = await purgeLocalOrderHistoryBefore(database, startOfLocalDayIso(), this.purgeOptions());
+      if (result.purged > 0) {
+        logger.info(`[PosModule] Order history purge (${reason}): removed ${result.purged}, remaining ${result.remaining}, kept ${result.kept}`);
+        const flush = await database.saveCoalesced();
+        if (!flush.success) {
+          logger.warn(`[PosModule] Order history purge flush deferred: ${flush.error || 'unknown error'}`);
+        }
+      }
+      if (result.remaining > 0) {
+        // Backlog larger than one run's cap: continue shortly, still yielding.
+        const t = setTimeout(() => { void this.runOrderHistoryPurge('continue'); }, 30_000);
+        t.unref?.();
+      }
+    } catch (error: any) {
+      logger.warn(`[PosModule] Order history purge (${reason}) failed: ${error?.message || error}`);
+    } finally {
+      this.purgeInFlight = false;
+    }
+  }
+
+  private startOrderHistoryPurgeTimer(): void {
+    if (this.orderHistoryPurgeTimer) clearTimeout(this.orderHistoryPurgeTimer);
+    const next = new Date();
+    next.setHours(24, 5, 0, 0); // 00:05 local, next day
+    const delay = Math.max(60_000, next.getTime() - Date.now());
+    this.orderHistoryPurgeTimer = setTimeout(() => {
+      this.orderHistoryPurgeTimer = null;
+      this.runOrderHistoryPurge('midnight');
+      this.startOrderHistoryPurgeTimer();
+    }, delay);
+    this.orderHistoryPurgeTimer.unref?.();
+  }
+
   private startReceiptPrintReplayTimer(): void {
     if (this.receiptPrintReplayTimer) return;
     this.receiptPrintReplayEnabled = true;
@@ -9152,6 +9446,10 @@ export class PosModule extends BaseModule {
       logger.debug(`[PosModule] Receipt queue retention deferred: ${error?.message || error}`);
     }
     this.startReceiptPrintReplayTimer();
+    // EOD catch-up first (may auto-close yesterday's shift), then the purge.
+    void this.endOfDayTick('startup').finally(() => { void this.runOrderHistoryPurge('startup'); });
+    this.startEndOfDayTimer();
+    this.startOrderHistoryPurgeTimer();
     // Set salon display info from config
     const config = getConfig();
     const salonSlug = config.salonSlug as string | undefined;
@@ -9162,6 +9460,8 @@ export class PosModule extends BaseModule {
   }
 
   async stop(): Promise<void> {
+    if (this.orderHistoryPurgeTimer) { clearTimeout(this.orderHistoryPurgeTimer); this.orderHistoryPurgeTimer = null; }
+    this.stopEndOfDayTimer();
     this.stopFiscalReceiptSyncTimer();
     this.stopProductAdminMutationReplayTimer();
     this.stopReceiptPrintReplayTimer();

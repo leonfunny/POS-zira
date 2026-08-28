@@ -1473,9 +1473,13 @@ export default function POSLayout({
   // failures/ambiguous outcomes; successful jobs stay silent so the next sale
   // is never interrupted by receipt UI.
   useEffect(() => {
+    // One generic toast per batch, max 2 per local day (persisted), so the
+    // cashier is nudged to check Order History but not nagged all day.
+    let storage: Storage | null = null;
+    try { storage = typeof window !== 'undefined' ? window.localStorage : null; } catch { storage = null; }
     const handleStatus = createReceiptPrintStatusHandler((message) => {
       showScanToast(message, 'warn');
-    });
+    }, { storage });
 
     // Subscribe before replaying durable unresolved rows so an event that
     // lands during the query cannot be lost. The local tracker deduplicates
@@ -1487,7 +1491,7 @@ export default function POSLayout({
     return () => unsub?.();
   }, [showScanToast]);
 
-  const hideNonFiscalOrders = config?.showNonFiscalOrders === false;
+  const hideNonFiscalOrders = config?.showNonFiscalOrders !== true;
 
   const handleShiftOpen = async (data: { staffId?: string; staffName?: string; openingCash?: number; closingCash?: number }) => {
     if (!data.staffId || !data.staffName?.trim()) throw new Error(tOr('pos.shift.selectStaffRequired', 'Select a staff member'));

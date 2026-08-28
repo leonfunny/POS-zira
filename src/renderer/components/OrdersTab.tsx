@@ -222,7 +222,7 @@ export default function OrdersTab({ language, onEditProduct }: OrdersTabProps) {
   const [serverItemsMap, setServerItemsMap] = useState<Record<string, OrderItemRow[]>>({});
   const [reprintBusyId, setReprintBusyId] = useState<string | null>(null);
   const [reprintFeedback, setReprintFeedback] = useState<ReprintFeedback>(null);
-  const hideNonFiscalOrders = config?.showNonFiscalOrders === false;
+  const hideNonFiscalOrders = config?.showNonFiscalOrders !== true;
 
   const searchedOrders = useMemo(() => {
     const needle = search.trim().toLowerCase();

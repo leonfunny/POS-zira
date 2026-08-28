@@ -15,6 +15,7 @@ import type {
   RestoredCartReconciliation,
 } from '../../../../../shared/billiard-pos-handoff';
 import { formatRetailSaleError, resolveRetailCartItem } from '../../retail-sale-flow';
+import { cartItemsSignature, shouldRefocusSearchAfterCartChange } from '../../cart-refocus';
 import SearchBar from '../../SearchBar';
 import ProductGrid from '../../ProductGrid';
 import Cart from '../../Cart';
@@ -657,8 +658,22 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
   // After every cart mutation (add, remove, qty change) return focus to the
   // search bar so the cashier can immediately scan/key the next item without
   // tapping back. SearchBar itself listens for `pos:focus-search`.
+  // `cart.items` is a fresh array on EVERY main-process broadcast (structured
+  // clone), so compare by content and never steal focus from the payment
+  // modal or another field — see cart-refocus.ts.
+  const cartItemsSignatureRef = useRef(cartItemsSignature(cart.items));
   useEffect(() => {
-    document.dispatchEvent(new CustomEvent('pos:focus-search'));
+    const nextSignature = cartItemsSignature(cart.items);
+    const active = document.activeElement as HTMLElement | null;
+    const refocus = shouldRefocusSearchAfterCartChange({
+      previousSignature: cartItemsSignatureRef.current,
+      nextSignature,
+      paymentOpen: document.body.dataset.posPaymentOpen === 'true',
+      activeTag: active?.tagName ?? null,
+      activeId: active?.id ?? null,
+    });
+    cartItemsSignatureRef.current = nextSignature;
+    if (refocus) document.dispatchEvent(new CustomEvent('pos:focus-search'));
   }, [cart.items]);
 
   const handleAddProduct = useCallback(async (product: Product, source: AddProductSource = 'manual') => {

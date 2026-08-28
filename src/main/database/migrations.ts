@@ -1930,4 +1930,25 @@ export const migrations: Migration[] = [
       ALTER TABLE orders ADD COLUMN ksef_invoice_number TEXT;
     `,
   },
+  {
+    version: 66,
+    name: 'pos_eod_runs',
+    // Per-device end-of-day ledger keyed by local business date: auto shift
+    // close + sync + local history purge. Idempotent so a device that was off
+    // at the scheduled time catches up exactly once on next boot.
+    up: `
+      CREATE TABLE IF NOT EXISTS pos_eod_runs (
+        business_date TEXT PRIMARY KEY,
+        status TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        started_at TEXT,
+        finished_at TEXT,
+        shifts_closed INTEGER NOT NULL DEFAULT 0,
+        purged INTEGER NOT NULL DEFAULT 0,
+        kept INTEGER NOT NULL DEFAULT 0,
+        error TEXT,
+        updated_at TEXT
+      );
+    `,
+  },
 ];

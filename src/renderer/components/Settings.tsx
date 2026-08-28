@@ -6439,7 +6439,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
             <div className="text-xs text-slate-400">{t('settings.showNonFiscalOrdersDesc')}</div>
           </div>
           {(() => {
-            const enabled = config?.showNonFiscalOrders ?? true;
+            const enabled = config?.showNonFiscalOrders ?? false;
             return (
               <button
                 type="button"

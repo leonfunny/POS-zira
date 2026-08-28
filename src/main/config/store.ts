@@ -217,6 +217,18 @@ const fiscalDailyReportConfigSchema = {
   default: {},
 };
 
+// End-of-day (auto shift close + sync + local history purge). Runs on every
+// POS regardless of fiscal master role. Local machine time.
+const endOfDayConfigSchema = {
+  type: 'object',
+  properties: {
+    enabled: { type: 'boolean', default: true },
+    hour: { type: 'number', default: 23, minimum: 0, maximum: 23 },
+    minute: { type: 'number', default: 59, minimum: 0, maximum: 59 },
+  },
+  default: {},
+};
+
 // Telegram group config schema
 const telegramGroupConfigSchema = {
   type: 'object',
@@ -353,6 +365,7 @@ const store = new Store<AgentConfig>({
     receiptSellerNip: { type: 'string' },
     allowRealFiscalPrint: { type: 'boolean', default: false },
     fiscalDailyReport: fiscalDailyReportConfigSchema,
+    endOfDay: endOfDayConfigSchema,
     posLanguage: { type: 'string', enum: ['en', 'vi', 'tr', 'zh', 'uk', 'ru', 'pl', ''] },
     customerDisplayLanguage: { type: 'string', enum: ['en', 'vi', 'tr', 'zh', 'uk', 'ru', 'pl', ''] },
     customerDisplayEnabled: { type: 'boolean', default: true },
@@ -498,7 +511,7 @@ const store = new Store<AgentConfig>({
     backupRestoreLastAppliedAt: { type: 'string' },
     // POS history/statistics visibility. True preserves the legacy "show all"
     // behavior; false hides orders without a successful fiscal print.
-    showNonFiscalOrders: { type: 'boolean', default: true },
+    showNonFiscalOrders: { type: 'boolean', default: false },
     // User-hidden tabs (legacy; migrated into moduleOverrides)
     hiddenTabs: { type: 'array', items: { type: 'string' }, default: [] },
     // Per-module visibility overrides (this device only). Map of tab -> boolean.
