@@ -611,6 +611,7 @@ export interface AgentConfig {
   posEnabled?: boolean;                // Enable POS window
   posMode?: 'retail' | 'salon' | 'b2b' | 'restaurant';  // POS mode (default: 'retail')
     allowOversell?: boolean;             // Allow retail/self-checkout sale when tracked stock is <= 0. Default false.
+    retailSimpleGrid?: boolean;          // Fair / market-stall till: one product grid, no categories or unit filter. Default false.
     fiscalOnCashSale?: 'always' | 'never' | 'ask'; // Fiscal receipt behavior after CASH/BLIK order-copy print. Default ask.
     autoOrderDiscount?: {
       enabled: boolean;

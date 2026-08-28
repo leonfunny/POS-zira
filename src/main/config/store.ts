@@ -72,6 +72,7 @@ const defaultConfig: AgentConfig = {
   isPaired: false,
   autoStart: true,
   allowOversell: false,
+  retailSimpleGrid: false,
   fiscalOnCashSale: 'ask',
   googleCustomSearchApiKey: '',
   googleCustomSearchCx: '',
@@ -353,6 +354,8 @@ const store = new Store<AgentConfig>({
     posEnabled: { type: 'boolean', default: true },
     posMode: { type: 'string', enum: ['retail', 'salon', 'b2b', 'restaurant'], default: 'retail' },
     allowOversell: { type: 'boolean', default: false },
+    // Fair / market-stall till: one product grid, no categories, no unit filter.
+    retailSimpleGrid: { type: 'boolean', default: false },
     fiscalOnCashSale: { type: 'string', enum: ['always', 'never', 'ask'], default: 'ask' },
     labelModuleProductIds: { type: 'array', items: { type: 'string' }, default: [] },
     labelModuleCategoryIds: { type: 'array', items: { type: 'string' }, default: [] },

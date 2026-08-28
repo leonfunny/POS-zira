@@ -41,6 +41,7 @@ import {
   sortCategoriesByRank,
   countNoBarcodeByCategory,
   categoryImageUrl,
+  shouldShowCategoryGallery,
 } from './retailBrowseFilters';
 
 // Category cards render an icon glyph in the colored avatar. Prefer the
@@ -236,6 +237,9 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
   const [showHistory, setShowHistory] = useState(false);
   const { config } = useConfig();
   const allowOversell = config?.allowOversell === true;
+  // Fair / market-stall mode: every product on one grid, no categories, no
+  // unit filter. Per-device switch in Settings > POS.
+  const simpleGrid = config?.retailSimpleGrid === true;
   const lang = language || (config?.posLanguage as string | undefined) || (config?.language as string | undefined) || 'pl';
   const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
   const [activeUnitFilter, setActiveUnitFilter] = useState<RetailUnitFilter>('all');
@@ -1207,7 +1211,11 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
   // either entry point.
   const browseActiveCategoryId = gridSearchQuery ? null : activeCategoryId;
   const browseUnitFilter = gridSearchQuery ? 'all' : activeUnitFilter;
-  const showCategoryGallery = !gridSearchQuery && browseActiveCategoryId === null;
+  const showCategoryGallery = shouldShowCategoryGallery({
+    simpleGrid,
+    gridSearchQuery,
+    activeCategoryId: browseActiveCategoryId,
+  });
   const showCatalogSkeleton = catalogLoading && allProducts.length === 0 && !gridSearchQuery.trim();
 
   useEffect(() => {
@@ -1308,6 +1316,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
                 </span>
               )}
 
+              {!simpleGrid && (
               <div
                 className="shrink-0 inline-flex min-h-11 rounded-lg border border-slate-300 bg-white p-0.5"
                 role="group"
@@ -1332,8 +1341,10 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
                   );
                 })}
               </div>
+              )}
 
               <div className="flex-1 min-w-0 relative">
+                {!simpleGrid && (
                 <button
                   type="button"
                   onClick={() => scrollCategories('left')}
@@ -1347,6 +1358,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
                   </svg>
                 </button>
+                )}
                 <div
                   ref={categoryScrollRef}
                   className="flex items-center gap-2 overflow-x-auto scrollbar-hide scroll-smooth"
@@ -1388,6 +1400,8 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
                       {syncError}
                     </span>
                   )}
+                  {!simpleGrid && (
+                    <>
                   <button
                     type="button"
                     onClick={() => {
@@ -1435,7 +1449,10 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
                       </button>
                     );
                   })}
+                    </>
+                  )}
                 </div>
+                {!simpleGrid && (
                 <button
                   type="button"
                   onClick={() => scrollCategories('right')}
@@ -1449,6 +1466,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
                   </svg>
                 </button>
+                )}
               </div>
             </div>
           </div>
