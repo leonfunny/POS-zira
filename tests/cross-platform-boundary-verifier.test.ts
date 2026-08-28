@@ -263,7 +263,10 @@ describe('cross-platform boundary verifier', () => {
     // The relaxed surface must not leak Node globals / network / electron
     // imports — only electronAPI / window namespace / renderer packages.
     expect(result.diagnostics).toHaveLength(0);
-  });
+    // This is the only case that parses the whole real Android entry graph
+    // instead of a small fixture; it takes seconds on a slow desktop, so it
+    // gets its own timeout rather than flaking against the 5s default.
+  }, 60_000);
 
   test('keeps window.electronAPI forbidden when the shim installer is absent', async () => {
     const result = await verifyFixture('forbidden-electron-api');

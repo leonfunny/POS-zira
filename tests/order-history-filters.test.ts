@@ -37,10 +37,21 @@ describe('OrderHistoryModal filters', () => {
   it('resets to page 1 immediately when any history filter changes', () => {
     expect(source).toMatch(/const changePaymentFilter = \(nextMethod: string\) => \{\n\s+setPage\(1\);\n\s+setFilterMethod\(nextMethod\);/);
     expect(source).toMatch(/const changeStaffFilter = \(nextStaff: string\) => \{\n\s+setPage\(1\);\n\s+setFilterStaff\(nextStaff\);/);
-    expect(source).toMatch(/const changePeriod = \(nextPeriod: 'today' \| 'week' \| 'month' \| 'all'\) => \{\n\s+setPage\(1\);\n\s+setSelectedPeriod\(nextPeriod\);/);
     expect(source).toContain('onChange={(e) => changePaymentFilter(e.target.value)}');
     expect(source).toContain('onChange={(e) => changeStaffFilter(e.target.value)}');
-    expect(source).toContain("onChange={(e) => changePeriod(e.target.value as 'today' | 'week' | 'month' | 'all')}");
+
+    // The period is no longer a user control -- history is today-only -- so
+    // there is no changePeriod handler to assert. The catch-all effect below
+    // is what now guarantees the invariant for every filter, including the
+    // ones that change without going through a handler at all
+    // (hideNonFiscalOrders comes from config).
+    const effect = source.match(/useEffect\(\(\) => \{ setPage\(1\); \}, \[([^\]]+)\]\);/);
+    expect(effect, 'page-reset effect not found').not.toBeNull();
+    const deps = effect![1].split(',').map((dep) => dep.trim());
+    expect(deps).toContain('selectedPeriod');
+    expect(deps).toContain('filterMethod');
+    expect(deps).toContain('filterStaff');
+    expect(deps).toContain('hideNonFiscalOrders');
   });
 
   it('ignores stale history loads that return after a newer filter request', () => {

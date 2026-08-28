@@ -387,7 +387,14 @@ describe('POS initial receipt queue wiring', () => {
     }]);
     expect(databaseMock.all).toHaveBeenCalledWith(
       expect.stringContaining("r.status IN ('FAILED_SAFE', 'NEEDS_REVIEW')"),
-      ['salon-1', 'pos-1'],
+      ['salon-1', 'pos-1', expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/)],
+    );
+    // The replay is day-scoped. Without the cutoff it resurrects every old
+    // unresolved row on every renderer start, which is how stale orders ended
+    // up in the unprinted-receipt warning.
+    expect(databaseMock.all).toHaveBeenCalledWith(
+      expect.stringContaining('r.created_at >= ?'),
+      expect.arrayContaining(['salon-1', 'pos-1']),
     );
   });
 
@@ -408,7 +415,12 @@ describe('POS initial receipt queue wiring', () => {
       expect.stringMatching(
         /r\.salon_id = \? AND r\.device_id = \?[\s\S]*r\.status IN \('FAILED_SAFE', 'NEEDS_REVIEW', 'COMPLETED'\)/,
       ),
-      ['salon-1', 'pos-1'],
+      ['salon-1', 'pos-1', expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/)],
+    );
+    // Same day-scoping as the startup replay.
+    expect(databaseMock.all).toHaveBeenCalledWith(
+      expect.stringContaining('r.created_at >= ?'),
+      expect.arrayContaining(['salon-1', 'pos-1']),
     );
     expect(notifyPosRenderersMock).toHaveBeenCalledTimes(1);
     expect(notifyPosRenderersMock).toHaveBeenCalledWith(

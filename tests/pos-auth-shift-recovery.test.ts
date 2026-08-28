@@ -203,8 +203,23 @@ describe('POS auth-boundary shift recovery', () => {
       'utf8',
     );
     expect(source).toContain('await this.refreshServerShiftConsistencyForPayment(openShift.id)');
-    expect(source.match(/await this\.refreshServerShiftConsistencyForPayment\(openShift\.id\)/g)?.length)
-      .toBeGreaterThanOrEqual(4);
+
+    // The billiard handoff is the money path that still round-trips to the
+    // server before it lets a tender start, so both of its entry points must
+    // verify. Pinned by enclosing method rather than by a raw call count: the
+    // ordinary POS preflight deliberately stopped waiting on the server (see
+    // pos-payment-preflight-no-network-wait.test.ts), so a count would just
+    // encode how many callers happen to exist today.
+    const enclosing = (name: string): string => {
+      const start = source.indexOf(`private async ${name}(`);
+      expect(start, `${name}() not found`).toBeGreaterThan(-1);
+      const next = source.indexOf('\n  private async ', start + 1);
+      return source.slice(start, next === -1 ? source.length : next);
+    };
+    expect(enclosing('preflightBilliardHandoff'))
+      .toContain('await this.refreshServerShiftConsistencyForPayment(openShift.id)');
+    expect(enclosing('prepareBilliardHandoff'))
+      .toContain('await this.refreshServerShiftConsistencyForPayment(openShift.id)');
     const billiardBoundary = source.slice(
       source.indexOf("ipcMain.handle('pos:billiard:begin-tender'"),
       source.indexOf("ipcMain.handle('pos:restored-cart:begin-tender'"),
