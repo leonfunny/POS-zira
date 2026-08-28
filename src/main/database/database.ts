@@ -406,6 +406,11 @@ class Database {
       'forecast_runs',
       'replenishment_policies',
       'shifts',
+      // Per-device end-of-day ledger. It is keyed by business_date alone, and
+      // scheduling treats a SUCCESS row as "this date is done" -- so leaving
+      // the previous tenant's rows behind would silently skip the new
+      // tenant's first end-of-day: no shift close, no sync, no purge.
+      'pos_eod_runs',
       // Product/catalog mirrors, including local-only imports from master drafts
       'product_admin_mutation_outbox',
       'local_variant_imports',
