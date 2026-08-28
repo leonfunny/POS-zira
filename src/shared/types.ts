@@ -724,6 +724,11 @@ export interface AgentConfig {
   receiptSellerAddress?: string; // Full address (e.g., "ul. Łączności 35, 32-020 Wieliczka")
   receiptSellerNip?: string;     // Tax ID (e.g., "522-005-23-49")
   allowRealFiscalPrint?: boolean; // Live fiscal receipts enabled on this POS after service-approved go-live.
+  endOfDay?: {
+    enabled?: boolean;            // Auto shift close + sync + local history purge. Default true, every POS.
+    hour?: number;                // Local hour, default 23.
+    minute?: number;              // Local minute, default 59.
+  };
   fiscalDailyReport?: {
     enabled?: boolean;            // Enable automatic fiscal daily report on this device.
     master?: boolean;             // Must be true on exactly one POS: the fiscal-printer master.
@@ -734,7 +739,7 @@ export interface AgentConfig {
     maxAttempts?: number;         // Attempts per scheduled run, default 3.
     unconditionally?: boolean;    // Pass ELZAB "print even without sale" flag. Default false.
   };
-  showNonFiscalOrders?: boolean; // Show orders without a successful fiscal receipt in history/stats. Default true.
+  showNonFiscalOrders?: boolean; // Show orders without a successful fiscal receipt in history/stats. Default false (fiscal-only).
   posLanguage?: 'en' | 'vi' | 'tr' | 'zh' | 'uk' | 'ru' | 'pl' | '';  // POS UI language (defaults to main language)
   customerDisplayLanguage?: 'en' | 'vi' | 'tr' | 'zh' | 'uk' | 'ru' | 'pl' | ''; // Display On UI language (falls back to POS, then main language)
   customerDisplayEnabled?: boolean;    // Enable customer-facing display

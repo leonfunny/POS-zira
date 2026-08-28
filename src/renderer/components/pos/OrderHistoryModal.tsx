@@ -244,16 +244,14 @@ function formatDateInput(value: string): string {
   return year && month && day ? `${day}/${month}/${year}` : value;
 }
 
-const PERIOD_LABELS: Record<string, string> = { today: 'Today', week: 'This Week', month: 'This Month', all: 'All Time' };
+// POS history is intentionally limited to the current day: staff reconcile
+// today's sales at the counter; anything older is reviewed on the web
+// dashboard. The period is therefore fixed — no week/month/all selector.
+const HISTORY_PERIOD = 'today' as const;
 
-function periodToDateRange(period: string): { from: string; to: string } {
+function periodToDateRange(_period: typeof HISTORY_PERIOD): { from: string; to: string } {
   const today = todayISO();
-  switch (period) {
-    case 'week': { const d = new Date(); d.setDate(d.getDate() - 7); return { from: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`, to: today }; }
-    case 'month': { const d = new Date(); d.setMonth(d.getMonth() - 1); return { from: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`, to: today }; }
-    case 'all': return { from: '2000-01-01', to: '2099-12-31' };
-    default: return { from: today, to: today };
-  }
+  return { from: today, to: today };
 }
 
 function formatMoney(amount: number, currency: string): string {
@@ -1751,7 +1749,7 @@ export default function OrderHistoryModal({
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [selectedPeriod, setSelectedPeriod] = useState<'today' | 'week' | 'month' | 'all'>('today');
+  const selectedPeriod = HISTORY_PERIOD;
   const [filterMethod, setFilterMethod] = useState('');
   const [filterStaff, setFilterStaff] = useState('');
   const [detail, setDetail] = useState<{ order: OrderRow; items: OrderItemRow[] } | null>(null);
@@ -1786,9 +1784,9 @@ export default function OrderHistoryModal({
   const loadSeqRef = useRef(0);
 
   const currency = tOr(t, 'pos.currency', 'zl');
-  const hideNonFiscalOrders = config?.showNonFiscalOrders === false;
+  const hideNonFiscalOrders = config?.showNonFiscalOrders !== true;
   const totalPages = Math.max(1, Math.ceil(totalOrders / PAGE_SIZE));
-  const hasActiveFilters = selectedPeriod !== 'today' || filterMethod !== '' || filterStaff !== '';
+  const hasActiveFilters = filterMethod !== '' || filterStaff !== '';
 
   const staffNames = useMemo(
     () => Array.from(new Set(orders.map((o) => o.staff_name).filter((name): name is string => Boolean(name)))).sort(),
@@ -2098,15 +2096,9 @@ export default function OrderHistoryModal({
   };
 
   const resetFilters = () => {
-    setSelectedPeriod('today');
     setFilterMethod('');
     setFilterStaff('');
     setPage(1);
-  };
-
-  const changePeriod = (nextPeriod: 'today' | 'week' | 'month' | 'all') => {
-    setPage(1);
-    setSelectedPeriod(nextPeriod);
   };
 
   const changePaymentFilter = (nextMethod: string) => {
@@ -2774,7 +2766,7 @@ export default function OrderHistoryModal({
         <div className="min-w-0">
           <h2 className="truncate text-xl font-extrabold text-slate-950">{tOr(t, 'pos.history.title', 'Order History')}</h2>
           <p className="mt-1 text-sm font-medium text-slate-500">
-            {PERIOD_LABELS[selectedPeriod] || 'Today'} — {totalOrders} {tOr(t, 'pos.history.orders', 'orders')}
+            {tOr(t, 'pos.history.todayOnly', 'Today')} — {totalOrders} {tOr(t, 'pos.history.orders', 'orders')}
             <span className="ml-2 font-bold text-slate-600">
               {tOr(t, 'pos.history.originalShort', 'Original')} {formatMoney(pageOriginalTotal, currency)} · {tOr(t, 'pos.history.refundedShort', 'Refunded')} -{formatMoney(pageRefundedTotal, currency)} · {tOr(t, 'pos.history.remainingShort', 'Remaining')} {formatMoney(pageRemainingTotal, currency)}
             </span>
@@ -2789,19 +2781,12 @@ export default function OrderHistoryModal({
 
       <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-5 py-3">
         <div className="flex flex-wrap items-end gap-3">
-          <label className="min-w-[168px] flex-1 text-xs font-bold uppercase tracking-wide text-slate-600">
-            Period
-            <select
-              value={selectedPeriod}
-              onChange={(e) => changePeriod(e.target.value as 'today' | 'week' | 'month' | 'all')}
-              className="mt-1.5 h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-bold text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
-            >
-              <option value="today">Today</option>
-              <option value="week">This Week</option>
-              <option value="month">This Month</option>
-              <option value="all">All Time</option>
-            </select>
-          </label>
+          <div className="min-w-[168px] flex-1 text-xs font-bold uppercase tracking-wide text-slate-600">
+            {tOr(t, 'pos.history.period', 'Period')}
+            <div className="mt-1.5 flex h-11 w-full items-center rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm font-bold text-slate-700">
+              {tOr(t, 'pos.history.todayOnly', 'Today')} · {formatDateInput(todayISO())}
+            </div>
+          </div>
 
           <label className="min-w-[184px] flex-1 text-xs font-bold uppercase tracking-wide text-slate-600">
             Payment

@@ -24,6 +24,7 @@ export interface ShiftReport {
   difference: number; // closingCash - (openingCash + cashTotal)
   unsyncedOrders: number;
   fiscalOnlySales?: boolean;
+  autoClosed?: boolean; // closed by end-of-day job; closingCash = expected cash, not counted
 }
 
 type PrinterDriver = {
@@ -112,7 +113,13 @@ export class ShiftController {
   /**
    * Close a shift and generate report
    */
-  closeShift(shiftId: string, closingCash: number, fiscalOnly = false): ShiftReport {
+  /**
+   * @param closingCash counted cash, or `null` for an automatic close (EOD):
+   *   closing cash is then set to the expected cash (opening + cash sales −
+   *   cash refunds) and the report is flagged `autoClosed`.
+   */
+  closeShift(shiftId: string, closingCashInput: number | null, fiscalOnly = false): ShiftReport {
+    const autoClosed = closingCashInput === null;
     const shift = database.get<{
       id: string;
       staff_id: string | null;
@@ -170,6 +177,7 @@ export class ShiftController {
     transferTotal -= refundCashflow.transfer_refund_total;
 
     const totalSales = grossSales - totalRefunds - totalDiscounts;
+    const closingCash = autoClosed ? shift.opening_cash + cashTotal : (closingCashInput as number);
     const difference = closingCash - (shift.opening_cash + cashTotal);
 
     database.run(
@@ -196,6 +204,7 @@ export class ShiftController {
       difference,
       unsyncedOrders,
       fiscalOnlySales: fiscalOnly,
+      autoClosed,
     };
 
     posEventEmitter.emitShiftClosed(report);
@@ -204,7 +213,7 @@ export class ShiftController {
     this.syncShiftClose(shiftId, closingCash);
 
     logger.info(
-      `[Shift] Closed shift ${shiftId}: ${salesOrders.length} sales orders, total ${totalSales}, diff ${difference}`,
+      `[Shift] Closed shift ${shiftId}${autoClosed ? ' (auto, end-of-day)' : ''}: ${salesOrders.length} sales orders, total ${totalSales}, diff ${difference}`,
     );
 
     return report;
@@ -233,7 +242,9 @@ export class ShiftController {
         { method: 'BLIK', amount: report.blikTotal },
         { method: 'TRANSFER', amount: report.transferTotal },
       ].filter((p) => p.amount > 0),
-      cashierName: report.staffName || undefined,
+      cashierName: report.autoClosed
+        ? `${report.staffName || ''} (AUTO)`.trim()
+        : report.staffName || undefined,
     };
 
     try {

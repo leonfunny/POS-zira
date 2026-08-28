@@ -123,6 +123,7 @@ import type {
   PosScheduleStaffStatusPayload,
   PosScheduleWeekIpcResult,
   ScaleReadResult,
+  ScaleAutoDetectResult,
 } from './types';
 
 // ── POS DB row types (mirrors repos) ──
@@ -304,6 +305,7 @@ interface ElectronAPI {
   listWindowsPrinters: () => Promise<Array<{name: string; port: string}>>;
   scale: {
     readWeight: (options?: { port?: string }) => Promise<ScaleReadResult>;
+    autoDetect: () => Promise<ScaleAutoDetectResult>;
     getNetworkInfo: () => Promise<{
       ips: string[];
       suggestedHost: string;
@@ -983,6 +985,7 @@ interface ElectronAPI {
     };
     scale: {
       readWeight: (options?: { port?: string }) => Promise<ScaleReadResult>;
+      autoDetect: () => Promise<ScaleAutoDetectResult>;
       getNetworkInfo: () => Promise<{
         ips: string[];
         suggestedHost: string;
