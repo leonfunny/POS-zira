@@ -102,7 +102,10 @@ describe('RetailTemplate - category switching uses renderer-side filtering', () 
     // grid off that swallowed the first tap on a result.
     expect(source).toContain('const browseActiveCategoryId = gridSearchQuery ? null : activeCategoryId;');
     expect(source).toContain("const browseUnitFilter = searchQuery ? 'all' : activeUnitFilter;");
-    expect(source).toContain('const showCategoryGallery = !gridSearchQuery && browseActiveCategoryId === null;');
+    // The gallery decision lives in shouldShowCategoryGallery() (retail
+    // simple-grid mode added a third input); it must still be keyed off the
+    // synchronous browse state, not the raw search input.
+    expect(source).toMatch(/const showCategoryGallery = shouldShowCategoryGallery\(\{[\s\S]*?gridSearchQuery,[\s\S]*?activeCategoryId: browseActiveCategoryId,[\s\S]*?\}\);/);
     expect(source).toContain('!searchQuery && browseActiveCategoryId === null');
     expect(source).toContain('const isActive = browseUnitFilter === filter.id;');
     expect(source).toContain('const isActive = browseActiveCategoryId === cat.id;');
