@@ -85,6 +85,32 @@ describe('protected tender fiscal preflight', () => {
     )).toThrow('ELZAB_LINE_DISCOUNT_UNSUPPORTED');
   });
 
+  it('lets a manual per-product discount tender on ELZAB; only frozen Billiard allocations stay blocked', () => {
+    // PaymentModal persists the cashier's per-product discount in the same
+    // order_items.allocated_discount column Billiard uses. It is a display
+    // detail on the order copy: the sum is already inside the whole-receipt
+    // rabat, so ELZAB prints it fine via ReceiptEndEx (chesaigon POS
+    // regression, 2026-08-28: every line-discounted sale was refused at commit).
+    const manualLines = [
+      { vat_rate: 23, allocated_discount: 500, billiard_json: null },
+      { vat_rate: 8, allocated_discount: 0, billiard_json: null },
+    ];
+    expect(hasTenderFiscalDiscount(manualLines)).toBe(false);
+    expect(() => assertTenderFiscalCompatibilityForProtocol('ELZAB_STX', manualLines)).not.toThrow();
+
+    // The frozen Billiard allocation on the same column is still refused.
+    const billiardLines = [
+      { vat_rate: 23, allocated_discount: 500, billiard_json: JSON.stringify({ allocatedDiscountGrosze: 500 }) },
+    ];
+    expect(hasTenderFiscalDiscount(billiardLines)).toBe(true);
+    expect(() => assertTenderFiscalCompatibilityForProtocol('ELZAB_STX', billiardLines))
+      .toThrow('ELZAB_LINE_DISCOUNT_UNSUPPORTED');
+    expect(() => assertTenderFiscalCompatibilityForProtocol(
+      'ELZAB_STX',
+      [{ vat_rate: 23, billiard: { allocatedDiscountGrosze: 500 } as any }],
+    )).toThrow('ELZAB_LINE_DISCOUNT_UNSUPPORTED');
+  });
+
   it('keeps the exact POSNET VAT allowlist fail-closed', () => {
     for (const vatRate of [23, 8, 5, 0, -1]) {
       expect(() => assertTenderFiscalCompatibilityForProtocol('POSNET', [{ vatRate }])).not.toThrow();
