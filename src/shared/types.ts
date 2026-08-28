@@ -10,7 +10,7 @@ export enum AgentStatus {
 }
 
 // Printer protocol types
-export type PrinterProtocol = 'THERMAL' | 'POSNET' | 'ELZAB_STX' | 'ZEBRA' | 'WINDOWS';
+export type PrinterProtocol = 'THERMAL' | 'POSNET' | 'ELZAB_STX' | 'ZEBRA' | 'WINDOWS' | 'TSPL';
 
 // Printer types - used for routing jobs to correct printer
 // Using const object instead of enum for better Vite/browser compatibility
@@ -21,8 +21,20 @@ export const PrinterType = {
   A4: 'A4',             // Máy in A4 thường (HP, Canon...)
   TICKET: 'TICKET',     // Máy in vé
   KITCHEN: 'KITCHEN',   // Máy in bếp
+  FABRIC_TAG: 'FABRIC_TAG', // Máy in mác vải / care label (TSC, Zebra — ribbon resin)
 } as const;
 export type PrinterType = typeof PrinterType[keyof typeof PrinterType];
+
+/**
+ * Printer types that print on label media (roll + gap/black-mark), not on a
+ * continuous receipt roll. They share label geometry (labelWidth/labelHeight),
+ * calibration, and a label-language driver (ZPL/TSPL) rather than ESC/POS.
+ */
+export const LABEL_PRINTER_TYPES: readonly PrinterType[] = [PrinterType.LABEL, PrinterType.FABRIC_TAG];
+
+export function isLabelPrinterType(printerType: string | null | undefined): boolean {
+  return LABEL_PRINTER_TYPES.includes(printerType as PrinterType);
+}
 
 /**
  * Allowed protocols per printer type — single source of truth.
@@ -36,10 +48,16 @@ export type PrinterType = typeof PrinterType[keyof typeof PrinterType];
 export const ALLOWED_PROTOCOLS_BY_TYPE: Record<PrinterType, PrinterProtocol[]> = {
   RECEIPT: ['THERMAL', 'WINDOWS'],
   FISCAL:  ['POSNET', 'ELZAB_STX'],
-  LABEL:   ['ZEBRA', 'WINDOWS'],
+  LABEL:   ['ZEBRA', 'TSPL', 'WINDOWS'],
   A4:      ['WINDOWS'],
   TICKET:  ['THERMAL', 'WINDOWS'],
   KITCHEN: ['THERMAL', 'WINDOWS'],
+  // Fabric tags go through a label language, never the Windows spooler: the
+  // graphic block (logo, Vietnamese text, care symbols) is rasterised here and
+  // sent as a bitmap, and a spooler path would re-render it at driver defaults
+  // and destroy the alignment. Only TSPL emits that bitmap today — adding
+  // Zebra means teaching ZplFormatter the ^GFA equivalent.
+  FABRIC_TAG: ['TSPL'],
 };
 
 // Print job types
@@ -55,12 +73,13 @@ export enum PrintJobType {
   X_REPORT = 'X_REPORT',          // Raport X (niefiskalny)
   Z_REPORT = 'Z_REPORT',          // Raport Z (fiskalny)
   KITCHEN_TICKET = 'KITCHEN_TICKET', // Phieu bep — items only, no prices
+  FABRIC_TAG = 'FABRIC_TAG', // Mac vai — brand + size + composition + care symbols
 }
 
 // Printer status returned by driver.getStatus()
 export interface PrinterStatusInfo {
   connected: boolean;
-  type: 'POSNET' | 'ELZAB' | 'ZEBRA' | 'THERMAL';
+  type: 'POSNET' | 'ELZAB' | 'ZEBRA' | 'THERMAL' | 'TSC';
   port?: string;
   printerName?: string;
   protocol?: string;
@@ -183,6 +202,72 @@ export interface InfoLabelData {
   quantity: number;
 }
 
+/**
+ * ISO 3758 textile care symbols, in the five families that appear on a garment
+ * tag (wash · bleach · tumble dry · iron · professional care). The renderer
+ * draws each one as vector art, so they survive being rasterised at 203 dpi
+ * without depending on a symbol font being installed on the machine.
+ */
+export const CARE_SYMBOLS = [
+  'WASH_30', 'WASH_40', 'WASH_60', 'WASH_HAND', 'WASH_NO',
+  'BLEACH_OK', 'BLEACH_NO',
+  // DRY_ANY is the bare square: "dry" with no method specified. It is what
+  // most off-the-shelf garment tags carry, so it leads the drying group.
+  'DRY_ANY', 'TUMBLE_LOW', 'TUMBLE_NORMAL', 'TUMBLE_NO', 'DRY_LINE', 'DRY_FLAT',
+  'IRON_LOW', 'IRON_MEDIUM', 'IRON_HIGH', 'IRON_NO',
+  // DRYCLEAN_ANY is the bare circle: professional care, any solvent.
+  'DRYCLEAN_ANY', 'DRYCLEAN_P', 'DRYCLEAN_F', 'DRYCLEAN_NO',
+] as const;
+export type CareSymbol = typeof CARE_SYMBOLS[number];
+
+export function isCareSymbol(value: unknown): value is CareSymbol {
+  return typeof value === 'string' && (CARE_SYMBOLS as readonly string[]).includes(value);
+}
+
+/**
+ * Fabric/care tag payload (mác vải). Printed on a FABRIC_TAG printer.
+ *
+ * Everything except `barcode` is rendered into a single monochrome bitmap so
+ * Vietnamese diacritics, the logo, and the care symbols come out identical on
+ * every printer. `barcode` is emitted as a native label-language barcode
+ * because printer firmware rasterises bars far more crisply than we can.
+ */
+export interface FabricTagData {
+  /** Brand line, printed largest at the top. */
+  brandName: string;
+  /** Optional logo as a data: URI (PNG/JPEG/SVG). Replaces the brand text when set. */
+  logoDataUrl?: string;
+  /** Garment size, e.g. "M", "38", "XL". */
+  size?: string;
+  /** Fibre composition, e.g. "95% Cotton · 5% Elastane". */
+  composition?: string;
+  /** Care instructions as ISO 3758 symbols. */
+  careSymbols?: CareSymbol[];
+  /** Free-text care/extra line under the symbols (country of origin, RN, …). */
+  careText?: string;
+  /** Product barcode. Printed natively under the graphic block. */
+  barcode?: string;
+  barcodeType?: BarcodeType;
+  /** Render the barcode as a QR code instead of a 1D symbology. */
+  useQrCode?: boolean;
+  /** Retail price in grosze/cents. Rendered into the graphic block. */
+  priceGrosze?: number;
+  /** Currency suffix for `priceGrosze`. Defaults to 'zł'. */
+  currency?: string;
+  /**
+   * Vertical arrangement of the graphic block.
+   *
+   * 'default'   — brand · size · composition · care symbols · care text · price.
+   *               Reads like a retail hang tag: identity first.
+   * 'care-first' — brand · care symbols · composition · size · care text · price.
+   *               The layout mass-produced garment care labels use, where the
+   *               symbol row sits at the top and the size anchors the bottom.
+   */
+  layout?: 'default' | 'care-first';
+  /** How many physical tags to print. */
+  quantity: number;
+}
+
 export interface CheckinConfirmationService {
   name: string;
   price: number;  // grosze (e.g. 5000 = 50.00 zł)
@@ -221,10 +306,22 @@ export interface PrinterConfig {
   baudRate?: number;
   // For network-capable fiscal printers (e.g. ELZAB RNDIS/IP)
   address?: string;
-  // For ZEBRA/WINDOWS (Windows printer)
+  // For ZEBRA/TSPL/WINDOWS (Windows printer)
   windowsPrinter?: string;
   labelWidth?: number;   // mm
   labelHeight?: number;  // mm
+  // ── TSPL media/quality tuning (protocol='TSPL') ──────────────────────────
+  // Fabric tags are printed with a resin ribbon onto satin/polyester, which
+  // needs more heat and less speed than paper. These expose that without
+  // making the user leave the app for the vendor's driver dialog.
+  /** Gap between labels in mm. 0 = continuous media. Default 2. */
+  labelGapMm?: number;
+  /** Print speed in inches/second. Default 3 (slow enough for resin on satin). */
+  printSpeed?: number;
+  /** Burn darkness 0–15. Default 10; resin on satin usually wants 12–14. */
+  printDensity?: number;
+  /** Media sensor. Default 'gap'. Use 'bline' for black-mark, 'none' for continuous. */
+  mediaSensor?: 'gap' | 'bline' | 'none';
   // Additional settings
   paperWidth?: number;   // mm (default: 80 for thermal)
   charsPerLine?: number; // Characters per line (default: 48)
@@ -1231,6 +1328,7 @@ export const IPC_CHANNELS = {
   LAN_FIRST_KITCHEN_TEST_ROUTE: 'lan-first-kitchen:test-route',
   TEST_PRINT: 'test-print',
   PRINT_LABEL: 'print-label',
+  PRINT_FABRIC_TAG: 'print-fabric-tag',
   TEST_PRINTER_BY_TYPE: 'test-printer-by-type',
   TEST_PRINTER_BY_CONFIG: 'test-printer-by-config',
   PRINT_FISCAL_DAILY_REPORT_NOW: 'print-fiscal-daily-report-now',

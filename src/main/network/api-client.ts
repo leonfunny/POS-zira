@@ -59,6 +59,7 @@ import {
   PosScheduleStaffStatus,
   PosScheduleWeekResponse,
   PosLoyaltyLookupResponse,
+  isLabelPrinterType,
 } from '../../shared/types';
 import { getConfig, setConfig, getConfigValue } from '../config/store';
 import { localPrinterRepo, type LocalPrinterUpsert } from '../database/repos/local-printer-repo';
@@ -156,6 +157,7 @@ function normalizeProtocol(protocol?: string): PrinterProtocol | null {
   if (p === 'POSNET') return 'POSNET';
   if (p === 'ELZAB' || p === 'STX' || p === 'ELZAB_STX') return 'ELZAB_STX';
   if (p === 'ZEBRA') return 'ZEBRA';
+  if (p === 'TSPL' || p === 'TSPL2' || p === 'TSC') return 'TSPL';
   if (p === 'WINDOWS' || p === 'CUPS') return 'WINDOWS';
   if (p === 'THERMAL' || p === 'ESC_POS' || p === 'SERIAL' || p === 'USB') return 'THERMAL';
   return null;
@@ -176,7 +178,7 @@ function mapServerPrinter(item: ServerPrinter): { type: PrinterType; config: Pri
   const address = (item.address || '').trim();
   const windowsPrinterName = (item.windowsPrinterName || '').trim();
   const target = windowsPrinterName || address;
-  const paperWidth = item.paperWidth || (printerType === PrinterType.LABEL ? 100 : 80);
+  const paperWidth = item.paperWidth || (isLabelPrinterType(printerType) ? 100 : 80);
   const config: PrinterConfig = {
     enabled: item.isEnabled ?? false,
     protocol,
@@ -190,7 +192,7 @@ function mapServerPrinter(item: ServerPrinter): { type: PrinterType; config: Pri
     supportsCashDrawer: item.supportsCashDrawer ?? false,
   };
 
-  if (printerType === PrinterType.LABEL) {
+  if (isLabelPrinterType(printerType)) {
     config.labelWidth = paperWidth;
     if (item.paperHeight && item.paperHeight > 0) config.labelHeight = item.paperHeight;
   }

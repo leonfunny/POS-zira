@@ -1,0 +1,223 @@
+/**
+ * Fabric tag rasteriser.
+ *
+ * A garment care tag carries three things no label-printer font can draw:
+ * Vietnamese diacritics, a brand logo, and ISO 3758 care symbols. So the tag's
+ * graphic block is laid out in HTML, painted by an offscreen BrowserWindow at
+ * exactly one CSS pixel per printer dot, then thresholded into the 1-bit
+ * bitmap that TSPL/ZPL want. Same pipeline the check-in label already uses to
+ * print Polish text (see hardware/pdf/pdf-printer.ts), one step further: we
+ * keep the pixels instead of handing them to the Windows spooler, so the
+ * printer receives a byte-exact image and nothing re-renders it at driver
+ * defaults.
+ *
+ * Care symbols are drawn as vector art rather than glyphs from a symbol font,
+ * because no care-symbol font ships with Windows and a missing font would
+ * silently print tofu boxes onto physical garments.
+ */
+import { BrowserWindow } from 'electron';
+import type { FabricTagData } from '../../../shared/types';
+import { careSymbolSvg } from '../../../shared/care-symbols';
+import logger from '../../logger';
+
+/** A packed monochrome image, one bit per dot, rows padded to whole bytes. */
+export interface MonoBitmap {
+  widthDots: number;
+  heightDots: number;
+  /** Bytes per row = ceil(widthDots / 8). This is what TSPL BITMAP wants. */
+  widthBytes: number;
+  /**
+   * Packed rows, MSB = leftmost dot.
+   * Bit value 0 = black (burn), 1 = white — the TSPL BITMAP convention.
+   */
+  data: Buffer;
+}
+
+/** Only inline images are allowed into the offscreen window. */
+const LOGO_DATA_URL = /^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml);base64,[A-Za-z0-9+/=]+$/;
+
+/** Pixels above this luminance count as white. Below it, the dot burns. */
+const BLACK_THRESHOLD = 150;
+
+function esc(text: string): string {
+  return String(text ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function formatPrice(grosze: number, currency: string): string {
+  return `${(grosze / 100).toFixed(2)} ${currency}`;
+}
+
+// ─── HTML layout ───────────────────────────────────────────────────────────
+
+/**
+ * Build the tag's graphic block as HTML sized in printer dots.
+ *
+ * Sizes are derived from the tag width so a 30mm and a 60mm tag both stay
+ * balanced instead of one overflowing and the other looking empty.
+ */
+export function buildFabricTagHtml(data: FabricTagData, widthDots: number, heightDots: number): string {
+  const pad = Math.round(widthDots * 0.06);
+  const brandSize = Math.round(widthDots * 0.13);
+  const sizeSize = Math.round(widthDots * 0.16);
+  const bodySize = Math.round(widthDots * 0.075);
+  const smallSize = Math.round(widthDots * 0.062);
+  // A care label reads as one row of symbols. Size them to the count so five
+  // symbols on a 20mm ribbon still fit on a single line instead of wrapping
+  // and pushing the composition off the tag.
+  const symbolCount = data.careSymbols?.length ?? 0;
+  const symbolGapRatio = 0.18;
+  const symbolRowWidth = widthDots - pad * 2;
+  const symbolFit = symbolCount > 0
+    ? Math.floor(symbolRowWidth / (symbolCount + symbolGapRatio * (symbolCount - 1)))
+    : Number.MAX_SAFE_INTEGER;
+  // Below ~14px the glyphs turn to mush, so a very long row is allowed to wrap.
+  const symbolPx = Math.max(14, Math.min(Math.round(widthDots * 0.155), symbolFit));
+
+  const logo = data.logoDataUrl && LOGO_DATA_URL.test(data.logoDataUrl)
+    ? `<img class="logo" src="${data.logoDataUrl}" alt="">`
+    : '';
+  if (data.logoDataUrl && !logo) {
+    logger.warn('[FabricTag] Ignoring logo: not an inline base64 image data URI');
+  }
+
+  const brand = !logo && data.brandName
+    ? `<div class="brand">${esc(data.brandName)}</div>`
+    : '';
+  const size = data.size ? `<div class="size">${esc(data.size)}</div>` : '';
+  const composition = data.composition
+    ? `<div class="composition">${esc(data.composition)}</div>`
+    : '';
+  const symbols = data.careSymbols?.length
+    ? `<div class="symbols">${data.careSymbols.map((s) => careSymbolSvg(s, symbolPx)).join('')}</div>`
+    : '';
+  const careText = data.careText ? `<div class="care-text">${esc(data.careText)}</div>` : '';
+  const price = typeof data.priceGrosze === 'number' && data.priceGrosze > 0
+    ? `<div class="price">${esc(formatPrice(data.priceGrosze, data.currency || 'zł'))}</div>`
+    : '';
+
+  // 'care-first' mirrors a mass-produced garment care label: symbol row on top,
+  // composition under it, size anchoring the bottom.
+  const body = data.layout === 'care-first'
+    ? `${logo}${brand}${symbols}${composition}${size}${careText}${price}`
+    : `${logo}${brand}${size}${composition}${symbols}${careText}${price}`;
+
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: ${widthDots}px; height: ${heightDots}px;
+    background: #fff; color: #000;
+    /* Antialiasing turns into speckle once we threshold to 1 bit. */
+    -webkit-font-smoothing: none;
+    text-rendering: geometricPrecision;
+  }
+  body {
+    display: flex; flex-direction: column;
+    align-items: center;
+    justify-content: ${data.layout === 'care-first' ? 'space-evenly' : 'center'};
+    gap: ${Math.round(pad * 0.5)}px;
+    padding: ${pad}px;
+    font-family: "Segoe UI", "Noto Sans", Arial, sans-serif;
+    /* Bold survives thresholding; regular weight breaks up at 203 dpi. */
+    font-weight: 700;
+    text-align: center;
+    overflow: hidden;
+  }
+  .logo { max-width: 100%; max-height: ${Math.round(heightDots * 0.3)}px; object-fit: contain; }
+  .brand { font-size: ${brandSize}px; letter-spacing: ${Math.round(brandSize * 0.08)}px; line-height: 1.1; text-transform: uppercase; }
+  .size { font-size: ${sizeSize}px; line-height: 1.05; }
+  .composition { font-size: ${bodySize}px; line-height: 1.25; }
+  .symbols { display: flex; flex-wrap: wrap; justify-content: center; gap: ${Math.round(symbolPx * symbolGapRatio)}px; }
+  .care { display: block; }
+  .care-text { font-size: ${smallSize}px; line-height: 1.2; font-weight: 400; }
+  .price { font-size: ${bodySize}px; }
+</style></head>
+<body>${body}</body></html>`;
+}
+
+// ─── Rasterisation ─────────────────────────────────────────────────────────
+
+/**
+ * Pack a BGRA buffer into TSPL's 1-bit-per-dot layout.
+ * Bit 0 = black so the head burns; bit 1 = white so it does not.
+ */
+function packMonochrome(bgra: Buffer, widthDots: number, heightDots: number): MonoBitmap {
+  const widthBytes = Math.ceil(widthDots / 8);
+  // Start all-white (0xFF); clear a bit to burn its dot.
+  const data = Buffer.alloc(widthBytes * heightDots, 0xff);
+
+  for (let y = 0; y < heightDots; y++) {
+    const rowStart = y * widthDots * 4;
+    const outRow = y * widthBytes;
+    for (let x = 0; x < widthDots; x++) {
+      const i = rowStart + x * 4;
+      // Electron's nativeImage bitmap is BGRA.
+      const b = bgra[i];
+      const g = bgra[i + 1];
+      const r = bgra[i + 2];
+      const a = bgra[i + 3];
+      // Composite onto white so a transparent logo background stays unburnt.
+      const alpha = a / 255;
+      const luminance = (0.299 * r + 0.587 * g + 0.114 * b) * alpha + 255 * (1 - alpha);
+      if (luminance < BLACK_THRESHOLD) {
+        data[outRow + (x >> 3)] &= ~(0x80 >> (x & 7));
+      }
+    }
+  }
+
+  return { widthDots, heightDots, widthBytes, data };
+}
+
+/**
+ * Paint the tag's graphic block and return it as a packed 1-bit bitmap.
+ *
+ * The offscreen window is sized in dots, but a HiDPI display can still hand
+ * back a 2x capture, so the image is resized to the exact dot grid before it
+ * is packed — otherwise every tag would print at double scale on some
+ * machines and correctly on others.
+ */
+export async function renderFabricTagBitmap(
+  data: FabricTagData,
+  widthDots: number,
+  heightDots: number,
+): Promise<MonoBitmap> {
+  const html = buildFabricTagHtml(data, widthDots, heightDots);
+  const win = new BrowserWindow({
+    show: false,
+    width: widthDots,
+    height: heightDots,
+    useContentSize: true,
+    webPreferences: { offscreen: true, nodeIntegration: false, contextIsolation: true },
+  });
+
+  try {
+    await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    // Give the compositor a frame to paint the logo and web fonts.
+    await new Promise((r) => setTimeout(r, 350));
+
+    let image = await win.webContents.capturePage();
+    const captured = image.getSize();
+    if (captured.width !== widthDots || captured.height !== heightDots) {
+      logger.debug(
+        `[FabricTag] Capture ${captured.width}x${captured.height} != ${widthDots}x${heightDots}, resizing`,
+      );
+      image = image.resize({ width: widthDots, height: heightDots, quality: 'best' });
+    }
+
+    const bgra = image.toBitmap();
+    const expected = widthDots * heightDots * 4;
+    if (bgra.length < expected) {
+      throw new Error(`Rasteriser returned ${bgra.length} bytes, expected ${expected}`);
+    }
+
+    const bitmap = packMonochrome(bgra, widthDots, heightDots);
+    logger.info(`[FabricTag] Rasterised ${widthDots}x${heightDots} dots (${bitmap.data.length} bytes)`);
+    return bitmap;
+  } finally {
+    win.destroy();
+  }
+}

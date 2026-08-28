@@ -183,6 +183,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   testPrint: () => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINT),
   printLabel: (barcode: string, text?: string, options?: { priceText?: string; sku?: string; text2?: string; text3?: string; quantity?: number; copies?: number }) =>
     ipcRenderer.invoke(IPC_CHANNELS.PRINT_LABEL, barcode, text, options),
+  printFabricTag: (data: import('../shared/types').FabricTagData) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PRINT_FABRIC_TAG, data),
   testPrinterByType: (printerType: string) => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINTER_BY_TYPE, printerType),
   testPrinterByConfig: (config: any, printerType?: string) => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINTER_BY_CONFIG, config, printerType),
   printFiscalDailyReportNow: () => ipcRenderer.invoke(IPC_CHANNELS.PRINT_FISCAL_DAILY_REPORT_NOW),

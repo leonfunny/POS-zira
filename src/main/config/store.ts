@@ -84,7 +84,7 @@ const printerConfigSchema = {
   type: 'object',
   properties: {
     enabled: { type: 'boolean', default: false },
-    protocol: { type: 'string', enum: ['THERMAL', 'POSNET', 'ELZAB_STX', 'ZEBRA', 'WINDOWS'], default: 'THERMAL' },
+    protocol: { type: 'string', enum: ['THERMAL', 'POSNET', 'ELZAB_STX', 'ZEBRA', 'WINDOWS', 'TSPL'], default: 'THERMAL' },
     serverPrinterId: { type: 'string' },
     displayName: { type: 'string' },
     port: { type: 'string' },
@@ -99,6 +99,12 @@ const printerConfigSchema = {
     supportsCashDrawer: { type: 'boolean', default: false },
     charset: { type: 'string', enum: ['utf8', 'cp1250', 'ascii'], default: 'utf8' },
     cutMode: { type: 'string', enum: ['partial', 'full', 'none'], default: 'partial' },
+    // TSPL media tuning (protocol='TSPL'). No defaults: the driver's own
+    // fallbacks differ per printer type, and a default here would override them.
+    labelGapMm: { type: 'number' },
+    printSpeed: { type: 'number' },
+    printDensity: { type: 'number' },
+    mediaSensor: { type: 'string', enum: ['gap', 'bline', 'none'] },
   },
 };
 
@@ -109,6 +115,7 @@ const printersConfigSchema = {
     RECEIPT: printerConfigSchema,
     FISCAL: printerConfigSchema,
     LABEL: printerConfigSchema,
+    FABRIC_TAG: printerConfigSchema,
     A4: printerConfigSchema,
     TICKET: printerConfigSchema,
     KITCHEN: printerConfigSchema,
@@ -305,7 +312,7 @@ const store = new Store<AgentConfig>({
     labelPrinter: printerConfigSchema,
     // Legacy single printer settings
     printerPort: { type: 'string' },
-    printerProtocol: { type: 'string', enum: ['THERMAL', 'POSNET', 'ELZAB_STX', 'ZEBRA', 'WINDOWS'], default: 'THERMAL' },
+    printerProtocol: { type: 'string', enum: ['THERMAL', 'POSNET', 'ELZAB_STX', 'ZEBRA', 'WINDOWS', 'TSPL'], default: 'THERMAL' },
     printerBaudRate: { type: 'number', default: 9600 },
     zebraPrinter: { type: 'string' },
     labelWidth: { type: 'number', default: 50 },

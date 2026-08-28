@@ -18,6 +18,7 @@ import { PosnetProbeEngine } from '../hardware/posnet/posnet-probe-engine';
 import { DeviceProfileRegistry } from '../hardware/posnet/device-profile-registry';
 import { FiscalPrinterAdapter } from '../hardware/posnet/fiscal-printer-adapter';
 import { ZebraDriver } from '../hardware/zebra/zebra-driver';
+import { TscDriver } from '../hardware/tsc/tsc-driver';
 import { UniversalDetectionService, UniversalDeviceRegistry } from '../hardware/detection';
 import { printLabelToDevice, printInfoLabelToDevice, cleanupOldLabels } from '../hardware/pdf/pdf-printer';
 import { ThermalDriver } from '../hardware/thermal/thermal-driver';
@@ -49,6 +50,8 @@ import {
   DeviceStatus,
   CheckinConfirmationData,
   InfoLabelData,
+  FabricTagData,
+  isLabelPrinterType,
   ALLOWED_PROTOCOLS_BY_TYPE,
   TestPrintStep,
   TestPrintStepName,
@@ -80,7 +83,12 @@ import {
   getFiscalDailyReportDateFromDbTimestamp,
 } from '../fiscal/fiscal-daily-report-date';
 
-type PrinterDriver = PosnetDriver | ElzabDriver | ZebraDriver | ThermalDriver;
+type PrinterDriver = PosnetDriver | ElzabDriver | ZebraDriver | TscDriver | ThermalDriver;
+
+/** Drivers that speak a label language and can render a LABEL job. */
+function isLabelDriver(driver: unknown): driver is ZebraDriver | TscDriver {
+  return driver instanceof ZebraDriver || driver instanceof TscDriver;
+}
 type LocalPrinterRow = ReturnType<typeof localPrinterRepo.getEnabled>[number];
 type PrinterDriversMap = { [key in PrinterType]?: PrinterDriver };
 type PrinterDriversById = { [serverPrinterId: string]: PrinterDriver | undefined };
@@ -385,6 +393,10 @@ export class HardwareModule extends BaseModule {
 
     ipcMain.handle(IPC_CHANNELS.PRINT_LABEL, async (_event, barcode: string, text?: string, options?: LabelPrintOptions) => {
       return this.printLabel(barcode, text, options);
+    });
+
+    ipcMain.handle(IPC_CHANNELS.PRINT_FABRIC_TAG, async (_event, data: FabricTagData) => {
+      return this.printFabricTag(data);
     });
 
     ipcMain.handle(IPC_CHANNELS.TEST_PRINTER_BY_TYPE, async (_, printerType: string) => {
@@ -1339,17 +1351,18 @@ export class HardwareModule extends BaseModule {
   }
 
   async calibratePrinterByConfig(config: PrinterConfig): Promise<{ success: boolean; error?: string; paperSize?: { widthMm: number; heightMm: number } }> {
-    if (config.protocol !== 'ZEBRA') {
-      return { success: false, error: 'Calibration is only supported for Zebra printers' };
+    if (config.protocol !== 'ZEBRA' && config.protocol !== 'TSPL') {
+      return { success: false, error: 'Calibration is only supported for Zebra and TSC label printers' };
     }
     const driver = this.createPrinterFromConfig({ ...config, enabled: true }, 'calibrate');
-    if (!driver || !(driver instanceof ZebraDriver)) {
-      return { success: false, error: 'Invalid Zebra printer configuration (missing printer name)' };
+    if (!driver || !isLabelDriver(driver)) {
+      return { success: false, error: 'Invalid label printer configuration (missing printer name)' };
     }
     try {
       const connected = await driver.connect();
       if (!connected) return { success: false, error: 'Printer not found. Check the printer name or connection.' };
-      await driver.calibrate();
+      if (driver instanceof TscDriver) await driver.calibrate(config.mediaSensor ?? 'gap');
+      else await driver.calibrate();
       const paperSize = config.windowsPrinter
         ? await ZebraDriver.detectPaperSize(config.windowsPrinter)
         : null;
@@ -1518,8 +1531,8 @@ export class HardwareModule extends BaseModule {
       protocol,
     };
 
-    if (protocol === 'ZEBRA' || protocol === 'WINDOWS') {
-      // Zebra and WINDOWS protocol use windowsPrinter (Windows spooler name)
+    if (protocol === 'ZEBRA' || protocol === 'TSPL' || protocol === 'WINDOWS') {
+      // Label languages and WINDOWS all address the Windows spooler by name
       printerConfig.windowsPrinter = printerName;
     } else if (protocol === 'THERMAL') {
       // Thermal can use either Windows printer name (USB) or COM port (serial)
@@ -1536,8 +1549,12 @@ export class HardwareModule extends BaseModule {
       printerConfig.charsPerLine = printerConfig.charsPerLine ?? 48;
     }
 
-    // Set default label dimensions for label printers
-    if (printerType === 'LABEL') {
+    // Set default label dimensions for label printers. A garment tag is
+    // narrower and much taller than a shelf label, so it gets its own default.
+    if (printerType === PrinterType.FABRIC_TAG) {
+      printerConfig.labelWidth = printerConfig.labelWidth || 40;
+      printerConfig.labelHeight = printerConfig.labelHeight || 60;
+    } else if (printerType === PrinterType.LABEL) {
       printerConfig.labelWidth = printerConfig.labelWidth || 50;
       printerConfig.labelHeight = printerConfig.labelHeight || 30;
     }
@@ -1578,7 +1595,7 @@ export class HardwareModule extends BaseModule {
       const reconnected = await this.connectPrinterWithTimeout(driver, 'Label');
       if (!reconnected || !driver.isConnected()) return { success: false, error: 'Label printer not connected' };
     }
-    if (!(driver instanceof ZebraDriver)) return { success: false, error: 'Label printing requires Zebra printer' };
+    if (!isLabelDriver(driver)) return { success: false, error: 'Label printing requires a label printer (Zebra or TSC)' };
     try {
       const priceText = options?.priceText?.trim() || options?.text2?.trim();
       const skuText = options?.sku?.trim();
@@ -1597,6 +1614,43 @@ export class HardwareModule extends BaseModule {
       });
       return { success: true };
     } catch (e: any) { return { success: false, error: e.message }; }
+  }
+
+  /**
+   * Print a garment care tag (mác vải) on the FABRIC_TAG printer.
+   *
+   * Kept separate from printLabel(): a fabric tag is a different physical
+   * product on different media (satin/polyester + resin ribbon), and a shop
+   * with both prints barcodes and tags on two different machines.
+   */
+  async printFabricTag(data: FabricTagData): Promise<{ success: boolean; error?: string }> {
+    if (!data?.brandName && !data?.logoDataUrl) {
+      return { success: false, error: 'Fabric tag needs a brand name or a logo' };
+    }
+    const driver = this.printers[PrinterType.FABRIC_TAG];
+    if (!driver) return { success: false, error: 'No fabric tag printer configured' };
+    if (!driver.isConnected()) {
+      logger.warn('[HardwareModule] Fabric tag printer disconnected at print time; attempting reconnect');
+      const reconnected = await this.connectPrinterWithTimeout(driver, 'Fabric tag');
+      if (!reconnected || !driver.isConnected()) {
+        return { success: false, error: 'Fabric tag printer not connected' };
+      }
+    }
+    try {
+      await this.printFabricTagOnDriver(driver, data);
+      return { success: true };
+    } catch (e: any) { return { success: false, error: e.message }; }
+  }
+
+  /** Shared by the IPC path and the server print-job path. */
+  private async printFabricTagOnDriver(driver: PrinterDriver, data: FabricTagData): Promise<void> {
+    if (!(driver instanceof TscDriver)) {
+      throw new Error('Fabric tag printing requires a TSPL printer (TSC)');
+    }
+    await driver.printFabricTag({
+      ...data,
+      quantity: Math.max(1, Math.min(999, Math.round(Number(data.quantity) || 1))),
+    });
   }
 
   /**
@@ -1673,7 +1727,7 @@ export class HardwareModule extends BaseModule {
       const type = (row.printer_type || PrinterType.RECEIPT) as PrinterType;
       if (type === PrinterType.RECEIPT) return 0;
       if (type === PrinterType.FISCAL) return 1;
-      if (type === PrinterType.LABEL) return 2;
+      if (isLabelPrinterType(type)) return 2;
       return 3;
     };
     return [...rows].sort((a, b) => priority(a) - priority(b));
@@ -1945,7 +1999,7 @@ export class HardwareModule extends BaseModule {
         // mirrors did not, so fall back to the legacy per-type config only
         // when a mirrored LABEL row has not been refreshed with paper_height.
         const cfgPrinter = (config.printers as any)?.[pt];
-        const hasRowLabelDimensions = pt === PrinterType.LABEL
+        const hasRowLabelDimensions = isLabelPrinterType(pt)
           && typeof pc.labelWidth === 'number'
           && pc.labelWidth > 0
           && typeof pc.labelHeight === 'number'
@@ -1957,6 +2011,16 @@ export class HardwareModule extends BaseModule {
           if (typeof cfgPrinter.labelHeight === 'number' && cfgPrinter.labelHeight > 0) {
             pc.labelHeight = cfgPrinter.labelHeight;
           }
+        }
+        // The local_printers mirror has no columns for TSPL media tuning, so
+        // these only ever live in electron-store. Without this the speed and
+        // darkness a user sets for resin-on-satin are silently dropped and the
+        // driver runs on its own defaults.
+        if (cfgPrinter && pc.protocol === 'TSPL') {
+          if (typeof cfgPrinter.labelGapMm === 'number') pc.labelGapMm = cfgPrinter.labelGapMm;
+          if (typeof cfgPrinter.printSpeed === 'number') pc.printSpeed = cfgPrinter.printSpeed;
+          if (typeof cfgPrinter.printDensity === 'number') pc.printDensity = cfgPrinter.printDensity;
+          if (cfgPrinter.mediaSensor) pc.mediaSensor = cfgPrinter.mediaSensor;
         }
         const driver = this.createPrinterFromConfig(pc, pt);
         if (!driver) continue;
@@ -2483,6 +2547,29 @@ export class HardwareModule extends BaseModule {
       if (config.windowsPrinter) return new ZebraDriver(config.windowsPrinter, config.labelWidth || 100, config.labelHeight || 50);
       return null;
     }
+    if (config.protocol === 'TSPL') {
+      // TSC label printers: raw TSPL2 via the Windows spooler. Fabric tags
+      // default to a taller 40x60mm garment tag; barcode labels keep the
+      // 100x50mm roll default the Zebra path uses.
+      if (!config.windowsPrinter) {
+        logger.warn(`[HardwareModule] TSPL printer "${name}" requires a Windows printer name`);
+        return null;
+      }
+      const isFabricTag = printerTypeKey === PrinterType.FABRIC_TAG;
+      return new TscDriver(
+        config.windowsPrinter,
+        config.labelWidth || (isFabricTag ? 40 : 100),
+        config.labelHeight || (isFabricTag ? 60 : 50),
+        {
+          gapMm: config.labelGapMm,
+          speed: config.printSpeed,
+          // Resin ribbon on satin needs more heat than paper, so fabric tags
+          // start darker than the generic label default.
+          density: config.printDensity ?? (isFabricTag ? 12 : 10),
+          sensor: config.mediaSensor,
+        },
+      );
+    }
     if (config.protocol === 'WINDOWS' && printerTypeKey === PrinterType.LABEL) {
       // Label printers generally expose a Windows spooler name, but still need
       // label-language output rather than plain A4 text.
@@ -2580,6 +2667,7 @@ export class HardwareModule extends BaseModule {
       }
     }
     if (job.printerType) return job.printerType;
+    if (job.jobType === PrintJobType.FABRIC_TAG) return PrinterType.FABRIC_TAG;
     if (job.jobType === PrintJobType.LABEL || job.jobType === PrintJobType.BARCODE || job.jobType === PrintJobType.INFO_LABEL) return PrinterType.LABEL;
     if (job.jobType === PrintJobType.KITCHEN_TICKET) return PrinterType.KITCHEN;
     return PrinterType.RECEIPT;
@@ -2650,6 +2738,7 @@ export class HardwareModule extends BaseModule {
 
       try {
         socket?.sendJobStatus(job.jobId, 'PRINTING');
+        const isFabricTag = printerType === PrinterType.FABRIC_TAG;
         const isLabel = printerType === PrinterType.LABEL;
         const isA4 = printerType === PrinterType.A4;
         const isReport = [PrintJobType.DAILY_REPORT, PrintJobType.X_REPORT, PrintJobType.Z_REPORT].includes(job.jobType);
@@ -2661,9 +2750,15 @@ export class HardwareModule extends BaseModule {
           // instead of printing mangled code-page text.
           const ticket = job.payload as KitchenTicketData;
           await this.printKitchenTicketPayload(targetPrinter, ticket);
+        } else if (isFabricTag) {
+          await this.printFabricTagOnDriver(targetPrinter, job.payload as FabricTagData);
         } else if (isLabel) {
-          if (!(targetPrinter instanceof ZebraDriver)) throw new Error('Label printing requires Zebra printer');
-          if (job.jobType === PrintJobType.INFO_LABEL) {
+          if (!isLabelDriver(targetPrinter)) throw new Error('Label printing requires a label printer (Zebra or TSC)');
+          if (targetPrinter instanceof TscDriver) {
+            // TSPL has no equivalent of the ZPL-only info-label layout, so on
+            // a TSC every label job renders as a product label.
+            await targetPrinter.printLabel(job.payload as LabelData);
+          } else if (job.jobType === PrintJobType.INFO_LABEL) {
             if (shouldRenderInfoLabelViaWindows(printerConfig)) {
               const printerName = printerConfig?.windowsPrinter || printerConfig?.address;
               if (!printerName) throw new Error('Info label printing requires a Windows printer name');

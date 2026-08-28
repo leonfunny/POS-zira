@@ -65,9 +65,12 @@ function knownProtocolsFor(brand: string, defaultProtocol: PrinterProtocol): Pri
     case 'Citizen':
     case 'Bixolon':
       return ['THERMAL', 'WINDOWS'];
+    case 'TSC':
+      // TSPL2 is native; ZEBRA only works on models with ZPL emulation
+      // switched on, and WINDOWS goes through the vendor driver.
+      return ['TSPL', 'WINDOWS', 'ZEBRA'];
     case 'DYMO':
     case 'Brother':
-    case 'TSC':
     case 'Honeywell':
       return ['WINDOWS', 'ZEBRA', 'THERMAL'];
     case 'HP':

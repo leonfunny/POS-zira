@@ -1,4 +1,4 @@
-import { LocalPrinterMirrorRow, PrinterConfig, PrinterProtocol, PrinterType } from '../../../shared/types';
+import { LocalPrinterMirrorRow, PrinterConfig, PrinterProtocol, PrinterType, isLabelPrinterType } from '../../../shared/types';
 import { database } from '../database';
 
 export interface LocalPrinterRow extends LocalPrinterMirrorRow {}
@@ -29,7 +29,9 @@ function boolToInt(value: boolean | undefined, fallback: number): number {
 
 function windowsPrinterTarget(row: LocalPrinterRow): string | undefined {
   if (row.windows_printer_name) return row.windows_printer_name;
-  if (row.protocol === 'WINDOWS' || row.protocol === 'ZEBRA') return row.address || undefined;
+  if (row.protocol === 'WINDOWS' || row.protocol === 'ZEBRA' || row.protocol === 'TSPL') {
+    return row.address || undefined;
+  }
   return undefined;
 }
 
@@ -49,7 +51,7 @@ export function rowToPrinterConfig(row: LocalPrinterRow): PrinterConfig {
     supportsCashDrawer: row.supports_cash_drawer === 1,
   };
 
-  if (row.printer_type === PrinterType.LABEL) {
+  if (isLabelPrinterType(row.printer_type)) {
     if (row.paper_width > 0) config.labelWidth = row.paper_width;
     if (row.paper_height && row.paper_height > 0) config.labelHeight = row.paper_height;
   }

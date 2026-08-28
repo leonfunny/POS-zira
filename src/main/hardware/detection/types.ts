@@ -179,7 +179,9 @@ export const BRAND_PATTERNS: BrandPattern[] = [
     brand: 'TSC',
     namePatterns: ['tsc', 'mb2', 'mb3', 'mh2', 'mh3', 'ml2', 'ml3', 'da2', 'da3', 'te2', 'te3', 'tx2', 'tx3', 'tx6', 'ttp-'],
     vids: ['1203'],
-    defaultProtocol: 'WINDOWS',
+    // TSC firmware speaks TSPL2 natively; the WINDOWS spooler path only ever
+    // worked because the vendor driver rasterises pages for it.
+    defaultProtocol: 'TSPL',
     defaultType: 'LABEL',
   },
   {
@@ -223,10 +225,31 @@ export const BRAND_PATTERNS: BrandPattern[] = [
  * Detect brand from a printer name string.
  * Returns the matching BrandPattern or null.
  */
+/**
+ * A pattern with no digits is a brand name ("canon", "zebra", "tsc"); one with
+ * digits is a model-number fragment ("mb2", "tm-t", "xp-80").
+ */
+function isBrandNamePattern(pattern: string): boolean {
+  return !/\d/.test(pattern);
+}
+
+/**
+ * Detect brand from a printer name string.
+ * Returns the matching BrandPattern or null.
+ *
+ * Brand names are matched before model fragments, because the fragments are
+ * short enough to collide across vendors: a Canon MAXIFY MB2750 contains
+ * "mb2", which is also a TSC label-printer series. Matching in array order
+ * alone classified that office inkjet as a TSC label printer and offered it
+ * for the Label slot on a TSPL driver.
+ */
 export function matchBrand(name: string): BrandPattern | null {
   const lower = name.toLowerCase();
   for (const bp of BRAND_PATTERNS) {
-    if (bp.namePatterns.some(p => lower.includes(p))) return bp;
+    if (bp.namePatterns.some(p => isBrandNamePattern(p) && lower.includes(p))) return bp;
+  }
+  for (const bp of BRAND_PATTERNS) {
+    if (bp.namePatterns.some(p => !isBrandNamePattern(p) && lower.includes(p))) return bp;
   }
   return null;
 }

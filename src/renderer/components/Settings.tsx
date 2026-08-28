@@ -7,9 +7,10 @@ import TelegramConfig from './TelegramConfig';
 import CategoryRankingSettings from './pos/CategoryRankingSettings';
 import StaffManagementSettings from './pos/StaffManagementSettings';
 import ConfirmActionDialog from './pos/ConfirmActionDialog';
+import FabricTagComposer from './label/FabricTagComposer';
 import rlog from '../utils/logger';
 import QRCode from 'qrcode';
-import { ShoppingCart, LayoutDashboard, FileText, Shield, Printer, Tag, Ticket, UtensilsCrossed, Plus, Pencil, Trash2, X, CheckCircle2, AlertTriangle, Share2, Wand2, Scale, LayoutGrid, Clock, Image as ImageIcon, Video, ArrowUp, ArrowDown, Upload } from 'lucide-react';
+import { ShoppingCart, LayoutDashboard, FileText, Shield, Printer, Tag, Ticket, UtensilsCrossed, Shirt, Plus, Pencil, Trash2, X, CheckCircle2, AlertTriangle, Share2, Wand2, Scale, LayoutGrid, Clock, Image as ImageIcon, Video, ArrowUp, ArrowDown, Upload } from 'lucide-react';
 import ModuleManager from './ModuleManager';
 import TextInput from './shared/TextInput';
 import { matchesSettingSection } from './settings-search';
@@ -97,8 +98,12 @@ type TvAdMediaItem = {
 };
 
 // Printer types - defined locally for Vite compatibility
-const PRINTER_TYPES = ['RECEIPT', 'FISCAL', 'LABEL', 'A4', 'TICKET', 'KITCHEN'] as const;
+const PRINTER_TYPES = ['RECEIPT', 'FISCAL', 'LABEL', 'FABRIC_TAG', 'A4', 'TICKET', 'KITCHEN'] as const;
 type PrinterTypeValue = typeof PRINTER_TYPES[number];
+/** Slots that print on label media and expose label width/height + calibration. */
+const LABEL_MEDIA_PRINTER_TYPES = ['LABEL', 'FABRIC_TAG'] as const;
+const isLabelMediaType = (printerType: string): boolean =>
+  LABEL_MEDIA_PRINTER_TYPES.includes(printerType as typeof LABEL_MEDIA_PRINTER_TYPES[number]);
 type SettingsTab = 'general' | 'pos' | 'printers' | 'modules';
 const SELF_CHECKOUT_RECEIPT_ROLE: SalonPrinterRole = 'SELF_CHECKOUT_RECEIPT';
 const PAPER_CONTROL_PRINTER_TYPES = ['RECEIPT', 'TICKET', 'KITCHEN'] as const;
@@ -310,6 +315,7 @@ const emptyCustomPrinterForm = (): CustomPrinterForm => ({
 function preferredProtocolForType(printerType: PrinterTypeValue): PrinterProtocol {
   if (printerType === 'LABEL') return 'WINDOWS';
   const allowed = ALLOWED_PROTOCOLS_BY_TYPE[printerType as PrinterType] || ['WINDOWS'];
+  // FABRIC_TAG only allows TSPL, so the WINDOWS preference falls through to it.
   return allowed.includes('WINDOWS') ? 'WINDOWS' : allowed[0];
 }
 
@@ -364,8 +370,10 @@ function buildServerPrinterPayloadFromConfig(
   printerType: PrinterTypeValue,
   pc: PrinterConfig,
 ): Partial<ServerPrinterMapping> {
-  const usesWindowsPrinter = pc.protocol === 'WINDOWS' || pc.protocol === 'ZEBRA' || pc.protocol === 'THERMAL';
-  const paperWidth = pc.paperWidth || (printerType === 'LABEL' ? pc.labelWidth || 100 : 80);
+  const usesWindowsPrinter = pc.protocol === 'WINDOWS' || pc.protocol === 'ZEBRA'
+    || pc.protocol === 'TSPL' || pc.protocol === 'THERMAL';
+  const isLabelMedia = isLabelMediaType(printerType);
+  const paperWidth = pc.paperWidth || (isLabelMedia ? pc.labelWidth || 100 : 80);
   const address = (pc.port || pc.address || '').trim();
   const windowsPrinterName = (pc.windowsPrinter || '').trim();
   const displayName = (pc.displayName || '').trim() || printerType;
@@ -378,9 +386,9 @@ function buildServerPrinterPayloadFromConfig(
     address: usesWindowsPrinter ? null : address || null,
     baudRate: pc.baudRate || 9600,
     paperWidth,
-    paperHeight: printerType === 'LABEL' ? pc.labelHeight || null : null,
+    paperHeight: isLabelMedia ? pc.labelHeight || null : null,
     charsPerLine: pc.charsPerLine || charsPerLineFor(paperWidth),
-    supportsCut: pc.supportsCut ?? (printerType !== 'LABEL' && printerType !== 'A4'),
+    supportsCut: pc.supportsCut ?? (!isLabelMedia && printerType !== 'A4'),
     supportsCashDrawer: pc.supportsCashDrawer ?? printerType === 'RECEIPT',
     isEnabled: !!pc.enabled,
   };
@@ -1417,7 +1425,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
         protocol,
         windowsPrinterName: printer.windowsPrinterName || '',
         address: printer.address || '',
-        paperWidth: printer.paperWidth || (printerType === 'LABEL' ? 100 : 80),
+        paperWidth: printer.paperWidth || (isLabelMediaType(printerType) ? 100 : 80),
         paperHeight: printer.paperHeight || 150,
         isEnabled: printer.isEnabled ?? true,
       });
@@ -1433,16 +1441,20 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
       const next = { ...prev, ...updates };
       if (updates.printerType && updates.printerType !== prev.printerType) {
         next.protocol = preferredProtocolForType(updates.printerType);
-        next.paperWidth = updates.printerType === 'LABEL' ? 100 : 80;
-        next.paperHeight = updates.printerType === 'LABEL' ? 150 : prev.paperHeight;
+        const nextIsLabelMedia = isLabelMediaType(updates.printerType);
+        // A garment tag is narrower and taller than a shelf label.
+        next.paperWidth = updates.printerType === 'FABRIC_TAG' ? 40 : nextIsLabelMedia ? 100 : 80;
+        next.paperHeight = updates.printerType === 'FABRIC_TAG' ? 60 : nextIsLabelMedia ? 150 : prev.paperHeight;
       }
       return next;
     });
   };
 
   const buildCustomPrinterPayload = (form: CustomPrinterForm): Partial<ServerPrinterMapping> => {
-    const usesWindowsPrinter = form.protocol === 'WINDOWS' || form.protocol === 'ZEBRA' || form.protocol === 'THERMAL';
-    const paperWidth = form.paperWidth || (form.printerType === 'LABEL' ? 100 : 80);
+    const usesWindowsPrinter = form.protocol === 'WINDOWS' || form.protocol === 'ZEBRA'
+      || form.protocol === 'TSPL' || form.protocol === 'THERMAL';
+    const isLabelMedia = isLabelMediaType(form.printerType);
+    const paperWidth = form.paperWidth || (isLabelMedia ? 100 : 80);
     return {
       displayName: form.displayName.trim(),
       printerType: form.printerType,
@@ -1451,9 +1463,9 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
       address: usesWindowsPrinter ? null : form.address.trim(),
       baudRate: 9600,
       paperWidth,
-      paperHeight: form.printerType === 'LABEL' ? form.paperHeight : null,
+      paperHeight: isLabelMedia ? form.paperHeight : null,
       charsPerLine: charsPerLineFor(paperWidth),
-      supportsCut: form.printerType !== 'LABEL' && form.printerType !== 'A4',
+      supportsCut: !isLabelMedia && form.printerType !== 'A4',
       supportsCashDrawer: form.printerType === 'RECEIPT',
       isEnabled: form.isEnabled,
     };
@@ -1465,7 +1477,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
       setServerPrintersError('Display name is required');
       return;
     }
-    if ((payload.protocol === 'WINDOWS' || payload.protocol === 'ZEBRA' || payload.protocol === 'THERMAL') && !payload.windowsPrinterName) {
+    if ((payload.protocol === 'WINDOWS' || payload.protocol === 'ZEBRA' || payload.protocol === 'TSPL' || payload.protocol === 'THERMAL') && !payload.windowsPrinterName) {
       setServerPrintersError('Windows printer is required');
       return;
     }
@@ -1473,7 +1485,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
       setServerPrintersError('COM port or address is required');
       return;
     }
-    if (payload.printerType === 'LABEL' && (!payload.paperWidth || !payload.paperHeight)) {
+    if (isLabelMediaType(String(payload.printerType)) && (!payload.paperWidth || !payload.paperHeight)) {
       setServerPrintersError('Label width and height are required');
       return;
     }
@@ -2344,6 +2356,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   const customFormAllowedProtocols = ALLOWED_PROTOCOLS_BY_TYPE[customPrinterForm.printerType as PrinterType] || [];
   const customFormUsesWindowsPrinter = customPrinterForm.protocol === 'WINDOWS'
     || customPrinterForm.protocol === 'ZEBRA'
+    || customPrinterForm.protocol === 'TSPL'
     || customPrinterForm.protocol === 'THERMAL';
   const localOnlinePrinterCount = localPrinterRows.filter((printer) => printer.is_online === 1).length;
   const getLocalPrinterTarget = (printer: LocalPrinterMirrorRow): string => (
@@ -2915,7 +2928,8 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                 isA4Printer ? 'A4' : 'RECEIPT';
               const fallbackTargetProtocol: PrinterProtocol = isPosnet ? 'POSNET' :
                 isZebra ? 'ZEBRA' :
-                (isTsc || isHoneywell || isDymo || isA4Printer) ? 'WINDOWS' : 'THERMAL';
+                isTsc ? 'TSPL' :
+                (isHoneywell || isDymo || isA4Printer) ? 'WINDOWS' : 'THERMAL';
               const targetType = (dev.targetType as PrinterTypeValue) || fallbackTargetType;
               const targetProtocol = (dev.recommendedProtocol as PrinterProtocol) || fallbackTargetProtocol;
 
@@ -3180,7 +3194,8 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
             {/* Dynamic Printer Sections - iterate over all PrinterType values */}
             {PRINTER_TYPES.map((printerType) => {
               const printerConfig = getPrinterConfig(printerType);
-              const isLabel = printerType === 'LABEL';
+              const isLabel = isLabelMediaType(printerType);
+              const isFabricTag = printerType === 'FABRIC_TAG';
               const isFiscalElzab = printerType === 'FISCAL' &&
                 printerConfig.protocol === 'ELZAB_STX';
 
@@ -3192,6 +3207,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                         {printerType === 'RECEIPT' && <Printer size={16} />}
                         {printerType === 'FISCAL' && <Shield size={16} />}
                         {printerType === 'LABEL' && <Tag size={16} />}
+                        {printerType === 'FABRIC_TAG' && <Shirt size={16} />}
                         {printerType === 'A4' && <FileText size={16} />}
                         {printerType === 'TICKET' && <Ticket size={16} />}
                         {printerType === 'KITCHEN' && <UtensilsCrossed size={16} />}
@@ -3484,7 +3500,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                                     type="number"
                                     value={printerConfig.labelWidth || ''}
                                     onChange={(e) => updatePrinter(printerType, { labelWidth: parseInt(e.target.value) || 0 })}
-                                    onBlur={(e) => { const v = parseInt(e.target.value); if (!v || v < 10) updatePrinter(printerType, { labelWidth: 50 }); }}
+                                    onBlur={(e) => { const v = parseInt(e.target.value); if (!v || v < 10) updatePrinter(printerType, { labelWidth: isFabricTag ? 40 : 50 }); }}
                                     min={10}
                                     max={1000}
                                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
@@ -3496,7 +3512,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                                     type="number"
                                     value={printerConfig.labelHeight || ''}
                                     onChange={(e) => updatePrinter(printerType, { labelHeight: parseInt(e.target.value) || 0 })}
-                                    onBlur={(e) => { const v = parseInt(e.target.value); if (!v || v < 10) updatePrinter(printerType, { labelHeight: 30 }); }}
+                                    onBlur={(e) => { const v = parseInt(e.target.value); if (!v || v < 10) updatePrinter(printerType, { labelHeight: isFabricTag ? 60 : 30 }); }}
                                     min={10}
                                     max={1000}
                                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
@@ -3508,7 +3524,72 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                               </p>
                             </>
                           )}
+
+                          {/* TSPL media tuning — resin ribbon on satin needs more heat and less speed than paper */}
+                          {printerConfig.protocol === 'TSPL' && (
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="block text-xs font-medium text-slate-600 mb-1">{t('settings.printSpeed')} (ips)</label>
+                                <input
+                                  type="number"
+                                  value={printerConfig.printSpeed ?? 3}
+                                  onChange={(e) => updatePrinter(printerType, { printSpeed: parseInt(e.target.value) || 0 })}
+                                  onBlur={(e) => { const v = parseInt(e.target.value); if (!v || v < 1 || v > 12) updatePrinter(printerType, { printSpeed: 3 }); }}
+                                  min={1}
+                                  max={12}
+                                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-slate-600 mb-1">{t('settings.printDensity')} (0-15)</label>
+                                <input
+                                  type="number"
+                                  value={printerConfig.printDensity ?? (isFabricTag ? 12 : 10)}
+                                  onChange={(e) => updatePrinter(printerType, { printDensity: parseInt(e.target.value) || 0 })}
+                                  onBlur={(e) => { const v = parseInt(e.target.value); if (isNaN(v) || v < 0 || v > 15) updatePrinter(printerType, { printDensity: isFabricTag ? 12 : 10 }); }}
+                                  min={0}
+                                  max={15}
+                                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-slate-600 mb-1">{t('settings.mediaSensor')}</label>
+                                <select
+                                  value={printerConfig.mediaSensor || 'gap'}
+                                  onChange={(e) => updatePrinter(printerType, { mediaSensor: e.target.value as 'gap' | 'bline' | 'none' })}
+                                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                                >
+                                  <option value="gap">{t('settings.sensorGap')}</option>
+                                  <option value="bline">{t('settings.sensorBline')}</option>
+                                  <option value="none">{t('settings.sensorNone')}</option>
+                                </select>
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-slate-600 mb-1">{t('settings.labelGap')} (mm)</label>
+                                <input
+                                  type="number"
+                                  value={printerConfig.labelGapMm ?? 2}
+                                  onChange={(e) => updatePrinter(printerType, { labelGapMm: parseFloat(e.target.value) || 0 })}
+                                  disabled={printerConfig.mediaSensor === 'none'}
+                                  min={0}
+                                  max={20}
+                                  step={0.5}
+                                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none disabled:bg-slate-50 disabled:text-slate-400"
+                                />
+                              </div>
+                            </div>
+                          )}
                         </>
+                      )}
+
+                      {isFabricTag && (
+                        <FabricTagComposer
+                          t={t}
+                          labelWidthMm={printerConfig.labelWidth || 40}
+                          labelHeightMm={printerConfig.labelHeight || 60}
+                          ready={!!printerConfig.enabled && !!printerConfig.windowsPrinter
+                            && (ALLOWED_PROTOCOLS_BY_TYPE.FABRIC_TAG || []).includes(printerConfig.protocol)}
+                        />
                       )}
 
                       {/* Test Print Button */}
@@ -3798,8 +3879,8 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                           </div>
                         )}
 
-                        {/* Calibrate Button — Zebra only */}
-                        {printerConfig.protocol === 'ZEBRA' && (
+                        {/* Calibrate Button — label languages only (ZPL ~JC / TSPL GAPDETECT) */}
+                        {(printerConfig.protocol === 'ZEBRA' || printerConfig.protocol === 'TSPL') && (
                           <>
                             <button
                               onClick={() => handleCalibrate(printerType)}
