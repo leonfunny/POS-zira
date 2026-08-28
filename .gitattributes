@@ -1,0 +1,34 @@
+# Keep every text file LF in the working tree, on every OS.
+#
+# Without this, a Windows checkout with core.autocrlf=true produces CRLF files
+# and two things break that look like real failures but are not:
+#   * Vite's SSR transform does not recognise a `#!...\r\n` shebang, so it
+#     hoists imports above it and the `#!` lands mid-line -> "SyntaxError:
+#     Invalid or unexpected token" when a test imports scripts/*.mjs.
+#   * Source-inspection tests match multi-line regexes against source files;
+#     an unexpected \r before every \n makes those patterns miss.
+# Both are invisible on Linux CI, so pin the line endings instead of teaching
+# every test to tolerate \r.
+* text=auto eol=lf
+
+# Binaries git must never touch.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
+*.zip binary
+*.exe binary
+*.dll binary
+*.ttf binary
+*.woff binary
+*.woff2 binary
+*.db binary
+*.node binary
+
+# Windows-only files that genuinely need CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
