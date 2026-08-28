@@ -48,7 +48,12 @@ describe('billiard floor surface theme', () => {
     expect(floor).toContain('<FloorSurfaceThemeToggle');
     expect(floor).toContain('FLOOR_SURFACE_THEME_STYLES[floorSurfaceTheme]');
     expect(floor).toContain("'--floor-surface-ring'");
-    expect(floor).toContain('<div className="p-4 sm:p-6 space-y-4">');
+    // The page shell keeps its neutral padding and carries no hardcoded dark
+    // background, so the theme comes from the floor canvas alone. Matched on
+    // the padding utilities rather than the whole class string: the shell has
+    // since moved from `space-y-4` to a flex column with `gap-4`, which is the
+    // same intent expressed differently.
+    expect(floor).toMatch(/<div className="[^"]*\bp-4\b[^"]*\bsm:p-6\b[^"]*">/);
     expect(floor).not.toContain('bg-slate-900');
 
     const table = readSource('../src/renderer/components/billiard/DraggableTable.tsx');

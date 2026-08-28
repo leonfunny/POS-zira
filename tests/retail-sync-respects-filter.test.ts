@@ -73,7 +73,7 @@ describe('RetailTemplate - category switching uses renderer-side filtering', () 
   it('derives non-search category products synchronously from allProducts and active unit filter', () => {
     expect(source).toMatch(/visibleCategoryProducts\s*=\s*useMemo/);
     expect(source).toContain('filterRetailBrowseProducts(allProducts, activeCategoryId, activeUnitFilter);');
-    expect(source).toMatch(/visibleProducts\s*=\s*searchQuery \? visibleSearchProducts : visibleCategoryProducts/);
+    expect(source).toMatch(/visibleProducts\s*=\s*gridSearchQuery \? visibleSearchProducts : visibleCategoryProducts/);
   });
 
   it('keeps displayed search products global while preserving variant/draft de-dupe', () => {
@@ -92,14 +92,17 @@ describe('RetailTemplate - category switching uses renderer-side filtering', () 
     expect(block).not.toContain('activeUnitFilter');
     expect(block).not.toContain('productMatchesRetailUnitFilter');
     expect(block).not.toContain('category_id === activeCategoryId');
-    expect(source).toMatch(/visibleProducts\s*=\s*searchQuery \? visibleSearchProducts : visibleCategoryProducts/);
+    expect(source).toMatch(/visibleProducts\s*=\s*gridSearchQuery \? visibleSearchProducts : visibleCategoryProducts/);
   });
 
   it('clears and ignores browse active state while search is active', () => {
     expect(source).toContain('if (searchQuery && activeCategoryId !== null) setActiveCategoryId(null);');
-    expect(source).toContain('const browseActiveCategoryId = searchQuery ? null : activeCategoryId;');
+    // Browse state follows gridSearchQuery, not the raw input: committing a
+    // Vietnamese IME composition briefly clears searchQuery, and keying the
+    // grid off that swallowed the first tap on a result.
+    expect(source).toContain('const browseActiveCategoryId = gridSearchQuery ? null : activeCategoryId;');
     expect(source).toContain("const browseUnitFilter = searchQuery ? 'all' : activeUnitFilter;");
-    expect(source).toContain('const showCategoryGallery = !searchQuery && browseActiveCategoryId === null;');
+    expect(source).toContain('const showCategoryGallery = !gridSearchQuery && browseActiveCategoryId === null;');
     expect(source).toContain('!searchQuery && browseActiveCategoryId === null');
     expect(source).toContain('const isActive = browseUnitFilter === filter.id;');
     expect(source).toContain('const isActive = browseActiveCategoryId === cat.id;');

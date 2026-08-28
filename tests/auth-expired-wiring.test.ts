@@ -127,19 +127,31 @@ describe('forwardAuthExpiredToRenderer — behaviour', () => {
   it('useAuth.ts subscribes to onExpired and clears auth state', () => {
     const source = read('src/renderer/hooks/useAuth.ts');
     expect(source).toMatch(/electronAPI\.auth\.onExpired/);
-    // The subscription effect must clear BOTH flags so App.tsx falls
-    // through to AuthScreen on next render.
+    // The handler must clear BOTH flags so App.tsx falls through to
+    // AuthScreen on the next render. They are cleared in one setState call,
+    // so assert on the resulting state rather than on two separate setters.
     const idx = source.indexOf('onExpired');
     const block = source.slice(idx, idx + 500);
-    expect(block).toMatch(/setIsAuthenticated\(\s*false\s*\)/);
-    expect(block).toMatch(/setUser\(\s*null\s*\)/);
+    expect(block).toMatch(/setState\(\{[^}]*isAuthenticated:\s*false/);
+    expect(block).toMatch(/setState\(\{[^}]*user:\s*null/);
   });
 
-  it('useAuth.ts cleanup unsubscribes (returned unsub function) — no listener leak across remounts', () => {
+  it('useAuth.ts subscribes once per renderer and keeps the unsub handle — no listener leak', () => {
     const source = read('src/renderer/hooks/useAuth.ts');
-    const idx = source.indexOf('onExpired');
-    const block = source.slice(idx, idx + 500);
-    // Return value of useEffect must be the unsub returned by onExpired.
-    expect(block).toMatch(/return\s+unsub/);
+
+    // The listener lives in the module-level store, not in a component
+    // effect: a session can expire while no particular component is mounted,
+    // so tearing it down on unmount would drop the event. The no-leak
+    // guarantee therefore comes from subscribing exactly once, not from
+    // unsubscribing on unmount.
+    expect(source).toMatch(/expiredUnsub\s*=\s*window\.electronAPI\.auth\.onExpired/);
+
+    // `started` is the once-guard that keeps remounts from stacking listeners.
+    const startIdx = source.indexOf('function ensureStarted');
+    expect(startIdx, 'ensureStarted() not found').toBeGreaterThan(-1);
+    expect(source.slice(startIdx, startIdx + 200)).toMatch(/if\s*\(started\)\s*return;\s*started\s*=\s*true;/);
+
+    // And the handle is retained so the store can release it on reset.
+    expect(source).toMatch(/expiredUnsub\?\.\(\)/);
   });
 });
