@@ -24,22 +24,58 @@ interface ShiftReportProps {
   report: ShiftReportData;
   onClose: () => void;
   t: (key: string) => string;
+  recovery?: {
+    status: 'PENDING' | 'FAILED_SAFE' | 'DISPATCHING' | 'NEEDS_REVIEW';
+    lastError?: string | null;
+    busy?: boolean;
+    error?: string | null;
+    onReprint: () => void;
+    onMarkPrinted: () => void;
+  };
 }
 
 function formatPrice(grosze: number, currency: string): string {
   return `${(grosze / 100).toFixed(2)} ${currency}`;
 }
 
-export default function ShiftReportModal({ report, onClose, t }: ShiftReportProps) {
+export default function ShiftReportModal({ report, onClose, t, recovery }: ShiftReportProps) {
   const currency = t('pos.currency');
+  const label = (key: string, fallback: string): string => {
+    const translated = t(key);
+    return translated && translated !== key ? translated : fallback;
+  };
+  const uncertain = recovery?.status === 'DISPATCHING' || recovery?.status === 'NEEDS_REVIEW';
 
   return (
     <Modal
-      title={t('pos.shift.report')}
+      title={recovery
+        ? label('pos.shift.zReportRecoveryTitle', 'Z-report recovery')
+        : t('pos.shift.report')}
       onClose={onClose}
       size="sm"
       bodyClassName="px-5 py-4 space-y-3"
-      footer={(
+      footer={recovery ? (
+        <div className="space-y-2">
+          {uncertain && (
+            <button
+              onClick={recovery.onMarkPrinted}
+              disabled={recovery.busy}
+              className="w-full rounded-lg border border-emerald-600 bg-white py-3 font-semibold text-emerald-800 transition-colors hover:bg-emerald-50 disabled:opacity-50"
+            >
+              {label('pos.shift.zReportMarkPrinted', 'It already printed')}
+            </button>
+          )}
+          <button
+            onClick={recovery.onReprint}
+            disabled={recovery.busy}
+            className="w-full rounded-lg bg-amber-600 py-3 font-semibold text-white transition-colors hover:bg-amber-700 disabled:opacity-50"
+          >
+            {recovery.busy
+              ? label('pos.shift.zReportWorking', 'Working…')
+              : label('pos.shift.zReportReprint', 'Print Z-report')}
+          </button>
+        </div>
+      ) : (
         <button
           onClick={onClose}
           className="w-full py-3 rounded-lg bg-slate-900 font-semibold text-white transition-colors hover:bg-slate-950"
@@ -48,6 +84,33 @@ export default function ShiftReportModal({ report, onClose, t }: ShiftReportProp
         </button>
       )}
     >
+          {recovery && (
+            <div className={`rounded-lg border px-3 py-2 text-sm font-medium leading-relaxed ${
+              uncertain
+                ? 'border-amber-300 bg-amber-50 text-amber-950'
+                : 'border-blue-200 bg-blue-50 text-blue-950'
+            }`}>
+              <p>
+                {uncertain
+                  ? label(
+                    'pos.shift.zReportUncertain',
+                    'The app stopped while sending this report. Check the printer: mark it printed if paper came out, otherwise print it again.',
+                  )
+                  : label(
+                    'pos.shift.zReportPending',
+                    'This closed shift still has a Z-report waiting to print. Print it before continuing.',
+                  )}
+              </p>
+              {recovery.lastError && (
+                <p className="mt-2 text-xs">
+                  {label('pos.shift.zReportLastError', 'Last printer error')}: {recovery.lastError}
+                </p>
+              )}
+              {recovery.error && (
+                <p className="mt-2 text-xs font-bold text-red-700">{recovery.error}</p>
+              )}
+            </div>
+          )}
           {report.staffName && (
             <div className="text-center text-sm text-slate-500">
               {report.staffName}

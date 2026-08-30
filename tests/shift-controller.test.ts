@@ -43,7 +43,12 @@ import { database } from '../src/main/database/database';
 import { orderRepo } from '../src/main/database/repos/order-repo';
 import { apiClient } from '../src/main/network/api-client';
 import { getConfigValue, getSecureAuthToken } from '../src/main/config/store';
-import { canReconcileActiveShift, ShiftController } from '../src/main/pos/shift-controller';
+import {
+  canReconcileActiveShift,
+  isSafeZReportPrintFailure,
+  ShiftController,
+  type ShiftReport,
+} from '../src/main/pos/shift-controller';
 
 function order(overrides: Record<string, unknown>) {
   return {
@@ -191,7 +196,7 @@ describe('ShiftController transfer totals', () => {
       return { id: 'shift-1' } as any;
     });
     vi.mocked(database.run).mockImplementation((sql: string) => {
-      if (/UPDATE shifts SET closed_at/i.test(sql)) open = false;
+      if (/UPDATE shifts SET[\s\S]*closed_at/i.test(sql)) open = false;
     });
     vi.mocked(orderRepo.getByShift).mockReturnValue([]);
 
@@ -288,6 +293,101 @@ describe('ShiftController transfer totals', () => {
     })).rejects.toBe(printError);
   });
 
+  it('treats a missing printer as a safe retry instead of silently losing the Z-report', async () => {
+    const controller = new ShiftController(() => null, () => false);
+
+    let failure: unknown;
+    try {
+      await controller.printZReport({
+        shiftId: 'shift-no-printer',
+        staffName: 'Cashier',
+        openedAt: '2026-08-30T08:00:00.000Z',
+        closedAt: '2026-08-30T16:00:00.000Z',
+        openingCash: 10000,
+        closingCash: 10000,
+        totalSales: 0,
+        totalOrders: 0,
+        cashTotal: 0,
+        cardTotal: 0,
+        blikTotal: 0,
+        transferTotal: 0,
+        totalRefunds: 0,
+        totalDiscounts: 0,
+        totalTips: 0,
+        difference: 0,
+        unsyncedOrders: 0,
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(isSafeZReportPrintFailure(failure)).toBe(true);
+  });
+
+  it('recovers a complete pending Z-report snapshot from the durable shift row', () => {
+    const report: ShiftReport = {
+      shiftId: 'shift-restart',
+      staffName: 'Cashier',
+      openedAt: '2026-08-30T08:00:00.000Z',
+      closedAt: '2026-08-30T16:00:00.000Z',
+      openingCash: 10000,
+      closingCash: 12000,
+      totalSales: 2000,
+      totalOrders: 1,
+      cashTotal: 2000,
+      cardTotal: 0,
+      blikTotal: 0,
+      transferTotal: 0,
+      totalRefunds: 0,
+      totalDiscounts: 0,
+      totalTips: 0,
+      difference: 0,
+      unsyncedOrders: 0,
+    };
+    vi.mocked(database.get).mockReturnValueOnce({
+      id: report.shiftId,
+      z_report_payload: JSON.stringify(report),
+      z_report_status: 'PENDING',
+      z_report_attempts: 0,
+      z_report_error: null,
+    } as any);
+
+    const recovered = new ShiftController(() => null, () => false)
+      .getUnresolvedZReport();
+
+    expect(recovered).toEqual({
+      shiftId: report.shiftId,
+      report,
+      status: 'PENDING',
+      attempts: 0,
+      lastError: null,
+    });
+  });
+
+  it('requires an explicit operator decision before reprinting an uncertain report', () => {
+    const report = {
+      shiftId: 'shift-uncertain',
+      staffName: 'Cashier',
+    } as ShiftReport;
+    vi.mocked(database.get).mockReturnValue({
+      id: report.shiftId,
+      z_report_payload: JSON.stringify(report),
+      z_report_status: 'DISPATCHING',
+      z_report_attempts: 1,
+      z_report_error: null,
+    } as any);
+    const controller = new ShiftController(() => null, () => false);
+
+    expect(() => controller.beginZReportPrint(report.shiftId)).toThrow(/uncertain/i);
+    expect(findRunCall(/z_report_status = 'DISPATCHING'/i)).toBeUndefined();
+
+    expect(controller.beginZReportPrint(report.shiftId, true)).toEqual(report);
+    expect(findRunCall(/z_report_status = 'DISPATCHING'/i)?.[1]).toEqual([
+      report.shiftId,
+    ]);
+  });
+
   it('subtracts refunds issued during this shift even when the sale belongs to an older shift', () => {
     vi.mocked(orderRepo.getByShift).mockReturnValue([
       order({
@@ -362,7 +462,16 @@ describe('ShiftController transfer totals', () => {
     expect(report.cardTotal).toBe(10000);
     expect(report.difference).toBe(5000);
     expect(report.fiscalOnlySales).toBe(true);
-    expect(vi.mocked(database.run).mock.calls[0][1]).toEqual([15000, 10000, 1, 'shift-1']);
+    const closeParams = vi.mocked(database.run).mock.calls[0][1] as unknown[];
+    expect(closeParams[1]).toBe(15000);
+    expect(closeParams[2]).toBe(10000);
+    expect(closeParams[3]).toBe(1);
+    expect(JSON.parse(String(closeParams[4]))).toMatchObject({
+      shiftId: 'shift-1',
+      fiscalOnlySales: true,
+      totalSales: 10000,
+    });
+    expect(closeParams[5]).toBe('shift-1');
   });
 
   it('sends machineId when retrying unsynced shift opens', async () => {

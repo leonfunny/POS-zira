@@ -1951,4 +1951,27 @@ export const migrations: Migration[] = [
       );
     `,
   },
+  {
+    version: 67,
+    name: 'shift_z_report_ledger',
+    // Persist the complete report and its print state on the shift itself.
+    // PENDING/FAILED_SAFE may be retried. DISPATCHING/NEEDS_REVIEW require an
+    // operator decision because the process may have stopped after paper was
+    // printed but before COMPLETED crossed the database durability barrier.
+    up: `
+      ALTER TABLE shifts ADD COLUMN z_report_payload TEXT;
+      ALTER TABLE shifts ADD COLUMN z_report_status TEXT;
+      ALTER TABLE shifts ADD COLUMN z_report_attempts INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE shifts ADD COLUMN z_report_error TEXT;
+      ALTER TABLE shifts ADD COLUMN z_report_dispatched_at TEXT;
+      ALTER TABLE shifts ADD COLUMN z_report_completed_at TEXT;
+
+      -- Historical shifts predate the durable print contract. Never replay
+      -- them on upgrade because there is no trustworthy report snapshot.
+      UPDATE shifts
+      SET z_report_status = 'COMPLETED',
+          z_report_completed_at = COALESCE(closed_at, datetime('now'))
+      WHERE closed_at IS NOT NULL;
+    `,
+  },
 ];

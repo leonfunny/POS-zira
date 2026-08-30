@@ -63,6 +63,14 @@ import type {
 
 type PosMode = 'retail' | 'salon' | 'b2b' | 'restaurant';
 
+type ZReportRecoveryInfo = {
+  shiftId: string;
+  report: any;
+  status: 'PENDING' | 'FAILED_SAFE' | 'DISPATCHING' | 'NEEDS_REVIEW';
+  attempts: number;
+  lastError: string | null;
+};
+
 const POS_LANGS: Language[] = ['en', 'pl', 'vi', 'uk', 'ru', 'zh', 'tr'];
 const PRINT_LAST_CART_LABEL_COMMAND = '00000000';
 
@@ -331,6 +339,9 @@ export default function POSLayout({
   const [isOnline, setIsOnline] = useState(false);
   const [showShiftModal, setShowShiftModal] = useState<'open' | 'close' | null>(null);
   const [shiftReport, setShiftReport] = useState<any>(null);
+  const [zReportRecovery, setZReportRecovery] = useState<ZReportRecoveryInfo | null>(null);
+  const [zReportRecoveryBusy, setZReportRecoveryBusy] = useState(false);
+  const [zReportRecoveryError, setZReportRecoveryError] = useState<string | null>(null);
   const [langOpen, setLangOpen] = useState(false);
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const [scanToast, setScanToast] = useState<{ text: string; type: ScanToastType } | null>(null);
@@ -477,6 +488,24 @@ export default function POSLayout({
     const translated = t(key);
     return translated && translated !== key ? translated : fallback;
   }, [t]);
+
+  const refreshPendingZReport = useCallback(async (): Promise<ZReportRecoveryInfo | null> => {
+    try {
+      const getPending = window.electronAPI.pos.shift.getPendingZReport;
+      if (typeof getPending !== 'function') return null;
+      const result = await getPending();
+      const pending = result.success && result.pending ? result.pending : null;
+      setZReportRecovery(pending);
+      return pending;
+    } catch (error: any) {
+      setZReportRecoveryError(error?.message || String(error));
+      return null;
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshPendingZReport();
+  }, [refreshPendingZReport]);
   const session = state?.session ?? { shiftId: null, staffId: null, staffName: null, isOpen: false, openedAt: null };
 
   const openBilliardPayment = useCallback(async (intent: BilliardPaymentIntent) => {
@@ -1500,7 +1529,10 @@ export default function POSLayout({
       staffName: data.staffName,
       openingCash: data.openingCash ?? 0,
     });
-    if (!result.success) throw new Error(result.error || 'Failed to open shift');
+    if (!result.success) {
+      await refreshPendingZReport();
+      throw new Error(result.error || 'Failed to open shift');
+    }
     setShowShiftModal(null);
   };
 
@@ -1511,9 +1543,63 @@ export default function POSLayout({
       closingCash: data.closingCash ?? 0,
       fiscalOnly: hideNonFiscalOrders,
     });
-    if (!result.success) throw new Error(result.error || 'Failed to close shift');
+    if (!result.success) {
+      await refreshPendingZReport();
+      throw new Error(result.error || 'Failed to close shift');
+    }
     setShowShiftModal(null);
     if (result.report) setShiftReport(result.report);
+  };
+
+  const handleZReportReprint = async () => {
+    if (!zReportRecovery || zReportRecoveryBusy) return;
+    setZReportRecoveryBusy(true);
+    setZReportRecoveryError(null);
+    try {
+      const uncertain = zReportRecovery.status === 'DISPATCHING'
+        || zReportRecovery.status === 'NEEDS_REVIEW';
+      const result = await window.electronAPI.pos.shift.retryZReport({
+        shiftId: zReportRecovery.shiftId,
+        confirmUncertainReprint: uncertain,
+      });
+      if (!result.success) {
+        await refreshPendingZReport();
+        setZReportRecoveryError(result.error || 'Failed to print the Z-report');
+        return;
+      }
+      setZReportRecovery(null);
+      setShowShiftModal(null);
+      if (result.report) setShiftReport(result.report);
+    } catch (error: any) {
+      await refreshPendingZReport();
+      setZReportRecoveryError(error?.message || String(error));
+    } finally {
+      setZReportRecoveryBusy(false);
+    }
+  };
+
+  const handleZReportMarkPrinted = async () => {
+    if (!zReportRecovery || zReportRecoveryBusy) return;
+    setZReportRecoveryBusy(true);
+    setZReportRecoveryError(null);
+    try {
+      const result = await window.electronAPI.pos.shift.markZReportPrinted({
+        shiftId: zReportRecovery.shiftId,
+      });
+      if (!result.success) {
+        await refreshPendingZReport();
+        setZReportRecoveryError(result.error || 'Failed to save the Z-report decision');
+        return;
+      }
+      setZReportRecovery(null);
+      setShowShiftModal(null);
+      if (result.report) setShiftReport(result.report);
+    } catch (error: any) {
+      await refreshPendingZReport();
+      setZReportRecoveryError(error?.message || String(error));
+    } finally {
+      setZReportRecoveryBusy(false);
+    }
   };
 
   const handleHomeReset = useCallback(() => {
@@ -2043,7 +2129,22 @@ export default function POSLayout({
           t={t}
         />
       )}
-      {shiftReport && (
+      {zReportRecovery && (
+        <ShiftReportModal
+          report={zReportRecovery.report}
+          onClose={() => undefined}
+          t={t}
+          recovery={{
+            status: zReportRecovery.status,
+            lastError: zReportRecovery.lastError,
+            busy: zReportRecoveryBusy,
+            error: zReportRecoveryError,
+            onReprint: () => { void handleZReportReprint(); },
+            onMarkPrinted: () => { void handleZReportMarkPrinted(); },
+          }}
+        />
+      )}
+      {!zReportRecovery && shiftReport && (
         <ShiftReportModal
           report={shiftReport}
           onClose={() => setShiftReport(null)}

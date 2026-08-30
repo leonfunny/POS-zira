@@ -57,7 +57,12 @@ import {
 } from '../pos/refund-backend-payload';
 import { sanitizeBilliardRefundRequest } from '../pos/billiard-refund-policy';
 import { assertPosPaymentAccounting, assertProtectedPosPaymentMethods } from '../pos/payment-accounting';
-import { ShiftController, type ShiftReport } from '../pos/shift-controller';
+import {
+  isSafeZReportPrintFailure,
+  ShiftController,
+  type ShiftReport,
+  type ZReportRecovery,
+} from '../pos/shift-controller';
 import { isShiftAlreadyClosedError, shouldCloseActiveShiftSession } from '../../shared/shift-close';
 import { toQuickAddVariantRow } from '../pos/quick-add-product';
 import {
@@ -789,10 +794,12 @@ export class PosModule extends BaseModule {
   private async finalizeDurableShiftClose(
     report: ShiftReport,
     closeSession: boolean,
+    confirmUncertainReprint = false,
   ): Promise<{
     success: boolean;
     report: ShiftReport;
     durabilityPending?: boolean;
+    needsReview?: boolean;
     error?: string;
   }> {
     const flush = await database.saveCoalesced();
@@ -806,19 +813,99 @@ export class PosModule extends BaseModule {
       };
     }
 
-    // Printing is part of a successful close from the cashier's perspective.
-    // Keep the report retryable and avoid server/session side effects if it
-    // throws after the local close has become durable.
     this.durabilityPendingShiftCloses.set(report.shiftId, report);
+    const print = await this.dispatchDurableZReport(
+      report,
+      confirmUncertainReprint,
+    );
+    if (!print.success) return { ...print, report };
+
+    this.completeDurableShiftClose(report, closeSession);
+    return { success: true, report };
+  }
+
+  private async dispatchDurableZReport(
+    report: ShiftReport,
+    confirmUncertainReprint: boolean,
+  ): Promise<{
+    success: boolean;
+    durabilityPending?: boolean;
+    needsReview?: boolean;
+    error?: string;
+  }> {
+    if (!this.shiftController) {
+      return { success: false, error: 'Shift controller not initialized' };
+    }
+
     try {
-      await this.shiftController?.printZReport(report);
+      this.shiftController.beginZReportPrint(
+        report.shiftId,
+        confirmUncertainReprint,
+      );
     } catch (error: any) {
       return {
         success: false,
-        report,
-        error: `Shift is saved but the Z-report did not print: ${error?.message || String(error)}`,
+        needsReview: true,
+        error: error?.message || String(error),
       };
     }
+
+    // Persist DISPATCHING before crossing the printer side-effect boundary.
+    // A crash after this point is deliberately surfaced for operator review
+    // instead of silently issuing a duplicate report.
+    const dispatchFlush = await database.saveCoalesced();
+    if (!dispatchFlush.success) {
+      const error = new Error(
+        `Z-report was not sent because its dispatch state could not be saved: `
+        + `${dispatchFlush.error || 'database durability barrier failed'}`,
+      );
+      this.shiftController.markZReportFailed(report.shiftId, error, true);
+      await database.saveCoalesced();
+      return {
+        success: false,
+        durabilityPending: true,
+        error: error.message,
+      };
+    }
+
+    try {
+      await this.shiftController.printZReport(report);
+    } catch (error: any) {
+      const safeToRetry = isSafeZReportPrintFailure(error);
+      this.shiftController.markZReportFailed(
+        report.shiftId,
+        error,
+        safeToRetry,
+      );
+      const failureFlush = await database.saveCoalesced();
+      return {
+        success: false,
+        durabilityPending: !failureFlush.success,
+        needsReview: !safeToRetry || !failureFlush.success,
+        error: safeToRetry
+          ? `Shift is saved but the Z-report was not sent: ${error?.message || String(error)}`
+          : `The Z-report result is uncertain. Check the printer before retrying: ${error?.message || String(error)}`,
+      };
+    }
+
+    this.shiftController.markZReportCompleted(report.shiftId);
+    const completionFlush = await database.saveCoalesced();
+    if (!completionFlush.success) {
+      // Paper is confirmed printed in this process. Continue closing the
+      // session; if the app now crashes, the persisted DISPATCHING marker will
+      // make the next process ask the operator instead of auto-reprinting.
+      logger.warn(
+        `[Shift] Z-report printed for ${report.shiftId}, but completion marker flush was deferred: `
+        + `${completionFlush.error || 'database durability barrier failed'}`,
+      );
+    }
+    return { success: true, durabilityPending: !completionFlush.success };
+  }
+
+  private completeDurableShiftClose(
+    report: ShiftReport,
+    closeSession: boolean,
+  ): void {
     this.shiftController?.syncDurableShiftClose(report.shiftId, report.closingCash);
     try {
       this.billiardShiftLink?.close(report.closingCash, report.shiftId);
@@ -831,7 +918,42 @@ export class PosModule extends BaseModule {
       this.setServerShiftMismatch(null);
     }
     this.durabilityPendingShiftCloses.delete(report.shiftId);
-    return { success: true, report };
+  }
+
+  private async resolveUncertainZReportAsPrinted(
+    pending: ZReportRecovery,
+  ): Promise<{
+    success: boolean;
+    report: ShiftReport;
+    error?: string;
+  }> {
+    if (pending.status !== 'DISPATCHING' && pending.status !== 'NEEDS_REVIEW') {
+      return {
+        success: false,
+        report: pending.report,
+        error: 'Only an uncertain Z-report can be marked as already printed.',
+      };
+    }
+    this.shiftController?.markZReportCompleted(pending.shiftId);
+    const flush = await database.saveCoalesced();
+    if (!flush.success) {
+      const persistenceError = new Error(
+        `Could not save the Z-report decision: ${flush.error || 'database durability barrier failed'}`,
+      );
+      this.shiftController?.markZReportFailed(
+        pending.shiftId,
+        persistenceError,
+        false,
+      );
+      await database.saveCoalesced();
+      return {
+        success: false,
+        report: pending.report,
+        error: persistenceError.message,
+      };
+    }
+    this.completeDurableShiftClose(pending.report, true);
+    return { success: true, report: pending.report };
   }
 
   private async finalizeDurableShiftOpen(data: {
@@ -1512,6 +1634,14 @@ export class PosModule extends BaseModule {
   }): Promise<{ success: boolean; shiftId?: string; recovered?: boolean; durabilityPending?: boolean; error?: string }> {
     if (!this.shiftController) {
       return { success: false, error: 'Shift controller not initialized' };
+    }
+
+    const unresolvedZReport = this.shiftController.getUnresolvedZReport();
+    if (unresolvedZReport) {
+      return {
+        success: false,
+        error: `Resolve the pending Z-report for shift ${unresolvedZReport.shiftId.slice(0, 8)} before opening another shift.`,
+      };
     }
 
     const durabilityPending = this.durabilityPendingShiftOpens.values().next().value as {
@@ -8643,6 +8773,77 @@ export class PosModule extends BaseModule {
         }
       }
     });
+
+    ipcMain.handle('pos:shift:z-report:get-pending', async () => {
+      try {
+        return {
+          success: true,
+          pending: this.shiftController?.getUnresolvedZReport() ?? null,
+        };
+      } catch (error: any) {
+        return { success: false, pending: null, error: error?.message || String(error) };
+      }
+    });
+
+    ipcMain.handle(
+      'pos:shift:z-report:retry',
+      async (_e, data: { shiftId: string; confirmUncertainReprint?: boolean }) => {
+        if (!this.shiftController) {
+          return { success: false, error: 'Shift controller not initialized' };
+        }
+        const existing = this.shiftCloseInFlight.get(data.shiftId);
+        if (existing) return existing;
+        const operation = (async () => {
+          try {
+            const pending = this.shiftController?.getUnresolvedZReport(data.shiftId);
+            if (!pending) return { success: true, report: null };
+            return await this.finalizeDurableShiftClose(
+              pending.report,
+              true,
+              Boolean(data.confirmUncertainReprint),
+            );
+          } catch (error: any) {
+            return { success: false, error: error?.message || String(error) };
+          }
+        })();
+        this.shiftCloseInFlight.set(data.shiftId, operation);
+        try {
+          return await operation;
+        } finally {
+          if (this.shiftCloseInFlight.get(data.shiftId) === operation) {
+            this.shiftCloseInFlight.delete(data.shiftId);
+          }
+        }
+      },
+    );
+
+    ipcMain.handle(
+      'pos:shift:z-report:mark-printed',
+      async (_e, data: { shiftId: string }) => {
+        if (!this.shiftController) {
+          return { success: false, error: 'Shift controller not initialized' };
+        }
+        const existing = this.shiftCloseInFlight.get(data.shiftId);
+        if (existing) return existing;
+        const operation = (async () => {
+          try {
+            const pending = this.shiftController?.getUnresolvedZReport(data.shiftId);
+            if (!pending) return { success: true, report: null };
+            return await this.resolveUncertainZReportAsPrinted(pending);
+          } catch (error: any) {
+            return { success: false, error: error?.message || String(error) };
+          }
+        })();
+        this.shiftCloseInFlight.set(data.shiftId, operation);
+        try {
+          return await operation;
+        } finally {
+          if (this.shiftCloseInFlight.get(data.shiftId) === operation) {
+            this.shiftCloseInFlight.delete(data.shiftId);
+          }
+        }
+      },
+    );
 
     // Self-checkout kiosk: "Wezwij obsługę" round-trip. Renderer is
     // sandboxed to localStorage + window-scoped APIs, so the actual

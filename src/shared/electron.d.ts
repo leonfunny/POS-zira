@@ -998,6 +998,19 @@ interface ElectronAPI {
       open: (data: { staffId: string; staffName: string; openingCash: number }) => Promise<{ success: boolean; shiftId?: string; error?: string }>;
       close: (data: { shiftId: string; closingCash: number; fiscalOnly?: boolean }) => Promise<{ success: boolean; report?: any; error?: string }>;
       getActive: () => Promise<{ success: boolean; shift?: any; error?: string }>;
+      getPendingZReport: () => Promise<{
+        success: boolean;
+        pending?: {
+          shiftId: string;
+          report: any;
+          status: 'PENDING' | 'FAILED_SAFE' | 'DISPATCHING' | 'NEEDS_REVIEW';
+          attempts: number;
+          lastError: string | null;
+        } | null;
+        error?: string;
+      }>;
+      retryZReport: (data: { shiftId: string; confirmUncertainReprint?: boolean }) => Promise<{ success: boolean; report?: any; needsReview?: boolean; error?: string }>;
+      markZReportPrinted: (data: { shiftId: string }) => Promise<{ success: boolean; report?: any; error?: string }>;
     };
     sync: {
       products: () => Promise<{ success: boolean; productsCount?: number; error?: string }>;

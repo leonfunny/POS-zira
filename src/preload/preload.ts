@@ -825,6 +825,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
       open: (data: { staffId: string; staffName: string; openingCash: number }) => ipcRenderer.invoke(IPC_CHANNELS.POS_SHIFT_OPEN, data),
       close: (data: { shiftId: string; closingCash: number; fiscalOnly?: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.POS_SHIFT_CLOSE, data),
       getActive: () => ipcRenderer.invoke('pos:shift:getActive'),
+      getPendingZReport: () => ipcRenderer.invoke('pos:shift:z-report:get-pending'),
+      retryZReport: (data: { shiftId: string; confirmUncertainReprint?: boolean }) => ipcRenderer.invoke('pos:shift:z-report:retry', data),
+      markZReportPrinted: (data: { shiftId: string }) => ipcRenderer.invoke('pos:shift:z-report:mark-printed', data),
     },
     sync: {
       products: () => ipcRenderer.invoke(IPC_CHANNELS.POS_SYNC_PRODUCTS),

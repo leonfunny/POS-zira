@@ -30,12 +30,32 @@ export interface ShiftReport {
   autoClosed?: boolean; // closed by end-of-day job; closingCash = expected cash, not counted
 }
 
+export type ZReportPrintStatus =
+  | 'PENDING'
+  | 'FAILED_SAFE'
+  | 'DISPATCHING'
+  | 'NEEDS_REVIEW'
+  | 'COMPLETED';
+
+export interface ZReportRecovery {
+  shiftId: string;
+  report: ShiftReport;
+  status: Exclude<ZReportPrintStatus, 'COMPLETED'>;
+  attempts: number;
+  lastError: string | null;
+}
+
 type PrinterDriver = {
   isConnected(): boolean;
   printZReport(data: DailyReportData): Promise<void>;
 };
 
 const SHIFT_SYNC_MAX_ATTEMPTS = 5;
+const Z_REPORT_PRINTER_UNAVAILABLE = 'Z_REPORT_PRINTER_UNAVAILABLE';
+
+export function isSafeZReportPrintFailure(error: unknown): boolean {
+  return (error as { code?: string } | null)?.code === Z_REPORT_PRINTER_UNAVAILABLE;
+}
 
 function shiftSyncErrorMessage(err: unknown): string {
   const value = err as any;
@@ -192,17 +212,6 @@ export class ShiftController {
     const closingCash = autoClosed ? shift.opening_cash + cashTotal : (closingCashInput as number);
     const difference = closingCash - (shift.opening_cash + cashTotal);
 
-    database.run(
-      "UPDATE shifts SET closed_at = datetime('now'), closing_cash = ?, total_sales = ?, total_orders = ?, close_synced = 0, close_sync_attempts = 0, close_sync_error = NULL WHERE id = ? AND closed_at IS NULL",
-      [closingCash, totalSales, salesOrders.length, shiftId],
-    );
-    const closed = database.get<{ count: number }>('SELECT changes() AS count')?.count ?? 0;
-    if (closed !== 1) throw new ShiftAlreadyClosedError(shiftId);
-    if (options.deferSyncUntilDurable) {
-      this.durabilityBlockedShiftIds.add(shiftId);
-    }
-    database.markDirty();
-
     const report: ShiftReport = {
       shiftId,
       staffName: shift.staff_name,
@@ -225,6 +234,30 @@ export class ShiftController {
       autoClosed,
     };
 
+    database.run(
+      `UPDATE shifts SET
+           closed_at = ?, closing_cash = ?, total_sales = ?, total_orders = ?,
+           close_synced = 0, close_sync_attempts = 0, close_sync_error = NULL,
+           z_report_payload = ?, z_report_status = 'PENDING',
+           z_report_attempts = 0, z_report_error = NULL,
+           z_report_dispatched_at = NULL, z_report_completed_at = NULL
+       WHERE id = ? AND closed_at IS NULL`,
+      [
+        closedAt,
+        closingCash,
+        totalSales,
+        salesOrders.length,
+        JSON.stringify(report),
+        shiftId,
+      ],
+    );
+    const closed = database.get<{ count: number }>('SELECT changes() AS count')?.count ?? 0;
+    if (closed !== 1) throw new ShiftAlreadyClosedError(shiftId);
+    if (options.deferSyncUntilDurable) {
+      this.durabilityBlockedShiftIds.add(shiftId);
+    }
+    database.markDirty();
+
     posEventEmitter.emitShiftClosed(report);
 
     // The live IPC/EOD flows defer this external side effect until the SQL.js
@@ -245,14 +278,108 @@ export class ShiftController {
     void this.syncShiftClose(shiftId, closingCash);
   }
 
+  getUnresolvedZReport(shiftId?: string): ZReportRecovery | null {
+    const whereShift = shiftId ? 'AND id = ?' : '';
+    const row = database.get<{
+      id: string;
+      z_report_payload: string;
+      z_report_status: ZReportPrintStatus;
+      z_report_attempts: number | null;
+      z_report_error: string | null;
+    }>(
+      `SELECT id, z_report_payload, z_report_status,
+              COALESCE(z_report_attempts, 0) AS z_report_attempts,
+              z_report_error
+       FROM shifts
+       WHERE closed_at IS NOT NULL
+         AND z_report_payload IS NOT NULL
+         AND z_report_status IN ('PENDING', 'FAILED_SAFE', 'DISPATCHING', 'NEEDS_REVIEW')
+         ${whereShift}
+       ORDER BY closed_at DESC
+       LIMIT 1`,
+      shiftId ? [shiftId] : [],
+    );
+    if (!row) return null;
+
+    let report: ShiftReport;
+    try {
+      report = JSON.parse(row.z_report_payload) as ShiftReport;
+    } catch {
+      throw new Error(`Stored Z-report for shift ${row.id} is unreadable`);
+    }
+    if (!report || report.shiftId !== row.id) {
+      throw new Error(`Stored Z-report for shift ${row.id} has an invalid identity`);
+    }
+    return {
+      shiftId: row.id,
+      report,
+      status: row.z_report_status as ZReportRecovery['status'],
+      attempts: row.z_report_attempts ?? 0,
+      lastError: row.z_report_error ?? null,
+    };
+  }
+
+  beginZReportPrint(shiftId: string, confirmUncertainReprint = false): ShiftReport {
+    const pending = this.getUnresolvedZReport(shiftId);
+    if (!pending) throw new Error(`No pending Z-report for shift ${shiftId}`);
+    if (
+      (pending.status === 'DISPATCHING' || pending.status === 'NEEDS_REVIEW')
+      && !confirmUncertainReprint
+    ) {
+      throw new Error(
+        'The previous Z-report outcome is uncertain. Check the printer before choosing whether to print again.',
+      );
+    }
+    database.run(
+      `UPDATE shifts
+       SET z_report_status = 'DISPATCHING',
+           z_report_attempts = COALESCE(z_report_attempts, 0) + 1,
+           z_report_error = NULL,
+           z_report_dispatched_at = datetime('now')
+       WHERE id = ?`,
+      [shiftId],
+    );
+    database.markDirty();
+    return pending.report;
+  }
+
+  markZReportFailed(shiftId: string, error: unknown, safeToRetry: boolean): void {
+    database.run(
+      `UPDATE shifts
+       SET z_report_status = ?, z_report_error = ?
+       WHERE id = ?`,
+      [
+        safeToRetry ? 'FAILED_SAFE' : 'NEEDS_REVIEW',
+        shiftSyncErrorMessage(error),
+        shiftId,
+      ],
+    );
+    database.markDirty();
+  }
+
+  markZReportCompleted(shiftId: string): void {
+    database.run(
+      `UPDATE shifts
+       SET z_report_status = 'COMPLETED', z_report_error = NULL,
+           z_report_completed_at = datetime('now')
+       WHERE id = ?`,
+      [shiftId],
+    );
+    database.markDirty();
+  }
+
   /**
    * Print Z-report (shift end report)
    */
   async printZReport(report: ShiftReport): Promise<void> {
     const printer = this.getPrinter(PrinterType.RECEIPT) as PrinterDriver | null;
     if (!printer || !printer.isConnected()) {
-      logger.warn('[Shift] No receipt printer connected, skipping Z-report print');
-      return;
+      const error = new Error('No receipt printer is connected for the Z-report') as Error & {
+        code?: string;
+      };
+      error.code = Z_REPORT_PRINTER_UNAVAILABLE;
+      logger.warn(`[Shift] ${error.message}`);
+      throw error;
     }
 
     const reportData: DailyReportData = {
