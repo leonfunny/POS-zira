@@ -276,7 +276,7 @@ describe('POS auth-boundary shift recovery', () => {
     const barrier = finalize.indexOf('await database.saveCoalesced()');
     expect(barrier).toBeGreaterThan(-1);
     expect(barrier).toBeLessThan(finalize.indexOf('syncDurableShiftClose'));
-    expect(barrier).toBeLessThan(finalize.indexOf("type: 'session/close'"));
+    expect(barrier).toBeLessThan(finalize.indexOf('closeSessionIfShiftMatches([report.shiftId])'));
     expect(barrier).toBeLessThan(finalize.indexOf('printZReport(report)'));
     expect(finalize).toContain('durabilityPendingShiftCloses.set');
     expect(closeHandler).toContain('deferSyncUntilDurable: true');
