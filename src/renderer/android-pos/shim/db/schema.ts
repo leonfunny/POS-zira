@@ -116,10 +116,25 @@ export const ANDROID_SCHEMA_DDL = `
     refund_amount INTEGER DEFAULT 0,
     refund_reason TEXT,
     refunded_at TEXT,
-    refund_lines TEXT
+    refund_lines TEXT,
+    has_fiscal INTEGER DEFAULT 0
   );
   CREATE INDEX IF NOT EXISTS idx_orders_shift ON orders(shift_id);
   CREATE INDEX IF NOT EXISTS idx_orders_synced ON orders(synced);
+
+  -- Immutable refund cashflow ledger. A refund belongs to the shift in which
+  -- money was returned, which may differ from the original sale shift.
+  CREATE TABLE IF NOT EXISTS android_refund_events (
+    id TEXT PRIMARY KEY,
+    order_id TEXT NOT NULL,
+    shift_id TEXT,
+    amount INTEGER NOT NULL,
+    payment_method TEXT,
+    payment_tenders TEXT,
+    occurred_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_android_refund_events_shift ON android_refund_events(shift_id);
+  CREATE INDEX IF NOT EXISTS idx_android_refund_events_order ON android_refund_events(order_id);
 
   CREATE TABLE IF NOT EXISTS order_items (
     id TEXT PRIMARY KEY,
@@ -212,6 +227,30 @@ export function applyAndroidSchema(db: SqlJsDatabase): void {
   if (!orderColumns.has('refund_lines')) {
     db.run('ALTER TABLE orders ADD COLUMN refund_lines TEXT');
   }
+  if (!orderColumns.has('has_fiscal')) {
+    db.run('ALTER TABLE orders ADD COLUMN has_fiscal INTEGER DEFAULT 0');
+  }
+  // Establish a one-time baseline for cumulative refunds created before the
+  // immutable ledger existed. Future refunds append only their incremental
+  // delta, so a later partial refund cannot pull an older amount into a new
+  // shift a second time.
+  db.run(`INSERT OR IGNORE INTO android_refund_events (
+            id, order_id, shift_id, amount, payment_method, payment_tenders, occurred_at
+          )
+          SELECT 'legacy:' || id,
+                 id,
+                 NULL,
+                 refund_amount,
+                 payment_method,
+                 payment_tenders,
+                 COALESCE(refunded_at, created_at, datetime('now'))
+          FROM orders
+          WHERE COALESCE(refund_amount, 0) > 0
+            AND NOT EXISTS (
+              SELECT 1
+                FROM android_refund_events e
+               WHERE e.order_id = orders.id
+            )`);
   // v5: durable Android shift-sync ledger. Local shift success stays offline-
   // first, while backend open/close is retried idempotently by local UUID.
   const shiftColumns = new Set<string>();
@@ -251,5 +290,6 @@ export function applyAndroidSchema(db: SqlJsDatabase): void {
 
 /** v3 = product_variants.track_inventory (stock-guard parity).
  *  v4 = orders.{refund_amount,refund_reason,refunded_at,refund_lines} (E1b refund).
- *  v5 = shifts sync ledger + legacy server-id marker (durable retry). */
-export const ANDROID_SCHEMA_VERSION = 5;
+ *  v5 = shifts sync ledger + legacy server-id marker (durable retry).
+ *  v6 = orders.has_fiscal + immutable android_refund_events cashflow ledger. */
+export const ANDROID_SCHEMA_VERSION = 6;

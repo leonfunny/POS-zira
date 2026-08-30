@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { createRealTransport } from '../src/renderer/android-pos/shim/real-transport';
 import { ShimConfigStore } from '../src/renderer/android-pos/shim/config-store';
 import { TokenStore, type TokenStoreStorage } from '../src/renderer/android-pos/shim/token-store';
+import type { AndroidDbPersistence } from '../src/renderer/android-pos/shim/db/db';
 
 /**
  * Packet E1b — refund flow + Z-report refund/discount subtraction.
@@ -23,6 +24,13 @@ import { TokenStore, type TokenStoreStorage } from '../src/renderer/android-pos/
 
 /** Node-friendly sql.js load — mirrors tests/android-real-transport.test.ts. */
 const NODE_LOCATE_FILE = null;
+
+class MemoryDbPersistence implements AndroidDbPersistence {
+  private image: Uint8Array | null = null;
+  async loadImage(): Promise<Uint8Array | null> { return this.image?.slice() ?? null; }
+  async saveImage(image: Uint8Array): Promise<void> { this.image = image.slice(); }
+  async quarantineImage(): Promise<void> {}
+}
 
 function memoryStorage(): TokenStoreStorage & { data: Map<string, string> } {
   const data = new Map<string, string>();
@@ -72,7 +80,7 @@ function build() {
   const transport = createRealTransport({
     configStore,
     tokenStore,
-    dbInit: { locateFile: NODE_LOCATE_FILE },
+    dbInit: { locateFile: NODE_LOCATE_FILE, persistence: new MemoryDbPersistence() },
   });
   return { configStore, tokenStore, transport };
 }
@@ -129,7 +137,7 @@ async function bootstrap() {
   fetchMock.mockImplementation(async (url: unknown) => ambient(url));
 
   const open = await built.transport.openShift!({ staffId: 'staff-1', staffName: 'Ala Nowak', openingCash: 10000 });
-  expect(open.success).toBe(true);
+  expect(open.success, open.error).toBe(true);
   await built.transport.syncProducts!();
   return { ...built, shiftId: open.shiftId! };
 }
@@ -268,6 +276,56 @@ describe('android refund (E1b)', () => {
       totalRefunds: 2000,
       totalSales: 2900, // gross 4900 − refunds 2000
       cashTotal: 2900, // sale 4900 CASH − refund 2000 CASH
+    });
+  });
+
+  test('blocks shift close while a server refund is still in flight', async () => {
+    const { transport, shiftId } = await bootstrap();
+    await transport.createOrder!(ORDER(shiftId, 'order-race'), ITEMS('order-race'));
+    await syncOrder(transport);
+
+    let releaseRefund!: (response: Response) => void;
+    let markRefundStarted!: () => void;
+    const refundStarted = new Promise<void>((resolve) => { markRefundStarted = resolve; });
+    const refundResponse = new Promise<Response>((resolve) => { releaseRefund = resolve; });
+    fetchMock.mockImplementation(async (url: unknown) => {
+      const target = String(url);
+      if (target.endsWith('/api/v1/b2b/pos/orders/backend-1/refund')) {
+        markRefundStarted();
+        return refundResponse;
+      }
+      if (target.endsWith('/api/v1/pos/shifts/server-shift/close')) return jsonResponse({});
+      if (target.endsWith('/api/v1/pos/shifts/open')) return jsonResponse({ shiftId: 'server-shift' });
+      throw new Error(`unexpected fetch: ${target}`);
+    });
+
+    const refund = transport.refundOrder!('order-race', {
+      type: 'PARTIAL',
+      refundRequestId: 'refund-race',
+      amount: 2_000,
+      lines: [],
+    });
+    await refundStarted;
+
+    const blockedClose = await transport.closeShift!({ shiftId, closingCash: 12_900 });
+    expect(blockedClose).toMatchObject({ success: false });
+    expect(blockedClose.error).toMatch(/refund.*progress/i);
+
+    releaseRefund(jsonResponse({
+      status: 'PARTIAL_REFUND',
+      refundAmount: 20,
+      totalRefundedAmount: 20,
+      refundedLines: [],
+    }));
+    expect((await refund).success).toBe(true);
+
+    const closed = await transport.closeShift!({ shiftId, closingCash: 12_900 });
+    expect(closed.success).toBe(true);
+    expect(closed.report).toMatchObject({
+      totalRefunds: 2_000,
+      totalSales: 2_900,
+      cashTotal: 2_900,
+      difference: 0,
     });
   });
 

@@ -27,7 +27,9 @@ import {
 import type { AndroidDatabase } from './db';
 import {
   addShiftPayment,
-  getOrderPaymentAllocations,
+  emptyShiftPaymentBuckets,
+  getRefundPaymentAllocations,
+  isShiftSaleOrder,
   summarizeShiftSales,
 } from '../../../../shared/shift-accounting';
 import { ShiftAlreadyClosedError } from '../../../../shared/shift-close';
@@ -84,6 +86,57 @@ export function buildBackendOrderItem(line: LocalOrderLineContract): Record<stri
     payload.packQuantity = Math.max(1, Math.round(quantity || 1));
   }
   return payload;
+}
+
+interface AndroidRefundCashflow {
+  refundCount: number;
+  refundTotal: number;
+  cashRefundTotal: number;
+  cardRefundTotal: number;
+  blikRefundTotal: number;
+  transferRefundTotal: number;
+}
+
+function getAndroidRefundCashflow(
+  database: AndroidDatabase,
+  shiftId: string,
+  openedAt: string,
+  closedAt: string,
+  fiscalOnly: boolean,
+): AndroidRefundCashflow {
+  const rows = database.all<any>(
+    `SELECT e.amount, e.payment_method, e.payment_tenders
+       FROM android_refund_events e
+       LEFT JOIN orders o ON o.id = e.order_id
+      WHERE (
+        e.shift_id = ?
+        OR (
+          e.shift_id IS NULL
+          AND julianday(e.occurred_at) >= julianday(?)
+          AND julianday(e.occurred_at) < julianday(?)
+        )
+      )
+      ${fiscalOnly ? 'AND COALESCE(o.has_fiscal, 0) = 1' : ''}`,
+    [shiftId, openedAt, closedAt],
+  );
+  const refunds = emptyShiftPaymentBuckets();
+  let refundTotal = 0;
+  for (const row of rows) {
+    const amount = Math.max(0, Math.round(Number(row.amount) || 0));
+    if (amount <= 0) continue;
+    refundTotal += amount;
+    for (const allocation of getRefundPaymentAllocations(row, amount)) {
+      addShiftPayment(refunds, allocation.method, allocation.amount);
+    }
+  }
+  return {
+    refundCount: rows.length,
+    refundTotal,
+    cashRefundTotal: refunds.cash,
+    cardRefundTotal: refunds.card,
+    blikRefundTotal: refunds.blik,
+    transferRefundTotal: refunds.transfer,
+  };
 }
 
 // ─── Repo ──────────────────────────────────────────────────────────────────
@@ -203,6 +256,31 @@ export function createOrderRepo(database: AndroidDatabase) {
         [status, amount, reason, refundLines ? JSON.stringify(refundLines) : null, id],
       );
     },
+    recordRefundEvent(input: {
+      id: string;
+      orderId: string;
+      shiftId: string | null;
+      amount: number;
+      paymentMethod?: string | null;
+      paymentTenders?: string | null;
+    }): void {
+      database.run(
+        `INSERT OR IGNORE INTO android_refund_events (
+           id, order_id, shift_id, amount, payment_method, payment_tenders, occurred_at
+         ) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`,
+        [
+          input.id,
+          input.orderId,
+          input.shiftId,
+          input.amount,
+          input.paymentMethod ?? null,
+          input.paymentTenders ?? null,
+        ],
+      );
+    },
+    markFiscalPrinted(orderId: string): void {
+      database.run('UPDATE orders SET has_fiscal = 1 WHERE id = ?', [orderId]);
+    },
     /**
      * Delete an UNSYNCED local order and restock its lines (order-repo.ts
      * deleteLocalUnsynced). Refuses a synced/in-flight order — those must be
@@ -300,7 +378,7 @@ export function createOrderRepo(database: AndroidDatabase) {
     },
     /** Close + Z-report aggregation (split tenders and tips honored). Refunds
      *  reduce revenue and the matching tender bucket. */
-    closeShift(shiftId: string, closingCash: number): any {
+    closeShift(shiftId: string, closingCash: number, fiscalOnly = false): any {
       const shift = database.get<any>('SELECT * FROM shifts WHERE id = ? AND closed_at IS NULL', [shiftId]);
       if (!shift) {
         const existing = database.get<{ id: string }>('SELECT id FROM shifts WHERE id = ?', [shiftId]);
@@ -308,44 +386,31 @@ export function createOrderRepo(database: AndroidDatabase) {
         throw new Error(`Shift ${shiftId} not found`);
       }
       const orders = database.all<any>('SELECT * FROM orders WHERE shift_id = ?', [shiftId]);
-      const accounting = summarizeShiftSales(orders);
+      const settledOrders = orders.filter(isShiftSaleOrder);
+      const salesOrders = fiscalOnly
+        ? settledOrders.filter((order: any) => order.has_fiscal === 1)
+        : settledOrders;
+      const accounting = summarizeShiftSales(salesOrders);
+      const drawerAccounting = fiscalOnly ? summarizeShiftSales(settledOrders) : accounting;
       const totalDiscounts = accounting.totalDiscounts;
-      // Per-order cumulative refund_amount for REFUNDED/PARTIAL_REFUND orders
-      // (shift-controller.ts:140-143). Refunds of unsynced orders can't happen
-      // (refundOrder refuses them), so every refund_amount here is backend-confirmed.
-      const totalRefunds = orders.reduce(
-        (sum: number, o: any) => sum + (o.refund_amount && o.refund_amount > 0 ? o.refund_amount : 0),
-        0,
+      const closedAt = new Date().toISOString();
+      const refundCashflow = getAndroidRefundCashflow(
+        database,
+        shiftId,
+        shift.opened_at,
+        closedAt,
+        fiscalOnly,
       );
-
-      const paymentBuckets = accounting.payments;
-
-      // 2. Subtract each order's refund from the matching tender bucket
-      //    (shift-controller.ts:145-175). Split tenders distribute the refund
-      //    proportionally with the last tender absorbing the rounding remainder;
-      //    a single-method order refunds straight against that method.
-      for (const o of orders) {
-        if (!(o.refund_amount > 0)) continue;
-        const tenders = getOrderPaymentAllocations(o);
-        if (tenders.length > 1) {
-          const orderTotal = tenders.reduce((s: number, t: any) => s + (t.amount ?? 0), 0);
-          if (orderTotal > 0) {
-            let distributed = 0;
-            for (let i = 0; i < tenders.length; i += 1) {
-              const isLast = i === tenders.length - 1;
-              const share = isLast
-                ? o.refund_amount - distributed
-                : Math.round(o.refund_amount * ((tenders[i].amount ?? 0) / orderTotal));
-              distributed += share;
-              addShiftPayment(paymentBuckets, tenders[i].method, share, -1);
-            }
-            continue;
-          }
-        }
-        addShiftPayment(paymentBuckets, tenders[0]?.method ?? o.payment_method, o.refund_amount, -1);
-      }
-
+      const drawerRefundCashflow = fiscalOnly
+        ? getAndroidRefundCashflow(database, shiftId, shift.opened_at, closedAt, false)
+        : refundCashflow;
+      const totalRefunds = refundCashflow.refundTotal;
+      const cashTotal = drawerAccounting.payments.cash - drawerRefundCashflow.cashRefundTotal;
+      const cardTotal = drawerAccounting.payments.card - drawerRefundCashflow.cardRefundTotal;
+      const blikTotal = drawerAccounting.payments.blik - drawerRefundCashflow.blikRefundTotal;
+      const transferTotal = drawerAccounting.payments.transfer - drawerRefundCashflow.transferRefundTotal;
       const totalSales = accounting.salesTotal - totalRefunds;
+      const expectedClosingCash = (shift.opening_cash ?? 0) + cashTotal;
 
       database.run(
         "UPDATE shifts SET closing_cash = ?, closed_at = datetime('now') WHERE id = ? AND closed_at IS NULL",
@@ -353,27 +418,30 @@ export function createOrderRepo(database: AndroidDatabase) {
       );
       const closed = database.get<{ count: number }>('SELECT changes() AS count')?.count ?? 0;
       if (closed !== 1) throw new ShiftAlreadyClosedError(shiftId);
-      const closedAt = database.get<{ closed_at: string }>(
+      const persistedClosedAt = database.get<{ closed_at: string }>(
         'SELECT closed_at FROM shifts WHERE id = ?', [shiftId],
       )?.closed_at ?? null;
       return {
         shiftId,
         staffName: shift.staff_name ?? '',
         openedAt: shift.opened_at,
-        closedAt,
+        closedAt: persistedClosedAt,
         openingCash: shift.opening_cash ?? 0,
         closingCash,
+        expectedClosingCash,
         totalSales,
-        totalOrders: orders.length,
-        cashTotal: paymentBuckets.cash,
-        cardTotal: paymentBuckets.card,
-        blikTotal: paymentBuckets.blik,
-        transferTotal: paymentBuckets.transfer,
+        totalOrders: salesOrders.length,
+        refundTransactions: refundCashflow.refundCount,
+        cashTotal,
+        cardTotal,
+        blikTotal,
+        transferTotal,
         totalRefunds,
         totalDiscounts,
         totalTips: accounting.totalTips,
-        difference: closingCash - ((shift.opening_cash ?? 0) + paymentBuckets.cash),
+        difference: closingCash - expectedClosingCash,
         unsyncedOrders: this.getUnsyncedCountByShift(shiftId),
+        fiscalOnlySales: fiscalOnly,
       };
     },
 

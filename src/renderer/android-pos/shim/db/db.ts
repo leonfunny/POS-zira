@@ -286,7 +286,7 @@ export class AndroidDatabase {
   clearSalonData(): void {
     this.transaction(() => {
       for (const table of [
-        'product_variants', 'categories', 'orders', 'order_items',
+        'product_variants', 'categories', 'orders', 'order_items', 'android_refund_events',
         'shifts', 'staff', 'sequence_counters', 'sync_meta',
       ]) {
         this.db.run(`DELETE FROM ${table}`);

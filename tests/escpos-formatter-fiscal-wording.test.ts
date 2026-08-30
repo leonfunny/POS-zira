@@ -306,4 +306,39 @@ describe('EscPosFormatter — fiscal-wording compliance', () => {
       expect(out).toContain('5,00');
     });
   });
+
+  it('prints the complete shift payment and cash reconciliation without VAT-style net labels', () => {
+    const fmt = new EscPosFormatter(80, 48, { charset: 'utf8', cutMode: 'partial' });
+    const out = bufferToString(fmt.formatZReport(buildReportData({
+      reportNumber: 'ABC123',
+      grossSales: 12_000,
+      discounts: 1_000,
+      refunds: 2_000,
+      refundTransactionCount: 2,
+      netSales: 9_000,
+      cashierName: 'Anna',
+      fiscalOnlySales: true,
+      paymentSummary: [
+        { method: 'CASH', amount: 4_000 },
+        { method: 'CARD', amount: 5_000 },
+        { method: 'BLIK', amount: -500 },
+      ],
+      openingCash: 10_000,
+      expectedClosingCash: 14_000,
+      closingCash: 13_500,
+      cashDifference: -500,
+    })));
+
+    expect(out).toContain('Kasjer: Anna');
+    expect(out).toContain('Sprzedaz: tylko fiskalna');
+    expect(out).toContain('Transakcje zwrotow:');
+    expect(out).toContain('FORMY PLATNOSCI');
+    expect(out).toContain('Gotowka:');
+    expect(out).toContain('BLIK:');
+    expect(out).toContain('ROZLICZENIE KASY');
+    expect(out).toContain('Stan oczekiwany:');
+    expect(out).toContain('ROZNICA:');
+    expect(out).not.toContain('Sprzedaz brutto:');
+    expect(out).not.toContain('SUMA NETTO:');
+  });
 });

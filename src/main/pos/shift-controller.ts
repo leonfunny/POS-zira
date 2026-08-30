@@ -5,7 +5,7 @@ import { apiClient } from '../network/api-client';
 import { getConfigValue, getSecureAuthToken } from '../config/store';
 import { posEventEmitter } from '../events/pos-event-emitter';
 import logger from '../logger';
-import { summarizeShiftSales } from '../../shared/shift-accounting';
+import { isShiftSaleOrder, summarizeShiftSales } from '../../shared/shift-accounting';
 import { ShiftAlreadyClosedError } from '../../shared/shift-close';
 
 export interface ShiftReport {
@@ -15,8 +15,10 @@ export interface ShiftReport {
   closedAt: string;
   openingCash: number;
   closingCash: number;
+  expectedClosingCash?: number;
   totalSales: number;
   totalOrders: number;
+  refundTransactions?: number;
   cashTotal: number;
   cardTotal: number;
   blikTotal: number;
@@ -181,18 +183,24 @@ export class ShiftController {
       throw new Error(`Shift ${shiftId} not found`);
     }
 
-    // Get orders for this shift — handle split payments
+    // Sales and drawer reconciliation are deliberately separate scopes. The
+    // fiscal visibility setting may hide a sale from revenue, but real money
+    // accepted/refunded still has to reconcile against the counted drawer.
     const orders = orderRepo.getByShift(shiftId);
-    const salesOrders = fiscalOnly ? orders.filter((o) => o.has_fiscal === 1) : orders;
+    const settledOrders = orders.filter(isShiftSaleOrder);
+    const salesOrders = fiscalOnly
+      ? settledOrders.filter((order) => order.has_fiscal === 1)
+      : settledOrders;
     const accounting = summarizeShiftSales(salesOrders);
+    const drawerAccounting = fiscalOnly ? summarizeShiftSales(settledOrders) : accounting;
     const closedAt = new Date().toISOString();
 
     const unsyncedOrders = orderRepo.getUnsyncedCountByShift(shiftId);
 
-    let cashTotal = accounting.payments.cash;
-    let cardTotal = accounting.payments.card;
-    let blikTotal = accounting.payments.blik;
-    let transferTotal = accounting.payments.transfer;
+    let cashTotal = drawerAccounting.payments.cash;
+    let cardTotal = drawerAccounting.payments.card;
+    let blikTotal = drawerAccounting.payments.blik;
+    let transferTotal = drawerAccounting.payments.transfer;
     const totalDiscounts = accounting.totalDiscounts;
     const refundCashflow = orderRepo.getRefundCashflowBetween(
       shift.opened_at,
@@ -201,16 +209,20 @@ export class ShiftController {
       shiftId,
     );
     const totalRefunds = refundCashflow.refund_total;
-    cashTotal -= refundCashflow.cash_refund_total;
-    cardTotal -= refundCashflow.card_refund_total;
-    blikTotal -= refundCashflow.blik_refund_total;
-    transferTotal -= refundCashflow.transfer_refund_total;
+    const drawerRefundCashflow = fiscalOnly
+      ? orderRepo.getRefundCashflowBetween(shift.opened_at, closedAt, false, shiftId)
+      : refundCashflow;
+    cashTotal -= drawerRefundCashflow.cash_refund_total;
+    cardTotal -= drawerRefundCashflow.card_refund_total;
+    blikTotal -= drawerRefundCashflow.blik_refund_total;
+    transferTotal -= drawerRefundCashflow.transfer_refund_total;
 
     // order.total is already net of every line/receipt discount. Discounts are
     // reported separately and must never be subtracted from revenue twice.
     const totalSales = accounting.salesTotal - totalRefunds;
-    const closingCash = autoClosed ? shift.opening_cash + cashTotal : (closingCashInput as number);
-    const difference = closingCash - (shift.opening_cash + cashTotal);
+    const expectedClosingCash = shift.opening_cash + cashTotal;
+    const closingCash = autoClosed ? expectedClosingCash : (closingCashInput as number);
+    const difference = closingCash - expectedClosingCash;
 
     const report: ShiftReport = {
       shiftId,
@@ -219,8 +231,10 @@ export class ShiftController {
       closedAt,
       openingCash: shift.opening_cash,
       closingCash,
+      expectedClosingCash,
       totalSales,
       totalOrders: salesOrders.length,
+      refundTransactions: refundCashflow.refund_count,
       cashTotal,
       cardTotal,
       blikTotal,
@@ -384,7 +398,9 @@ export class ShiftController {
 
     const reportData: DailyReportData = {
       date: report.closedAt.split('T')[0],
+      reportNumber: report.shiftId.slice(0, 8).toUpperCase(),
       transactionCount: report.totalOrders,
+      refundTransactionCount: report.refundTransactions,
       grossSales: report.totalSales + report.totalRefunds + report.totalDiscounts,
       discounts: report.totalDiscounts,
       tips: report.totalTips,
@@ -395,10 +411,17 @@ export class ShiftController {
         { method: 'CARD', amount: report.cardTotal },
         { method: 'BLIK', amount: report.blikTotal },
         { method: 'TRANSFER', amount: report.transferTotal },
-      ].filter((p) => p.amount > 0),
+      ],
       cashierName: report.autoClosed
         ? `${report.staffName || ''} (AUTO)`.trim()
         : report.staffName || undefined,
+      openingCash: report.openingCash,
+      closingCash: report.closingCash,
+      expectedClosingCash: report.expectedClosingCash
+        ?? (report.openingCash + report.cashTotal),
+      cashDifference: report.difference,
+      fiscalOnlySales: report.fiscalOnlySales,
+      autoClosed: report.autoClosed,
     };
 
     try {

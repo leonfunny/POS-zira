@@ -8,13 +8,17 @@ interface ShiftReportData {
   closedAt: string;
   openingCash: number;
   closingCash: number;
+  expectedClosingCash?: number;
   totalSales: number;
   totalOrders: number;
+  refundTransactions?: number;
   cashTotal: number;
   cardTotal: number;
   blikTotal: number;
   transferTotal: number;
   totalTips?: number;
+  totalRefunds?: number;
+  totalDiscounts?: number;
   difference: number;
   unsyncedOrders?: number;
   fiscalOnlySales?: boolean;
@@ -119,10 +123,23 @@ export default function ShiftReportModal({ report, onClose, t, recovery }: Shift
 
           <div className="space-y-2">
             <Row label={t('pos.shift.openingCash')} value={formatPrice(report.openingCash, currency)} />
+            <Row
+              label={t('pos.shift.expectedCash')}
+              value={formatPrice(report.expectedClosingCash ?? (report.openingCash + report.cashTotal), currency)}
+            />
             <Row label={t('pos.shift.closingCash')} value={formatPrice(report.closingCash, currency)} />
             <div className="border-t border-slate-200 my-2" />
             <Row label={t('pos.shift.totalOrders')} value={String(report.totalOrders)} />
+            {(report.refundTransactions ?? 0) > 0 && (
+              <Row label={t('pos.shift.refundTransactions')} value={String(report.refundTransactions)} />
+            )}
             <Row label={t('pos.shift.totalSales')} value={formatPrice(report.totalSales, currency)} bold />
+            {(report.totalDiscounts ?? 0) !== 0 && (
+              <Row label={t('pos.shift.discounts')} value={`-${formatPrice(Math.abs(report.totalDiscounts ?? 0), currency)}`} />
+            )}
+            {(report.totalRefunds ?? 0) !== 0 && (
+              <Row label={t('pos.shift.refunds')} value={`-${formatPrice(Math.abs(report.totalRefunds ?? 0), currency)}`} />
+            )}
             {(report.totalTips ?? 0) > 0 && (
               <Row label={t('pos.tip')} value={formatPrice(report.totalTips ?? 0, currency)} />
             )}
@@ -133,8 +150,8 @@ export default function ShiftReportModal({ report, onClose, t, recovery }: Shift
             )}
             <Row label={t('pos.shift.cashSales')} value={formatPrice(report.cashTotal, currency)} />
             <Row label={t('pos.shift.cardSales')} value={formatPrice(report.cardTotal, currency)} />
-            {report.blikTotal > 0 && <Row label={t('pos.shift.blikSales') || 'Blik Sales'} value={formatPrice(report.blikTotal, currency)} />}
-            {report.transferTotal > 0 && <Row label={t('pos.shift.transferSales') || 'Transfer Sales'} value={formatPrice(report.transferTotal, currency)} />}
+            {report.blikTotal !== 0 && <Row label={t('pos.shift.blikSales') || 'Blik Sales'} value={formatPrice(report.blikTotal, currency)} />}
+            {report.transferTotal !== 0 && <Row label={t('pos.shift.transferSales') || 'Transfer Sales'} value={formatPrice(report.transferTotal, currency)} />}
             <div className="border-t border-slate-200 my-2" />
             <Row
               label={t('pos.shift.difference')}

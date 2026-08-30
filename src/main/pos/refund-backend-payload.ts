@@ -361,17 +361,22 @@ export function allocateRefundTenders(
   const tenderTotal = source.reduce((sum, t) => sum + t.amount, 0);
   if (tenderTotal <= 0) return fallbackRefundTender(refundAmount, fallbackMethod);
 
-  let distributed = 0;
-  return source
-    .map((t, index) => {
-      const isLast = index === source.length - 1;
-      const amount = isLast
-        ? refundAmount - distributed
-        : Math.round(refundAmount * (t.amount / tenderTotal));
-      distributed += amount;
-      return amount > 0 ? { method: t.method, amount } : null;
-    })
-    .filter((t): t is RefundTenderAllocation => t !== null);
+  const weighted = source.map((tender, index) => {
+    const exact = refundAmount * (tender.amount / tenderTotal);
+    const amount = Math.floor(exact);
+    return { method: tender.method, amount, remainder: exact - amount, index };
+  });
+  let remaining = refundAmount - weighted.reduce((sum, tender) => sum + tender.amount, 0);
+  const byRemainder = [...weighted].sort((left, right) =>
+    right.remainder - left.remainder || left.index - right.index,
+  );
+  for (let index = 0; index < byRemainder.length && remaining > 0; index += 1) {
+    byRemainder[index].amount += 1;
+    remaining -= 1;
+  }
+  return weighted
+    .filter((tender) => tender.amount > 0)
+    .map(({ method, amount }) => ({ method, amount }));
 }
 
 export function toRefundBackendPayload(

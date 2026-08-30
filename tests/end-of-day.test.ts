@@ -5,9 +5,18 @@ import {
   localDateKey,
   purgeCutoffForBusinessDate,
   resolveEndOfDayTarget,
+  shouldUseFiscalOnlySales,
 } from '../src/main/pos/end-of-day';
 
 const at = (y: number, m: number, d: number, h: number, min: number) => new Date(y, m - 1, d, h, min, 0, 0);
+
+describe('automatic shift report sales scope', () => {
+  it('matches the manual-close default and includes non-fiscal sales only when enabled', () => {
+    expect(shouldUseFiscalOnlySales(undefined)).toBe(true);
+    expect(shouldUseFiscalOnlySales(false)).toBe(true);
+    expect(shouldUseFiscalOnlySales(true)).toBe(false);
+  });
+});
 
 describe('resolveEndOfDayTarget', () => {
   it('is not due before the scheduled time when yesterday is already done', () => {

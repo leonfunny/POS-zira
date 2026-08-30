@@ -148,7 +148,7 @@ describe('android shim catalog DB (S5)', () => {
 
       // user_version stamped at schema apply time.
       const version = db.getRawHandle().exec('PRAGMA user_version')[0].values[0][0];
-      expect(version).toBe(5); // v5 = durable shift sync; v4 = orders.refund_*
+      expect(version).toBe(6); // v6 = fiscal marker + immutable refund ledger
       const shiftColumns = db
         .all<{ name: string }>('PRAGMA table_info(shifts)')
         .map((column) => column.name);
@@ -158,6 +158,11 @@ describe('android shim catalog DB (S5)', () => {
         'shift_sync_error',
         'legacy_server_id_unknown',
       ]));
+      const orderColumns = db
+        .all<{ name: string }>('PRAGMA table_info(orders)')
+        .map((column) => column.name);
+      expect(orderColumns).toContain('has_fiscal');
+      expect(tables).toContain('android_refund_events');
     });
 
     test('is idempotent — re-init over a persisted image keeps the schema', async () => {
@@ -173,6 +178,32 @@ describe('android shim catalog DB (S5)', () => {
       const tables = db2.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table'");
       expect(tables.filter((t) => t.name === 'product_variants')).toHaveLength(1);
       expect(createProductRepo(db2).getById('persisted')?.id).toBe('persisted');
+    });
+
+    test('schema reapply does not create a legacy duplicate for journaled refunds', async () => {
+      const fake = createFakeIndexedDB();
+      setFakeIndexedDB(fake);
+      const db1 = await initAndroidDb({ locateFile: NODE_LOCATE_FILE });
+      db1.run(
+        `INSERT INTO orders (
+           id, status, total, payment_method, payment_amount, refund_amount, refunded_at
+         ) VALUES ('order-refund', 'PARTIAL_REFUND', 5000, 'CASH', 5000, 2000, datetime('now'))`,
+      );
+      db1.run(
+        `INSERT INTO android_refund_events (
+           id, order_id, shift_id, amount, payment_method, occurred_at
+         ) VALUES ('refund-event', 'order-refund', 'shift-1', 2000, 'CASH', datetime('now'))`,
+      );
+      await db1.flush();
+
+      const db2 = await initAndroidDb({ locateFile: NODE_LOCATE_FILE });
+      expect(db2.get<{ count: number }>(
+        'SELECT COUNT(*) AS count FROM android_refund_events WHERE order_id = ?',
+        ['order-refund'],
+      )?.count).toBe(1);
+      expect(db2.get<{ id: string }>(
+        "SELECT id FROM android_refund_events WHERE id = 'legacy:order-refund'",
+      )).toBeNull();
     });
 
     test('v5 migration does not replay legacy shifts while new shifts remain pending', async () => {

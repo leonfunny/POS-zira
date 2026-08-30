@@ -440,7 +440,7 @@ describe('ShiftController transfer totals', () => {
     expect(report.difference).toBe(0);
   });
 
-  it('can limit sales and payment totals to fiscal orders', () => {
+  it('limits sales to fiscal orders while reconciling every settled payment', () => {
     vi.mocked(orderRepo.getByShift).mockReturnValue([
       order({
         total: 10000,
@@ -458,9 +458,10 @@ describe('ShiftController transfer totals', () => {
 
     expect(report.totalOrders).toBe(1);
     expect(report.totalSales).toBe(10000);
-    expect(report.cashTotal).toBe(0);
+    expect(report.cashTotal).toBe(5000);
     expect(report.cardTotal).toBe(10000);
-    expect(report.difference).toBe(5000);
+    expect(report.expectedClosingCash).toBe(15000);
+    expect(report.difference).toBe(0);
     expect(report.fiscalOnlySales).toBe(true);
     const closeParams = vi.mocked(database.run).mock.calls[0][1] as unknown[];
     expect(closeParams[1]).toBe(15000);
@@ -472,6 +473,58 @@ describe('ShiftController transfer totals', () => {
       totalSales: 10000,
     });
     expect(closeParams[5]).toBe('shift-1');
+  });
+
+  it('excludes cancelled, void, and unpaid rows from shift sales', () => {
+    vi.mocked(orderRepo.getByShift).mockReturnValue([
+      order({ status: 'COMPLETED', total: 10000, payment_method: 'CASH' }),
+      order({ status: 'CANCELLED', total: 5000, payment_method: 'CASH' }),
+      order({ status: 'VOID', total: 3000, payment_method: 'CARD' }),
+      order({ status: 'PENDING', total: 2000, payment_method: null }),
+    ]);
+
+    const report = new ShiftController(() => null, () => false).closeShift('shift-1', 20000);
+
+    expect(report.totalOrders).toBe(1);
+    expect(report.totalSales).toBe(10000);
+    expect(report.cashTotal).toBe(10000);
+    expect(report.cardTotal).toBe(0);
+    expect(report.difference).toBe(0);
+  });
+
+  it('keeps non-fiscal refunds in drawer flow without subtracting fiscal revenue', () => {
+    vi.mocked(orderRepo.getByShift).mockReturnValue([
+      order({ status: 'COMPLETED', total: 10000, payment_method: 'CARD', has_fiscal: 1 }),
+      order({ status: 'COMPLETED', total: 5000, payment_method: 'CASH', has_fiscal: 0 }),
+    ]);
+    vi.mocked(orderRepo.getRefundCashflowBetween).mockImplementation((_from, _to, fiscalOnly) => (
+      fiscalOnly
+        ? {
+            refund_count: 0,
+            refund_total: 0,
+            cash_refund_total: 0,
+            card_refund_total: 0,
+            blik_refund_total: 0,
+            transfer_refund_total: 0,
+          }
+        : {
+            refund_count: 1,
+            refund_total: 1000,
+            cash_refund_total: 1000,
+            card_refund_total: 0,
+            blik_refund_total: 0,
+            transfer_refund_total: 0,
+          }
+    ));
+
+    const report = new ShiftController(() => null, () => false).closeShift('shift-1', 14000, true);
+
+    expect(report.totalSales).toBe(10000);
+    expect(report.totalRefunds).toBe(0);
+    expect(report.refundTransactions).toBe(0);
+    expect(report.cashTotal).toBe(4000);
+    expect(report.expectedClosingCash).toBe(14000);
+    expect(report.difference).toBe(0);
   });
 
   it('sends machineId when retrying unsynced shift opens', async () => {

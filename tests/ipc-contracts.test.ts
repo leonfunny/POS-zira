@@ -233,6 +233,13 @@ describe('Refund payload passes lines[] end-to-end', () => {
     expect(electronDts).toContain('refundRequestId?: string;');
   });
 
+  it('serializes refunds and owner corrections against shift close', () => {
+    expect(posModule).toContain('runShiftFinancialMutation');
+    expect(posModule).toContain('this.shiftFinancialMutationsInFlight > 0');
+    expect(posModule).toContain('this.shiftCloseInFlight.has(activeShift.id)');
+    expect(posModule).toContain('refund or correction in progress; shift auto-close deferred');
+  });
+
   it('renderer sends amount for partial refund in grosze', () => {
     expect(buildRefundRequest({
       type: 'PARTIAL',
@@ -503,6 +510,18 @@ describe('Refund payload passes lines[] end-to-end', () => {
       { method: 'CASH', amount: 334 },
       { method: 'CARD', amount: 667 },
     ]);
+  });
+
+  it('keeps multi-tender refund allocation non-negative and exactly balanced', () => {
+    const allocations = allocateRefundTenders(JSON.stringify(
+      Array.from({ length: 5 }, (_, index) => ({
+        method: index === 0 ? 'CASH' : 'CARD',
+        amount: 100,
+      })),
+    ), 3, 'CASH');
+
+    expect(allocations.every((allocation) => allocation.amount > 0)).toBe(true);
+    expect(allocations.reduce((sum, allocation) => sum + allocation.amount, 0)).toBe(3);
   });
 
   it('accepts only a backend response that confirms refund amount, refund lines, and restock movement', () => {

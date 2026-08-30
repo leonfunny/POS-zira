@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { PosApiClient } from '../src/renderer/android-pos/port/api-client';
-import { initAndroidDb } from '../src/renderer/android-pos/shim/db/db';
+import { initAndroidDb, type AndroidDbPersistence } from '../src/renderer/android-pos/shim/db/db';
 import { createOrderRepo } from '../src/renderer/android-pos/shim/db/order-repo';
 import { ShimConfigStore } from '../src/renderer/android-pos/shim/config-store';
 import { createRemotePrintCoordinator } from '../src/renderer/android-pos/shim/remote-print';
@@ -15,6 +15,13 @@ import { TokenStore, type TokenStoreStorage } from '../src/renderer/android-pos/
 
 /** Node-friendly sql.js load (mirrors tests/android-shim-db.test.ts). */
 const NODE_LOCATE_FILE = null;
+
+class MemoryDbPersistence implements AndroidDbPersistence {
+  private image: Uint8Array | null = null;
+  async loadImage(): Promise<Uint8Array | null> { return this.image?.slice() ?? null; }
+  async saveImage(image: Uint8Array): Promise<void> { this.image = image.slice(); }
+  async quarantineImage(): Promise<void> {}
+}
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -412,7 +419,7 @@ describe('android fiscal-print real-transport wiring (E-FISCAL)', () => {
     const transport = createRealTransport({
       configStore,
       tokenStore,
-      dbInit: { locateFile: NODE_LOCATE_FILE },
+      dbInit: { locateFile: NODE_LOCATE_FILE, persistence: new MemoryDbPersistence() },
     });
     return { configStore, tokenStore, transport };
   }
@@ -435,6 +442,7 @@ describe('android fiscal-print real-transport wiring (E-FISCAL)', () => {
 
     const r = await transport.requestFiscalPrint!('local-order-1');
     expect(r).toMatchObject({ success: true, fiscalPrinted: true, jobId: 'fj-rt' });
+    expect((await transport.getOrderDetail!('local-order-1'))?.order.has_fiscal).toBe(1);
 
     // The created job is the staff-JWT FISCAL contract.
     const create = callsOf(fetchMock).find((c) => c.method === 'POST' && /\/print-agent\/jobs$/.test(c.url))!;

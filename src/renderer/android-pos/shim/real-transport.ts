@@ -578,6 +578,7 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
   };
   let shiftOpenInFlight: Promise<ShiftOpenResult> | null = null;
   const shiftCloseInFlight = new Map<string, Promise<ShiftCloseResult>>();
+  let refundMutationsInFlight = 0;
   const durabilityPendingShiftOpens = new Map<string, {
     shiftId: string;
     staffId: string;
@@ -1402,6 +1403,7 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
       requiresRefresh?: boolean;
       error?: string;
     }> {
+      refundMutationsInFlight += 1;
       try {
         const database = await db();
         const orderRepo = createOrderRepo(database);
@@ -1415,8 +1417,12 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         if (order.status === 'REFUNDED') return { success: false, error: 'Order already fully refunded' };
 
         // Refunds are shift-scoped — an active shift is required (pos.module.ts:3743-3746).
-        if (!orderRepo.getActiveShift()) {
+        const activeShift = orderRepo.getActiveShift();
+        if (!activeShift) {
           return { success: false, error: 'Cannot refund without an active shift. Open a shift first.' };
+        }
+        if (shiftCloseInFlight.has(activeShift.id)) {
+          return { success: false, error: 'This shift is closing. Wait for it to finish before refunding.' };
         }
 
         const token = await tokenStore.getAccessToken();
@@ -1445,9 +1451,13 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
           return Number.isFinite(n) ? Math.round(n * 100) : null;
         };
         const cumulativeFromBackend = plnToGrosze(result?.totalRefundedAmount);
-        const refundedAmount = cumulativeFromBackend ?? (alreadyRefunded + requestedAmountGrosze);
+        const refundedAmount = Math.max(
+          alreadyRefunded,
+          cumulativeFromBackend ?? (alreadyRefunded + requestedAmountGrosze),
+        );
+        const refundDelta = Math.max(0, refundedAmount - alreadyRefunded);
         const status: 'FULL' | 'PARTIAL' =
-          result?.status === 'REFUNDED' || (requestedAmountGrosze >= orderTotal && orderTotal > 0)
+          result?.status === 'REFUNDED' || (refundedAmount >= orderTotal && orderTotal > 0)
             ? 'FULL'
             : 'PARTIAL';
         const refundReason = result?.refundReason || dto?.reason || '';
@@ -1458,7 +1468,18 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         // with un-restocked stock.
         database.transaction(() => {
           orderRepo.markRefunded(orderId, refundedAmount, refundReason, status, dto?.lines);
-          if (Array.isArray(dto?.lines)) {
+          if (refundDelta > 0) {
+            const requestId = String(dto?.refundRequestId || '').trim();
+            orderRepo.recordRefundEvent({
+              id: requestId || `refund:${orderId}:${refundedAmount}`,
+              orderId,
+              shiftId: activeShift.id,
+              amount: refundDelta,
+              paymentMethod: order.payment_method,
+              paymentTenders: order.payment_tenders,
+            });
+          }
+          if (refundDelta > 0 && Array.isArray(dto?.lines)) {
             for (const line of dto.lines) {
               const qty = Number(line?.quantity) || 0;
               if (line?.restock && line.variantId && qty > 0) {
@@ -1484,6 +1505,8 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
       } catch (e: any) {
         const detail = e?.message || e?.code || (typeof e === 'string' ? e : '') || 'Refund failed';
         return { success: false, error: detail };
+      } finally {
+        refundMutationsInFlight = Math.max(0, refundMutationsInFlight - 1);
       }
     },
 
@@ -1652,6 +1675,9 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
       }
     },
     async closeShift(data: { shiftId: string; closingCash: number; fiscalOnly?: boolean }): Promise<ShiftCloseResult> {
+      if (refundMutationsInFlight > 0) {
+        return { success: false, error: 'A refund is still in progress. Wait before closing the shift.' };
+      }
       const existing = shiftCloseInFlight.get(data.shiftId);
       if (existing) return existing;
       const operation = (async (): Promise<ShiftCloseResult> => {
@@ -1688,7 +1714,7 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         durabilityBlockedShiftIds.add(data.shiftId);
         let report: any;
         try {
-          report = orderRepo.closeShift(data.shiftId, data.closingCash);
+          report = orderRepo.closeShift(data.shiftId, data.closingCash, Boolean(data.fiscalOnly));
         } catch (error) {
           durabilityBlockedShiftIds.delete(data.shiftId);
           throw error;
@@ -1810,7 +1836,16 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
     //    (NEVER auto-retries an uncertain job). hasFiscalPrinter (stubs.ts)
     //    resolves `configured`+`connected` from getFiscalPrinterStatus.assigned.
     async requestFiscalPrint(orderId) {
-      return printCoordinator().requestFiscalPrint(orderId);
+      const result = await printCoordinator().requestFiscalPrint(orderId);
+      if (result.fiscalPrinted) {
+        const database = await db();
+        createOrderRepo(database).markFiscalPrinted(orderId);
+        await database.flush().catch(() => {
+          // The in-memory marker remains dirty and the DB debounce retries. The
+          // legal print outcome must not be rewritten to false after completion.
+        });
+      }
+      return result;
     },
     async getFiscalPrinterStatus() {
       return printCoordinator().getFiscalPrinterStatus();

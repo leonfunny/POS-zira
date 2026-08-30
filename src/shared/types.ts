@@ -98,6 +98,7 @@ export interface DailyReportData {
   date: string;
   reportNumber?: string;
   transactionCount: number;
+  refundTransactionCount?: number;
   grossSales: number;      // In grosze/cents
   discounts: number;       // In grosze/cents
   tips?: number;           // In grosze/cents; excluded from sales revenue
@@ -112,6 +113,12 @@ export interface DailyReportData {
     amount: number;        // In grosze/cents
   }>;
   cashierName?: string;
+  openingCash?: number;
+  closingCash?: number;
+  expectedClosingCash?: number;
+  cashDifference?: number;
+  fiscalOnlySales?: boolean;
+  autoClosed?: boolean;
   unconditionally?: 0 | 1;  // ELZAB daily report flag: print even without sales.
 }
 

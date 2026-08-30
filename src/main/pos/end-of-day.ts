@@ -21,6 +21,11 @@ export interface EndOfDayTarget {
   reason: 'scheduled' | 'catch_up' | 'not_due' | 'already_done';
 }
 
+/** Keep automatic shift close on the same sales scope as manual close/history. */
+export function shouldUseFiscalOnlySales(showNonFiscalOrders: boolean | undefined): boolean {
+  return showNonFiscalOrders !== true;
+}
+
 export function localDateKey(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }

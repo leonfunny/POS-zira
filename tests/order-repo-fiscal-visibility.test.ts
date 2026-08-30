@@ -18,6 +18,12 @@ vi.mock('../src/main/logger', () => ({
   },
 }));
 
+vi.mock('../src/main/events/pos-event-emitter', () => ({
+  posEventEmitter: {
+    emitOrderFinalized: vi.fn(),
+  },
+}));
+
 import { database } from '../src/main/database/database';
 import { orderRepo } from '../src/main/database/repos/order-repo';
 

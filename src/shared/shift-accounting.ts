@@ -1,4 +1,5 @@
 export interface ShiftAccountingOrder {
+  status?: string | null;
   total?: number | null;
   discount?: number | null;
   tip?: number | null;
@@ -27,9 +28,36 @@ export interface ShiftSalesAccounting {
   payments: ShiftPaymentBuckets;
 }
 
+const FINALIZED_SHIFT_SALE_STATUSES = new Set([
+  'COMPLETED',
+  'DELIVERED',
+  'PAID',
+  'PARTIAL_REFUND',
+  'REFUNDED',
+]);
+
 function money(value: unknown): number {
   const amount = Number(value);
   return Number.isFinite(amount) ? Math.round(amount) : 0;
+}
+
+function parseTenderSnapshot(value: string | null | undefined): ShiftPaymentAllocation[] | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed) || parsed.length === 0) return null;
+    const allocations: ShiftPaymentAllocation[] = [];
+    for (const value of parsed) {
+      const row = value as { method?: unknown; amount?: unknown };
+      const method = String(row?.method ?? '').trim().toUpperCase();
+      const rawAmount = Number(row?.amount);
+      if (!method || !Number.isFinite(rawAmount) || rawAmount < 0) return null;
+      allocations.push({ method, amount: money(rawAmount) });
+    }
+    return allocations;
+  } catch {
+    return null;
+  }
 }
 
 export function emptyShiftPaymentBuckets(): ShiftPaymentBuckets {
@@ -55,43 +83,34 @@ export function addShiftPayment(
 }
 
 /**
+ * A shift report is a ledger of settled sales, not every order row carrying the
+ * shift id. Local checkouts persist COMPLETED; server mirrors may use PAID or
+ * one of the refund terminal states. Unknown/open/cancelled states fail closed.
+ * Legacy rows without a status are accepted only when they still carry payment
+ * evidence.
+ */
+export function isShiftSaleOrder(order: ShiftAccountingOrder): boolean {
+  const status = String(order.status ?? '').trim().toUpperCase();
+  if (status && !FINALIZED_SHIFT_SALE_STATUSES.has(status)) return false;
+
+  const primaryMethod = String(order.payment_method ?? '').trim();
+  if (primaryMethod) return true;
+  if (!order.payment_tenders) return false;
+  return parseTenderSnapshot(order.payment_tenders) !== null;
+}
+
+/**
  * Tender allocations represent the money actually kept after change. Split
  * payments already persist exact allocations. A single payment persists cash
  * received separately, so subtract change; legacy rows fall back to sale+tip.
  */
 export function getOrderPaymentAllocations(order: ShiftAccountingOrder): ShiftPaymentAllocation[] {
-  if (order.payment_tenders) {
-    try {
-      const parsed = JSON.parse(order.payment_tenders) as unknown;
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        let malformed = false;
-        const allocations = parsed
-          .map((value) => {
-            const row = value as { method?: unknown; amount?: unknown };
-            const method = String(row?.method ?? '').trim().toUpperCase();
-            const rawAmount = Number(row?.amount);
-            if (!method || !Number.isFinite(rawAmount) || rawAmount < 0) {
-              malformed = true;
-            }
-            return {
-              method,
-              amount: money(row?.amount),
-            };
-          })
-          .filter((row) => row.method && row.amount >= 0);
-        const expected = money(order.total) + money(order.tip);
-        const allocated = allocations.reduce((sum, row) => sum + row.amount, 0);
-        if (
-          !malformed
-          && allocations.length === parsed.length
-          && allocations.length > 0
-          && allocated === expected
-        ) {
-          return allocations;
-        }
-      }
-    } catch {
-      // Legacy malformed JSON falls through to the single-payment snapshot.
+  const allocations = parseTenderSnapshot(order.payment_tenders);
+  if (allocations) {
+    const expected = money(order.total) + money(order.tip);
+    const allocated = allocations.reduce((sum, row) => sum + row.amount, 0);
+    if (allocated === expected) {
+      return allocations;
     }
   }
 
@@ -101,6 +120,50 @@ export function getOrderPaymentAllocations(order: ShiftAccountingOrder): ShiftPa
     method: String(order.payment_method ?? '').trim().toUpperCase(),
     amount: settled > 0 ? settled : fallback,
   }];
+}
+
+/** Allocate a refund back across the immutable sale tender snapshot. */
+export function getRefundPaymentAllocations(
+  order: ShiftAccountingOrder,
+  refundAmountValue: unknown,
+): ShiftPaymentAllocation[] {
+  const refundAmount = Math.max(0, money(refundAmountValue));
+  if (refundAmount === 0) return [];
+
+  // Refund events retain the immutable tender snapshot but intentionally do
+  // not duplicate the sale total. Trust a structurally valid snapshot here;
+  // getOrderPaymentAllocations has a stricter total-equality check for sales.
+  const tenders = parseTenderSnapshot(order.payment_tenders)
+    ?? getOrderPaymentAllocations(order);
+  if (tenders.length <= 1) {
+    return [{
+      method: tenders[0]?.method ?? String(order.payment_method ?? '').trim().toUpperCase(),
+      amount: refundAmount,
+    }];
+  }
+
+  const tenderTotal = tenders.reduce((sum, tender) => sum + Math.max(0, money(tender.amount)), 0);
+  if (tenderTotal <= 0) {
+    return [{ method: tenders[0]?.method ?? '', amount: refundAmount }];
+  }
+
+  // Largest-remainder allocation guarantees non-negative integer amounts and
+  // an exact sum even with three or more tenders (independent rounding can
+  // otherwise over-allocate and make the final tender negative).
+  const weighted = tenders.map((tender, index) => {
+    const exact = refundAmount * (Math.max(0, money(tender.amount)) / tenderTotal);
+    const amount = Math.floor(exact);
+    return { method: tender.method, amount, remainder: exact - amount, index };
+  });
+  let remainder = refundAmount - weighted.reduce((sum, tender) => sum + tender.amount, 0);
+  const byRemainder = [...weighted].sort((left, right) =>
+    right.remainder - left.remainder || left.index - right.index,
+  );
+  for (let index = 0; index < byRemainder.length && remainder > 0; index += 1) {
+    byRemainder[index].amount += 1;
+    remainder -= 1;
+  }
+  return weighted.map(({ method, amount }) => ({ method, amount }));
 }
 
 export function summarizeShiftSales(orders: ShiftAccountingOrder[]): ShiftSalesAccounting {

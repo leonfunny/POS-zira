@@ -937,11 +937,23 @@ export class EscPosFormatter {
     parts.push(ESCPOS.ALIGN_LEFT);
     parts.push(this.text(`Nr raportu: ${reportData.reportNumber || 'N/A'}`));
     parts.push(this.text(`Data: ${reportData.date}`));
+    if (reportData.cashierName) {
+      parts.push(this.text(`Kasjer: ${reportData.cashierName}`));
+    }
+    if (reportData.fiscalOnlySales) {
+      parts.push(this.text('Sprzedaz: tylko fiskalna'));
+      parts.push(this.text('Platnosci/kasa: wszystkie'));
+    }
     parts.push(this.text(this.repeatChar('=', this.charsPerLine)));
 
-    parts.push(this.formatLine('Transakcje:', reportData.transactionCount.toString()));
-    parts.push(this.formatLine('Sprzedaz brutto:', this.formatMoney(reportData.grossSales)));
-    parts.push(this.formatLine('Rabaty:', this.formatMoney(reportData.discounts)));
+    parts.push(this.formatLine('Transakcje sprzedazy:', reportData.transactionCount.toString()));
+    if ((reportData.refundTransactionCount ?? 0) > 0) {
+      parts.push(this.formatLine('Transakcje zwrotow:', String(reportData.refundTransactionCount)));
+    }
+    parts.push(this.formatLine('Sprzedaz przed rabatami:', this.formatMoney(reportData.grossSales)));
+    parts.push(this.formatLine('Rabaty:', reportData.discounts > 0
+      ? `-${this.formatMoney(reportData.discounts)}`
+      : this.formatMoney(reportData.discounts)));
     if (reportData.refunds && reportData.refunds > 0) {
       parts.push(this.formatLine('Zwroty:', `-${this.formatMoney(reportData.refunds)}`));
     }
@@ -949,7 +961,7 @@ export class EscPosFormatter {
       parts.push(this.formatLine('Napiwki:', this.formatMoney(reportData.tips)));
     }
     parts.push(ESCPOS.BOLD_ON);
-    parts.push(this.formatLine('SUMA NETTO:', this.formatMoney(reportData.netSales)));
+    parts.push(this.formatLine('SPRZEDAZ PO KOREKTACH:', this.formatMoney(reportData.netSales)));
     parts.push(ESCPOS.BOLD_OFF);
 
     // VAT breakdown
@@ -959,6 +971,35 @@ export class EscPosFormatter {
       for (const vat of reportData.vatSummary) {
         parts.push(this.formatLine(`  ${vat.rate}%:`, this.formatMoney(vat.amount)));
       }
+    }
+
+    if (reportData.paymentSummary && reportData.paymentSummary.length > 0) {
+      parts.push(this.text(''));
+      parts.push(this.text('FORMY PLATNOSCI (PRZEPLYW):'));
+      for (const payment of reportData.paymentSummary) {
+        parts.push(this.formatLine(
+          `  ${this.paymentMethodPl(payment.method)}:`,
+          this.formatMoney(payment.amount),
+        ));
+      }
+    }
+
+    if (
+      reportData.openingCash !== undefined
+      && reportData.closingCash !== undefined
+      && reportData.expectedClosingCash !== undefined
+    ) {
+      parts.push(this.text(''));
+      parts.push(this.text('ROZLICZENIE KASY:'));
+      parts.push(this.formatLine('  Stan poczatkowy:', this.formatMoney(reportData.openingCash)));
+      parts.push(this.formatLine('  Stan oczekiwany:', this.formatMoney(reportData.expectedClosingCash)));
+      parts.push(this.formatLine(
+        reportData.autoClosed ? '  Stan zamkniecia AUTO:' : '  Stan policzony:',
+        this.formatMoney(reportData.closingCash),
+      ));
+      parts.push(ESCPOS.BOLD_ON);
+      parts.push(this.formatLine('  ROZNICA:', this.formatMoney(reportData.cashDifference ?? 0)));
+      parts.push(ESCPOS.BOLD_OFF);
     }
 
     parts.push(this.text(this.repeatChar('=', this.charsPerLine)));
@@ -979,6 +1020,7 @@ export interface DailyReportData {
   date: string;
   reportNumber?: string;
   transactionCount: number;
+  refundTransactionCount?: number;
   grossSales: number;      // In grosze
   discounts: number;       // In grosze
   tips?: number;           // In grosze; excluded from sales revenue
@@ -993,4 +1035,10 @@ export interface DailyReportData {
     amount: number;        // In grosze
   }>;
   cashierName?: string;
+  openingCash?: number;
+  closingCash?: number;
+  expectedClosingCash?: number;
+  cashDifference?: number;
+  fiscalOnlySales?: boolean;
+  autoClosed?: boolean;
 }

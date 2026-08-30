@@ -125,6 +125,7 @@ import {
   isShiftEligibleForEndOfDay,
   purgeCutoffForBusinessDate,
   resolveEndOfDayTarget,
+  shouldUseFiscalOnlySales,
 } from '../pos/end-of-day';
 import {
   FiscalReceiptOrderPendingSyncError,
@@ -773,6 +774,7 @@ export class PosModule extends BaseModule {
   private shiftVerificationInFlight: Promise<void> | null = null;
   private shiftOpenInFlight: Promise<{ success: boolean; shiftId?: string; recovered?: boolean; error?: string }> | null = null;
   private shiftCloseInFlight = new Map<string, Promise<any>>();
+  private shiftFinancialMutationsInFlight = 0;
   private durabilityPendingShiftOpens = new Map<string, {
     shiftId: string;
     staffId: string;
@@ -789,6 +791,15 @@ export class PosModule extends BaseModule {
 
   constructor(private container: ServiceContainer) {
     super();
+  }
+
+  private async runShiftFinancialMutation<T>(operation: () => Promise<T>): Promise<T> {
+    this.shiftFinancialMutationsInFlight += 1;
+    try {
+      return await operation();
+    } finally {
+      this.shiftFinancialMutationsInFlight = Math.max(0, this.shiftFinancialMutationsInFlight - 1);
+    }
   }
 
   private async finalizeDurableShiftClose(
@@ -7045,7 +7056,7 @@ export class PosModule extends BaseModule {
       catch (e: any) { return { success: false, receiptPrinted: false, error: e.message }; }
     });
 
-    ipcMain.handle('pos:orders:refund', async (_e, orderId: string, data: RefundIpcPayload) => {
+    ipcMain.handle('pos:orders:refund', (_e, orderId: string, data: RefundIpcPayload) => this.runShiftFinancialMutation(async () => {
       try {
         const order = orderRepo.getById(orderId);
         if (!order) return { success: false, error: 'Order not found' };
@@ -7089,6 +7100,9 @@ export class PosModule extends BaseModule {
           'SELECT id, backend_id, staff_id FROM shifts WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 1',
         );
         if (!activeShift) return { success: false, error: 'Cannot refund without an active shift. Open a shift first.' };
+        if (this.eodInFlight || this.shiftCloseInFlight.has(activeShift.id)) {
+          return { success: false, error: 'This shift is closing. Wait for it to finish before refunding.' };
+        }
 
         const token = getSecureAuthToken();
         if (!token) return { success: false, error: 'Not authenticated' };
@@ -7322,12 +7336,12 @@ export class PosModule extends BaseModule {
         if (e?.stack) logger.error(`[PosModule] Refund failure stack: ${e.stack}`);
         return { success: false, error: surfaced };
       }
-    });
+    }));
 
-    ipcMain.handle('pos:orders:billiard-correction', async (_e, orderId: string, data: {
+    ipcMain.handle('pos:orders:billiard-correction', (_e, orderId: string, data: {
       correctionRequestId?: string;
       reason?: string;
-    }) => {
+    }) => this.runShiftFinancialMutation(async () => {
       try {
         const config = getConfig();
         if (String(config.authUser?.role || '').toUpperCase() !== 'OWNER') {
@@ -7430,6 +7444,12 @@ export class PosModule extends BaseModule {
             success: false,
             code: 'BILLIARD_CORRECTION_ACTIVE_SHIFT_REQUIRED',
             error: 'Open a POS shift before correcting this Billiard order.',
+          };
+        }
+        if (this.eodInFlight || this.shiftCloseInFlight.has(activeShift.id)) {
+          return {
+            success: false,
+            error: 'This shift is closing. Wait for it to finish before correcting the order.',
           };
         }
 
@@ -7713,7 +7733,7 @@ export class PosModule extends BaseModule {
           error: (code && messageByCode[code]) || error?.message || 'Billiard owner correction failed',
         };
       }
-    });
+    }));
 
     ipcMain.handle('pos:orders:downloadPdf', async (e, orderId: string, kind: 'receipt' | 'invoice', invoiceType?: 'VAT' | 'PROFORMA') => {
       try {
@@ -8692,6 +8712,9 @@ export class PosModule extends BaseModule {
       const operation = (async () => {
         try {
         if (!this.shiftController) return { success: false, error: 'Shift controller not initialized' };
+        if (this.shiftFinancialMutationsInFlight > 0) {
+          return { success: false, error: 'A refund or correction is still in progress. Wait before closing the shift.' };
+        }
         const durabilityPending = this.durabilityPendingShiftCloses.get(data.shiftId);
         if (durabilityPending) {
           return this.finalizeDurableShiftClose(durabilityPending, true);
@@ -9581,6 +9604,7 @@ export class PosModule extends BaseModule {
     if (cfg?.enabled === false) return;
     const hour = Number.isFinite(cfg?.hour) ? Number(cfg!.hour) : 23;
     const minute = Number.isFinite(cfg?.minute) ? Number(cfg!.minute) : 59;
+    const fiscalOnlySales = shouldUseFiscalOnlySales(getConfig().showNonFiscalOrders);
     let target: ReturnType<typeof resolveEndOfDayTarget>;
     let existing: ReturnType<typeof eodRunRepo.get>;
     try {
@@ -9614,6 +9638,9 @@ export class PosModule extends BaseModule {
         shiftsClosed += 1;
         closedShiftIds.add(pendingReport.shiftId);
       }
+      if (this.shiftFinancialMutationsInFlight > 0) {
+        throw new Error('refund or correction in progress; shift auto-close deferred');
+      }
       const openShifts = database
         .all<{ id: string; opened_at: string }>(
           'SELECT id, opened_at FROM shifts WHERE closed_at IS NULL ORDER BY opened_at ASC',
@@ -9638,7 +9665,7 @@ export class PosModule extends BaseModule {
             report = this.shiftController.closeShift(
               shift.id,
               null,
-              false,
+              fiscalOnlySales,
               { deferSyncUntilDurable: true },
             );
           } catch (error) {

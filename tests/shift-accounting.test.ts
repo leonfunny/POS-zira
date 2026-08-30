@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  getRefundPaymentAllocations,
   getOrderPaymentAllocations,
+  isShiftSaleOrder,
   summarizeShiftSales,
 } from '../src/shared/shift-accounting';
 
@@ -74,5 +76,58 @@ describe('shift accounting invariants', () => {
     }]);
 
     expect(result.payments.transfer).toBe(12_000);
+  });
+
+  it('accepts only settled sale rows into a shift report', () => {
+    expect(isShiftSaleOrder({ status: 'COMPLETED', payment_method: 'CASH' })).toBe(true);
+    expect(isShiftSaleOrder({ status: 'PAID', payment_method: 'CARD' })).toBe(true);
+    expect(isShiftSaleOrder({ status: 'PARTIAL_REFUND', payment_method: 'CASH' })).toBe(true);
+    expect(isShiftSaleOrder({ status: 'CANCELLED', payment_method: 'CASH' })).toBe(false);
+    expect(isShiftSaleOrder({ status: 'VOID', payment_method: 'CARD' })).toBe(false);
+    expect(isShiftSaleOrder({ status: 'PENDING', payment_method: 'CASH' })).toBe(false);
+    expect(isShiftSaleOrder({ status: 'COMPLETED' })).toBe(false);
+  });
+
+  it('allocates an incremental split refund without losing rounding', () => {
+    const allocations = getRefundPaymentAllocations({
+      total: 10_000,
+      payment_method: 'SPLIT',
+      payment_tenders: JSON.stringify([
+        { method: 'CASH', amount: 6_000 },
+        { method: 'CARD', amount: 4_000 },
+      ]),
+    }, 3_333);
+
+    expect(allocations).toEqual([
+      { method: 'CASH', amount: 2_000 },
+      { method: 'CARD', amount: 1_333 },
+    ]);
+    expect(allocations.reduce((sum, row) => sum + row.amount, 0)).toBe(3_333);
+  });
+
+  it('uses a refund-event tender snapshot even when the event has no sale total', () => {
+    expect(getRefundPaymentAllocations({
+      payment_method: 'SPLIT',
+      payment_tenders: JSON.stringify([
+        { method: 'CASH', amount: 600 },
+        { method: 'CARD', amount: 400 },
+      ]),
+    }, 500)).toEqual([
+      { method: 'CASH', amount: 300 },
+      { method: 'CARD', amount: 200 },
+    ]);
+  });
+
+  it('never creates a negative final allocation when several tenders round up', () => {
+    const allocations = getRefundPaymentAllocations({
+      payment_method: 'SPLIT',
+      payment_tenders: JSON.stringify(Array.from({ length: 5 }, (_, index) => ({
+        method: index === 0 ? 'CASH' : 'CARD',
+        amount: 100,
+      }))),
+    }, 3);
+
+    expect(allocations.every((row) => row.amount >= 0)).toBe(true);
+    expect(allocations.reduce((sum, row) => sum + row.amount, 0)).toBe(3);
   });
 });
