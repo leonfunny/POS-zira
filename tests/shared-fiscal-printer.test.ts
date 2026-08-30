@@ -15,6 +15,7 @@ const {
   listSalonPrintersWithApiKey,
   safeRetryPrintJob,
   safeRetryPrintJobWithApiKey,
+  fiscalAttemptRepo,
 } = vi.hoisted(() => ({
   createPrintJob: vi.fn(),
   createPrintJobWithApiKey: vi.fn(),
@@ -29,6 +30,16 @@ const {
   listSalonPrintersWithApiKey: vi.fn(),
   safeRetryPrintJob: vi.fn(),
   safeRetryPrintJobWithApiKey: vi.fn(),
+  fiscalAttemptRepo: {
+    findLatestRemoteByOrder: vi.fn(),
+    getNextAttemptNo: vi.fn(),
+    createPending: vi.fn(),
+    markSent: vi.fn(),
+    markSuccess: vi.fn(),
+    markFailed: vi.fn(),
+    markUnknown: vi.fn(),
+    flush: vi.fn(),
+  },
 }));
 
 vi.mock('../src/main/config/store', () => ({
@@ -51,6 +62,8 @@ vi.mock('../src/main/network/api-client', () => ({
     safeRetryPrintJobWithApiKey = safeRetryPrintJobWithApiKey;
   },
 }));
+
+vi.mock('../src/main/database/repos/fiscal-attempt-repo', () => ({ fiscalAttemptRepo }));
 
 vi.mock('../src/main/logger', () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -89,6 +102,25 @@ describe('submitSharedFiscalPrint', () => {
       assignments: [{ role: 'FISCAL_RECEIPT', printerId: 'fiscal-printer-1' }],
     });
     listSalonPrinters.mockResolvedValue({ printers: [readyFiscalPrinter] });
+    fiscalAttemptRepo.findLatestRemoteByOrder.mockReturnValue(null);
+    fiscalAttemptRepo.getNextAttemptNo.mockReturnValue(1);
+    fiscalAttemptRepo.createPending.mockImplementation((input: any) => ({
+      id: 'remote-attempt-1',
+      order_id: input.orderId,
+      payment_id: null,
+      attempt_no: input.attemptNo,
+      idempotency_key: input.idempotencyKey,
+      printer_type: input.printerType,
+      payload_json: input.payloadJson,
+      payload_hash: input.payloadHash,
+      status: 'PENDING',
+      result_json: null,
+      error_code: null,
+      created_at: null,
+      sent_at: null,
+      resolved_at: null,
+    }));
+    fiscalAttemptRepo.flush.mockResolvedValue({ success: true });
   });
 
   it('reports a ready remote fiscal assignment as configured and connected', async () => {
@@ -293,6 +325,83 @@ describe('submitSharedFiscalPrint', () => {
       status: 'TIMEOUT',
     });
     expect(result.error).toContain('timeout');
+  });
+
+  it('reuses the durable first payload when order sync changes the displayed order number', async () => {
+    const originalReceipt = { ...receiptData, orderNumber: 'POS-20260830-0005' };
+    fiscalAttemptRepo.findLatestRemoteByOrder.mockReturnValue({
+      id: 'remote-attempt-old',
+      order_id: 'order-1',
+      payment_id: null,
+      attempt_no: 1,
+      idempotency_key: 'pos-fiscal:machine-2:order-1:default:v1',
+      printer_type: 'REMOTE',
+      payload_json: JSON.stringify(originalReceipt),
+      payload_hash: 'sha256:old',
+      status: 'UNKNOWN_NEEDS_RECONCILIATION',
+      result_json: null,
+      error_code: null,
+      created_at: null,
+      sent_at: null,
+      resolved_at: null,
+    });
+    createPrintJob.mockResolvedValue({ jobId: 'job-original', status: 'COMPLETED', sent: true });
+
+    const result = await submitSharedFiscalPrint(
+      { ...receiptData, orderNumber: 'POS260830-0052' },
+      { referenceType: 'POS_FISCAL_RECEIPT', referenceId: 'order-1' },
+    );
+
+    expect(result).toMatchObject({ printed: true, jobId: 'job-original' });
+    expect(createPrintJob).toHaveBeenCalledWith(
+      'jwt-token',
+      expect.objectContaining({
+        idempotencyKey: 'pos-fiscal:machine-2:order-1:default:v1',
+        payload: originalReceipt,
+      }),
+    );
+  });
+
+  it('resumes a durable failed job by job id instead of creating a changed job', async () => {
+    fiscalAttemptRepo.findLatestRemoteByOrder.mockReturnValue({
+      id: 'remote-attempt-known',
+      order_id: 'order-1',
+      payment_id: null,
+      attempt_no: 1,
+      idempotency_key: 'pos-fiscal:machine-2:order-1:default:v1',
+      printer_type: 'REMOTE',
+      payload_json: JSON.stringify({ ...receiptData, orderNumber: 'POS-20260830-0005' }),
+      payload_hash: 'sha256:old',
+      status: 'FAILED_CONFIRMED',
+      result_json: JSON.stringify({ jobId: 'job-safe-old' }),
+      error_code: 'REMOTE_SAFE_BEFORE_PRINT',
+      created_at: null,
+      sent_at: null,
+      resolved_at: null,
+    });
+    getPrintJobStatus.mockResolvedValue({ jobId: 'job-safe-old', status: 'COMPLETED', sent: true });
+
+    const result = await submitSharedFiscalPrint(
+      { ...receiptData, orderNumber: 'POS260830-0052' },
+      { referenceType: 'POS_FISCAL_RECEIPT', referenceId: 'order-1' },
+    );
+
+    expect(result).toMatchObject({ printed: true, jobId: 'job-safe-old' });
+    expect(getPrintJobStatus).toHaveBeenCalledWith('jwt-token', 'job-safe-old');
+    expect(createPrintJob).not.toHaveBeenCalled();
+  });
+
+  it('does not dispatch a fiscal job until its immutable attempt is durable', async () => {
+    fiscalAttemptRepo.flush.mockResolvedValue({ success: false, error: 'disk busy' });
+
+    const result = await submitSharedFiscalPrint(receiptData, {
+      referenceType: 'POS_FISCAL_RECEIPT',
+      referenceId: 'order-1',
+    });
+
+    expect(result).toMatchObject({ handled: true, printed: false });
+    expect(result.error).toContain('Cannot persist remote fiscal attempt');
+    expect(createPrintJob).not.toHaveBeenCalled();
   });
 
   it('does not route through a non-fiscal or not-ready assignment', async () => {

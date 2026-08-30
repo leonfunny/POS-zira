@@ -58,7 +58,7 @@ import {
 import { sanitizeBilliardRefundRequest } from '../pos/billiard-refund-policy';
 import { assertPosPaymentAccounting, assertProtectedPosPaymentMethods } from '../pos/payment-accounting';
 import { ShiftController } from '../pos/shift-controller';
-import { isShiftAlreadyClosedError } from '../../shared/shift-close';
+import { isShiftAlreadyClosedError, shouldCloseActiveShiftSession } from '../../shared/shift-close';
 import { toQuickAddVariantRow } from '../pos/quick-add-product';
 import {
   captureProductAdminSessionContext,
@@ -922,6 +922,20 @@ export class PosModule extends BaseModule {
       this.ordinaryPaymentPreflights.clear();
       logger.error(`[PosModule] Payment blocked by verified shift mismatch: ${error}`);
     }
+  }
+
+  /** Clear only the session owned by the close flow that just finished. */
+  private closeSessionIfShiftMatches(closingShiftIds: Iterable<string>): boolean {
+    const activeShiftId = this.posStore?.getState().session.shiftId;
+    if (!shouldCloseActiveShiftSession(activeShiftId, closingShiftIds)) {
+      logger.info(
+        `[PosModule] Leaving active shift ${activeShiftId || 'none'} open; ` +
+        'the completed close flow belongs to a different shift',
+      );
+      return false;
+    }
+    this.posStore?.dispatch({ type: 'session/close' });
+    return true;
   }
 
   /** Must match PaymentController's local-first fiscal route selection. */
@@ -8456,7 +8470,7 @@ export class PosModule extends BaseModule {
           } catch (err: any) {
             logger.warn(`[PosModule] Failed to close server ghost shift ${data.shiftId.substring(0, 8)}: ${err?.message ?? err}`);
           }
-          this.posStore?.dispatch({ type: 'session/close' });
+          this.closeSessionIfShiftMatches([data.shiftId]);
           this.invalidateShiftVerification();
           this.setServerShiftMismatch(null);
           return { success: true, report: null };
@@ -8485,7 +8499,7 @@ export class PosModule extends BaseModule {
         }
         const report = this.shiftController.closeShift(data.shiftId, data.closingCash, Boolean(data.fiscalOnly));
         billiardShiftLink.close(data.closingCash, data.shiftId);
-        this.posStore?.dispatch({ type: 'session/close' });
+        this.closeSessionIfShiftMatches([data.shiftId]);
         this.invalidateShiftVerification();
         this.setServerShiftMismatch(null);
         await this.shiftController.printZReport(report);
@@ -8493,7 +8507,7 @@ export class PosModule extends BaseModule {
       } catch (e: any) {
         if (isShiftAlreadyClosedError(e)) {
           logger.info(`[PosModule] Shift ${data.shiftId.substring(0, 8)} was already closed by another close flow`);
-          this.posStore?.dispatch({ type: 'session/close' });
+          this.closeSessionIfShiftMatches([data.shiftId]);
           this.invalidateShiftVerification();
           this.setServerShiftMismatch(null);
           return { success: true, report: null };
@@ -9294,7 +9308,7 @@ export class PosModule extends BaseModule {
           shiftsClosed += 1;
           await this.shiftController.printZReport(report);
         }
-        this.posStore?.dispatch({ type: 'session/close' });
+        this.closeSessionIfShiftMatches(openShifts.map((shift) => shift.id));
         this.invalidateShiftVerification();
         this.setServerShiftMismatch(null);
       }
