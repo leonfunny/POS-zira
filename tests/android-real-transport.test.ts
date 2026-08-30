@@ -42,6 +42,43 @@ class MemoryDbPersistence implements AndroidDbPersistence {
   async quarantineImage(): Promise<void> {}
 }
 
+class SwitchableDbPersistence extends MemoryDbPersistence {
+  rejectWrites = false;
+  readonly events: string[] = [];
+
+  override async saveImage(image: Uint8Array): Promise<void> {
+    if (this.rejectWrites) throw new Error('simulated persistence failure');
+    this.events.push('save');
+    await super.saveImage(image);
+  }
+}
+
+class GatedDbPersistence extends MemoryDbPersistence {
+  private nextGate: {
+    signalStarted: () => void;
+    released: Promise<void>;
+  } | null = null;
+
+  blockNextSave(): { started: Promise<void>; release: () => void } {
+    let signalStarted!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => { signalStarted = resolve; });
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    this.nextGate = { signalStarted, released };
+    return { started, release };
+  }
+
+  override async saveImage(image: Uint8Array): Promise<void> {
+    const gate = this.nextGate;
+    this.nextGate = null;
+    if (gate) {
+      gate.signalStarted();
+      await gate.released;
+    }
+    await super.saveImage(image);
+  }
+}
+
 const LOGIN_BODY = {
   access_token: 'jwt-access-1',
   refresh_token: 'jwt-refresh-1',
@@ -56,20 +93,27 @@ const LOGIN_BODY = {
   },
 };
 
-function build(overrides: {
+type BuildOverrides = {
   seed?: Record<string, unknown>;
   persistence?: AndroidDbPersistence;
-} = {}) {
+  tokenStore?: TokenStore;
+};
+
+function build(overrides: BuildOverrides = {}) {
   const configStore = new ShimConfigStore({
     storage: memoryStorage(),
     seed: overrides.seed as never,
   });
   const tokenStorage = memoryStorage();
-  const tokenStore = new TokenStore({ storage: tokenStorage, allowInsecureFallback: true });
+  const tokenStore = overrides.tokenStore
+    ?? new TokenStore({ storage: tokenStorage, allowInsecureFallback: true });
   const transport = createRealTransport({
     configStore,
     tokenStore,
-    dbInit: { locateFile: NODE_LOCATE_FILE, persistence: overrides.persistence },
+    dbInit: {
+      locateFile: NODE_LOCATE_FILE,
+      persistence: overrides.persistence ?? new MemoryDbPersistence(),
+    },
     // No-op agent: these auth/order tests use mockResolvedValueOnce sequences, so
     // the real login-time /print-agent/my-key fetch would desync them. The
     // login→connect→socket path is covered by tests/android-agent-connect.test.ts.
@@ -101,7 +145,6 @@ describe('real transport auth', () => {
     const { configStore, tokenStore, transport } = build();
 
     const result = await transport.loginWithEmail!('staff@salon.pl', 'pw');
-
     expect(result.success).toBe(true);
     expect(result.data?.user).toMatchObject({
       id: 'staff-1',
@@ -252,6 +295,34 @@ describe('real transport auth', () => {
     // re-login to the same salon).
     expect(configStore.getRawConfig().salonId).toBe('salon-1');
   });
+
+  test('logout keeps the authenticated identity when secure token clearing fails', async () => {
+    const tokenStore = new TokenStore({ storage: memoryStorage(), allowInsecureFallback: true });
+    await tokenStore.setTokens('jwt-access-1', 'jwt-refresh-1');
+    vi.spyOn(tokenStore, 'clear').mockRejectedValueOnce(new Error('secure-storage-clear-failed'));
+    const { configStore, transport } = build({
+      tokenStore,
+      seed: {
+        authUser: {
+          ...LOGIN_BODY.user,
+          salonId: 'salon-1',
+          salonName: 'Test Salon',
+        },
+        salonId: 'salon-1',
+        salonName: 'Test Salon',
+        salonSlug: 'test-salon',
+      },
+    });
+
+    const outcome = await transport.logout!().then(
+      (value) => ({ rejected: false as const, value }),
+      (error) => ({ rejected: true as const, error }),
+    );
+
+    expect(outcome.rejected || (outcome as any).value?.success === false).toBe(true);
+    expect(configStore.getRawConfig().authUser?.id).toBe('staff-1');
+    await expect(tokenStore.getAccessToken()).resolves.toBe('jwt-access-1');
+  });
 });
 
 describe('real transport catalog sync', () => {
@@ -358,9 +429,9 @@ describe('real transport orders + shifts (S8+S9)', () => {
     sku: 'SKU-1', price: 4900, quantity: 1, sell_by: 'PIECE', total: 4900, vat_rate: 23,
   }];
 
-  async function transportWithShift() {
+  async function transportWithShift(overrides: BuildOverrides = {}) {
     fetchMock.mockResolvedValue(jsonResponse(LOGIN_BODY));
-    const built = build();
+    const built = build(overrides);
     await built.transport.loginWithEmail!('staff@salon.pl', 'pw');
     fetchMock.mockResolvedValue(jsonResponse({ shiftId: 'server-shift' }));
     const open = await built.transport.openShift!({ staffId: 'staff-1', staffName: 'Ala Nowak', openingCash: 10000 });
@@ -375,6 +446,109 @@ describe('real transport orders + shifts (S8+S9)', () => {
     const result = await transport.createOrder!(CASH_ORDER('missing-shift'), CASH_ITEMS);
     expect(result.success).toBe(false);
     expect(result.error).toContain('shift');
+  });
+
+  test('openShift retries the same local shift after a failed durability barrier before backend sync', async () => {
+    const persistence = new SwitchableDbPersistence();
+    fetchMock.mockResolvedValueOnce(jsonResponse(LOGIN_BODY));
+    const { transport } = build({ persistence, seed: { machineId: 'SUNMI-1' } });
+    await transport.loginWithEmail!('staff@salon.pl', 'pw');
+    fetchMock.mockClear();
+    persistence.events.length = 0;
+    const backendOpenBodies: any[] = [];
+    fetchMock.mockImplementation(async (url: unknown, init?: RequestInit) => {
+      const target = String(url);
+      if (/\/pos\/shifts\/open$/.test(target)) {
+        persistence.events.push('backend-open');
+        backendOpenBodies.push(JSON.parse(String(init?.body)));
+        return jsonResponse({ shiftId: 'server-shift' });
+      }
+      return jsonResponse({});
+    });
+
+    const input = { staffId: 'staff-1', staffName: 'Ala Nowak', openingCash: 10000 };
+    persistence.rejectWrites = true;
+    const first = await transport.openShift!(input);
+    expect(first).toMatchObject({ success: false, durabilityPending: true });
+    expect(first.shiftId).toEqual(expect.any(String));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fetchMock.mock.calls.some(([url]) => /\/pos\/shifts\/open$/.test(String(url)))).toBe(false);
+
+    persistence.rejectWrites = false;
+    persistence.events.length = 0;
+    const retry = await transport.openShift!(input);
+    expect(retry).toMatchObject({ success: true, shiftId: first.shiftId });
+    await vi.waitFor(() => {
+      expect(persistence.events).toEqual(['save', 'backend-open', 'save']);
+    });
+    expect(fetchMock.mock.calls.filter(([url]) => /\/pos\/shifts\/open$/.test(String(url)))).toHaveLength(1);
+    expect(backendOpenBodies).toEqual([{
+      shiftId: first.shiftId,
+      staffId: 'staff-1',
+      openingCash: 10000,
+      machineId: 'SUNMI-1',
+    }]);
+  });
+
+  test('syncOrders retries a durable shift open after a backend outage', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(LOGIN_BODY));
+    const { transport } = build({ seed: { machineId: 'SUNMI-1' } });
+    await transport.loginWithEmail!('staff@salon.pl', 'pw');
+    let openAttempts = 0;
+    fetchMock.mockImplementation(async (url: unknown) => {
+      if (/\/pos\/shifts\/open$/.test(String(url))) {
+        openAttempts += 1;
+        if (openAttempts === 1) throw new Error('offline');
+        return jsonResponse({ shiftId: 'server-shift' });
+      }
+      return jsonResponse({});
+    });
+
+    const opened = await transport.openShift!({
+      staffId: 'staff-1',
+      staffName: 'Ala Nowak',
+      openingCash: 10000,
+    });
+    expect(opened.success).toBe(true);
+    await vi.waitFor(() => expect(openAttempts).toBe(1));
+
+    await transport.syncOrders!();
+    expect(openAttempts).toBe(2);
+    await transport.syncOrders!();
+    expect(openAttempts).toBe(2);
+  });
+
+  test('concurrent openShift calls share one durability barrier and cannot be synced before it', async () => {
+    const persistence = new GatedDbPersistence();
+    fetchMock.mockResolvedValueOnce(jsonResponse(LOGIN_BODY));
+    const { transport } = build({ persistence });
+    await transport.loginWithEmail!('staff@salon.pl', 'pw');
+    fetchMock.mockClear();
+    fetchMock.mockImplementation(async (url: unknown) => {
+      if (/\/pos\/shifts\/open$/.test(String(url))) {
+        return jsonResponse({ shiftId: 'server-shift' });
+      }
+      return jsonResponse({});
+    });
+
+    const gate = persistence.blockNextSave();
+    const input = { staffId: 'staff-1', staffName: 'Ala Nowak', openingCash: 10000 };
+    const first = transport.openShift!(input);
+    const second = transport.openShift!(input);
+    await gate.started;
+    const competingWorker = transport.syncOrders!();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fetchMock.mock.calls.filter(([url]) => /\/pos\/shifts\/open$/.test(String(url)))).toHaveLength(0);
+
+    gate.release();
+    const [firstResult, secondResult] = await Promise.all([first, second, competingWorker])
+      .then(([a, b]) => [a, b]);
+    expect(firstResult).toMatchObject({ success: true, shiftId: expect.any(String) });
+    expect(secondResult).toEqual(firstResult);
+    await vi.waitFor(() => {
+      expect(fetchMock.mock.calls.filter(([url]) => /\/pos\/shifts\/open$/.test(String(url)))).toHaveLength(1);
+    });
   });
 
   test('CASH order: local create → authoritative create sync → marked synced without legacy finish', async () => {
@@ -415,6 +589,49 @@ describe('real transport orders + shifts (S8+S9)', () => {
     const detail = await transport.getOrderDetail!('local-order-1');
     expect(detail?.order).toMatchObject({ synced: 1, backend_id: 'backend-1', order_number: 'POS-20260718-0042' });
     expect(detail?.items).toHaveLength(1);
+  });
+
+  test('createOrder reports durability pending and retries without a second stock decrement', async () => {
+    const persistence = new SwitchableDbPersistence();
+    const { transport, shiftId } = await transportWithShift({ persistence });
+    fetchMock.mockImplementation(async (url: unknown) => {
+      const target = String(url);
+      if (target.includes('/warehouse/public/products')) {
+        return jsonResponse({
+          products: [{
+            id: 'p1',
+            name: 'Gel Polish',
+            sku: 'SKU-1',
+            retailPrice: '49.00',
+            totalStockQty: 10,
+            availableQty: 10,
+            template: { id: 't1', taxRate: '23' },
+          }],
+          categories: [],
+          nextSyncCursor: 'cursor-1',
+        });
+      }
+      if (target.includes('categories')) return jsonResponse({ categories: [] });
+      return jsonResponse({});
+    });
+    await expect(transport.syncProducts!()).resolves.toMatchObject({ success: true });
+    expect((await transport.getProductById!('p1') as any)?.in_stock).toBe(10);
+
+    persistence.rejectWrites = true;
+    const first = await transport.createOrder!(CASH_ORDER(shiftId), CASH_ITEMS);
+    expect(first).toMatchObject({
+      success: false,
+      id: 'local-order-1',
+      durabilityPending: true,
+    });
+    expect((await transport.getProductById!('p1') as any)?.in_stock).toBe(9);
+
+    persistence.rejectWrites = false;
+    const retry = await transport.createOrder!(CASH_ORDER(shiftId), CASH_ITEMS);
+    expect(retry).toMatchObject({ success: true, id: 'local-order-1' });
+    expect((await transport.getProductById!('p1') as any)?.in_stock).toBe(9);
+    const history = await transport.getOrderHistory!({});
+    expect(history.orders.filter((order: any) => order.id === 'local-order-1')).toHaveLength(1);
   });
 
   test('business-rule rejection shelves the order (synced = -1) and emits failure', async () => {
@@ -524,6 +741,125 @@ describe('real transport orders + shifts (S8+S9)', () => {
     // A second order after close is refused — the shift is gone.
     const after = await transport.createOrder!({ ...CASH_ORDER(shiftId), id: 'local-order-2' }, CASH_ITEMS);
     expect(after.success).toBe(false);
+  });
+
+  test('closeShift retries a failed durability barrier before notifying the backend', async () => {
+    const persistence = new SwitchableDbPersistence();
+    const { transport, shiftId } = await transportWithShift({ persistence });
+    fetchMock.mockClear();
+    persistence.events.length = 0;
+    fetchMock.mockImplementation(async (url: unknown) => {
+      const target = String(url);
+      if (/\/close$/.test(target)) {
+        persistence.events.push('backend-close');
+        return jsonResponse({});
+      }
+      return jsonResponse({});
+    });
+
+    persistence.rejectWrites = true;
+    const first = await transport.closeShift!({ shiftId, closingCash: 10000 });
+    expect(first).toMatchObject({ success: false, durabilityPending: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fetchMock.mock.calls.some(([url]) => /\/close$/.test(String(url)))).toBe(false);
+
+    persistence.rejectWrites = false;
+    persistence.events.length = 0;
+    const retry = await transport.closeShift!({ shiftId, closingCash: 10000 });
+    expect(retry).toMatchObject({ success: true });
+    await vi.waitFor(() => {
+      expect(persistence.events).toEqual(['save', 'backend-close', 'save']);
+    });
+  });
+
+  test('concurrent closeShift calls close once and cannot be synced before persistence', async () => {
+    const persistence = new GatedDbPersistence();
+    const { transport, shiftId } = await transportWithShift({ persistence });
+    await transport.syncOrders!();
+    fetchMock.mockClear();
+    fetchMock.mockImplementation(async (url: unknown) => {
+      if (/\/close$/.test(String(url))) return jsonResponse({});
+      return jsonResponse({});
+    });
+
+    const gate = persistence.blockNextSave();
+    const input = { shiftId, closingCash: 10000 };
+    const first = transport.closeShift!(input);
+    const second = transport.closeShift!(input);
+    await gate.started;
+    const competingWorker = transport.syncOrders!();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fetchMock.mock.calls.filter(([url]) => /\/close$/.test(String(url)))).toHaveLength(0);
+
+    gate.release();
+    const [firstResult, secondResult] = await Promise.all([first, second, competingWorker])
+      .then(([a, b]) => [a, b]);
+    expect(firstResult).toMatchObject({ success: true, report: { shiftId } });
+    expect(secondResult).toEqual(firstResult);
+    await vi.waitFor(() => {
+      expect(fetchMock.mock.calls.filter(([url]) => /\/close$/.test(String(url)))).toHaveLength(1);
+    });
+  });
+
+  test('a migrated v4 open shift closes the matching server shift instead of replaying its local id', async () => {
+    const persistence = new MemoryDbPersistence();
+    const legacy = await initAndroidDb({
+      locateFile: NODE_LOCATE_FILE,
+      persistence: new MemoryDbPersistence(),
+    });
+    const raw = legacy.getRawHandle();
+    raw.run('DROP TABLE shifts');
+    raw.run(`CREATE TABLE shifts (
+      id TEXT PRIMARY KEY,
+      staff_id TEXT,
+      staff_name TEXT,
+      opening_cash INTEGER DEFAULT 0,
+      closing_cash INTEGER,
+      opened_at TEXT DEFAULT (datetime('now')),
+      closed_at TEXT
+    )`);
+    raw.run(
+      `INSERT INTO shifts (id, staff_id, staff_name, opening_cash, opened_at)
+       VALUES ('legacy-local-shift', 'staff-1', 'Ala Nowak', 10000,
+               '2026-08-30T08:00:00.000Z')`,
+    );
+    raw.run('PRAGMA user_version = 4');
+    persistence.image = legacy.exportImage();
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(LOGIN_BODY));
+    const { transport } = build({
+      persistence,
+      seed: { salonId: 'salon-1', salonSlug: 'test-salon' },
+    });
+    await transport.loginWithEmail!('staff@salon.pl', 'pw');
+    fetchMock.mockClear();
+    fetchMock.mockImplementation(async (url: unknown) => {
+      const target = String(url);
+      if (target.endsWith('/pos/shifts/active')) {
+        return jsonResponse({ id: 'server-legacy-shift', staffId: 'staff-1' });
+      }
+      if (target.endsWith('/pos/shifts/server-legacy-shift/close')) {
+        return jsonResponse({ id: 'server-legacy-shift' });
+      }
+      return jsonResponse({});
+    });
+
+    await expect(transport.closeShift!({
+      shiftId: 'legacy-local-shift',
+      closingCash: 10000,
+    })).resolves.toMatchObject({ success: true });
+    await vi.waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([url]) =>
+          String(url).endsWith('/pos/shifts/server-legacy-shift/close'),
+        ),
+        JSON.stringify(fetchMock.mock.calls.map(([url]) => String(url))),
+      ).toBe(true);
+    });
+    expect(fetchMock.mock.calls.some(([url]) =>
+      String(url).endsWith('/pos/shifts/legacy-local-shift/close'),
+    )).toBe(false);
   });
 
   test('the staff picker is seeded with the logged-in cashier', async () => {

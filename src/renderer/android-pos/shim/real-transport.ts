@@ -525,11 +525,15 @@ export interface RealTransportEvents {
 export function createRealTransport(options: RealTransportOptions): ShimTransport & RealTransportEvents {
   const { configStore, tokenStore } = options;
   const baseUrl = resolveApiUrl(configStore);
+  const configuredMachineId = String(
+    (configStore.getRawConfig() as AgentConfig & { machineId?: string | null }).machineId ?? '',
+  ).trim() || undefined;
 
   const client = new PosApiClient({
     baseUrl,
     tokenProvider: undefined as unknown as TokenProvider, // assigned below
     salonSlug: configStore.getRawConfig().salonSlug ?? undefined,
+    machineId: configuredMachineId,
   });
 
   // Billiard (Bi-a) online-only transport (T4). Bound to the SAME client's
@@ -560,6 +564,28 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
   const nailTurnsUpdatedListeners = new Set<(data: { orderId?: string; checkedOut?: number }) => void>();
   let lastRefreshOutcome: RefreshOutcome = 'none';
   let orderSyncInFlight: Promise<void> | null = null;
+  type ShiftOpenResult = {
+    success: boolean;
+    shiftId?: string;
+    durabilityPending?: boolean;
+    error?: string;
+  };
+  type ShiftCloseResult = {
+    success: boolean;
+    report?: any;
+    durabilityPending?: boolean;
+    error?: string;
+  };
+  let shiftOpenInFlight: Promise<ShiftOpenResult> | null = null;
+  const shiftCloseInFlight = new Map<string, Promise<ShiftCloseResult>>();
+  const durabilityPendingShiftOpens = new Map<string, {
+    shiftId: string;
+    staffId: string;
+    staffName: string;
+    openingCash: number;
+  }>();
+  const durabilityPendingShiftCloses = new Map<string, any>();
+  const durabilityBlockedShiftIds = new Set<string>();
   // Single-flight refresh (Windows auth-refresh.ts:73-91): the backend ROTATES
   // the refresh token on every success, so two concurrent 401s must NOT each
   // POST the same token — the loser would 401 and clear the just-rotated pair,
@@ -651,6 +677,119 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
   const db = (): Promise<AndroidDatabase> => {
     if (!dbPromise) dbPromise = initAndroidDb(options.dbInit);
     return dbPromise;
+  };
+
+  let shiftSyncInFlight: Promise<void> | null = null;
+  let shiftSyncRerunRequested = false;
+  const syncPendingShifts = async (): Promise<void> => {
+    if (shiftSyncInFlight) {
+      // Do not lose a wake-up that arrives while the current pass is flushing
+      // its marker updates. The next pass observes shifts unblocked after their
+      // durability barrier without starting a second concurrent worker.
+      shiftSyncRerunRequested = true;
+      return shiftSyncInFlight;
+    }
+    shiftSyncInFlight = (async () => {
+      do {
+        shiftSyncRerunRequested = false;
+        const token = await tokenStore.getAccessToken();
+        if (!token) return;
+        const database = await db();
+        const shifts = database.all<any>(
+          `SELECT id, staff_id, opening_cash, closing_cash, closed_at, shift_sync_error,
+                  COALESCE(legacy_server_id_unknown, 0) AS legacy_server_id_unknown,
+                  COALESCE(open_synced, 0) AS open_synced,
+                  COALESCE(close_synced, 0) AS close_synced
+           FROM shifts
+           WHERE COALESCE(open_synced, 0) != 1
+              OR (closed_at IS NOT NULL AND COALESCE(close_synced, 0) != 1)
+           ORDER BY opened_at ASC`,
+        );
+        for (const shift of shifts) {
+          // A local mutation is visible to SQL.js before its IndexedDB image is
+          // durable. Background retry workers must not publish that mutation
+          // until the initiating operation's explicit flush has succeeded.
+          if (durabilityBlockedShiftIds.has(String(shift.id))) continue;
+          try {
+            if (shift.open_synced !== 1) {
+              await client.openPosShift({
+                shiftId: shift.id,
+                staffId: shift.staff_id,
+                openingCash: Number(shift.opening_cash || 0),
+              });
+              database.run(
+                'UPDATE shifts SET open_synced = 1, shift_sync_error = NULL WHERE id = ?',
+                [shift.id],
+              );
+              shift.open_synced = 1;
+            }
+            if (shift.closed_at && shift.close_synced !== 1) {
+              const legacyShift = Number(shift.legacy_server_id_unknown) === 1;
+              let backendShiftId = shift.id;
+              if (legacyShift) {
+                // Android v4 opened the backend shift without its local UUID,
+                // so replaying/closing by the local id would either create a
+                // duplicate or loop on 404. Resolve the one legacy/default
+                // server shift and require the same cashier before closing it.
+                const active = await client.getActivePosShift(null);
+                if (!active) {
+                  database.run(
+                    `UPDATE shifts
+                     SET close_synced = 1, shift_sync_error = NULL,
+                         legacy_server_id_unknown = 0
+                     WHERE id = ?`,
+                    [shift.id],
+                  );
+                  continue;
+                }
+                if (
+                  active.id !== shift.id &&
+                  (!active.staffId || !shift.staff_id || active.staffId !== shift.staff_id)
+                ) {
+                  throw new Error('Legacy server shift belongs to a different cashier');
+                }
+                backendShiftId = active.id;
+              }
+              await client.closePosShift(backendShiftId, {
+                closingCash: Number(shift.closing_cash || 0),
+              });
+              database.run(
+                `UPDATE shifts
+                 SET close_synced = 1, shift_sync_error = NULL,
+                     legacy_server_id_unknown = 0
+                 WHERE id = ?`,
+                [shift.id],
+              );
+            }
+          } catch (error: any) {
+            const legacyShift = Number(shift.legacy_server_id_unknown) === 1;
+            const rawMessage = String(error?.message || error);
+            const message = (legacyShift
+              ? `LEGACY_SHIFT_NOT_REPLAYED: ${rawMessage}`
+              : rawMessage
+            ).substring(0, 500);
+            // A stable client UUID makes an already-closed server shift an
+            // idempotent success after a lost response or app restart.
+            if (shift.closed_at && /already closed/i.test(message)) {
+              database.run(
+                'UPDATE shifts SET open_synced = 1, close_synced = 1, shift_sync_error = NULL WHERE id = ?',
+                [shift.id],
+              );
+            } else {
+              database.run(
+                'UPDATE shifts SET shift_sync_error = ? WHERE id = ?',
+                [message, shift.id],
+              );
+            }
+          }
+        }
+        await database.flush().catch(() => {
+          // Remote calls are idempotent by local shift UUID; retaining a pending
+          // marker only causes a safe retry if this metadata flush fails.
+        });
+      } while (shiftSyncRerunRequested);
+    })().finally(() => { shiftSyncInFlight = null; });
+    return shiftSyncInFlight;
   };
 
   // ── Remote receipt-print coordinator (E1a) — receipt COPY over the staff-JWT
@@ -1026,7 +1165,17 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         // instead of throwing a PK violation — otherwise the renderer would
         // re-ring under a new id and double-charge the customer.
         if (normalizedOrder.id && orderRepo.getById(normalizedOrder.id)) {
-          return { success: true, id: normalizedOrder.id, duplicate: true } as any;
+          try {
+            await database.flush();
+            return { success: true, id: normalizedOrder.id, duplicate: true } as any;
+          } catch (error: any) {
+            return {
+              success: false,
+              id: normalizedOrder.id,
+              durabilityPending: true,
+              error: error?.message || String(error),
+            } as any;
+          }
         }
 
         // Tender validation (E-PARITY-2). The trusted Sunmi terminal accepts the
@@ -1106,7 +1255,16 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         }
 
         // Paid orders must survive a crash — flush immediately (order-repo.ts:249-250).
-        await database.flush().catch(() => { /* debounced flush still pending */ });
+        try {
+          await database.flush();
+        } catch (error: any) {
+          return {
+            success: false,
+            id,
+            durabilityPending: true,
+            error: error?.message || String(error),
+          } as any;
+        }
         // E2a §2.D: salon sales best-effort close each technician's turn on the
         // nail-turn board (mode:'salon' only). Fire-and-forget + swallowed — it
         // no-ops when the board is absent, so it can never break the sale.
@@ -1124,6 +1282,7 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
       orderSyncInFlight = (async () => {
         const token = await tokenStore.getAccessToken();
         if (!token) return;
+        await syncPendingShifts();
         const database = await db();
         const orderRepo = createOrderRepo(database);
         orderRepo.recoverStrandedSyncing();
@@ -1418,25 +1577,105 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
 
     // ── Shifts (S9 — local-first port of shift-controller.ts:75-170 +
     //    pos.module.ts:4650-4666) ────────────────────────────────────────────
-    async openShift(data: { staffId: string; staffName: string; openingCash: number }): Promise<{ success: boolean; shiftId?: string; error?: string }> {
-      try {
+    async openShift(data: { staffId: string; staffName: string; openingCash: number }): Promise<ShiftOpenResult> {
+      if (shiftOpenInFlight) return shiftOpenInFlight;
+      const operation = (async (): Promise<ShiftOpenResult> => {
+        try {
         const database = await db();
         const orderRepo = createOrderRepo(database);
+        const pending = durabilityPendingShiftOpens.values().next().value as {
+          shiftId: string;
+          staffId: string;
+          staffName: string;
+          openingCash: number;
+        } | undefined;
+        if (pending) {
+          if (
+            pending.staffId !== data.staffId
+            || pending.staffName !== data.staffName
+            || pending.openingCash !== data.openingCash
+          ) {
+            return {
+              success: false,
+              shiftId: pending.shiftId,
+              durabilityPending: true,
+              error: 'A previous shift open is still waiting to be saved',
+            };
+          }
+          try {
+            await database.flush();
+          } catch (error: any) {
+            return {
+              success: false,
+              shiftId: pending.shiftId,
+              durabilityPending: true,
+              error: error?.message || String(error),
+            };
+          }
+          durabilityBlockedShiftIds.delete(pending.shiftId);
+          durabilityPendingShiftOpens.delete(pending.shiftId);
+          void syncPendingShifts();
+          return { success: true, shiftId: pending.shiftId };
+        }
         const shiftId = (globalThis.crypto?.randomUUID?.() ?? `shift-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-        orderRepo.openShift(shiftId, data.staffId, data.staffName, data.openingCash);
-        await database.flush().catch(() => { /* debounced flush still pending */ });
-        // Async backend sync, non-blocking (shift-controller.ts:88).
-        void client.openPosShift({ staffId: data.staffId, openingCash: data.openingCash })
-          .catch(() => { /* backend outage never blocks the local shift */ });
+        durabilityBlockedShiftIds.add(shiftId);
+        try {
+          orderRepo.openShift(shiftId, data.staffId, data.staffName, data.openingCash);
+        } catch (error) {
+          durabilityBlockedShiftIds.delete(shiftId);
+          throw error;
+        }
+        try {
+          await database.flush();
+        } catch (error: any) {
+          durabilityPendingShiftOpens.set(shiftId, { shiftId, ...data });
+          return {
+            success: false,
+            shiftId,
+            durabilityPending: true,
+            error: error?.message || String(error),
+          };
+        }
+        durabilityBlockedShiftIds.delete(shiftId);
+        // Durable retry ledger mirrors the Windows offline-first shift queue.
+        void syncPendingShifts();
         return { success: true, shiftId };
-      } catch (e: any) {
-        return { success: false, error: e?.message || String(e) };
+        } catch (e: any) {
+          return { success: false, error: e?.message || String(e) };
+        }
+      })();
+      shiftOpenInFlight = operation;
+      try {
+        return await operation;
+      } finally {
+        if (shiftOpenInFlight === operation) shiftOpenInFlight = null;
       }
     },
-    async closeShift(data: { shiftId: string; closingCash: number; fiscalOnly?: boolean }): Promise<{ success: boolean; report?: any; error?: string }> {
-      try {
+    async closeShift(data: { shiftId: string; closingCash: number; fiscalOnly?: boolean }): Promise<ShiftCloseResult> {
+      const existing = shiftCloseInFlight.get(data.shiftId);
+      if (existing) return existing;
+      const operation = (async (): Promise<ShiftCloseResult> => {
+        try {
         const database = await db();
         const orderRepo = createOrderRepo(database);
+        const pendingReport = durabilityPendingShiftCloses.get(data.shiftId);
+        if (pendingReport) {
+          durabilityBlockedShiftIds.add(data.shiftId);
+          try {
+            await database.flush();
+          } catch (error: any) {
+            return {
+              success: false,
+              report: pendingReport,
+              durabilityPending: true,
+              error: error?.message || String(error),
+            };
+          }
+          durabilityBlockedShiftIds.delete(data.shiftId);
+          durabilityPendingShiftCloses.delete(data.shiftId);
+          void syncPendingShifts();
+          return { success: true, report: pendingReport };
+        }
         // Ghost shift → clear gracefully (pos.module.ts:4663-4676).
         if (!orderRepo.getOpenShiftById(data.shiftId)) {
           void client.closePosShift(data.shiftId, { closingCash: data.closingCash })
@@ -1446,14 +1685,40 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         // Pre-close order drain, never blocking (pos.module.ts:4680-4700 —
         // Windows races a 2s timeout; the Android drain is awaited best-effort).
         await (transport.syncOrders?.() ?? Promise.resolve()).catch(() => { /* offline close is fine */ });
-        const report = orderRepo.closeShift(data.shiftId, data.closingCash);
-        await database.flush().catch(() => { /* debounced flush still pending */ });
-        void client.closePosShift(data.shiftId, { closingCash: data.closingCash })
-          .catch(() => { /* backend outage never blocks the local Z-report */ });
+        durabilityBlockedShiftIds.add(data.shiftId);
+        let report: any;
+        try {
+          report = orderRepo.closeShift(data.shiftId, data.closingCash);
+        } catch (error) {
+          durabilityBlockedShiftIds.delete(data.shiftId);
+          throw error;
+        }
+        try {
+          await database.flush();
+        } catch (error: any) {
+          durabilityPendingShiftCloses.set(data.shiftId, report);
+          return {
+            success: false,
+            report,
+            durabilityPending: true,
+            error: error?.message || String(error),
+          };
+        }
+        durabilityBlockedShiftIds.delete(data.shiftId);
+        void syncPendingShifts();
         return { success: true, report };
-      } catch (e: any) {
-        if (isShiftAlreadyClosedError(e)) return { success: true, report: null };
-        return { success: false, error: e?.message || String(e) };
+        } catch (e: any) {
+          if (isShiftAlreadyClosedError(e)) return { success: true, report: null };
+          return { success: false, error: e?.message || String(e) };
+        }
+      })();
+      shiftCloseInFlight.set(data.shiftId, operation);
+      try {
+        return await operation;
+      } finally {
+        if (shiftCloseInFlight.get(data.shiftId) === operation) {
+          shiftCloseInFlight.delete(data.shiftId);
+        }
       }
     },
     async getStaff(): Promise<any[]> {

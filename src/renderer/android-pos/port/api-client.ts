@@ -952,7 +952,7 @@ export class PosApiClient {
    * present — Windows falls back to `getConfigValue('machineId')`.
    */
   async openPosShift(
-    data: { staffId: string; openingCash: number; machineId?: string | null },
+    data: { shiftId?: string; staffId: string; openingCash: number; machineId?: string | null },
   ): Promise<{ shiftId: string }> {
     const token = await this.requireToken('openPosShift');
     const url = `${this.baseUrl}/api/v1/pos/shifts/open`;
@@ -1001,6 +1001,23 @@ export class PosApiClient {
     }
 
     return response.json();
+  }
+
+  /** Resolve the server-owned legacy shift before closing an Android v4 row. */
+  async getActivePosShift(machineId?: string | null): Promise<any | null> {
+    const token = await this.requireToken('getActivePosShift');
+    const query = String(machineId ?? '').trim();
+    const suffix = query ? `?machineId=${encodeURIComponent(query)}` : '';
+    const response = await this.fetchWithTimeout(
+      `${this.baseUrl}/api/v1/pos/shifts/active${suffix}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.message || `HTTP ${response.status}`);
+    }
+    const body = await response.json();
+    return body?.active === false ? null : body;
   }
 
   // ════════════════════════════════════════════════════════════════════════

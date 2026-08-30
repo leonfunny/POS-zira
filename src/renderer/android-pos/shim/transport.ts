@@ -263,7 +263,7 @@ export interface ShimTransport {
   syncOrders?(): Promise<void>;
 
   /** Shift open/close — POST /api/v1/pos/shifts/* (S9). */
-  openShift?(data: { staffId: string; staffName: string; openingCash: number }): Promise<{ success: boolean; shiftId?: string; error?: string }>;
+  openShift?(data: { staffId: string; staffName: string; openingCash: number }): Promise<{ success: boolean; shiftId?: string; durabilityPending?: boolean; error?: string }>;
   closeShift?(data: { shiftId: string; closingCash: number; fiscalOnly?: boolean }): Promise<{ success: boolean; report?: any; error?: string }>;
   /** Active-shift lookup for boot session recovery (S9). Returns the open local
    *  shift so the shell can re-dispatch session/open after a restart. */

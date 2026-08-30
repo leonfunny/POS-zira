@@ -55,6 +55,7 @@ const INSECURE_PREFIX = 'zira.dev-insecure.';
 interface SecureKVPlugin {
   get(opts: { key: string }): Promise<{ value: string | null }>;
   set(opts: { key: string; value: string }): Promise<void>;
+  setTokens(opts: { accessToken: string; refreshToken: string | null }): Promise<void>;
   remove(opts: { key: string }): Promise<void>;
   clear(): Promise<void>;
 }
@@ -153,11 +154,24 @@ export class TokenStore {
    * (a login that returns no refresh token must not keep the previous one).
    */
   async setTokens(accessToken: string, refreshToken?: string | null): Promise<void> {
-    await this.write(ACCESS_TOKEN_KEY, accessToken);
+    const plugin = nativeSecureKv();
+    if (plugin) {
+      if (typeof plugin.setTokens !== 'function') {
+        throw new SecureTokenStorageUnavailableError();
+      }
+      await plugin.setTokens({
+        accessToken,
+        refreshToken: refreshToken || null,
+      });
+      return;
+    }
+
+    if (!this.allowInsecureFallback) throw new SecureTokenStorageUnavailableError();
+    this.storage.setItem(INSECURE_PREFIX + ACCESS_TOKEN_KEY, accessToken);
     if (refreshToken) {
-      await this.write(REFRESH_TOKEN_KEY, refreshToken);
+      this.storage.setItem(INSECURE_PREFIX + REFRESH_TOKEN_KEY, refreshToken);
     } else {
-      await this.removeKey(REFRESH_TOKEN_KEY);
+      this.storage.removeItem(INSECURE_PREFIX + REFRESH_TOKEN_KEY);
     }
   }
 
@@ -183,13 +197,10 @@ export class TokenStore {
   async clear(): Promise<void> {
     const plugin = nativeSecureKv();
     if (plugin) {
-      try {
-        await plugin.clear();
-        return;
-      } catch {
-        // Fall through to a best-effort local wipe.
-      }
+      await plugin.clear();
+      return;
     }
+    if (!this.allowInsecureFallback) throw new SecureTokenStorageUnavailableError();
     this.storage.removeItem(INSECURE_PREFIX + ACCESS_TOKEN_KEY);
     this.storage.removeItem(INSECURE_PREFIX + REFRESH_TOKEN_KEY);
     this.storage.removeItem(INSECURE_PREFIX + PRINT_AGENT_KEY);
@@ -223,13 +234,10 @@ export class TokenStore {
   private async removeKey(key: string): Promise<void> {
     const plugin = nativeSecureKv();
     if (plugin) {
-      try {
-        await plugin.remove({ key });
-        return;
-      } catch {
-        // Best-effort; a stale refresh token is not a security cliff.
-      }
+      await plugin.remove({ key });
+      return;
     }
+    if (!this.allowInsecureFallback) throw new SecureTokenStorageUnavailableError();
     this.storage.removeItem(INSECURE_PREFIX + key);
   }
 }

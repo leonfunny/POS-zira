@@ -258,4 +258,83 @@ describe('POS auth-boundary shift recovery', () => {
     expect(verifier).not.toContain('UPDATE shifts SET backend_id');
     expect(source).not.toContain('canReconcileActiveShift(');
   });
+
+  it('crosses the disk durability barrier before close sync, session clear, or Z-report printing', () => {
+    const source = readFileSync(
+      new URL('../src/main/modules/pos.module.ts', import.meta.url),
+      'utf8',
+    );
+    const finalize = source.slice(
+      source.indexOf('private async finalizeDurableShiftClose'),
+      source.indexOf('private capturePosAuthContext'),
+    );
+    const closeHandler = source.slice(
+      source.indexOf("ipcMain.handle('pos:shift:close'"),
+      source.indexOf("ipcMain.handle(\n      'self-checkout:help-request'"),
+    );
+
+    const barrier = finalize.indexOf('await database.saveCoalesced()');
+    expect(barrier).toBeGreaterThan(-1);
+    expect(barrier).toBeLessThan(finalize.indexOf('syncDurableShiftClose'));
+    expect(barrier).toBeLessThan(finalize.indexOf("type: 'session/close'"));
+    expect(barrier).toBeLessThan(finalize.indexOf('printZReport(report)'));
+    expect(finalize).toContain('durabilityPendingShiftCloses.set');
+    expect(closeHandler).toContain('deferSyncUntilDurable: true');
+    expect(closeHandler).toContain('return this.finalizeDurableShiftClose(report, true)');
+  });
+
+  it('coalesces concurrent Windows close requests for the same shift', () => {
+    const source = readFileSync(
+      new URL('../src/main/modules/pos.module.ts', import.meta.url),
+      'utf8',
+    );
+    const closeHandler = source.slice(
+      source.indexOf("ipcMain.handle('pos:shift:close'"),
+      source.indexOf("ipcMain.handle(\n      'self-checkout:help-request'"),
+    );
+
+    expect(source).toContain('private shiftCloseInFlight = new Map');
+    expect(closeHandler).toContain('this.shiftCloseInFlight.get(data.shiftId)');
+    expect(closeHandler).toContain('this.shiftCloseInFlight.set(data.shiftId, operation)');
+    expect(closeHandler).toContain('this.shiftCloseInFlight.delete(data.shiftId)');
+  });
+
+  it('makes a new shift durable before backend sync, billiard open, or session activation', () => {
+    const source = readFileSync(
+      new URL('../src/main/modules/pos.module.ts', import.meta.url),
+      'utf8',
+    );
+    const recovery = source.slice(
+      source.indexOf('private async openOrRecoverShift'),
+      source.indexOf('private allowCustomerDisplayIpc'),
+    );
+    const finalize = source.slice(
+      source.indexOf('private async finalizeDurableShiftOpen'),
+      source.indexOf('private capturePosAuthContext'),
+    );
+
+    const openCall = recovery.indexOf('this.shiftController.openShift');
+    const pendingLookup = recovery.indexOf('this.durabilityPendingShiftOpens.values()');
+    const localRecovery = recovery.indexOf('recoverOpenShiftFromLocal(database, this.posStore)');
+    const barrier = finalize.indexOf('await database.saveCoalesced()');
+    const backendSync = finalize.indexOf('syncDurableShiftOpen', barrier);
+    const billiardOpen = finalize.indexOf('this.billiardShiftLink?.open', barrier);
+    const sessionOpen = finalize.indexOf("type: 'session/open'", barrier);
+
+    expect(openCall).toBeGreaterThan(-1);
+    expect(pendingLookup).toBeGreaterThan(-1);
+    expect(pendingLookup).toBeLessThan(localRecovery);
+    expect(recovery.slice(pendingLookup, localRecovery)).toContain(
+      'return this.finalizeDurableShiftOpen(durabilityPending)',
+    );
+    expect(recovery.slice(openCall)).toContain('deferSyncUntilDurable: true');
+    expect(recovery.slice(openCall)).toContain('return this.finalizeDurableShiftOpen');
+    expect(barrier).toBeGreaterThan(-1);
+    expect(backendSync).toBeGreaterThan(barrier);
+    expect(billiardOpen).toBeGreaterThan(barrier);
+    expect(sessionOpen).toBeGreaterThan(barrier);
+    const durabilityDecision = finalize.slice(barrier, backendSync);
+    expect(durabilityDecision).toMatch(/if\s*\(\s*!\w+\.success\s*\)/);
+    expect(durabilityDecision).toContain('durabilityPending: true');
+  });
 });

@@ -32,6 +32,7 @@ import org.json.JSONObject;
  * Contract (called from src/renderer/android-pos/shim/token-store.ts):
  *   get({key})        -> {value: string|null}   (null when absent)
  *   set({key,value})  -> {}                       (both strings required)
+ *   setTokens({accessToken,refreshToken}) -> {}   (atomic token-pair commit)
  *   remove({key})     -> {}
  *   clear()           -> {}                       (wipes every key in the file)
  *
@@ -42,9 +43,9 @@ import org.json.JSONObject;
  *
  * Fail-closed policy: a read that cannot open the encrypted store resolves with
  * `{value: null}` rather than surfacing a stored secret through an error path
- * or crashing the cashier. Writes/removes that cannot open the store reject so
- * the caller can fall back; a token that cannot be stored securely is never
- * silently dropped to plaintext here.
+ * or crashing the cashier. Writes/removes that cannot open the store reject;
+ * a token that cannot be stored securely is never silently dropped to
+ * plaintext here.
  */
 @CapacitorPlugin(name = "SecureKV")
 public class SecureKVPlugin extends Plugin {
@@ -119,10 +120,45 @@ public class SecureKVPlugin extends Plugin {
             return;
         }
         try {
-            prefs.edit().putString(key, value).apply();
+            if (!prefs.edit().putString(key, value).commit()) {
+                call.reject("secure-storage-write-failed");
+                return;
+            }
             call.resolve();
         } catch (Exception ex) {
             call.reject("secure-storage-write-failed", ex);
+        }
+    }
+
+    /** Atomically replace the rotated access/refresh pair in one disk commit. */
+    @PluginMethod
+    public void setTokens(PluginCall call) {
+        String accessToken = call.getString("accessToken");
+        String refreshToken = call.getString("refreshToken");
+        if (accessToken == null) {
+            call.reject("accessToken is required");
+            return;
+        }
+        SharedPreferences prefs = encryptedPrefs();
+        if (prefs == null) {
+            call.reject("secure-storage-unavailable");
+            return;
+        }
+        try {
+            SharedPreferences.Editor editor = prefs.edit()
+                    .putString("access_token", accessToken);
+            if (refreshToken == null || refreshToken.isEmpty()) {
+                editor.remove("refresh_token");
+            } else {
+                editor.putString("refresh_token", refreshToken);
+            }
+            if (!editor.commit()) {
+                call.reject("secure-storage-token-commit-failed");
+                return;
+            }
+            call.resolve();
+        } catch (Exception ex) {
+            call.reject("secure-storage-token-commit-failed", ex);
         }
     }
 
@@ -135,12 +171,14 @@ public class SecureKVPlugin extends Plugin {
         }
         SharedPreferences prefs = encryptedPrefs();
         if (prefs == null) {
-            // Nothing to remove when the store never opened; treat as success.
-            call.resolve();
+            call.reject("secure-storage-unavailable");
             return;
         }
         try {
-            prefs.edit().remove(key).apply();
+            if (!prefs.edit().remove(key).commit()) {
+                call.reject("secure-storage-remove-failed");
+                return;
+            }
             call.resolve();
         } catch (Exception ex) {
             call.reject("secure-storage-remove-failed", ex);
@@ -151,11 +189,14 @@ public class SecureKVPlugin extends Plugin {
     public void clear(PluginCall call) {
         SharedPreferences prefs = encryptedPrefs();
         if (prefs == null) {
-            call.resolve();
+            call.reject("secure-storage-unavailable");
             return;
         }
         try {
-            prefs.edit().clear().apply();
+            if (!prefs.edit().clear().commit()) {
+                call.reject("secure-storage-clear-failed");
+                return;
+            }
             call.resolve();
         } catch (Exception ex) {
             call.reject("secure-storage-clear-failed", ex);

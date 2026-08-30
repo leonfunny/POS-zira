@@ -101,6 +101,29 @@ describe('posEventEmitter.emitOrderFinalized', () => {
     expect(pays[0].payload.changeGivenMinor).toBe(1300);
   });
 
+  it('captures sale plus tip for a single cash tender while preserving cash received and change', () => {
+    // 90 zł sale + 5 zł tip; cashier receives 100 zł and returns 5 zł.
+    posEventEmitter.emitOrderFinalized(
+      {
+        ...baseOrder,
+        subtotal: 9000,
+        total: 9000,
+        tip: 500,
+        payment_amount: 10000,
+        change_amount: 500,
+      },
+      [{ ...items[0], price: 9000, total: 9000 }] as any,
+    );
+
+    const sale = calls('SaleCompleted')[0];
+    const pays = calls('PaymentCaptured');
+    expect(sale.payload.totalGrossMinor).toBe(9000);
+    expect(pays).toHaveLength(1);
+    expect(pays[0].payload.amountMinor).toBe(9500);
+    expect(pays[0].payload.cashReceivedMinor).toBe(10000);
+    expect(pays[0].payload.changeGivenMinor).toBe(500);
+  });
+
   it('emits one PaymentCaptured per tender for a split payment', () => {
     posEventEmitter.emitOrderFinalized(
       { ...baseOrder, payment_method: 'SPLIT', payment_tenders: JSON.stringify([
@@ -118,6 +141,30 @@ describe('posEventEmitter.emitOrderFinalized', () => {
     // distinct idempotent keys per tender
     expect(pays[0].dedupeKey).toBe('PaymentCaptured:order-1:0');
     expect(pays[1].dedupeKey).toBe('PaymentCaptured:order-1:1');
+  });
+
+  it('keeps tip out of sale gross while split payments capture sale plus tip', () => {
+    posEventEmitter.emitOrderFinalized(
+      {
+        ...baseOrder,
+        subtotal: 9000,
+        total: 9000,
+        tip: 500,
+        payment_method: 'SPLIT',
+        payment_tenders: JSON.stringify([
+          { method: 'CASH', amount: 6000 },
+          { method: 'CARD', amount: 3500 },
+        ]),
+      },
+      [{ ...items[0], price: 9000, total: 9000 }] as any,
+    );
+
+    const sale = calls('SaleCompleted')[0];
+    const pays = calls('PaymentCaptured');
+    expect(sale.payload.totalGrossMinor).toBe(9000);
+    expect(pays.map((payment) => payment.payload.method)).toEqual(['cash', 'card']);
+    expect(pays.map((payment) => payment.payload.amountMinor)).toEqual([6000, 3500]);
+    expect(pays.reduce((sum, payment) => sum + Number(payment.payload.amountMinor), 0)).toBe(9500);
   });
 
   it('builds a SaleCompleted tax summary from item vat rates (minor units)', () => {

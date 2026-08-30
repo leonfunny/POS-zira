@@ -57,7 +57,7 @@ import {
 } from '../pos/refund-backend-payload';
 import { sanitizeBilliardRefundRequest } from '../pos/billiard-refund-policy';
 import { assertPosPaymentAccounting, assertProtectedPosPaymentMethods } from '../pos/payment-accounting';
-import { ShiftController } from '../pos/shift-controller';
+import { ShiftController, type ShiftReport } from '../pos/shift-controller';
 import { isShiftAlreadyClosedError, shouldCloseActiveShiftSession } from '../../shared/shift-close';
 import { toQuickAddVariantRow } from '../pos/quick-add-product';
 import {
@@ -273,6 +273,7 @@ import {
 } from '../../shared/billiard-pos-handoff';
 import {
   assertLocalOpenShiftMatchesSession,
+  getSingleLocalOpenShift,
   getVerifiedServerShiftMismatch,
   recoverOpenShiftFromLocal,
 } from '../pos/open-shift-recovery';
@@ -766,6 +767,14 @@ export class PosModule extends BaseModule {
   private shiftVerificationGeneration = 0;
   private shiftVerificationInFlight: Promise<void> | null = null;
   private shiftOpenInFlight: Promise<{ success: boolean; shiftId?: string; recovered?: boolean; error?: string }> | null = null;
+  private shiftCloseInFlight = new Map<string, Promise<any>>();
+  private durabilityPendingShiftOpens = new Map<string, {
+    shiftId: string;
+    staffId: string;
+    staffName: string;
+    openingCash: number;
+  }>();
+  private durabilityPendingShiftCloses = new Map<string, ShiftReport>();
   private ordinaryPaymentPreflights = new Map<string, {
     orderId: string;
     shiftId: string;
@@ -775,6 +784,92 @@ export class PosModule extends BaseModule {
 
   constructor(private container: ServiceContainer) {
     super();
+  }
+
+  private async finalizeDurableShiftClose(
+    report: ShiftReport,
+    closeSession: boolean,
+  ): Promise<{
+    success: boolean;
+    report: ShiftReport;
+    durabilityPending?: boolean;
+    error?: string;
+  }> {
+    const flush = await database.saveCoalesced();
+    if (!flush.success) {
+      this.durabilityPendingShiftCloses.set(report.shiftId, report);
+      return {
+        success: false,
+        report,
+        durabilityPending: true,
+        error: `Shift is closed in memory but not yet saved: ${flush.error || 'database durability barrier failed'}`,
+      };
+    }
+
+    // Printing is part of a successful close from the cashier's perspective.
+    // Keep the report retryable and avoid server/session side effects if it
+    // throws after the local close has become durable.
+    this.durabilityPendingShiftCloses.set(report.shiftId, report);
+    try {
+      await this.shiftController?.printZReport(report);
+    } catch (error: any) {
+      return {
+        success: false,
+        report,
+        error: `Shift is saved but the Z-report did not print: ${error?.message || String(error)}`,
+      };
+    }
+    this.shiftController?.syncDurableShiftClose(report.shiftId, report.closingCash);
+    try {
+      this.billiardShiftLink?.close(report.closingCash, report.shiftId);
+    } catch {
+      // Billiard sync is already best-effort and never changes local durability.
+    }
+    if (closeSession) {
+      this.closeSessionIfShiftMatches([report.shiftId]);
+      this.invalidateShiftVerification();
+      this.setServerShiftMismatch(null);
+    }
+    this.durabilityPendingShiftCloses.delete(report.shiftId);
+    return { success: true, report };
+  }
+
+  private async finalizeDurableShiftOpen(data: {
+    shiftId: string;
+    staffId: string;
+    staffName: string;
+    openingCash: number;
+  }): Promise<{
+    success: boolean;
+    shiftId?: string;
+    durabilityPending?: boolean;
+    error?: string;
+  }> {
+    const flush = await database.saveCoalesced();
+    if (!flush.success) {
+      this.durabilityPendingShiftOpens.set(data.shiftId, data);
+      return {
+        success: false,
+        shiftId: data.shiftId,
+        durabilityPending: true,
+        error: `Shift is open in memory but not yet saved: ${flush.error || 'database durability barrier failed'}`,
+      };
+    }
+
+    this.shiftController?.syncDurableShiftOpen(
+      data.shiftId,
+      data.staffId,
+      data.openingCash,
+    );
+    this.billiardShiftLink?.open(data.openingCash, data.shiftId);
+    this.posStore?.dispatch({
+      type: 'session/open',
+      payload: { shiftId: data.shiftId, staffId: data.staffId, staffName: data.staffName },
+    });
+    this.invalidateShiftVerification();
+    this.setServerShiftMismatch(null);
+    this.durabilityPendingShiftOpens.delete(data.shiftId);
+    return { success: true, shiftId: data.shiftId };
   }
 
   private capturePosAuthContext(scope = currentPosSnapshotScope(getConfig())): PosAuthContext {
@@ -1414,9 +1509,28 @@ export class PosModule extends BaseModule {
     staffId: string;
     staffName: string;
     openingCash: number;
-  }): Promise<{ success: boolean; shiftId?: string; recovered?: boolean; error?: string }> {
+  }): Promise<{ success: boolean; shiftId?: string; recovered?: boolean; durabilityPending?: boolean; error?: string }> {
     if (!this.shiftController) {
       return { success: false, error: 'Shift controller not initialized' };
+    }
+
+    const durabilityPending = this.durabilityPendingShiftOpens.values().next().value as {
+      shiftId: string;
+      staffId: string;
+      staffName: string;
+      openingCash: number;
+    } | undefined;
+    if (durabilityPending) {
+      const localPendingShift = getSingleLocalOpenShift(database);
+      if (!localPendingShift || localPendingShift.id !== durabilityPending.shiftId) {
+        return {
+          success: false,
+          shiftId: durabilityPending.shiftId,
+          durabilityPending: true,
+          error: 'The pending shift is no longer present in the local journal.',
+        };
+      }
+      return this.finalizeDurableShiftOpen(durabilityPending);
     }
 
     const localShift = recoverOpenShiftFromLocal(database, this.posStore);
@@ -1463,15 +1577,13 @@ export class PosModule extends BaseModule {
       }
     }
 
-    const shiftId = this.shiftController.openShift(data.staffId, data.staffName, data.openingCash);
-    this.billiardShiftLink?.open(data.openingCash, shiftId);
-    this.posStore?.dispatch({
-      type: 'session/open',
-      payload: { shiftId, staffId: data.staffId, staffName: data.staffName },
-    });
-    this.invalidateShiftVerification();
-    this.setServerShiftMismatch(null);
-    return { success: true, shiftId };
+    const shiftId = this.shiftController.openShift(
+      data.staffId,
+      data.staffName,
+      data.openingCash,
+      { deferSyncUntilDurable: true },
+    );
+    return this.finalizeDurableShiftOpen({ shiftId, ...data });
   }
 
   private allowCustomerDisplayIpc(
@@ -8445,8 +8557,15 @@ export class PosModule extends BaseModule {
     });
 
     ipcMain.handle('pos:shift:close', async (_e, data: { shiftId: string; closingCash: number; fiscalOnly?: boolean }) => {
-      try {
+      const existing = this.shiftCloseInFlight.get(data.shiftId);
+      if (existing) return existing;
+      const operation = (async () => {
+        try {
         if (!this.shiftController) return { success: false, error: 'Shift controller not initialized' };
+        const durabilityPending = this.durabilityPendingShiftCloses.get(data.shiftId);
+        if (durabilityPending) {
+          return this.finalizeDurableShiftClose(durabilityPending, true);
+        }
         if (
           this.posStore?.getState().checkoutDraft.billiard
           || this.posStore?.getState().checkoutDraft.restoredInterruption
@@ -8497,22 +8616,31 @@ export class PosModule extends BaseModule {
             logger.warn(`[PosModule] pre-close order sync still running after ${syncTimeoutMs}ms; closing shift locally`);
           }
         }
-        const report = this.shiftController.closeShift(data.shiftId, data.closingCash, Boolean(data.fiscalOnly));
-        billiardShiftLink.close(data.closingCash, data.shiftId);
-        this.closeSessionIfShiftMatches([data.shiftId]);
-        this.invalidateShiftVerification();
-        this.setServerShiftMismatch(null);
-        await this.shiftController.printZReport(report);
-        return { success: true, report };
-      } catch (e: any) {
-        if (isShiftAlreadyClosedError(e)) {
-          logger.info(`[PosModule] Shift ${data.shiftId.substring(0, 8)} was already closed by another close flow`);
-          this.closeSessionIfShiftMatches([data.shiftId]);
-          this.invalidateShiftVerification();
-          this.setServerShiftMismatch(null);
-          return { success: true, report: null };
+        const report = this.shiftController.closeShift(
+          data.shiftId,
+          data.closingCash,
+          Boolean(data.fiscalOnly),
+          { deferSyncUntilDurable: true },
+        );
+        return this.finalizeDurableShiftClose(report, true);
+        } catch (e: any) {
+          if (isShiftAlreadyClosedError(e)) {
+            logger.info(`[PosModule] Shift ${data.shiftId.substring(0, 8)} was already closed by another close flow`);
+            this.closeSessionIfShiftMatches([data.shiftId]);
+            this.invalidateShiftVerification();
+            this.setServerShiftMismatch(null);
+            return { success: true, report: null };
+          }
+          return { success: false, error: e.message };
         }
-        return { success: false, error: e.message };
+      })();
+      this.shiftCloseInFlight.set(data.shiftId, operation);
+      try {
+        return await operation;
+      } finally {
+        if (this.shiftCloseInFlight.get(data.shiftId) === operation) {
+          this.shiftCloseInFlight.delete(data.shiftId);
+        }
       }
     });
 
@@ -9275,6 +9403,16 @@ export class PosModule extends BaseModule {
       // 1. Auto-close only shifts belonging to the due business date. During
       // startup catch-up, a shift opened today must remain visible and open.
       let shiftsClosed = 0;
+      const closedShiftIds = new Set<string>();
+      for (const pendingReport of [...this.durabilityPendingShiftCloses.values()]) {
+        const finalized = await this.finalizeDurableShiftClose(
+          pendingReport,
+          false,
+        );
+        if (!finalized.success) throw new Error(finalized.error);
+        shiftsClosed += 1;
+        closedShiftIds.add(pendingReport.shiftId);
+      }
       const openShifts = database
         .all<{ id: string; opened_at: string }>(
           'SELECT id, opened_at FROM shifts WHERE closed_at IS NULL ORDER BY opened_at ASC',
@@ -9296,7 +9434,12 @@ export class PosModule extends BaseModule {
         for (const shift of openShifts) {
           let report;
           try {
-            report = this.shiftController.closeShift(shift.id, null, false);
+            report = this.shiftController.closeShift(
+              shift.id,
+              null,
+              false,
+              { deferSyncUntilDurable: true },
+            );
           } catch (error) {
             if (isShiftAlreadyClosedError(error)) {
               logger.info(`[EOD] shift ${shift.id} was closed concurrently; skipping duplicate Z-report`);
@@ -9304,11 +9447,14 @@ export class PosModule extends BaseModule {
             }
             throw error;
           }
-          try { this.billiardShiftLink?.close(report.closingCash, shift.id); } catch { /* best effort */ }
+          const finalized = await this.finalizeDurableShiftClose(report, false);
+          if (!finalized.success) throw new Error(finalized.error);
           shiftsClosed += 1;
-          await this.shiftController.printZReport(report);
+          closedShiftIds.add(shift.id);
         }
-        this.closeSessionIfShiftMatches(openShifts.map((shift) => shift.id));
+      }
+      if (shiftsClosed > 0) {
+        this.closeSessionIfShiftMatches(closedShiftIds);
         this.invalidateShiftVerification();
         this.setServerShiftMismatch(null);
       }

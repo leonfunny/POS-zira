@@ -79,6 +79,13 @@ export function canReconcileActiveShift(
 }
 
 export class ShiftController {
+  /**
+   * SQL.js mutations are visible in memory before the database image crosses
+   * its explicit save barrier. Keep reconnect workers away from deferred shift
+   * mutations until PosModule confirms that barrier succeeded.
+   */
+  private readonly durabilityBlockedShiftIds = new Set<string>();
+
   constructor(
     private getPrinter: (type: string) => PrinterDriver | null,
     private isOnline: () => boolean,
@@ -91,22 +98,38 @@ export class ShiftController {
   /**
    * Open a new shift
    */
-  openShift(staffId: string, staffName: string, openingCash: number): string {
+  openShift(
+    staffId: string,
+    staffName: string,
+    openingCash: number,
+    options: { deferSyncUntilDurable?: boolean } = {},
+  ): string {
     const shiftId = crypto.randomUUID();
 
     database.run(
       'INSERT INTO shifts (id, staff_id, staff_name, opening_cash) VALUES (?, ?, ?, ?)',
       [shiftId, staffId, staffName, openingCash],
     );
+    if (options.deferSyncUntilDurable) {
+      this.durabilityBlockedShiftIds.add(shiftId);
+    }
     database.markDirty();
 
     posEventEmitter.emitShiftOpened({ shiftId, staffId, staffName, openingCashMinor: openingCash });
 
-    // Async sync to backend (non-blocking)
-    this.syncShiftOpen(shiftId, staffId, openingCash);
+    // The live IPC flow defers this external side effect until the SQL.js
+    // image has crossed its explicit disk durability barrier.
+    if (!options.deferSyncUntilDurable) {
+      this.syncShiftOpen(shiftId, staffId, openingCash);
+    }
 
     logger.info(`[Shift] Opened shift ${shiftId} for ${staffName}, opening cash: ${openingCash}`);
     return shiftId;
+  }
+
+  syncDurableShiftOpen(shiftId: string, staffId: string, openingCash: number): void {
+    this.durabilityBlockedShiftIds.delete(shiftId);
+    this.syncShiftOpen(shiftId, staffId, openingCash);
   }
 
   /**
@@ -117,7 +140,12 @@ export class ShiftController {
    *   closing cash is then set to the expected cash (opening + cash sales −
    *   cash refunds) and the report is flagged `autoClosed`.
    */
-  closeShift(shiftId: string, closingCashInput: number | null, fiscalOnly = false): ShiftReport {
+  closeShift(
+    shiftId: string,
+    closingCashInput: number | null,
+    fiscalOnly = false,
+    options: { deferSyncUntilDurable?: boolean } = {},
+  ): ShiftReport {
     const autoClosed = closingCashInput === null;
     const shift = database.get<{
       id: string;
@@ -170,6 +198,9 @@ export class ShiftController {
     );
     const closed = database.get<{ count: number }>('SELECT changes() AS count')?.count ?? 0;
     if (closed !== 1) throw new ShiftAlreadyClosedError(shiftId);
+    if (options.deferSyncUntilDurable) {
+      this.durabilityBlockedShiftIds.add(shiftId);
+    }
     database.markDirty();
 
     const report: ShiftReport = {
@@ -196,14 +227,22 @@ export class ShiftController {
 
     posEventEmitter.emitShiftClosed(report);
 
-    // Async sync to backend (non-blocking)
-    this.syncShiftClose(shiftId, closingCash);
+    // The live IPC/EOD flows defer this external side effect until the SQL.js
+    // image has crossed their explicit disk durability barrier.
+    if (!options.deferSyncUntilDurable) {
+      void this.syncShiftClose(shiftId, closingCash);
+    }
 
     logger.info(
       `[Shift] Closed shift ${shiftId}${autoClosed ? ' (auto, end-of-day)' : ''}: ${salesOrders.length} sales orders, total ${totalSales}, diff ${difference}`,
     );
 
     return report;
+  }
+
+  syncDurableShiftClose(shiftId: string, closingCash: number): void {
+    this.durabilityBlockedShiftIds.delete(shiftId);
+    void this.syncShiftClose(shiftId, closingCash);
   }
 
   /**
@@ -240,6 +279,7 @@ export class ShiftController {
       logger.info(`[Shift] Z-report printed for shift ${report.shiftId}`);
     } catch (err) {
       logger.error(`[Shift] Z-report print failed: ${err}`);
+      throw err;
     }
   }
 
@@ -256,6 +296,7 @@ export class ShiftController {
       'SELECT id, staff_id, opening_cash, COALESCE(sync_attempts, 0) as sync_attempts FROM shifts WHERE synced = 0 AND backend_id IS NULL',
     );
     for (const shift of unsyncedOpen) {
+      if (this.durabilityBlockedShiftIds.has(shift.id)) continue;
       if (shift.sync_attempts >= SHIFT_SYNC_MAX_ATTEMPTS) {
         database.run("UPDATE shifts SET synced = -1, sync_error = 'Max retry exceeded' WHERE id = ?", [shift.id]);
         logger.warn(`[Shift] Shift open ${shift.id} shelved after ${shift.sync_attempts} failed attempts`);
@@ -297,6 +338,7 @@ export class ShiftController {
          AND COALESCE(close_synced, 0) = 0`,
     );
     for (const shift of unsyncedClose) {
+      if (this.durabilityBlockedShiftIds.has(shift.id)) continue;
       if (shift.close_sync_attempts >= SHIFT_SYNC_MAX_ATTEMPTS) {
         this.markShiftCloseExhausted(shift.id, shift.close_sync_attempts);
         continue;

@@ -7,6 +7,7 @@ import {
 } from '../database/repos/pos-event-outbox-repo';
 import type { OrderRow, OrderItemRow } from '../database/repos/order-repo';
 import type { ShiftReport } from '../pos/shift-controller';
+import { getOrderPaymentAllocations } from '../../shared/shift-accounting';
 
 const RELIABILITY: Record<PosEventType, PosEventReliabilityClass> = {
   SaleCompleted: 'important_business',
@@ -57,30 +58,6 @@ function settlement(method: string, occurredAt: string): Record<string, unknown>
     settledAt: instant ? occurredAt : null,
     providerFeeMinor: 0,
   };
-}
-
-interface Tender {
-  method: string;
-  amount: number;
-}
-
-function parseTenders(order: OrderRow): Tender[] {
-  if (order.payment_tenders) {
-    try {
-      const parsed = JSON.parse(order.payment_tenders) as Tender[];
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed.filter((t) => t && typeof t.amount === 'number');
-      }
-    } catch {
-      /* fall through to single-method */
-    }
-  }
-  // Captured amount for a single tender is the SALE total, not the cash tendered:
-  // payment_amount holds cash received (change_amount is returned separately), so
-  // using it would overstate revenue by the change on a cash sale.
-  const amount = order.total || order.payment_amount || 0;
-  if (!order.payment_method && amount <= 0) return [];
-  return [{ method: order.payment_method || 'OTHER', amount }];
 }
 
 function buildTaxSummary(items: OrderItemRow[]): Array<Record<string, number>> {
@@ -163,7 +140,9 @@ export const posEventEmitter = {
         },
       });
 
-      const tenders = parseTenders(order);
+      const tenders = getOrderPaymentAllocations(order).filter(
+        (tender) => tender.method && tender.amount > 0,
+      );
       tenders.forEach((tender, idx) => {
         const method = normalizeMethod(tender.method);
         posEventOutboxRepo.enqueue({
@@ -179,6 +158,8 @@ export const posEventEmitter = {
           occurredAt,
           payload: {
             paymentId: `${localOrderId}:tender:${idx}`,
+            tenderIndex: idx,
+            tenderCount: tenders.length,
             currency,
             amountMinor: tender.amount,
             method,
@@ -306,6 +287,7 @@ export const posEventEmitter = {
           cashDifferenceMinor: report.closingCash - expectedCashMinor,
           summary: {
             salesCount: report.totalOrders,
+            netSalesMinor: report.totalSales,
             grossSalesMinor: report.totalSales + report.totalRefunds + report.totalDiscounts,
             refundsMinor: report.totalRefunds,
             cashSalesMinor: report.cashTotal,
@@ -341,6 +323,7 @@ export const posEventEmitter = {
         occurredAt,
         payload: {
           fiscalEventId: `${input.orderId}:fiscal:${input.printJobId || status}`,
+          printJobId: input.printJobId ?? null,
           status,
           printerProtocol: input.printerProtocol ?? null,
           totalGrossMinor: input.grossTotalMinor ?? null,

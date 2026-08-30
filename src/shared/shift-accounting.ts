@@ -64,16 +64,31 @@ export function getOrderPaymentAllocations(order: ShiftAccountingOrder): ShiftPa
     try {
       const parsed = JSON.parse(order.payment_tenders) as unknown;
       if (Array.isArray(parsed) && parsed.length > 0) {
+        let malformed = false;
         const allocations = parsed
           .map((value) => {
             const row = value as { method?: unknown; amount?: unknown };
+            const method = String(row?.method ?? '').trim().toUpperCase();
+            const rawAmount = Number(row?.amount);
+            if (!method || !Number.isFinite(rawAmount) || rawAmount < 0) {
+              malformed = true;
+            }
             return {
-              method: String(row?.method ?? '').trim().toUpperCase(),
+              method,
               amount: money(row?.amount),
             };
           })
           .filter((row) => row.method && row.amount >= 0);
-        if (allocations.length > 0) return allocations;
+        const expected = money(order.total) + money(order.tip);
+        const allocated = allocations.reduce((sum, row) => sum + row.amount, 0);
+        if (
+          !malformed
+          && allocations.length === parsed.length
+          && allocations.length > 0
+          && allocated === expected
+        ) {
+          return allocations;
+        }
       }
     } catch {
       // Legacy malformed JSON falls through to the single-payment snapshot.

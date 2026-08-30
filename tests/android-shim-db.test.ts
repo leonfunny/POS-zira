@@ -148,7 +148,16 @@ describe('android shim catalog DB (S5)', () => {
 
       // user_version stamped at schema apply time.
       const version = db.getRawHandle().exec('PRAGMA user_version')[0].values[0][0];
-      expect(version).toBe(4); // v4 = orders.refund_* (E1b); v3 = track_inventory
+      expect(version).toBe(5); // v5 = durable shift sync; v4 = orders.refund_*
+      const shiftColumns = db
+        .all<{ name: string }>('PRAGMA table_info(shifts)')
+        .map((column) => column.name);
+      expect(shiftColumns).toEqual(expect.arrayContaining([
+        'open_synced',
+        'close_synced',
+        'shift_sync_error',
+        'legacy_server_id_unknown',
+      ]));
     });
 
     test('is idempotent — re-init over a persisted image keeps the schema', async () => {
@@ -164,6 +173,69 @@ describe('android shim catalog DB (S5)', () => {
       const tables = db2.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table'");
       expect(tables.filter((t) => t.name === 'product_variants')).toHaveLength(1);
       expect(createProductRepo(db2).getById('persisted')?.id).toBe('persisted');
+    });
+
+    test('v5 migration does not replay legacy shifts while new shifts remain pending', async () => {
+      const seedPersistence: AndroidDbPersistence = {
+        loadImage: async () => null,
+        saveImage: async () => {},
+        quarantineImage: async () => {},
+      };
+      const legacy = await initAndroidDb({
+        locateFile: NODE_LOCATE_FILE,
+        persistence: seedPersistence,
+      });
+      const raw = legacy.getRawHandle();
+      raw.run('DROP TABLE shifts');
+      raw.run(`CREATE TABLE shifts (
+        id TEXT PRIMARY KEY,
+        staff_id TEXT,
+        staff_name TEXT,
+        opening_cash INTEGER DEFAULT 0,
+        closing_cash INTEGER,
+        opened_at TEXT DEFAULT (datetime('now')),
+        closed_at TEXT
+      )`);
+      raw.run(
+        `INSERT INTO shifts (id, staff_id, staff_name, opening_cash, opened_at)
+         VALUES ('legacy-open', 'staff-1', 'Cashier', 10000, '2026-08-28T08:00:00.000Z')`,
+      );
+      raw.run(
+        `INSERT INTO shifts (id, staff_id, staff_name, opening_cash, closing_cash, opened_at, closed_at)
+         VALUES ('legacy-closed', 'staff-1', 'Cashier', 10000, 12000,
+                 '2026-08-27T08:00:00.000Z', '2026-08-27T16:00:00.000Z')`,
+      );
+      raw.run('PRAGMA user_version = 4');
+
+      const fake = createFakeIndexedDB();
+      fake.blobs.set('pos-db-image', legacy.exportImage());
+      setFakeIndexedDB(fake);
+      const upgraded = await initAndroidDb({ locateFile: NODE_LOCATE_FILE });
+
+      expect(upgraded.get<{ open_synced: number; close_synced: number; shift_sync_error: string; legacy_server_id_unknown: number }>(
+        `SELECT open_synced, close_synced, shift_sync_error,
+                legacy_server_id_unknown
+         FROM shifts WHERE id = ?`,
+        ['legacy-open'],
+      )).toEqual({
+        open_synced: 1,
+        close_synced: 0,
+        shift_sync_error: 'LEGACY_SHIFT_NOT_REPLAYED',
+        legacy_server_id_unknown: 1,
+      });
+      expect(upgraded.get<{ open_synced: number; close_synced: number }>(
+        'SELECT open_synced, close_synced FROM shifts WHERE id = ?',
+        ['legacy-closed'],
+      )).toEqual({ open_synced: 1, close_synced: 1 });
+
+      upgraded.run(
+        `INSERT INTO shifts (id, staff_id, staff_name, opening_cash)
+         VALUES ('new-shift', 'staff-2', 'New Cashier', 5000)`,
+      );
+      expect(upgraded.get<{ open_synced: number; close_synced: number }>(
+        'SELECT open_synced, close_synced FROM shifts WHERE id = ?',
+        ['new-shift'],
+      )).toEqual({ open_synced: 0, close_synced: 0 });
     });
   });
 
@@ -387,10 +459,12 @@ describe('android shim catalog DB (S5)', () => {
       expect(isValidSqliteHeader(new Uint8Array(8))).toBe(false); // too short
     });
 
-    test('IndexedDbPersistence no-ops gracefully when IndexedDB is absent', async () => {
+    test('IndexedDbPersistence fails writes closed when IndexedDB is absent', async () => {
       clearIndexedDB();
       const persistence: AndroidDbPersistence = new IndexedDbPersistence();
-      await expect(persistence.saveImage(new Uint8Array([1, 2, 3]))).resolves.toBeUndefined();
+      await expect(persistence.saveImage(new Uint8Array([1, 2, 3]))).rejects.toThrow(
+        'IndexedDB unavailable',
+      );
       await expect(persistence.loadImage()).resolves.toBeNull();
     });
   });

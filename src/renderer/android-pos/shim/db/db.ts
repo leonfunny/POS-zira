@@ -75,8 +75,8 @@ function getIndexedDB(): IDBFactory | undefined {
 /**
  * Default persistence: the live DB image as a single IndexedDB blob record,
  * with corrupt images preserved under `pos-db-image.corrupted-<ts>` keys.
- * Gracefully no-ops (load → null, save → noop) when IndexedDB is absent, so the
- * engine still boots in-memory in environments without it.
+ * Reads may boot empty when IndexedDB is absent, but writes fail closed: a paid
+ * order must never report success when its database image cannot be persisted.
  */
 export class IndexedDbPersistence implements AndroidDbPersistence {
   private open(): Promise<IDBDatabase> {
@@ -122,7 +122,7 @@ export class IndexedDbPersistence implements AndroidDbPersistence {
   }
 
   async saveImage(image: Uint8Array): Promise<void> {
-    if (!getIndexedDB()) return;
+    if (!getIndexedDB()) throw new Error('IndexedDB unavailable');
     await this.withStore<IDBValidKey>('readwrite', (store) => store.put(image, IDB_IMAGE_KEY));
   }
 

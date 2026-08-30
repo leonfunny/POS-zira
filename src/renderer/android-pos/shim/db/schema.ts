@@ -148,7 +148,11 @@ export const ANDROID_SCHEMA_DDL = `
     opening_cash INTEGER DEFAULT 0,
     closing_cash INTEGER,
     opened_at TEXT DEFAULT (datetime('now')),
-    closed_at TEXT
+    closed_at TEXT,
+    open_synced INTEGER DEFAULT 0,
+    close_synced INTEGER DEFAULT 0,
+    shift_sync_error TEXT,
+    legacy_server_id_unknown INTEGER DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS staff (
@@ -208,9 +212,44 @@ export function applyAndroidSchema(db: SqlJsDatabase): void {
   if (!orderColumns.has('refund_lines')) {
     db.run('ALTER TABLE orders ADD COLUMN refund_lines TEXT');
   }
+  // v5: durable Android shift-sync ledger. Local shift success stays offline-
+  // first, while backend open/close is retried idempotently by local UUID.
+  const shiftColumns = new Set<string>();
+  const shiftInfo = db.exec('PRAGMA table_info(shifts)');
+  for (const row of shiftInfo[0]?.values ?? []) shiftColumns.add(String(row[1]));
+  const needsLegacyShiftBackfill =
+    !shiftColumns.has('open_synced') || !shiftColumns.has('close_synced');
+  if (!shiftColumns.has('open_synced')) {
+    db.run('ALTER TABLE shifts ADD COLUMN open_synced INTEGER DEFAULT 0');
+  }
+  if (!shiftColumns.has('close_synced')) {
+    db.run('ALTER TABLE shifts ADD COLUMN close_synced INTEGER DEFAULT 0');
+  }
+  if (!shiftColumns.has('shift_sync_error')) {
+    db.run('ALTER TABLE shifts ADD COLUMN shift_sync_error TEXT');
+  }
+  if (!shiftColumns.has('legacy_server_id_unknown')) {
+    db.run('ALTER TABLE shifts ADD COLUMN legacy_server_id_unknown INTEGER DEFAULT 0');
+  }
+  if (needsLegacyShiftBackfill) {
+    // Rows created before the durable shift ledger existed may already have
+    // been mirrored to the backend by the old fire-and-forget path. Replaying
+    // them after upgrade could reopen/close historical shifts. Only rows that
+    // existed while a ledger column was missing are marked as migrated; new
+    // rows keep the column defaults (0/0) and enter the normal retry queue.
+    db.run(`UPDATE shifts
+            SET open_synced = 1,
+                close_synced = CASE WHEN closed_at IS NULL THEN 0 ELSE 1 END,
+                shift_sync_error = CASE
+                  WHEN closed_at IS NULL THEN 'LEGACY_SHIFT_NOT_REPLAYED'
+                  ELSE shift_sync_error
+                END,
+                legacy_server_id_unknown = CASE WHEN closed_at IS NULL THEN 1 ELSE 0 END`);
+  }
   db.run(`PRAGMA user_version = ${ANDROID_SCHEMA_VERSION}`);
 }
 
 /** v3 = product_variants.track_inventory (stock-guard parity).
- *  v4 = orders.{refund_amount,refund_reason,refunded_at,refund_lines} (E1b refund). */
-export const ANDROID_SCHEMA_VERSION = 4;
+ *  v4 = orders.{refund_amount,refund_reason,refunded_at,refund_lines} (E1b refund).
+ *  v5 = shifts sync ledger + legacy server-id marker (durable retry). */
+export const ANDROID_SCHEMA_VERSION = 5;

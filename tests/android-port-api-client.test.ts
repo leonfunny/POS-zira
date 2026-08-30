@@ -264,6 +264,22 @@ describe('endpoint shapes — URL / method / headers / body', () => {
     expect(JSON.parse(init.body as string)).toEqual({ closingCash: 12345 });
   });
 
+  it('getActivePosShift resolves the legacy/default server shift without a machine query', async () => {
+    const client = new PosApiClient({ baseUrl: BASE_URL, tokenProvider: makeProvider() });
+    fetchMock.mockResolvedValueOnce(json({ id: 'server-shift', staffId: 'staff-1' }));
+
+    await expect(client.getActivePosShift(null)).resolves.toMatchObject({
+      id: 'server-shift',
+      staffId: 'staff-1',
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${BASE_URL}/api/v1/pos/shifts/active`,
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer access-1' }),
+      }),
+    );
+  });
+
   it('strips the trailing slash from baseUrl', async () => {
     const client = new PosApiClient({ baseUrl: `${BASE_URL}/`, tokenProvider: makeProvider() });
     fetchMock.mockResolvedValueOnce(json({ id: 'u' }));

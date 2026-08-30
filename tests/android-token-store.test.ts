@@ -3,7 +3,7 @@
  *
  * Covers the storage policies the shim's token store exposes:
  *   • NATIVE  — `window.Capacitor.Plugins.SecureKV` is present (a fake of the
- *     SecureKVPlugin Java plugin). Verifies get/set/remove/clear call shapes,
+ *     SecureKVPlugin Java plugin). Verifies get/setTokens/remove/clear call shapes,
  *     isSecure === true, and that access/refresh tokens round-trip + clear().
  *   • FALLBACK — the native plugin is absent and dev/test explicitly opts in.
  *     Verifies plaintext localStorage persistence under the
@@ -24,7 +24,7 @@ import { TokenStore } from '../src/renderer/android-pos/shim/token-store';
  * A fake SecureKV plugin backed by an in-memory Map, so round-trip + clear
  * semantics can be exercised while still asserting exact call shapes via the
  * vi.fn wrappers. Mirrors the SecureKVPlugin.java contract
- * (get→{value}, set/remove/clear→{}).
+ * (get→{value}, setTokens/set/remove/clear→{}).
  */
 function makeFakePlugin() {
   const map = new Map<string, string>();
@@ -33,6 +33,17 @@ function makeFakePlugin() {
     get: vi.fn(async ({ key }: { key: string }): Promise<{ value: string | null }> => ({
       value: map.has(key) ? (map.get(key) as string) : null,
     })),
+    setTokens: vi.fn(async ({
+      accessToken,
+      refreshToken,
+    }: {
+      accessToken: string;
+      refreshToken: string | null;
+    }): Promise<void> => {
+      map.set('access_token', accessToken);
+      if (refreshToken) map.set('refresh_token', refreshToken);
+      else map.delete('refresh_token');
+    }),
     set: vi.fn(async ({ key, value }: { key: string; value: string }): Promise<void> => {
       map.set(key, value);
     }),
@@ -104,26 +115,48 @@ describe('TokenStore — native SecureKV path', () => {
     expect(await store.getAccessToken()).toBeNull();
   });
 
-  it('setTokens(access, refresh) calls SecureKV.set twice with {key,value}', async () => {
+  it('setTokens(access, refresh) makes one atomic SecureKV.setTokens call', async () => {
     const store = new TokenStore();
     await store.setTokens('access-1', 'refresh-1');
 
-    expect(plugin.set).toHaveBeenCalledTimes(2);
-    expect(plugin.set).toHaveBeenNthCalledWith(1, { key: 'access_token', value: 'access-1' });
-    expect(plugin.set).toHaveBeenNthCalledWith(2, { key: 'refresh_token', value: 'refresh-1' });
+    expect(plugin.setTokens).toHaveBeenCalledTimes(1);
+    expect(plugin.setTokens).toHaveBeenCalledWith({
+      accessToken: 'access-1',
+      refreshToken: 'refresh-1',
+    });
+    expect(plugin.set).not.toHaveBeenCalled();
     expect(plugin.remove).not.toHaveBeenCalled();
   });
 
-  it('setTokens(access, null) removes a stale refresh token via SecureKV.remove', async () => {
+  it('setTokens(access, null) atomically replaces access and removes stale refresh', async () => {
     plugin.map.set('refresh_token', 'stale');
     const store = new TokenStore();
     await store.setTokens('access-1', null);
 
-    // access set; refresh removed (login with no refresh must drop the old one).
-    expect(plugin.set).toHaveBeenCalledTimes(1);
-    expect(plugin.set).toHaveBeenCalledWith({ key: 'access_token', value: 'access-1' });
-    expect(plugin.remove).toHaveBeenCalledTimes(1);
-    expect(plugin.remove).toHaveBeenCalledWith({ key: 'refresh_token' });
+    expect(plugin.setTokens).toHaveBeenCalledTimes(1);
+    expect(plugin.setTokens).toHaveBeenCalledWith({
+      accessToken: 'access-1',
+      refreshToken: null,
+    });
+    expect(plugin.set).not.toHaveBeenCalled();
+    expect(plugin.remove).not.toHaveBeenCalled();
+    expect(plugin.map.get('access_token')).toBe('access-1');
+    expect(plugin.map.has('refresh_token')).toBe(false);
+  });
+
+  it('keeps the old token pair when the atomic native write fails', async () => {
+    plugin.map.set('access_token', 'access-old');
+    plugin.map.set('refresh_token', 'refresh-old');
+    plugin.setTokens.mockRejectedValueOnce(new Error('secure-storage-write-failed'));
+    const store = new TokenStore();
+
+    await expect(store.setTokens('access-new', 'refresh-new')).rejects.toThrow(
+      'secure-storage-write-failed',
+    );
+    expect(plugin.map.get('access_token')).toBe('access-old');
+    expect(plugin.map.get('refresh_token')).toBe('refresh-old');
+    expect(plugin.set).not.toHaveBeenCalled();
+    expect(plugin.remove).not.toHaveBeenCalled();
   });
 
   it('clear() calls SecureKV.clear()', async () => {
@@ -136,6 +169,20 @@ describe('TokenStore — native SecureKV path', () => {
     expect(plugin.clear).toHaveBeenCalledTimes(1);
     expect(await store.getAccessToken()).toBeNull();
     expect(await store.getRefreshToken()).toBeNull();
+  });
+
+  it('propagates native clear failure without pretending an insecure fallback was cleared', async () => {
+    const storage = makeFakeStorage();
+    storage.map.set('zira.dev-insecure.access_token', 'fallback-access');
+    plugin.map.set('access_token', 'native-access');
+    plugin.map.set('refresh_token', 'native-refresh');
+    plugin.clear.mockRejectedValueOnce(new Error('secure-storage-clear-failed'));
+    const store = new TokenStore({ storage, allowInsecureFallback: true });
+
+    await expect(store.clear()).rejects.toThrow('secure-storage-clear-failed');
+    expect(plugin.map.get('access_token')).toBe('native-access');
+    expect(plugin.map.get('refresh_token')).toBe('native-refresh');
+    expect(storage.removeItem).not.toHaveBeenCalled();
   });
 
   it('round-trips access + refresh through the encrypted store', async () => {
@@ -211,6 +258,16 @@ describe('TokenStore — production fail-closed path', () => {
     expect(await store.getAccessToken()).toBeNull();
     expect(storage.setItem).not.toHaveBeenCalled();
   });
+
+  it('rejects clear when SecureKV is unavailable instead of reporting a fake logout', async () => {
+    const storage = makeFakeStorage();
+    const store = new TokenStore({ storage, allowInsecureFallback: false });
+
+    await expect(store.clear()).rejects.toMatchObject({
+      code: 'SECURE_TOKEN_STORAGE_UNAVAILABLE',
+    });
+    expect(storage.removeItem).not.toHaveBeenCalled();
+  });
 });
 
 // ─── boundary: native access never reaches @capacitor/* ────────────────────
@@ -228,7 +285,7 @@ describe('TokenStore — native access boundary', () => {
     // The runtime-global path is the only way the store touches native code;
     // there is no static @capacitor/* import (enforced separately by the
     // cross-platform boundary verifier).
-    expect(plugin.set).toHaveBeenCalledWith({ key: 'access_token', value: 'a' });
+    expect(plugin.setTokens).toHaveBeenCalledWith({ accessToken: 'a', refreshToken: 'r' });
     vi.unstubAllGlobals();
   });
 });

@@ -201,6 +201,93 @@ describe('ShiftController transfer totals', () => {
     expect(() => controller.closeShift('shift-1', 10000)).toThrow(/already closed/i);
   });
 
+  it('defers backend close until the caller confirms the local close is durable', () => {
+    vi.mocked(orderRepo.getByShift).mockReturnValue([]);
+    const controller = new ShiftController(() => null, () => false);
+    const syncShiftClose = vi
+      .spyOn(controller as any, 'syncShiftClose')
+      .mockResolvedValue(undefined);
+
+    controller.closeShift('shift-1', 10000, false, {
+      deferSyncUntilDurable: true,
+    });
+    expect(syncShiftClose).not.toHaveBeenCalled();
+
+    controller.syncDurableShiftClose('shift-1', 10000);
+    expect(syncShiftClose).toHaveBeenCalledWith('shift-1', 10000);
+  });
+
+  it('defers backend open until the caller confirms the local open is durable', () => {
+    const controller = new ShiftController(() => null, () => false);
+    const syncShiftOpen = vi
+      .spyOn(controller as any, 'syncShiftOpen')
+      .mockResolvedValue(undefined);
+
+    const shiftId = (controller as any).openShift(
+      'staff-1',
+      'Cashier',
+      10000,
+      { deferSyncUntilDurable: true },
+    );
+    expect(syncShiftOpen).not.toHaveBeenCalled();
+
+    (controller as any).syncDurableShiftOpen(shiftId, 'staff-1', 10000);
+    expect(syncShiftOpen).toHaveBeenCalledWith(shiftId, 'staff-1', 10000);
+  });
+
+  it('keeps reconnect retry workers away from deferred shift mutations', async () => {
+    vi.mocked(getSecureAuthToken).mockReturnValue('token-1');
+    vi.mocked(orderRepo.getByShift).mockReturnValue([]);
+    const controller = new ShiftController(() => null, () => true);
+    const shiftId = controller.openShift('staff-1', 'Cashier', 10000, {
+      deferSyncUntilDurable: true,
+    });
+    controller.closeShift(shiftId, 10000, false, {
+      deferSyncUntilDurable: true,
+    });
+    vi.mocked(database.all)
+      .mockReturnValueOnce([
+        { id: shiftId, staff_id: 'staff-1', opening_cash: 10000, sync_attempts: 0 },
+      ] as any)
+      .mockReturnValueOnce([
+        { id: shiftId, backend_id: 'server-shift', closing_cash: 10000, close_sync_attempts: 0 },
+      ] as any);
+
+    await controller.retryUnsyncedShifts();
+
+    expect(apiClient.openPosShift).not.toHaveBeenCalled();
+    expect(apiClient.closePosShift).not.toHaveBeenCalled();
+  });
+
+  it('rejects when a connected printer fails to print the Z-report', async () => {
+    const printError = new Error('paper jam');
+    const printer = {
+      isConnected: vi.fn(() => true),
+      printZReport: vi.fn().mockRejectedValue(printError),
+    };
+    const controller = new ShiftController(() => printer, () => false);
+
+    await expect(controller.printZReport({
+      shiftId: 'shift-1',
+      staffName: 'Cashier',
+      openedAt: '2026-08-30T08:00:00.000Z',
+      closedAt: '2026-08-30T16:00:00.000Z',
+      openingCash: 10000,
+      closingCash: 12000,
+      totalSales: 2000,
+      totalOrders: 1,
+      cashTotal: 2000,
+      cardTotal: 0,
+      blikTotal: 0,
+      transferTotal: 0,
+      totalRefunds: 0,
+      totalDiscounts: 0,
+      totalTips: 0,
+      difference: 0,
+      unsyncedOrders: 0,
+    })).rejects.toBe(printError);
+  });
+
   it('subtracts refunds issued during this shift even when the sale belongs to an older shift', () => {
     vi.mocked(orderRepo.getByShift).mockReturnValue([
       order({
