@@ -51,7 +51,7 @@ function build() {
     seed: undefined as never,
   });
   const tokenStorage = memoryStorage();
-  const tokenStore = new TokenStore({ storage: tokenStorage });
+  const tokenStore = new TokenStore({ storage: tokenStorage, allowInsecureFallback: true });
   const transport = createRealTransport({
     configStore,
     tokenStore,

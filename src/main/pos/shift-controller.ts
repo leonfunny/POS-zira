@@ -5,6 +5,8 @@ import { apiClient } from '../network/api-client';
 import { getConfigValue, getSecureAuthToken } from '../config/store';
 import { posEventEmitter } from '../events/pos-event-emitter';
 import logger from '../logger';
+import { summarizeShiftSales } from '../../shared/shift-accounting';
+import { ShiftAlreadyClosedError } from '../../shared/shift-close';
 
 export interface ShiftReport {
   shiftId: string;
@@ -21,6 +23,7 @@ export interface ShiftReport {
   transferTotal: number;
   totalRefunds: number;
   totalDiscounts: number;
+  totalTips: number;
   difference: number; // closingCash - (openingCash + cashTotal)
   unsyncedOrders: number;
   fiscalOnlySales?: boolean;
@@ -54,10 +57,6 @@ function isTerminalShiftCloseError(err: unknown): boolean {
   if (status === 404 || status === 409 || status === 410) return true;
   const message = shiftSyncErrorMessage(err).toLowerCase();
   return message.includes('not found') || message.includes('already closed') || message.includes('already been closed') || message.includes('no active shift');
-}
-
-function isTransferMethod(method: string | null | undefined): boolean {
-  return method === 'TRANSFER' || method === 'BANK_TRANSFER';
 }
 
 export function canReconcileActiveShift(
@@ -126,44 +125,27 @@ export class ShiftController {
       staff_name: string | null;
       opened_at: string;
       opening_cash: number;
-    }>('SELECT * FROM shifts WHERE id = ?', [shiftId]);
+    }>('SELECT * FROM shifts WHERE id = ? AND closed_at IS NULL', [shiftId]);
 
-    if (!shift) throw new Error(`Shift ${shiftId} not found`);
+    if (!shift) {
+      const existing = database.get<{ id: string }>('SELECT id FROM shifts WHERE id = ?', [shiftId]);
+      if (existing) throw new ShiftAlreadyClosedError(shiftId);
+      throw new Error(`Shift ${shiftId} not found`);
+    }
 
     // Get orders for this shift — handle split payments
     const orders = orderRepo.getByShift(shiftId);
     const salesOrders = fiscalOnly ? orders.filter((o) => o.has_fiscal === 1) : orders;
-    const grossSales = salesOrders.reduce((sum, o) => sum + o.total, 0);
+    const accounting = summarizeShiftSales(salesOrders);
     const closedAt = new Date().toISOString();
 
     const unsyncedOrders = orderRepo.getUnsyncedCountByShift(shiftId);
 
-    // Aggregate by payment method for the same order set shown in the report,
-    // accounting for split tenders.
-    const paymentOrders = salesOrders;
-    let cashTotal = 0, cardTotal = 0, blikTotal = 0, transferTotal = 0;
-    for (const o of paymentOrders) {
-      const tendersJson = o.payment_tenders;
-      if (tendersJson) {
-        try {
-          const tenders = JSON.parse(tendersJson) as Array<{ method: string; amount: number }>;
-          for (const t of tenders) {
-            if (t.method === 'CASH') cashTotal += t.amount;
-            else if (t.method === 'CARD') cardTotal += t.amount;
-            else if (t.method === 'BLIK') blikTotal += t.amount;
-            else if (isTransferMethod(t.method)) transferTotal += t.amount;
-          }
-          continue; // skip single-method fallback
-        } catch { /* fall through */ }
-      }
-      // Single payment method
-      if (o.payment_method === 'CASH') cashTotal += o.total;
-      else if (o.payment_method === 'CARD') cardTotal += o.total;
-      else if (o.payment_method === 'BLIK') blikTotal += o.total;
-      else if (isTransferMethod(o.payment_method)) transferTotal += o.total;
-    }
-
-    const totalDiscounts = salesOrders.reduce((sum, o) => sum + (o.discount ?? 0), 0);
+    let cashTotal = accounting.payments.cash;
+    let cardTotal = accounting.payments.card;
+    let blikTotal = accounting.payments.blik;
+    let transferTotal = accounting.payments.transfer;
+    const totalDiscounts = accounting.totalDiscounts;
     const refundCashflow = orderRepo.getRefundCashflowBetween(
       shift.opened_at,
       closedAt,
@@ -176,14 +158,18 @@ export class ShiftController {
     blikTotal -= refundCashflow.blik_refund_total;
     transferTotal -= refundCashflow.transfer_refund_total;
 
-    const totalSales = grossSales - totalRefunds - totalDiscounts;
+    // order.total is already net of every line/receipt discount. Discounts are
+    // reported separately and must never be subtracted from revenue twice.
+    const totalSales = accounting.salesTotal - totalRefunds;
     const closingCash = autoClosed ? shift.opening_cash + cashTotal : (closingCashInput as number);
     const difference = closingCash - (shift.opening_cash + cashTotal);
 
     database.run(
-      "UPDATE shifts SET closed_at = datetime('now'), closing_cash = ?, total_sales = ?, total_orders = ?, close_synced = 0, close_sync_attempts = 0, close_sync_error = NULL WHERE id = ?",
+      "UPDATE shifts SET closed_at = datetime('now'), closing_cash = ?, total_sales = ?, total_orders = ?, close_synced = 0, close_sync_attempts = 0, close_sync_error = NULL WHERE id = ? AND closed_at IS NULL",
       [closingCash, totalSales, salesOrders.length, shiftId],
     );
+    const closed = database.get<{ count: number }>('SELECT changes() AS count')?.count ?? 0;
+    if (closed !== 1) throw new ShiftAlreadyClosedError(shiftId);
     database.markDirty();
 
     const report: ShiftReport = {
@@ -201,6 +187,7 @@ export class ShiftController {
       transferTotal,
       totalRefunds,
       totalDiscounts,
+      totalTips: accounting.totalTips,
       difference,
       unsyncedOrders,
       fiscalOnlySales: fiscalOnly,
@@ -234,6 +221,7 @@ export class ShiftController {
       transactionCount: report.totalOrders,
       grossSales: report.totalSales + report.totalRefunds + report.totalDiscounts,
       discounts: report.totalDiscounts,
+      tips: report.totalTips,
       refunds: report.totalRefunds,
       netSales: report.totalSales,
       paymentSummary: [

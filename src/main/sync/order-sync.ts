@@ -122,6 +122,20 @@ export class OrderSync {
       try {
         const items = orderRepo.getItemsByOrderId(order.id);
 
+        if (items.length === 0) {
+          const error = 'INVALID_LOCAL_ORDER_NO_ITEMS';
+          orderRepo.shelve(order.id, error);
+          summary.failed++;
+          summary.results.push({
+            orderId: order.id,
+            orderNumber: order.order_number,
+            status: 'shelved',
+            error,
+          });
+          logger.warn(`[OrderSync] Shelved invalid order ${order.id}: no items`);
+          continue;
+        }
+
         // Defer pushing orders that reference a locally-imported variant
         // (created from a draft without a server roundtrip). The server
         // doesn't know the variant id yet and would reject the order as
@@ -142,22 +156,6 @@ export class OrderSync {
           );
           database.markDirty();
           logger.debug(`[OrderSync] Order ${order.id} deferred — variant ${unresolved.variant_id} not yet on server`);
-          continue;
-        }
-
-        // Mark as syncing (2) to prevent re-send by concurrent sync cycles
-        orderRepo.markSyncing(order.id);
-        database.run(
-          'UPDATE orders SET sync_attempts = sync_attempts + 1 WHERE id = ?',
-          [order.id],
-        );
-        database.markDirty();
-
-        // Skip orders with no items (can't sync empty orders)
-        if (items.length === 0) {
-          logger.warn(`[OrderSync] Order ${order.id} has no items, skipping`);
-          orderRepo.markSynced(order.id, 'no-items');
-          summary.results.push({ orderId: order.id, orderNumber: order.order_number, status: 'synced', backendId: 'no-items' });
           continue;
         }
 
@@ -184,13 +182,30 @@ export class OrderSync {
           }
         }
 
-        // Skip if all items were filtered out
+        // Preserve an invalid local financial row for owner-visible repair;
+        // never lie that it reached the backend.
         if (dto.items.length === 0) {
-          logger.warn(`[OrderSync] Order ${order.id} has no valid items (missing variant_id), skipping`);
-          orderRepo.markSynced(order.id, 'no-valid-items');
-          summary.results.push({ orderId: order.id, orderNumber: order.order_number, status: 'synced', backendId: 'no-valid-items' });
+          const error = 'INVALID_LOCAL_ORDER_NO_VALID_ITEMS';
+          orderRepo.shelve(order.id, error);
+          summary.failed++;
+          summary.results.push({
+            orderId: order.id,
+            orderNumber: order.order_number,
+            status: 'shelved',
+            error,
+          });
+          logger.warn(`[OrderSync] Shelved invalid order ${order.id}: no valid items`);
           continue;
         }
+
+        // Mark as syncing only after the persisted order passes local
+        // validation. Invalid rows must remain visible as failed, not in-flight.
+        orderRepo.markSyncing(order.id);
+        database.run(
+          'UPDATE orders SET sync_attempts = sync_attempts + 1 WHERE id = ?',
+          [order.id],
+        );
+        database.markDirty();
 
         // Payment — split or single
         const PM_MAP: Record<string, string> = {
@@ -234,25 +249,11 @@ export class OrderSync {
 
         const result = await apiClient.createPosOrder(token, dto);
         const backendId = result.id ?? result.orderId ?? order.id;
-        let backendOrderNumber = getBackendOrderNumber(result);
+        const backendOrderNumber = getBackendOrderNumber(result);
 
-        // Finalize immediately — POS orders are paid at the counter, no draft stage.
-        // This triggers stock deduction on the backend.
-        if (!order.billiard_origin_json) {
-          try {
-            const finishResult = await apiClient.finishOrder(token, backendId);
-            backendOrderNumber = getBackendOrderNumber(finishResult) ?? backendOrderNumber;
-            logger.info(`[OrderSync] Finished order ${backendId} → ${JSON.stringify(finishResult)?.substring(0, 200)}`);
-          } catch (e) {
-            logger.warn(`[OrderSync] finishOrder failed for ${backendId} (non-fatal): ${e}`);
-          }
-        } else {
-          // The authoritative Billiard create endpoint atomically creates a
-          // DELIVERED order and settles checkoutId. Calling finish again is a
-          // false failure ("already finished"). A successful create response
-          // is the settlement acknowledgement for this origin.
-          logger.info(`[OrderSync] Billiard order ${backendId} was finalized atomically by createPosOrder`);
-        }
+        // createPosOrder atomically persists a DELIVERED order, deducts stock,
+        // and settles a Billiard checkout when present. /finish is a legacy
+        // compatibility endpoint and must not be called by current clients.
 
         orderRepo.markSynced(order.id, backendId, backendOrderNumber);
         const billiardHandoff = billiardPosHandoffRepo.getByOrderId(order.id);

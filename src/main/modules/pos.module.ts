@@ -58,6 +58,7 @@ import {
 import { sanitizeBilliardRefundRequest } from '../pos/billiard-refund-policy';
 import { assertPosPaymentAccounting, assertProtectedPosPaymentMethods } from '../pos/payment-accounting';
 import { ShiftController } from '../pos/shift-controller';
+import { isShiftAlreadyClosedError } from '../../shared/shift-close';
 import { toQuickAddVariantRow } from '../pos/quick-add-product';
 import {
   captureProductAdminSessionContext,
@@ -8489,7 +8490,16 @@ export class PosModule extends BaseModule {
         this.setServerShiftMismatch(null);
         await this.shiftController.printZReport(report);
         return { success: true, report };
-      } catch (e: any) { return { success: false, error: e.message }; }
+      } catch (e: any) {
+        if (isShiftAlreadyClosedError(e)) {
+          logger.info(`[PosModule] Shift ${data.shiftId.substring(0, 8)} was already closed by another close flow`);
+          this.posStore?.dispatch({ type: 'session/close' });
+          this.invalidateShiftVerification();
+          this.setServerShiftMismatch(null);
+          return { success: true, report: null };
+        }
+        return { success: false, error: e.message };
+      }
     });
 
     // Self-checkout kiosk: "Wezwij obsługę" round-trip. Renderer is
@@ -9270,7 +9280,16 @@ export class PosModule extends BaseModule {
           ]);
         }
         for (const shift of openShifts) {
-          const report = this.shiftController.closeShift(shift.id, null, false);
+          let report;
+          try {
+            report = this.shiftController.closeShift(shift.id, null, false);
+          } catch (error) {
+            if (isShiftAlreadyClosedError(error)) {
+              logger.info(`[EOD] shift ${shift.id} was closed concurrently; skipping duplicate Z-report`);
+              continue;
+            }
+            throw error;
+          }
           try { this.billiardShiftLink?.close(report.closingCash, shift.id); } catch { /* best effort */ }
           shiftsClosed += 1;
           await this.shiftController.printZReport(report);

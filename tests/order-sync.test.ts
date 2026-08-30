@@ -21,6 +21,7 @@ vi.mock('../src/main/database/repos/order-repo', () => ({
     markSyncing: vi.fn(),
     markSynced: vi.fn(),
     markSyncFailed: vi.fn(),
+    shelve: vi.fn(),
   },
 }));
 
@@ -206,6 +207,21 @@ describe('OrderSync DTO mapping', () => {
         ],
       }),
     );
+    expect(apiClient.finishOrder).not.toHaveBeenCalled();
+  });
+
+  it('shelves an itemless local order instead of claiming it synced', async () => {
+    vi.mocked(orderRepo.getUnsynced).mockReturnValue([makeOrder() as any]);
+    vi.mocked(orderRepo.getItemsByOrderId).mockReturnValue([]);
+
+    const summary = await new OrderSync().syncPendingOrders();
+
+    expect(orderRepo.shelve).toHaveBeenCalledWith('order-1', 'INVALID_LOCAL_ORDER_NO_ITEMS');
+    expect(orderRepo.markSynced).not.toHaveBeenCalled();
+    expect(orderRepo.markSyncing).not.toHaveBeenCalled();
+    expect(apiClient.createPosOrder).not.toHaveBeenCalled();
+    expect(summary).toMatchObject({ attempted: 1, synced: 0, failed: 1 });
+    expect(summary.results[0]).toMatchObject({ status: 'shelved', error: 'INVALID_LOCAL_ORDER_NO_ITEMS' });
   });
 
   it('persists backend canonical orderNumber when createPosOrder returns it', async () => {
@@ -248,7 +264,7 @@ describe('OrderSync DTO mapping', () => {
     });
   });
 
-  it('marks a paid Billiard handoff SETTLED after create succeeds and never calls finish twice', async () => {
+  it('marks a paid Billiard handoff SETTLED after create succeeds and never calls legacy finish', async () => {
     vi.mocked(orderRepo.getUnsynced).mockReturnValue([
       makeOrder({
         billiard_origin_json: JSON.stringify({

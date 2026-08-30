@@ -642,6 +642,17 @@ describe('Receipt lifecycle before external order mutation', () => {
 });
 
 describe('OrderRepo transaction boundary', () => {
+  it('rejects an itemless paid order before opening a transaction', async () => {
+    const actual = await vi.importActual<
+      typeof import('../src/main/database/repos/order-repo')
+    >('../src/main/database/repos/order-repo');
+
+    expect(() => actual.orderRepo.create(order('CASH') as any, [])).toThrow(
+      'POS order must contain at least one item',
+    );
+    expect(databaseMock.transaction).not.toHaveBeenCalled();
+  });
+
   it('executes the receipt-intent hook before the order transaction commits', async () => {
     const actual = await vi.importActual<
       typeof import('../src/main/database/repos/order-repo')

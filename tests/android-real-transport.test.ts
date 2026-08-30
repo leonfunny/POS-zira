@@ -3,6 +3,10 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { createRealTransport } from '../src/renderer/android-pos/shim/real-transport';
 import { ShimConfigStore } from '../src/renderer/android-pos/shim/config-store';
 import { TokenStore, type TokenStoreStorage } from '../src/renderer/android-pos/shim/token-store';
+import {
+  initAndroidDb,
+  type AndroidDbPersistence,
+} from '../src/renderer/android-pos/shim/db/db';
 
 /** Node-friendly sql.js load — mirrors tests/android-shim-db.test.ts. */
 const NODE_LOCATE_FILE = null;
@@ -24,6 +28,20 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+class MemoryDbPersistence implements AndroidDbPersistence {
+  image: Uint8Array | null = null;
+
+  async loadImage(): Promise<Uint8Array | null> {
+    return this.image ? new Uint8Array(this.image) : null;
+  }
+
+  async saveImage(image: Uint8Array): Promise<void> {
+    this.image = new Uint8Array(image);
+  }
+
+  async quarantineImage(): Promise<void> {}
+}
+
 const LOGIN_BODY = {
   access_token: 'jwt-access-1',
   refresh_token: 'jwt-refresh-1',
@@ -38,17 +56,20 @@ const LOGIN_BODY = {
   },
 };
 
-function build(overrides: { seed?: Record<string, unknown> } = {}) {
+function build(overrides: {
+  seed?: Record<string, unknown>;
+  persistence?: AndroidDbPersistence;
+} = {}) {
   const configStore = new ShimConfigStore({
     storage: memoryStorage(),
     seed: overrides.seed as never,
   });
   const tokenStorage = memoryStorage();
-  const tokenStore = new TokenStore({ storage: tokenStorage });
+  const tokenStore = new TokenStore({ storage: tokenStorage, allowInsecureFallback: true });
   const transport = createRealTransport({
     configStore,
     tokenStore,
-    dbInit: { locateFile: NODE_LOCATE_FILE },
+    dbInit: { locateFile: NODE_LOCATE_FILE, persistence: overrides.persistence },
     // No-op agent: these auth/order tests use mockResolvedValueOnce sequences, so
     // the real login-time /print-agent/my-key fetch would desync them. The
     // login→connect→socket path is covered by tests/android-agent-connect.test.ts.
@@ -356,7 +377,7 @@ describe('real transport orders + shifts (S8+S9)', () => {
     expect(result.error).toContain('shift');
   });
 
-  test('CASH order: local create → sync sends PLN-decimal DTO → finish → marked synced', async () => {
+  test('CASH order: local create → authoritative create sync → marked synced without legacy finish', async () => {
     const { transport, shiftId } = await transportWithShift();
     const synced = vi.fn();
     (transport as any).onOrderSynced(synced);
@@ -368,10 +389,9 @@ describe('real transport orders + shifts (S8+S9)', () => {
     fetchMock.mockImplementation(async (url: unknown, init?: RequestInit) => {
       const target = String(url);
       requests.push({ url: target, body: init?.body ? JSON.parse(String(init.body)) : null });
-      if (/\/b2b\/pos\/orders\/backend-1\/finish$/.test(target)) {
-        return jsonResponse({ orderNumber: 'POS-20260718-0042' });
+      if (/\/b2b\/pos\/orders$/.test(target)) {
+        return jsonResponse({ id: 'backend-1', orderNumber: 'POS-20260718-0042' });
       }
-      if (/\/b2b\/pos\/orders$/.test(target)) return jsonResponse({ id: 'backend-1' });
       throw new Error(`unexpected fetch: ${target}`);
     });
 
@@ -389,7 +409,7 @@ describe('real transport orders + shifts (S8+S9)', () => {
       shiftId,
     });
     expect(createCall!.body.items[0]).toMatchObject({ variantId: 'p1', customPrice: 49, packQuantity: 1 });
-    expect(requests.some((r) => /\/finish$/.test(r.url))).toBe(true);
+    expect(requests.some((r) => /\/finish$/.test(r.url))).toBe(false);
     expect(synced).toHaveBeenCalledWith({ orderId: 'local-order-1', backendId: 'backend-1' });
 
     const detail = await transport.getOrderDetail!('local-order-1');
@@ -414,6 +434,49 @@ describe('real transport orders + shifts (S8+S9)', () => {
     fetchMock.mockClear();
     await transport.syncOrders!();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('a legacy itemless local row is shelved and never sent as a fake order', async () => {
+    const persistence = new MemoryDbPersistence();
+    const seedDatabase = await initAndroidDb({
+      locateFile: NODE_LOCATE_FILE,
+      persistence,
+    });
+    seedDatabase.run(
+      `INSERT INTO orders (
+        id, order_number, status, total, payment_method, payment_amount,
+        change_amount, source, mode, synced
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        'legacy-empty-order', 'ZAM-20260830-0099', 'COMPLETED', 4_900,
+        'CASH', 5_000, 100, 'POS', 'retail', 0,
+      ],
+    );
+    persistence.image = seedDatabase.exportImage();
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(LOGIN_BODY));
+    const { transport } = build({
+      persistence,
+      seed: { salonId: 'salon-1', salonName: 'Test Salon', salonSlug: 'test-salon' },
+    });
+    const failed = vi.fn();
+    (transport as any).onOrderSyncFailed(failed);
+    await transport.loginWithEmail!('staff@salon.pl', 'pw');
+    expect((await transport.getOrderDetail!('legacy-empty-order'))?.order.synced).toBe(0);
+    fetchMock.mockClear();
+
+    await transport.syncOrders!();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(failed).toHaveBeenCalledWith(expect.objectContaining({
+      orderId: 'legacy-empty-order',
+      code: 'INVALID_LOCAL_ORDER_NO_ITEMS',
+    }));
+    const detail = await transport.getOrderDetail!('legacy-empty-order');
+    expect(detail?.order).toMatchObject({
+      synced: -1,
+      sync_error: 'INVALID_LOCAL_ORDER_NO_ITEMS',
+    });
   });
 
   test('transient failure reverts to pending for retry and eventually shelves at the cap', async () => {

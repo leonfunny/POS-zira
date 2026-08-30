@@ -38,6 +38,7 @@
  */
 
 import type { AgentConfig, AuthUser } from '../../../shared/types';
+import { isShiftAlreadyClosedError } from '../../../shared/shift-close';
 import { resolvePosMode } from './config-store';
 import { PosApiClient, type TokenProvider } from '../../android-pos/port/api-client';
 import type {
@@ -1135,26 +1136,30 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
           }
           try {
             const items = orderRepo.getItemsByOrderId(order.id);
-            orderRepo.markSyncing(order.id);
-            database.run('UPDATE orders SET sync_attempts = sync_attempts + 1 WHERE id = ?', [order.id]);
             if (items.length === 0) {
-              orderRepo.markSynced(order.id, 'no-items');
+              const error = 'INVALID_LOCAL_ORDER_NO_ITEMS';
+              orderRepo.shelve(order.id, error);
+              for (const cb of [...orderSyncFailedListeners]) {
+                try { cb({ orderId: order.id, orderNumber: order.order_number ?? null, error, code: error }); } catch { /* listener isolation */ }
+              }
               continue;
             }
             const dto = buildOrderDto(order, items);
             if (dto.items.length === 0) {
-              orderRepo.markSynced(order.id, 'no-valid-items');
+              const error = 'INVALID_LOCAL_ORDER_NO_VALID_ITEMS';
+              orderRepo.shelve(order.id, error);
+              for (const cb of [...orderSyncFailedListeners]) {
+                try { cb({ orderId: order.id, orderNumber: order.order_number ?? null, error, code: error }); } catch { /* listener isolation */ }
+              }
               continue;
             }
+            orderRepo.markSyncing(order.id);
+            database.run('UPDATE orders SET sync_attempts = sync_attempts + 1 WHERE id = ?', [order.id]);
             const result = await client.createPosOrder(dto);
             const backendId = String(result.id ?? result.orderId ?? order.id);
-            let backendOrderNumber = getBackendOrderNumber(result);
-            // Finalize immediately — triggers backend stock deduction
-            // (order-sync.ts:230-238). finishOrder failure is non-fatal.
-            try {
-              const finishResult = await client.finishOrder(backendId);
-              backendOrderNumber = getBackendOrderNumber(finishResult) ?? backendOrderNumber;
-            } catch { /* non-fatal, matches Windows */ }
+            const backendOrderNumber = getBackendOrderNumber(result);
+            // createPosOrder is the authoritative finalization transaction;
+            // current clients never call the legacy /finish endpoint.
             orderRepo.markSynced(order.id, backendId, backendOrderNumber);
             database.run('UPDATE orders SET sync_error = NULL WHERE id = ?', [order.id]);
             for (const cb of [...orderSyncedListeners]) {
@@ -1447,6 +1452,7 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
           .catch(() => { /* backend outage never blocks the local Z-report */ });
         return { success: true, report };
       } catch (e: any) {
+        if (isShiftAlreadyClosedError(e)) return { success: true, report: null };
         return { success: false, error: e?.message || String(e) };
       }
     },

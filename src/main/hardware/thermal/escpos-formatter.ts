@@ -821,6 +821,10 @@ export class EscPosFormatter {
       parts.push(this.formatLine('Zwroty:', `-${this.formatMoney(reportData.refunds)}`));
     }
 
+    if (reportData.tips && reportData.tips > 0) {
+      parts.push(this.formatLine('Napiwki:', this.formatMoney(reportData.tips)));
+    }
+
     parts.push(this.formatLine('Sprzedaz netto:', this.formatMoney(reportData.netSales)));
 
     // VAT Summary
@@ -901,6 +905,9 @@ export class EscPosFormatter {
     if (reportData.refunds && reportData.refunds > 0) {
       parts.push(this.formatLine('Zwroty:', this.formatMoney(reportData.refunds)));
     }
+    if (reportData.tips && reportData.tips > 0) {
+      parts.push(this.formatLine('Napiwki:', this.formatMoney(reportData.tips)));
+    }
     parts.push(this.formatLine('Netto:', this.formatMoney(reportData.netSales)));
     parts.push(this.text(this.repeatChar('-', this.charsPerLine)));
 
@@ -938,6 +945,9 @@ export class EscPosFormatter {
     if (reportData.refunds && reportData.refunds > 0) {
       parts.push(this.formatLine('Zwroty:', `-${this.formatMoney(reportData.refunds)}`));
     }
+    if (reportData.tips && reportData.tips > 0) {
+      parts.push(this.formatLine('Napiwki:', this.formatMoney(reportData.tips)));
+    }
     parts.push(ESCPOS.BOLD_ON);
     parts.push(this.formatLine('SUMA NETTO:', this.formatMoney(reportData.netSales)));
     parts.push(ESCPOS.BOLD_OFF);
@@ -971,6 +981,7 @@ export interface DailyReportData {
   transactionCount: number;
   grossSales: number;      // In grosze
   discounts: number;       // In grosze
+  tips?: number;           // In grosze; excluded from sales revenue
   refunds?: number;        // In grosze
   netSales: number;        // In grosze
   vatSummary?: Array<{

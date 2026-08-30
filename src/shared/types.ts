@@ -100,6 +100,7 @@ export interface DailyReportData {
   transactionCount: number;
   grossSales: number;      // In grosze/cents
   discounts: number;       // In grosze/cents
+  tips?: number;           // In grosze/cents; excluded from sales revenue
   refunds?: number;        // In grosze/cents
   netSales: number;        // In grosze/cents
   vatSummary?: Array<{

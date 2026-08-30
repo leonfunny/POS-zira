@@ -292,4 +292,18 @@ describe('EscPosFormatter — fiscal-wording compliance', () => {
       expect(out).not.toMatch(/\d{1,2}\/\d{1,2}\/\d{4}/);
     });
   });
+
+  describe('shift tip accounting', () => {
+    it.each([
+      ['daily', (fmt: EscPosFormatter, data: DailyReportData) => fmt.formatDailyReport(data)],
+      ['X', (fmt: EscPosFormatter, data: DailyReportData) => fmt.formatXReport(data)],
+      ['Z', (fmt: EscPosFormatter, data: DailyReportData) => fmt.formatZReport(data)],
+    ])('prints tips separately on the %s report', (_name, format) => {
+      const fmt = new EscPosFormatter(80, 48, { charset: 'utf8', cutMode: 'partial' });
+      const out = bufferToString(format(fmt, buildReportData({ tips: 500 })));
+
+      expect(out).toContain('Napiwki:');
+      expect(out).toContain('5,00');
+    });
+  });
 });

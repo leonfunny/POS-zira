@@ -608,11 +608,9 @@ export class PosApiClient {
   }
 
   /**
-   * POST /api/v1/b2b/pos/orders/:id/finish. Ported from api-client.ts:2919-2932.
-   * Locks the order and triggers server-side stock deduction. Returns null on
-   * 404/501 (endpoint not deployed / order not found) so the outbox drainer can
-   * shelve without retrying; throws on other errors. Body is the fixed
-   * `{ notes: 'POS auto-finish' }` Windows sends.
+   * Legacy compatibility endpoint for older draft-order workflows. Current POS
+   * creates are already authoritative/DELIVERED and do not call this. Returns
+   * null on 404/501 (endpoint not deployed / order not found); throws otherwise.
    */
   async finishOrder(backendOrderId: string): Promise<any> {
     const token = await this.requireToken('finishOrder');

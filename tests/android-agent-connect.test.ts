@@ -73,7 +73,7 @@ function buildAgent(over: Partial<AgentConnectDeps> & {
 } = {}) {
   const client = over.client ?? fakeClient();
   const socket = over.socket ?? fakeSocket();
-  const tokenStore = (over.tokenStore as TokenStore) ?? new TokenStore({ storage: memoryStorage() });
+  const tokenStore = (over.tokenStore as TokenStore) ?? new TokenStore({ storage: memoryStorage(), allowInsecureFallback: true });
   const configStore = over.configStore ?? new ShimConfigStore({ storage: memoryStorage() });
   let capturedUri = '';
   let capturedOpts: Record<string, any> = {};
@@ -123,7 +123,7 @@ describe('createAgentConnection (E-PARITY-1)', () => {
   });
 
   test('reuses a stored pa_ key without re-fetching from /my-key', async () => {
-    const tokenStore = new TokenStore({ storage: memoryStorage() });
+    const tokenStore = new TokenStore({ storage: memoryStorage(), allowInsecureFallback: true });
     await tokenStore.setPrintAgentKey('pa_already_stored');
     const { agent, client } = buildAgent({ tokenStore });
 
@@ -217,7 +217,7 @@ describe('cross-tenant pa_ key guard on login (E-PARITY-1)', () => {
   test('logging into a DIFFERENT salon drops the previous salon pa_ key', async () => {
     // Device was paired to salon-A and holds salon-A's pa_ key.
     const storage = memoryStorage();
-    const tokenStore = new TokenStore({ storage: memoryStorage() });
+    const tokenStore = new TokenStore({ storage: memoryStorage(), allowInsecureFallback: true });
     await tokenStore.setPrintAgentKey('pa_salonA_secret');
     const configStore = new ShimConfigStore({ storage });
     configStore.setConfig({ salonId: 'salon-A', salonName: 'Salon A' } as never);
