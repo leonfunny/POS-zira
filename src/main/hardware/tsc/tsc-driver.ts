@@ -31,6 +31,9 @@ export interface TscDriverOptions extends TsplMediaOptions {
   dpi?: number;
 }
 
+/** A tag shorter than this is hard to handle and hard to sew in. */
+const MIN_TAG_LENGTH_MM = 15;
+
 export class TscDriver {
   private printerName: string;
   private connected = false;
@@ -248,14 +251,31 @@ export class TscDriver {
       `(size: ${data.size || '-'}, symbols: ${data.careSymbols?.length ?? 0}, qty: ${data.quantity})...`,
     );
 
-    const graphicHeightMm = this.formatter.graphicHeightMm(hasBarcode);
+    // The configured length is a ceiling, not a target: fabric arrives as a
+    // continuous ribbon, so a tag that needs 18mm should advance 18mm and not
+    // feed 14mm of blank between tags. The barcode zone, when there is one,
+    // still has to fit under whatever the graphic ends up using.
+    const graphicCeilingMm = this.formatter.graphicHeightMm(hasBarcode);
     const graphic = await renderFabricTagBitmap(
       data,
       this.formatter.widthDots,
-      this.formatter.mmToDots(graphicHeightMm),
+      this.formatter.mmToDots(graphicCeilingMm),
+      { fitHeight: true, minHeightDots: this.formatter.mmToDots(MIN_TAG_LENGTH_MM) },
     );
+    const dotsPerMm = this.formatter.mmToDots(1);
+    const configuredMm = this.formatter.getDimensions().heightMm;
+    // Clamped here rather than trusted from the rasteriser: this number is how
+    // far the printer advances the media, so a bad one wastes ribbon on every
+    // tag, and the driver is the last place that can still catch it.
+    const graphicMm = Math.min(
+      graphicCeilingMm,
+      Math.ceil(graphic.heightDots / dotsPerMm),
+    );
+    const labelHeightMm = hasBarcode
+      ? graphicMm + (configuredMm - graphicCeilingMm)
+      : graphicMm;
 
-    await this.printRaw(this.formatter.formatFabricTag(data, graphic), { docName: 'Zira Fabric Tag' });
+    await this.printRaw(this.formatter.formatFabricTag(data, graphic, labelHeightMm), { docName: 'Zira Fabric Tag' });
     logger.info('[TscDriver] Fabric tag printed successfully');
   }
 

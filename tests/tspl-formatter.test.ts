@@ -82,6 +82,23 @@ describe('TsplFormatter product labels', () => {
 });
 
 describe('TsplFormatter fabric tags', () => {
+  it('declares the length the tag actually needs, not the configured maximum', () => {
+    // Care-label ribbon is continuous: the configured height is a ceiling, and
+    // a tag that fits in 18mm must advance 18mm or every tag leaves a blank
+    // gap behind it. The rasteriser measures the content and the length it
+    // returns has to reach SIZE.
+    const formatter = new TsplFormatter(20, 60);
+    const out = text(formatter.formatFabricTag(fabricTag(), fakeGraphic(formatter.widthDots, 144), 18));
+    expect(out).toContain('SIZE 20 mm,18 mm');
+    expect(out).not.toContain('SIZE 20 mm,60 mm');
+  });
+
+  it('falls back to the configured length when no measured length is given', () => {
+    const formatter = new TsplFormatter(20, 60);
+    const out = text(formatter.formatFabricTag(fabricTag(), fakeGraphic(formatter.widthDots, 480)));
+    expect(out).toContain('SIZE 20 mm,60 mm');
+  });
+
   it('emits the bitmap payload with no separator between the command and its bytes', () => {
     const formatter = new TsplFormatter(40, 60);
     const graphic = fakeGraphic(formatter.widthDots, 200);

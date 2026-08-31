@@ -1551,9 +1551,16 @@ export class HardwareModule extends BaseModule {
 
     // Set default label dimensions for label printers. A garment tag is
     // narrower and much taller than a shelf label, so it gets its own default.
+    // 20mm is the narrowest media the TSC desktop range takes and the width
+    // woven care-label ribbon actually comes in; the height is only a ceiling,
+    // since the tag is trimmed to its content before printing.
     if (printerType === PrinterType.FABRIC_TAG) {
-      printerConfig.labelWidth = printerConfig.labelWidth || 40;
+      printerConfig.labelWidth = printerConfig.labelWidth || 20;
       printerConfig.labelHeight = printerConfig.labelHeight || 60;
+      // Care-label ribbon is one uninterrupted strip. Left on the default gap
+      // sensor the printer hunts for a notch that is not there, feeds the roll
+      // looking for it, and stops on a media error.
+      printerConfig.mediaSensor = printerConfig.mediaSensor || 'none';
     } else if (printerType === PrinterType.LABEL) {
       printerConfig.labelWidth = printerConfig.labelWidth || 50;
       printerConfig.labelHeight = printerConfig.labelHeight || 30;
@@ -2558,7 +2565,7 @@ export class HardwareModule extends BaseModule {
       const isFabricTag = printerTypeKey === PrinterType.FABRIC_TAG;
       return new TscDriver(
         config.windowsPrinter,
-        config.labelWidth || (isFabricTag ? 40 : 100),
+        config.labelWidth || (isFabricTag ? 20 : 100),
         config.labelHeight || (isFabricTag ? 60 : 50),
         {
           gapMm: config.labelGapMm,
@@ -2566,7 +2573,9 @@ export class HardwareModule extends BaseModule {
           // Resin ribbon on satin needs more heat than paper, so fabric tags
           // start darker than the generic label default.
           density: config.printDensity ?? (isFabricTag ? 12 : 10),
-          sensor: config.mediaSensor,
+          // Continuous ribbon by default -- see the note where FABRIC_TAG
+          // defaults are seeded.
+          sensor: config.mediaSensor ?? (isFabricTag ? 'none' : undefined),
         },
       );
     }

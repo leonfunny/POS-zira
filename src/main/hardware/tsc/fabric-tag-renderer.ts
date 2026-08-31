@@ -59,12 +59,21 @@ function formatPrice(grosze: number, currency: string): string {
  * Sizes are derived from the tag width so a 30mm and a 60mm tag both stay
  * balanced instead of one overflowing and the other looking empty.
  */
-export function buildFabricTagHtml(data: FabricTagData, widthDots: number, heightDots: number): string {
+export function buildFabricTagHtml(
+  data: FabricTagData,
+  widthDots: number,
+  /** null lays the tag out at its natural height so it can be measured. */
+  heightDots: number | null,
+): string {
   const pad = Math.round(widthDots * 0.06);
   const brandSize = Math.round(widthDots * 0.13);
   const sizeSize = Math.round(widthDots * 0.16);
   const bodySize = Math.round(widthDots * 0.075);
-  const smallSize = Math.round(widthDots * 0.062);
+  // Below roughly 11 dots the strokes of a lowercase letter fall between the
+  // dot grid and threshold away, which is how "NATURALNY LEN" printed as
+  // "ATURALNY LE" on the first fabric run. Keep the small line above that
+  // floor even on a narrow 20mm ribbon.
+  const smallSize = Math.max(11, Math.round(widthDots * 0.068));
   // A care label reads as one row of symbols. Size them to the count so five
   // symbols on a 20mm ribbon still fit on a single line instead of wrapping
   // and pushing the composition off the tag.
@@ -109,7 +118,7 @@ export function buildFabricTagHtml(data: FabricTagData, widthDots: number, heigh
 <html><head><meta charset="utf-8"><style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body {
-    width: ${widthDots}px; height: ${heightDots}px;
+    width: ${widthDots}px; height: ${heightDots === null ? 'auto' : `${heightDots}px`};
     background: #fff; color: #000;
     /* Antialiasing turns into speckle once we threshold to 1 bit. */
     -webkit-font-smoothing: none;
@@ -118,7 +127,7 @@ export function buildFabricTagHtml(data: FabricTagData, widthDots: number, heigh
   body {
     display: flex; flex-direction: column;
     align-items: center;
-    justify-content: ${data.layout === 'care-first' ? 'space-evenly' : 'center'};
+    justify-content: ${heightDots === null ? 'flex-start' : (data.layout === 'care-first' ? 'space-evenly' : 'center')};
     gap: ${Math.round(pad * 0.5)}px;
     padding: ${pad}px;
     font-family: "Segoe UI", "Noto Sans", Arial, sans-serif;
@@ -127,13 +136,13 @@ export function buildFabricTagHtml(data: FabricTagData, widthDots: number, heigh
     text-align: center;
     overflow: hidden;
   }
-  .logo { max-width: 100%; max-height: ${Math.round(heightDots * 0.3)}px; object-fit: contain; }
+  .logo { max-width: 100%; max-height: ${Math.round((heightDots ?? widthDots * 3) * 0.3)}px; object-fit: contain; }
   .brand { font-size: ${brandSize}px; letter-spacing: ${Math.round(brandSize * 0.08)}px; line-height: 1.1; text-transform: uppercase; }
   .size { font-size: ${sizeSize}px; line-height: 1.05; }
   .composition { font-size: ${bodySize}px; line-height: 1.25; }
   .symbols { display: flex; flex-wrap: wrap; justify-content: center; gap: ${Math.round(symbolPx * symbolGapRatio)}px; }
   .care { display: block; }
-  .care-text { font-size: ${smallSize}px; line-height: 1.2; font-weight: 400; }
+  .care-text { font-size: ${smallSize}px; line-height: 1.25; }
   .price { font-size: ${bodySize}px; }
 </style></head>
 <body>${body}</body></html>`;
@@ -180,12 +189,54 @@ function packMonochrome(bgra: Buffer, widthDots: number, heightDots: number): Mo
  * is packed — otherwise every tag would print at double scale on some
  * machines and correctly on others.
  */
+export interface RenderFabricTagOptions {
+  /**
+   * Shrink the tag to the height its content actually needs, using
+   * `heightDots` only as the ceiling. Continuous fabric has no label pitch to
+   * respect, so a fixed height just feeds blank ribbon between tags.
+   */
+  fitHeight?: boolean;
+  /** Floor for `fitHeight`, so a one-line tag is still handleable. */
+  minHeightDots?: number;
+}
+
+/** Round up to a whole millimetre: TSPL takes label length in mm. */
+function ceilToMm(dots: number, dotsPerMm = 8): number {
+  return Math.ceil(dots / dotsPerMm) * dotsPerMm;
+}
+
+/**
+ * Warn when ink reaches a side edge. On a 20mm ribbon there is no room to
+ * spare, and silent clipping is how "NATURALNY LEN" first printed as
+ * "ATURALNY LE" -- the kind of fault nobody notices until the garments ship.
+ */
+function warnOnEdgeContact(bitmap: MonoBitmap): void {
+  const columnHasInk = (x: number): boolean => {
+    for (let y = 0; y < bitmap.heightDots; y++) {
+      const bit = (bitmap.data[y * bitmap.widthBytes + (x >> 3)] >> (7 - (x & 7))) & 1;
+      if (bit === 0) return true;
+    }
+    return false;
+  };
+  const left = columnHasInk(0);
+  const right = columnHasInk(bitmap.widthDots - 1);
+  if (left || right) {
+    logger.warn(
+      `[FabricTag] Ink reaches the ${left && right ? 'left and right edges' : left ? 'left edge' : 'right edge'} ` +
+      `of a ${(bitmap.widthDots / 8).toFixed(1)}mm tag -- content is being cut off. ` +
+      'Shorten the text or widen the media.',
+    );
+  }
+}
+
 export async function renderFabricTagBitmap(
   data: FabricTagData,
   widthDots: number,
   heightDots: number,
+  options: RenderFabricTagOptions = {},
 ): Promise<MonoBitmap> {
-  const html = buildFabricTagHtml(data, widthDots, heightDots);
+  const fit = options.fitHeight === true;
+  const html = buildFabricTagHtml(data, widthDots, fit ? null : heightDots);
   const win = new BrowserWindow({
     show: false,
     width: widthDots,
@@ -199,23 +250,42 @@ export async function renderFabricTagBitmap(
     // Give the compositor a frame to paint the logo and web fonts.
     await new Promise((r) => setTimeout(r, 350));
 
+    let targetHeight = heightDots;
+    if (fit) {
+      // Measure the laid-out content rather than trusting the configured
+      // length. scrollHeight already includes the body padding.
+      const natural = Number(await win.webContents.executeJavaScript(
+        'Math.ceil(document.body.getBoundingClientRect().height)',
+      ));
+      const floor = options.minHeightDots ?? 8;
+      targetHeight = Math.min(heightDots, Math.max(floor, ceilToMm(natural || heightDots)));
+      win.setContentSize(widthDots, targetHeight);
+      // The resize needs a frame of its own before the capture is valid.
+      await new Promise((r) => setTimeout(r, 120));
+      logger.info(
+        `[FabricTag] Content measured ${natural} dots -> label length ${targetHeight} dots ` +
+        `(${(targetHeight / 8).toFixed(0)}mm, ceiling ${(heightDots / 8).toFixed(0)}mm)`,
+      );
+    }
+
     let image = await win.webContents.capturePage();
     const captured = image.getSize();
-    if (captured.width !== widthDots || captured.height !== heightDots) {
+    if (captured.width !== widthDots || captured.height !== targetHeight) {
       logger.debug(
-        `[FabricTag] Capture ${captured.width}x${captured.height} != ${widthDots}x${heightDots}, resizing`,
+        `[FabricTag] Capture ${captured.width}x${captured.height} != ${widthDots}x${targetHeight}, resizing`,
       );
-      image = image.resize({ width: widthDots, height: heightDots, quality: 'best' });
+      image = image.resize({ width: widthDots, height: targetHeight, quality: 'best' });
     }
 
     const bgra = image.toBitmap();
-    const expected = widthDots * heightDots * 4;
+    const expected = widthDots * targetHeight * 4;
     if (bgra.length < expected) {
       throw new Error(`Rasteriser returned ${bgra.length} bytes, expected ${expected}`);
     }
 
-    const bitmap = packMonochrome(bgra, widthDots, heightDots);
-    logger.info(`[FabricTag] Rasterised ${widthDots}x${heightDots} dots (${bitmap.data.length} bytes)`);
+    const bitmap = packMonochrome(bgra, widthDots, targetHeight);
+    warnOnEdgeContact(bitmap);
+    logger.info(`[FabricTag] Rasterised ${widthDots}x${targetHeight} dots (${bitmap.data.length} bytes)`);
     return bitmap;
   } finally {
     win.destroy();

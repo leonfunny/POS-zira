@@ -244,10 +244,13 @@ export class TsplFormatter {
    * Media setup + CLS. Every job starts here so a tag never inherits the
    * geometry of whatever was printed before it.
    */
-  header(builder: TsplBuilder): TsplBuilder {
+  header(builder: TsplBuilder, labelHeightMmOverride?: number): TsplBuilder {
     const sensor = this.media.sensor ?? 'gap';
     const gapMm = this.media.gapMm ?? 2;
-    builder.cmd(`SIZE ${this.labelWidthMm} mm,${this.labelHeightMm} mm`);
+    // Continuous media has no pitch to honour, so a tag may declare the length
+    // its content actually needs instead of the configured maximum.
+    const heightMm = labelHeightMmOverride ?? this.labelHeightMm;
+    builder.cmd(`SIZE ${this.labelWidthMm} mm,${heightMm} mm`);
     if (sensor === 'bline') builder.cmd(`BLINE ${gapMm} mm,0 mm`);
     else if (sensor === 'none') builder.cmd('GAP 0 mm,0 mm');
     else builder.cmd(`GAP ${gapMm} mm,0 mm`);
@@ -331,8 +334,12 @@ export class TsplFormatter {
    * firmware rasterises bars far more accurately than a downsampled bitmap,
    * and a fabric tag that will not scan at the till is a defective tag.
    */
-  formatFabricTag(data: FabricTagData, graphic: MonoBitmap | null): Buffer {
-    const b = this.header(new TsplBuilder());
+  formatFabricTag(
+    data: FabricTagData,
+    graphic: MonoBitmap | null,
+    labelHeightMmOverride?: number,
+  ): Buffer {
+    const b = this.header(new TsplBuilder(), labelHeightMmOverride);
     const margin = this.mmToDots(2);
     const barcode = String(data.barcode || '').trim();
 
