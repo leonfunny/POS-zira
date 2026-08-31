@@ -12,6 +12,7 @@ import InvoicingTab from './components/invoicing/InvoicingTab';
 import OrdersTab from './components/OrdersTab';
 import ProductModule from './components/products/ProductModule';
 import LabelModule from './components/label/LabelModule';
+import type { PosMode } from '../shared/types';
 import WarehouseModule from './components/warehouse/WarehouseModule';
 import ForecastOrderingTab from './components/forecast/ForecastOrderingTab';
 import SecurityTab from './components/security/SecurityTab';
@@ -644,7 +645,7 @@ export default function App() {
                 />
               )}
               {activeTab === 'label' && isTabAvailable('label') && (
-                <LabelModule language={posUiLanguage} />
+                <LabelModule language={posUiLanguage} posMode={config?.posMode as PosMode | undefined} />
               )}
               {activeTab === 'selfCheckout' && isTabAvailable('selfCheckout') && (
                 <SelfCheckoutTab language={(config?.language as Language) || 'en'} />

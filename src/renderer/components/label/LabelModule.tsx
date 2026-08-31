@@ -22,6 +22,8 @@ import {
 import type { AgentConfig } from '../../../shared/types';
 import { useConfig } from '../../hooks/useConfig';
 import { useProducts } from '../../hooks/useProducts';
+import type { FabricTagTemplate, PosMode } from '../../../shared/types';
+import FabricTagPrintPanel, { type FabricTagVariant } from './FabricTagPrintPanel';
 import type { ProductListItem } from '../../hooks/useProducts';
 import type { Category } from '../../hooks/usePosDb';
 import { getTranslation, type Language } from '../../i18n/translations';
@@ -39,6 +41,11 @@ import ConfirmActionDialog from '../pos/ConfirmActionDialog';
 
 interface LabelModuleProps {
   language: Language;
+  /**
+   * Fabric care labels only make sense in a garment shop, so the panel is
+   * gated on the trade rather than shown to every till that has a TSC.
+   */
+  posMode?: PosMode;
 }
 
 type LabelProduct = ProductListItem & { ean?: string | null };
@@ -380,7 +387,7 @@ function BarcodePreview({ barcode }: { barcode: string }) {
   );
 }
 
-export default function LabelModule({ language }: LabelModuleProps) {
+export default function LabelModule({ language, posMode }: LabelModuleProps) {
   const { config, saveConfig } = useConfig();
   const labelLanguage: LabelLanguage = PRODUCT_LABEL_NAME_LOCALE;
   const copy = COPY[language] || COPY.vi;
@@ -396,6 +403,24 @@ export default function LabelModule({ language }: LabelModuleProps) {
   const [activeCategoryId, setActiveCategoryId] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedProductId, setSelectedProductId] = useState('');
+  const [fabricTemplates, setFabricTemplates] = useState<Map<string, FabricTagTemplate>>(new Map());
+  const isGarmentMode = posMode === 'garment';
+
+  useEffect(() => {
+    if (!isGarmentMode) { setFabricTemplates(new Map()); return; }
+    let cancelled = false;
+    window.electronAPI.pos.fabricTagTemplates.list()
+      .then((rows: FabricTagTemplate[]) => {
+        if (cancelled) return;
+        setFabricTemplates(new Map(rows.map((row) => [row.templateId, row])));
+      })
+      .catch((err: unknown) => {
+        // Loud on purpose: silently showing no fabric panel is exactly how the
+        // printer looked broken for an afternoon.
+        rlog.error('[LabelModule] Failed to load fabric tag templates:', err);
+      });
+    return () => { cancelled = true; };
+  }, [isGarmentMode]);
   const [copies, setCopies] = useState(1);
   const [status, setStatus] = useState<LabelStatus>({ type: 'idle', message: '' });
   const [recentPrints, setRecentPrints] = useState<RecentPrint[]>([]);
@@ -508,6 +533,25 @@ export default function LabelModule({ language }: LabelModuleProps) {
     () => labelProducts.find((product) => product.id === selectedProductId) || null,
     [labelProducts, selectedProductId],
   );
+
+  /**
+   * The style behind the selected product, and every size that belongs to it.
+   *
+   * Sizes are sibling variants sharing a template id, read from the full
+   * catalogue rather than the filtered Label list: a size the operator has not
+   * pinned is still a size that needs a label.
+   */
+  const selectedFabricStyle = useMemo(() => {
+    if (!isGarmentMode || !selectedProduct) return null;
+    const templateId = selectedProduct.template_id;
+    if (!templateId) return null;
+    const template = fabricTemplates.get(templateId);
+    if (!template) return null;
+    const variants: FabricTagVariant[] = allProducts
+      .filter((product) => product.template_id === templateId)
+      .map((product) => ({ id: product.id, name: product.name }));
+    return { template, variants };
+  }, [isGarmentMode, selectedProduct, fabricTemplates, allProducts]);
 
   const selectedBarcode = resolveLabelCode(selectedProduct);
   const selectedNameResolution = selectedProduct
@@ -920,6 +964,19 @@ export default function LabelModule({ language }: LabelModuleProps) {
               {status.type === 'printing' ? <RefreshCw size={20} className="animate-spin" /> : <Printer size={20} />}
               {printButtonText}
             </button>
+
+            {selectedFabricStyle && (
+              <FabricTagPrintPanel
+                template={selectedFabricStyle.template}
+                styleName={selectedName || selectedProduct?.name || ''}
+                variants={selectedFabricStyle.variants}
+                ready
+                // Not translated yet: the strings land with the editing form,
+                // which is where an operator will actually read them.
+                t={(_key, fallback) => fallback}
+                onStatus={(next) => setStatus(next as typeof status)}
+              />
+            )}
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto border-t border-slate-200 p-3 space-y-3">
