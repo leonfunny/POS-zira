@@ -37,6 +37,22 @@ describe('TSPL is a first-class protocol end to end', () => {
     }
   });
 
+  it('opens every slot on a protocol that slot accepts', async () => {
+    // The shared default was THERMAL for all slots. FABRIC_TAG rejects it, and
+    // because the protocol <select> lists only the allowed values, it rendered
+    // as TSPL while the value underneath stayed THERMAL -- so every save was
+    // refused by the backend and the screen gave no sign of it.
+    const fs = await import('node:fs/promises');
+    const settings = await fs.readFile('src/renderer/components/Settings.tsx', 'utf8');
+
+    const start = settings.indexOf('const getPrinterConfig =');
+    expect(start, 'getPrinterConfig not found').toBeGreaterThan(-1);
+    const block = settings.slice(start, start + 1400);
+
+    expect(block).toMatch(/ALLOWED_PROTOCOLS_BY_TYPE/);
+    expect(block).toMatch(/!allowed\.includes\(base\.protocol\)/);
+  });
+
   it('recommends TSPL for a TSC, the only protocol that can reach a fabric tag slot', async () => {
     // FABRIC_TAG accepts TSPL and nothing else, so a detected TSC that comes
     // back as WINDOWS can never be routed to it -- which is how a garment-tag

@@ -6,7 +6,7 @@ import * as fs from 'fs';
 import { app } from 'electron';
 import logger from '../logger';
 import { BRAND_PATTERNS } from './detection/types';
-import { listSerialPorts, isUsbPrintPortPresent } from './port-utils';
+import { listSerialPorts, isUsbPrintPortPresent, listWindowsPrintersDetailed } from './port-utils';
 
 const execFileAsync = promisify(execFile);
 
@@ -234,7 +234,9 @@ foreach ($vid in $vids) {
     const { stdout } = await execFileAsync(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
-      { encoding: 'utf8', timeout: 20000 },
+      // A slow desktop enumerating every PnP device needs longer than 20s, and
+      // this scan failing is not cosmetic: it takes the printer list with it.
+      { encoding: 'utf8', timeout: 60000 },
     );
 
     // --- Parse output ---
@@ -637,12 +639,36 @@ foreach ($vid in $vids) {
       .filter((printer) => isRealSpoolerPrinter(printer.name, printer.port))
       .map((printer) => ({ name: printer.name, port: printer.port })),
   );
-  const windowsPrinters = filteredWindowsPrinters.length > 0 ? filteredWindowsPrinters : fallbackWindowsPrinters;
+  let windowsPrinters = filteredWindowsPrinters.length > 0 ? filteredWindowsPrinters : fallbackWindowsPrinters;
 
   if (filteredWindowsPrinters.length === 0 && fallbackWindowsPrinters.length > 0) {
     logger.warn(
       `[DriverInstaller] Filtered printer list is empty; falling back to ${fallbackWindowsPrinters.length} raw spooler printer(s)`
     );
+  }
+
+  // Both lists above come out of the one big PnP batch, so when that batch
+  // fails there is no printer list at all -- settings then offers an empty
+  // dropdown and a printer that is plugged in and working cannot be selected.
+  // Ask the spooler directly instead: it is a much cheaper call, it answers
+  // when the PnP enumeration times out, and names are all the dropdown needs.
+  if (windowsPrinters.length === 0) {
+    try {
+      const spooler = await listWindowsPrintersDetailed();
+      windowsPrinters = dedupeWindowsPrinters(
+        spooler
+          .filter((printer) => isRealSpoolerPrinter(printer.name, printer.portName || ''))
+          .map((printer) => ({ name: printer.name, port: printer.portName || '' })),
+      );
+      if (windowsPrinters.length > 0) {
+        logger.warn(
+          `[DriverInstaller] Device scan produced no printers; recovered ${windowsPrinters.length} ` +
+          'from the spooler. Brand and VID detail is missing for this scan.',
+        );
+      }
+    } catch (err) {
+      logger.error('[DriverInstaller] Spooler fallback failed; settings will show no printers:', err);
+    }
   }
 
   return {

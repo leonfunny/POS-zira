@@ -22,7 +22,10 @@ describe('Windows USB printer presence checks', () => {
     const samePortIndex = source.indexOf('const samePortPresent = await isUsbPrintPortPresent(portUpper)');
     const vidFallbackIndex = source.indexOf('backendPresent = bp.vids.some');
 
-    expect(source).toContain("import { listSerialPorts, isUsbPrintPortPresent } from './port-utils'");
+    // Matched on the symbol rather than the whole import line: this test is
+    // about the order of the two presence checks, and pinning the import list
+    // made it fail the next time the module imported one more helper.
+    expect(source).toMatch(/import \{[^}]*\bisUsbPrintPortPresent\b[^}]*\} from '\.\/port-utils'/);
     expect(samePortIndex).toBeGreaterThan(0);
     expect(vidFallbackIndex).toBeGreaterThan(samePortIndex);
   });

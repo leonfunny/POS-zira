@@ -250,6 +250,22 @@ function printerTypeLabel(t: (key: string) => string, printerType?: string | nul
   return translated && translated !== key ? translated : value;
 }
 
+/**
+ * What a fabric tag slot should look like before anyone touches it.
+ *
+ * The generic label defaults describe a 50x30 shelf label; care-label ribbon
+ * is a 20mm continuous strip, and offering the shelf numbers means the first
+ * print renders 320 dots into a 160-dot head. The height is a ceiling, not a
+ * target -- the tag is trimmed to its content before printing.
+ */
+const FABRIC_TAG_DEFAULTS: Partial<PrinterConfig> = {
+  labelWidth: 20,
+  labelHeight: 60,
+  mediaSensor: 'none',
+  printSpeed: 2,
+  printDensity: 12,
+};
+
 // Default printer config
 const defaultPrinterConfig: PrinterConfig = {
   enabled: false,
@@ -1356,7 +1372,23 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
 
   // Get printer config for a type (with default)
   const getPrinterConfig = (printerType: PrinterTypeValue): PrinterConfig => {
-    return printers[printerType as keyof typeof printers] || { ...defaultPrinterConfig };
+    const saved = printers[printerType as keyof typeof printers];
+    const base: PrinterConfig = saved || {
+      ...defaultPrinterConfig,
+      ...(printerType === 'FABRIC_TAG' ? FABRIC_TAG_DEFAULTS : {}),
+    };
+
+    // A slot has to start on a protocol its own type accepts. Every slot
+    // defaulted to THERMAL, which FABRIC_TAG rejects -- and since the select
+    // lists only the allowed protocols, it displayed TSPL while the value
+    // underneath stayed THERMAL. Saving then bounced with "FABRIC_TAG slot
+    // cannot use THERMAL protocol" in a log nobody was reading, so the screen
+    // looked right and nothing could be configured.
+    const allowed = (ALLOWED_PROTOCOLS_BY_TYPE as Record<string, PrinterProtocol[] | undefined>)[printerType] || [];
+    if (allowed.length > 0 && !allowed.includes(base.protocol)) {
+      return { ...base, protocol: allowed[0] };
+    }
+    return base;
   };
 
   const formatTestPrintDebugText = (
