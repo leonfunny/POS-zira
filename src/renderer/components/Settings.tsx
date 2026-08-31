@@ -1443,7 +1443,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
         next.protocol = preferredProtocolForType(updates.printerType);
         const nextIsLabelMedia = isLabelMediaType(updates.printerType);
         // A garment tag is narrower and taller than a shelf label.
-        next.paperWidth = updates.printerType === 'FABRIC_TAG' ? 40 : nextIsLabelMedia ? 100 : 80;
+        next.paperWidth = updates.printerType === 'FABRIC_TAG' ? 20 : nextIsLabelMedia ? 100 : 80;
         next.paperHeight = updates.printerType === 'FABRIC_TAG' ? 60 : nextIsLabelMedia ? 150 : prev.paperHeight;
       }
       return next;
@@ -3500,7 +3500,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                                     type="number"
                                     value={printerConfig.labelWidth || ''}
                                     onChange={(e) => updatePrinter(printerType, { labelWidth: parseInt(e.target.value) || 0 })}
-                                    onBlur={(e) => { const v = parseInt(e.target.value); if (!v || v < 10) updatePrinter(printerType, { labelWidth: isFabricTag ? 40 : 50 }); }}
+                                    onBlur={(e) => { const v = parseInt(e.target.value); if (!v || v < 10) updatePrinter(printerType, { labelWidth: isFabricTag ? 20 : 50 }); }}
                                     min={10}
                                     max={1000}
                                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
@@ -3577,6 +3577,20 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none disabled:bg-slate-50 disabled:text-slate-400"
                                 />
                               </div>
+                              <div className="col-span-2">
+                                <label className="block text-xs font-medium text-slate-600 mb-1">{t('settings.labelOriginInset')}</label>
+                                <input
+                                  type="number"
+                                  value={printerConfig.labelOriginInsetMm ?? 0}
+                                  onChange={(e) => updatePrinter(printerType, { labelOriginInsetMm: parseFloat(e.target.value) || 0 })}
+                                  onBlur={(e) => { const v = parseFloat(e.target.value); if (isNaN(v) || v < 0) updatePrinter(printerType, { labelOriginInsetMm: 0 }); }}
+                                  min={0}
+                                  max={10}
+                                  step={0.1}
+                                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
+                                />
+                                <p className="mt-1 text-xs text-slate-500">{t('settings.labelOriginInsetHint')}</p>
+                              </div>
                             </div>
                           )}
                         </>
@@ -3585,7 +3599,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                       {isFabricTag && (
                         <FabricTagComposer
                           t={t}
-                          labelWidthMm={printerConfig.labelWidth || 40}
+                          labelWidthMm={printerConfig.labelWidth || 20}
                           labelHeightMm={printerConfig.labelHeight || 60}
                           ready={!!printerConfig.enabled && !!printerConfig.windowsPrinter
                             && (ALLOWED_PROTOCOLS_BY_TYPE.FABRIC_TAG || []).includes(printerConfig.protocol)}
