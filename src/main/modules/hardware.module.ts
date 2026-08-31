@@ -2576,6 +2576,7 @@ export class HardwareModule extends BaseModule {
           // Continuous ribbon by default -- see the note where FABRIC_TAG
           // defaults are seeded.
           sensor: config.mediaSensor ?? (isFabricTag ? 'none' : undefined),
+          originInsetMm: config.labelOriginInsetMm,
         },
       );
     }

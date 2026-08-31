@@ -322,6 +322,16 @@ export interface PrinterConfig {
   printDensity?: number;
   /** Media sensor. Default 'gap'. Use 'bline' for black-mark, 'none' for continuous. */
   mediaSensor?: 'gap' | 'bline' | 'none';
+  /**
+   * How far the print origin sits inside the media's edge, in millimetres.
+   *
+   * On a wide print head the first addressable dot does not necessarily land
+   * on the edge of a narrow ribbon. Measure it with
+   * `scripts/fabric-tag-bench.cjs --align`: the ruler's edge blocks show which
+   * side is unreachable and the 1mm ticks give the distance. Content is inset
+   * by this much on BOTH sides so the tag sits centred on the media.
+   */
+  labelOriginInsetMm?: number;
   // Additional settings
   paperWidth?: number;   // mm (default: 80 for thermal)
   charsPerLine?: number; // Characters per line (default: 48)

@@ -37,6 +37,24 @@ describe('TSPL is a first-class protocol end to end', () => {
     }
   });
 
+  it('carries the measured origin inset from saved config through to the driver', async () => {
+    // The inset is per-installation -- it depends on where the media sits
+    // under the head -- so it has to survive being saved and reach the
+    // formatter. A value the schema drops, or a driver call that forgets it,
+    // both show up as a tag printed off-centre with no error anywhere.
+    const fs = await import('node:fs/promises');
+
+    const schema = await fs.readFile('src/main/config/store.ts', 'utf8');
+    expect(schema, 'schema would silently drop the inset').toMatch(
+      /labelOriginInsetMm: \{ type: 'number' \}/,
+    );
+
+    const hardware = await fs.readFile('src/main/modules/hardware.module.ts', 'utf8');
+    expect(hardware, 'driver never receives the inset').toMatch(
+      /originInsetMm:\s*config\.labelOriginInsetMm/,
+    );
+  });
+
   it('stores a FABRIC_TAG slot under schema validation like every other slot', async () => {
     const fs = await import('node:fs/promises');
     const source = await fs.readFile('src/main/config/store.ts', 'utf8');

@@ -258,7 +258,7 @@ export class TscDriver {
     const graphicCeilingMm = this.formatter.graphicHeightMm(hasBarcode);
     const graphic = await renderFabricTagBitmap(
       data,
-      this.formatter.widthDots,
+      this.formatter.contentWidthDots,
       this.formatter.mmToDots(graphicCeilingMm),
       { fitHeight: true, minHeightDots: this.formatter.mmToDots(MIN_TAG_LENGTH_MM) },
     );

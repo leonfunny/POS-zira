@@ -204,6 +204,20 @@ describe('TsplFormatter narrow media', () => {
 });
 
 describe('TsplFormatter geometry', () => {
+  it('gives up the same margin on both sides when dot 0 is inside the media', () => {
+    // Measured on the factory MB241: dot 0 lands ~1.1mm inside a 20mm ribbon.
+    // TSPL cannot address a negative column, so the only way to sit centred is
+    // to surrender the reachable margin too.
+    const formatter = new TsplFormatter(20, 60, 203, { originInsetMm: 1.1 });
+    expect(formatter.widthDots).toBe(160);
+    expect(formatter.contentWidthDots).toBe(160 - formatter.mmToDots(1.1) * 2);
+  });
+
+  it('uses the full width when the origin is on the media edge', () => {
+    expect(new TsplFormatter(20, 60, 203).contentWidthDots).toBe(160);
+    expect(new TsplFormatter(20, 60, 203, { originInsetMm: 0 }).contentWidthDots).toBe(160);
+  });
+
   it('converts millimetres to dots at the head resolution', () => {
     expect(new TsplFormatter(40, 60, 203).mmToDots(25.4)).toBe(203);
     expect(new TsplFormatter(40, 60, 300).mmToDots(25.4)).toBe(300);

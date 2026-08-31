@@ -70,6 +70,8 @@ const MIN_BARCODE_MODULE_DOTS = 2;
 export interface TsplMediaOptions {
   /** Gap between labels in mm. Ignored when sensor is 'none'. */
   gapMm?: number;
+  /** How far dot 0 sits inside the media edge. See `contentWidthDots`. */
+  originInsetMm?: number;
   /** Print speed in inches/second. */
   speed?: number;
   /** Burn darkness, 0-15. */
@@ -138,6 +140,20 @@ export class TsplFormatter {
 
   get widthDots(): number {
     return this.mmToDots(this.labelWidthMm);
+  }
+
+  /**
+   * Width available to content, in dots.
+   *
+   * The print origin does not always land on the media's edge: measured on the
+   * factory MB241, dot 0 sits ~1.1mm inside a 20mm ribbon, so a full-width tag
+   * runs its right edge off the cloth and reads as shifted. TSPL cannot
+   * address a negative column, so sitting centred on the media means giving up
+   * the same margin on the reachable side too.
+   */
+  get contentWidthDots(): number {
+    const inset = this.mmToDots(Math.max(0, this.media.originInsetMm ?? 0));
+    return Math.max(8, this.widthDots - inset * 2);
   }
 
   get heightDots(): number {

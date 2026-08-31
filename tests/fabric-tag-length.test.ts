@@ -44,8 +44,11 @@ const { TscDriver } = await import('../src/main/hardware/tsc/tsc-driver');
 
 const tag = { brandName: 'ZIRA', size: 'L', quantity: 1 } as any;
 
-async function printOnce(overrides: Partial<{ heightMm: number }> = {}) {
-  const driver = new TscDriver('TSC MB241', 20, overrides.heightMm ?? 60, { sensor: 'none' });
+async function printOnce(overrides: Partial<{ heightMm: number; originInsetMm: number }> = {}) {
+  const driver = new TscDriver('TSC MB241', 20, overrides.heightMm ?? 60, {
+    sensor: 'none',
+    originInsetMm: overrides.originInsetMm,
+  });
   expect(await driver.connect()).toBe(true);
   await driver.printFabricTag(tag);
   return sent[sent.length - 1].toString('latin1');
@@ -67,6 +70,20 @@ describe('fabric tag length follows the content', () => {
     expect(renderCalls[0].heightDots).toBe(480); // 60mm at 203dpi
     // A tag still has to be big enough to handle and to sew in.
     expect(renderCalls[0].options?.minHeightDots).toBeGreaterThan(0);
+  });
+
+  it('rasterises at the reachable width, not the media width', async () => {
+    // With dot 0 sitting 1.1mm inside the ribbon there is no way to print the
+    // far edge, so the tag has to be narrowed on both sides to come out
+    // centred. Handing the rasteriser the full media width instead would put
+    // the tag's right edge off the cloth.
+    await printOnce({ originInsetMm: 1.1 });
+    expect(renderCalls[0].widthDots).toBe(142);
+  });
+
+  it('rasterises at the full media width when nothing is inset', async () => {
+    await printOnce();
+    expect(renderCalls[0].widthDots).toBe(160);
   });
 
   it('never declares more than the configured ceiling', async () => {

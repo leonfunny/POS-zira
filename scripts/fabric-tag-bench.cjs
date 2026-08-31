@@ -149,15 +149,20 @@ async function run() {
   const heightMm = Number(arg('height', 32));
   const printer = arg('printer', 'TSC MB241');
 
-  const driver = new TscDriver(printer, widthMm, heightMm, {
+  const insetMm = Number(arg('inset', 0));
+  const media = {
     sensor: arg('sensor', 'none'),
     density: Number(arg('density', 12)),
     speed: Number(arg('speed', 2)),
+    originInsetMm: insetMm,
     gapMm: 0,
-  });
+  };
+  const driver = new TscDriver(printer, widthMm, heightMm, media);
   const formatter = driver.formatter || driver._formatter;
 
-  const widthDots = Math.round(widthMm * 8);
+  const mediaWidthDots = Math.round(widthMm * 8);
+  // Same inset the driver applies, so the preview is the printed tag.
+  const widthDots = Math.max(8, mediaWidthDots - Math.round(insetMm * 8) * 2);
   const heightDots = Math.round(heightMm * 8);
   const bmp = has('align')
     ? buildAlignmentBitmap(widthDots, heightDots)
@@ -172,7 +177,8 @@ async function run() {
   const bounds = inkBounds(bmp);
   writeGreyPng(arg('out', 'fabric-preview.png'), bmp.widthDots, bmp.heightDots, out);
 
-  console.log(`BITMAP ${bmp.widthDots}x${bmp.heightDots} dots (${widthMm}x${heightMm}mm @203dpi)`);
+  console.log(`BITMAP ${bmp.widthDots}x${bmp.heightDots} dots on ${mediaWidthDots}-dot media ` +
+    `(${widthMm}x${heightMm}mm @203dpi, inset ${insetMm}mm)`);
   console.log(`INK    ${black} dots burnt (${((black / (bmp.widthDots * bmp.heightDots)) * 100).toFixed(1)}%)`);
   console.log(`BOUNDS x ${bounds.minX}..${bounds.maxX}  y ${bounds.minY}..${bounds.maxY}`);
   console.log(`EDGE   left-margin=${bounds.minX} right-margin=${bmp.widthDots - 1 - bounds.maxX} ` +
@@ -203,12 +209,7 @@ async function run() {
     if (has('align')) {
       const { TsplFormatter } = require(dist('hardware/tsc/tspl-formatter'));
       const { sendRawToPrinter } = require(dist('hardware/windows-raw-print'));
-      const formatter = new TsplFormatter(widthMm, heightMm, 203, {
-        sensor: arg('sensor', 'none'),
-        density: Number(arg('density', 12)),
-        speed: Number(arg('speed', 2)),
-        gapMm: 0,
-      });
+      const formatter = new TsplFormatter(widthMm, heightMm, 203, media);
       const job = formatter.formatFabricTag({ brandName: '', quantity: 1 }, bmp);
       await sendRawToPrinter(printer, job, { docName: 'Zira Fabric Alignment' });
       console.log('PRINTED (alignment ruler)');

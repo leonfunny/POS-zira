@@ -105,6 +105,7 @@ const printerConfigSchema = {
     printSpeed: { type: 'number' },
     printDensity: { type: 'number' },
     mediaSensor: { type: 'string', enum: ['gap', 'bline', 'none'] },
+    labelOriginInsetMm: { type: 'number' },
   },
 };
 
