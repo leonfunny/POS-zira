@@ -1974,4 +1974,40 @@ export const migrations: Migration[] = [
       WHERE closed_at IS NOT NULL;
     `,
   },
+  {
+    version: 68,
+    name: 'invoice_handoff_outbox',
+    // Shadow handoff from a durable, fiscalized POS sale to the standalone
+    // Zira Invoice app. The order/idempotency identities never change across
+    // retries. DISPATCHING is persisted before the local WebSocket mutation;
+    // a restart therefore reconciles by status instead of blindly importing
+    // the order again.
+    up: `
+      CREATE TABLE IF NOT EXISTS invoice_handoffs (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_id TEXT NOT NULL UNIQUE,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        salon_id TEXT NOT NULL,
+        tenant_generation INTEGER NOT NULL,
+        company_nip TEXT,
+        document_intent TEXT NOT NULL CHECK (document_intent IN ('FISCALISED_RETAIL')),
+        channel_id TEXT,
+        status TEXT NOT NULL CHECK (status IN ('WAITING_ELIGIBILITY', 'PENDING', 'DISPATCHING', 'COMPLETED', 'NOT_APPLICABLE', 'NEEDS_REVIEW')),
+        attempts INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at TEXT,
+        last_request_id TEXT,
+        last_error_code TEXT,
+        last_error TEXT,
+        response_json TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        dispatched_at TEXT,
+        completed_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_invoice_handoffs_replay
+        ON invoice_handoffs(salon_id, tenant_generation, status, next_attempt_at, seq);
+      CREATE INDEX IF NOT EXISTS idx_invoice_handoffs_order_status
+        ON invoice_handoffs(order_id, status);
+    `,
+  },
 ];

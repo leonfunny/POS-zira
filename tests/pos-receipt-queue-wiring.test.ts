@@ -9,6 +9,7 @@ const {
   databaseMock,
   orderRepoMock,
   outboxRepoMock,
+  invoiceHandoffRepoMock,
   productRepoMock,
   paymentControllerMock,
   transactionState,
@@ -36,6 +37,9 @@ const {
       enqueue: vi.fn(),
       findInitialByOrder: vi.fn(),
       prepareInitialForOrderMutation: vi.fn(),
+    },
+    invoiceHandoffRepoMock: {
+      enqueue: vi.fn(),
     },
     productRepoMock: {
       getById: vi.fn(),
@@ -113,6 +117,10 @@ vi.mock('../src/main/database/repos/receipt-print-outbox-repo', () => ({
     'CANCELLED',
   ],
   receiptPrintOutboxRepo: outboxRepoMock,
+}));
+
+vi.mock('../src/main/database/repos/invoice-handoff-repo', () => ({
+  invoiceHandoffRepo: invoiceHandoffRepoMock,
 }));
 
 vi.mock('../src/main/events/pos-event-emitter', () => ({
@@ -303,6 +311,7 @@ describe('POS initial receipt queue wiring', () => {
       openDrawer: true,
       payload: expect.objectContaining({ orderId: 'order-cash' }),
     }));
+    expect(invoiceHandoffRepoMock.enqueue).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       success: true,
       id: 'order-cash',

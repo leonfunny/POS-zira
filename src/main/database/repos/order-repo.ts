@@ -7,6 +7,28 @@ import { posEventEmitter } from '../../events/pos-event-emitter';
 import { STOCK_TRACKED_GUARD_SQL } from './product-repo';
 import { receiptPrintOutboxRepo } from './receipt-print-outbox-repo';
 
+const FISCAL_SIDE_EFFECT_STATUSES = [
+  'SENT',
+  'SUCCESS_CONFIRMED',
+  'UNKNOWN_NEEDS_RECONCILIATION',
+] as const;
+
+function assertOrderHasNoFiscalSideEffect(orderId: string): void {
+  const placeholders = FISCAL_SIDE_EFFECT_STATUSES.map(() => '?').join(', ');
+  const attempt = database.get<{ id: string; status: string }>(
+    `SELECT id, status FROM fiscal_attempts
+     WHERE order_id = ? AND status IN (${placeholders})
+     ORDER BY attempt_no DESC LIMIT 1`,
+    [orderId, ...FISCAL_SIDE_EFFECT_STATUSES],
+  );
+  if (!attempt) return;
+  const error = new Error(
+    `Fiscal order cannot be edited or deleted after printer side effects (${attempt.status}).`,
+  ) as Error & { code?: string };
+  error.code = 'FISCAL_ORDER_IMMUTABLE';
+  throw error;
+}
+
 export interface OrderRow {
   id: string;
   order_number: string | null;
@@ -549,6 +571,7 @@ export const orderRepo = {
     if (order.synced === 2) {
       throw new Error('Order sync is in progress. Wait for sync to finish before deleting.');
     }
+    assertOrderHasNoFiscalSideEffect(id);
 
     const items = orderRepo.getItemsByOrderId(id);
     let restocked = 0;
@@ -605,6 +628,7 @@ export const orderRepo = {
     if (order.status === 'REFUNDED' || order.status === 'PARTIAL_REFUND' || order.status === 'CANCELLED') {
       throw new Error('Refunded or cancelled orders cannot be edited locally.');
     }
+    assertOrderHasNoFiscalSideEffect(id);
 
     const currentItems = orderRepo.getItemsByOrderId(id);
     const nextItems = input.items?.map((item) => {

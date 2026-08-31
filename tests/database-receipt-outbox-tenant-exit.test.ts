@@ -45,6 +45,16 @@ function createClearSchema(target: SqlJsDatabase): void {
           payload_json TEXT
         )
       `);
+    } else if (table === 'invoice_handoffs') {
+      target.run(`
+        CREATE TABLE invoice_handoffs (
+          seq INTEGER PRIMARY KEY AUTOINCREMENT,
+          order_id TEXT NOT NULL,
+          salon_id TEXT NOT NULL,
+          status TEXT NOT NULL,
+          last_request_id TEXT
+        )
+      `);
     } else {
       target.run(`CREATE TABLE ${table} (id TEXT)`);
     }
@@ -79,6 +89,15 @@ function insertReceipt(status: string): void {
     [status],
   );
   db.run("INSERT INTO orders (id) VALUES ('order-old')");
+}
+
+function insertInvoiceHandoff(status: string): void {
+  db.run(
+    `INSERT INTO invoice_handoffs (
+       order_id, salon_id, status, last_request_id
+     ) VALUES ('invoice-order-old', 'salon-old', ?, 'request-old')`,
+    [status],
+  );
 }
 
 describe('database receipt outbox tenant exit', () => {
@@ -177,5 +196,39 @@ describe('database receipt outbox tenant exit', () => {
 
     transactionSpy.mockRestore();
     (database as any).saving = false;
+  });
+
+  it('blocks tenant exit while an invoice handoff is DISPATCHING', () => {
+    insertInvoiceHandoff('DISPATCHING');
+
+    expect(() => database.assertNoActiveReceiptPrintOutcomes('salon-old'))
+      .toThrowError(expect.objectContaining({
+        code: 'INVOICE_HANDOFF_OUTCOME_UNCERTAIN',
+        invoiceHandoffOrderId: 'invoice-order-old',
+      }));
+    expect(() => database.clearSalonData(
+      'salon-old',
+      { archivedReviewEvidence: true },
+    )).toThrowError(expect.objectContaining({
+      code: 'INVOICE_HANDOFF_OUTCOME_UNCERTAIN',
+    }));
+  });
+
+  it('retains NEEDS_REVIEW until archive allowance, then clears old-tenant evidence', () => {
+    insertInvoiceHandoff('NEEDS_REVIEW');
+
+    expect(() => database.clearSalonData('salon-old')).toThrowError(
+      expect.objectContaining({ code: 'INVOICE_HANDOFF_OUTCOME_UNCERTAIN' }),
+    );
+    expect(() => database.prepareReceiptPrintOutboxForTenantExit(
+      'salon-old',
+      'archived switch',
+      { allowNeedsReview: true },
+    )).not.toThrow();
+
+    database.clearSalonData('salon-old', { archivedReviewEvidence: true });
+    expect(database.get<{ count: number }>(
+      'SELECT COUNT(*) AS count FROM invoice_handoffs',
+    )?.count).toBe(0);
   });
 });

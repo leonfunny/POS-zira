@@ -1,5 +1,8 @@
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { database } from '../database';
+import logger from '../../logger';
+import { invoiceHandoffRepo } from './invoice-handoff-repo';
+import type { ReceiptData } from '../../../shared/types';
 
 export type FiscalAttemptStatus =
   | 'PENDING'
@@ -59,6 +62,22 @@ const BLOCKING_STATUSES: FiscalAttemptStatus[] = [
   'UNKNOWN_NEEDS_RECONCILIATION',
 ];
 
+export interface InvoiceHandoffRuntimeContext {
+  salonId: string;
+  companyNip?: string | null;
+}
+
+// Fail-closed activation gate. Runtime must wire the secure bridge worker,
+// token/config UI, and this provider as one reviewed unit. Until then no POS
+// fiscal result can create a purge-blocking handoff row.
+let invoiceHandoffContextProvider: (() => InvoiceHandoffRuntimeContext | null) | null = null;
+
+export function configureInvoiceHandoffContextProvider(
+  provider: (() => InvoiceHandoffRuntimeContext | null) | null,
+): void {
+  invoiceHandoffContextProvider = provider;
+}
+
 function serialize(value: unknown): string | null {
   if (value === undefined) return null;
   try {
@@ -66,6 +85,39 @@ function serialize(value: unknown): string | null {
   } catch {
     return JSON.stringify({ unserializable: true, text: String(value) });
   }
+}
+
+function resultRecord(value: unknown): Record<string, unknown> {
+  let parsed = value;
+  if (typeof value === 'string') {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      parsed = null;
+    }
+  }
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+    ? parsed as Record<string, unknown>
+    : {};
+}
+
+function canonicalRemoteEvidence(
+  value: unknown,
+  jobId?: string | null,
+  printerId?: string | null,
+): Record<string, unknown> | null {
+  const current = resultRecord(value);
+  const cleanJobId = String(jobId ?? '').trim()
+    || String(current.jobId ?? current.id ?? '').trim();
+  const cleanPrinterId = String(printerId ?? '').trim()
+    || String(current.printerId ?? '').trim();
+  if (!cleanJobId || !cleanPrinterId) return null;
+  return {
+    ...current,
+    remote: true,
+    jobId: cleanJobId,
+    printerId: cleanPrinterId,
+  };
 }
 
 function projectFromPayload(payloadJson: string): { fiskalNumber: string | null; grossTotal: number | null } {
@@ -94,6 +146,87 @@ function markResolved(id: string, status: FiscalAttemptStatus, errorCode?: strin
   database.markDirty();
 }
 
+/**
+ * Only a confirmed, original retail sale can create a Zira Invoice handoff.
+ * Refunds and copies/reprints are different fiscal operations and must never
+ * create a new FISCALISED_RETAIL semantic intent. Invalid/legacy snapshots
+ * fail closed for the optional handoff while the fiscal journal remains the
+ * source of truth.
+ */
+function isFiscalisedRetailSale(payload: unknown): payload is ReceiptData {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+  const receipt = payload as Partial<ReceiptData>;
+  return receipt.isRefund !== true
+    && receipt.isReprint !== true
+    && Array.isArray(receipt.items)
+    && receipt.items.length > 0
+    && !!receipt.payment
+    && typeof receipt.payment === 'object'
+    && Number.isFinite(Number(receipt.total));
+}
+
+function parseFiscalisedRetailSale(payloadJson: string): ReceiptData | null {
+  try {
+    const payload = JSON.parse(payloadJson);
+    return isFiscalisedRetailSale(payload) ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeValidPolishNip(value: unknown): string | null {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (!/^\d{10}$/.test(digits)) return null;
+  // All-identical placeholders (notably 0000000000) satisfy the arithmetic
+  // checksum but are not valid taxpayer identities and are rejected by the
+  // receiving Zira Invoice contract as well.
+  if (new Set(digits).size === 1) return null;
+  const weights = [6, 5, 7, 2, 3, 4, 5, 6, 7];
+  const checksum = weights.reduce(
+    (sum, weight, index) => sum + Number(digits[index]) * weight,
+    0,
+  ) % 11;
+  return checksum !== 10 && checksum === Number(digits[9]) ? digits : null;
+}
+
+function tryEnsureInvoiceHandoff(orderId: string, payload: unknown): void {
+  const cleanOrderId = String(orderId || '').trim();
+  if (!cleanOrderId || !isFiscalisedRetailSale(payload)) return;
+  try {
+    const context = invoiceHandoffContextProvider?.() ?? null;
+    const salonId = String(context?.salonId || '').trim();
+    if (!salonId) {
+      logger.debug(
+        `[FiscalAttemptRepo] Invoice handoff skipped for ${cleanOrderId}: no active salon`,
+      );
+      return;
+    }
+    const companyNip = normalizeValidPolishNip(context?.companyNip);
+    const fiscalPayloadNip = normalizeValidPolishNip((payload as ReceiptData).sellerNip);
+    if (!companyNip || !fiscalPayloadNip || companyNip !== fiscalPayloadNip) {
+      logger.debug(
+        `[FiscalAttemptRepo] Invoice handoff skipped for ${cleanOrderId}: `
+        + 'fiscal payload seller NIP is missing, invalid, or differs from the active context',
+      );
+      return;
+    }
+    invoiceHandoffRepo.enqueue({
+      orderId: cleanOrderId,
+      salonId,
+      tenantGeneration: database.getTenantGeneration(),
+      companyNip,
+    });
+  } catch (error) {
+    // Fiscal printing is legally/operationally primary. The durable fiscal
+    // row remains backfillable on activation; bridge bookkeeping cannot turn
+    // a valid fiscal print into a checkout failure.
+    logger.warn(
+      `[FiscalAttemptRepo] Invoice handoff unavailable for ${cleanOrderId}; `
+      + `fiscal flow continues: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 export const fiscalAttemptRepo: FiscalAttemptJournal & {
   markOpenSentAsUnknownOnStartup(): number;
   findLatestByOrder(orderId: string): FiscalAttemptRow | null;
@@ -101,7 +234,12 @@ export const fiscalAttemptRepo: FiscalAttemptJournal & {
   getConfirmedOrderIds(orderIds: string[]): string[];
   getReceiptSnapshot(orderId: string): any | null;
   backfillFiskalColumns(): number;
-  recordRemoteFiscalSuccess(orderId: string, jobId?: string | null, printerId?: string | null): void;
+  recordRemoteFiscalSuccess(
+    orderId: string,
+    jobId?: string | null,
+    printerId?: string | null,
+    receiptData?: ReceiptData | null,
+  ): void;
 } = {
   async flush(): Promise<{ success: boolean; error?: string }> {
     const result = await database.saveCoalesced();
@@ -134,28 +272,69 @@ export const fiscalAttemptRepo: FiscalAttemptJournal & {
    * routes fiscal printing to another machine has has_fiscal=0 for every
    * order it sells. Idempotent: one confirmed row per order is enough.
    */
-  recordRemoteFiscalSuccess(orderId: string, jobId?: string | null, printerId?: string | null): void {
+  recordRemoteFiscalSuccess(
+    orderId: string,
+    jobId?: string | null,
+    printerId?: string | null,
+    receiptData?: ReceiptData | null,
+  ): void {
     if (!orderId) return;
-    const existing = database.get<{ id: string }>(
-      `SELECT id FROM fiscal_attempts WHERE order_id = ? AND status = 'SUCCESS_CONFIRMED' LIMIT 1`,
+    const existing = database.get<FiscalAttemptRow>(
+      `SELECT * FROM fiscal_attempts
+       WHERE order_id = ? AND status = 'SUCCESS_CONFIRMED'
+       ORDER BY CASE WHEN printer_type = 'REMOTE' THEN 0 ELSE 1 END,
+                attempt_no DESC
+       LIMIT 1`,
       [orderId],
     );
-    if (existing) return;
+    if (existing) {
+      if (existing.printer_type === 'REMOTE') {
+        const evidence = canonicalRemoteEvidence(existing.result_json, jobId, printerId);
+        if (evidence) {
+          const resultJson = serialize(evidence)!;
+          if (resultJson !== existing.result_json) {
+            database.run(
+              `UPDATE fiscal_attempts
+               SET result_json = ?
+               WHERE id = ? AND printer_type = 'REMOTE' AND status = 'SUCCESS_CONFIRMED'`,
+              [resultJson, existing.id],
+            );
+            database.markDirty();
+          }
+          tryEnsureInvoiceHandoff(orderId, receiptData);
+        }
+      } else {
+        tryEnsureInvoiceHandoff(orderId, receiptData);
+      }
+      return;
+    }
+    const payloadJson = receiptData ? JSON.stringify(receiptData) : '{}';
+    const payloadHash = receiptData
+      ? createHash('sha256').update(payloadJson).digest('hex')
+      : '';
     const id = randomUUID();
+    const remoteEvidence = canonicalRemoteEvidence(null, jobId, printerId);
     database.run(
       `INSERT INTO fiscal_attempts (
         id, order_id, payment_id, attempt_no, idempotency_key, printer_type,
         payload_json, payload_hash, status, sent_at, resolved_at, result_json
-      ) VALUES (?, ?, NULL, ?, ?, 'REMOTE', '{}', '', 'SUCCESS_CONFIRMED', datetime('now'), datetime('now'), ?)`,
+      ) VALUES (?, ?, NULL, ?, ?, 'REMOTE', ?, ?, 'SUCCESS_CONFIRMED', datetime('now'), datetime('now'), ?)`,
       [
         id,
         orderId,
         fiscalAttemptRepo.getNextAttemptNo(orderId, null),
         `remote-${jobId || orderId}`,
-        serialize({ remote: true, jobId: jobId ?? null, printerId: printerId ?? null }),
+        payloadJson,
+        payloadHash,
+        serialize(remoteEvidence ?? {
+          remote: true,
+          jobId: jobId ?? null,
+          printerId: printerId ?? null,
+        }),
       ],
     );
     database.markDirty();
+    if (remoteEvidence) tryEnsureInvoiceHandoff(orderId, receiptData);
   },
 
   // Latest fiscal attempt for an order, any status — used by Order History to
@@ -235,7 +414,17 @@ export const fiscalAttemptRepo: FiscalAttemptJournal & {
     if (!attempt) return null;
     const reconciliation = { reconciledBy: 'operator', didPrint, reconciledAt: new Date().toISOString() };
     if (didPrint) {
-      markResolved(attempt.id, 'SUCCESS_CONFIRMED', undefined, reconciliation);
+      const remoteEvidence = attempt.printer_type === 'REMOTE'
+        ? canonicalRemoteEvidence(attempt.result_json)
+        : null;
+      const result = remoteEvidence
+        ? { ...remoteEvidence, ...reconciliation }
+        : reconciliation;
+      markResolved(attempt.id, 'SUCCESS_CONFIRMED', undefined, result);
+      const receipt = parseFiscalisedRetailSale(attempt.payload_json);
+      if (receipt && (attempt.printer_type !== 'REMOTE' || remoteEvidence)) {
+        tryEnsureInvoiceHandoff(orderId, receipt);
+      }
     } else {
       markResolved(attempt.id, 'FAILED_CONFIRMED', 'OPERATOR_RECONCILED_NOT_PRINTED', reconciliation);
     }
@@ -328,6 +517,36 @@ export const fiscalAttemptRepo: FiscalAttemptJournal & {
 
   markSuccess(id: string, result?: unknown): void {
     markResolved(id, 'SUCCESS_CONFIRMED', undefined, result);
+    const attempt = database.get<{
+      order_id: string;
+      payload_json: string;
+      printer_type: string;
+      result_json: string | null;
+    }>(
+      'SELECT order_id, payload_json, printer_type, result_json FROM fiscal_attempts WHERE id = ?',
+      [id],
+    );
+    if (attempt?.order_id) {
+      const receipt = parseFiscalisedRetailSale(attempt.payload_json);
+      let remoteEvidenceValid = attempt.printer_type !== 'REMOTE';
+      if (attempt.printer_type === 'REMOTE') {
+        const remoteEvidence = canonicalRemoteEvidence(attempt.result_json);
+        if (remoteEvidence) {
+          const resultJson = serialize(remoteEvidence)!;
+          if (resultJson !== attempt.result_json) {
+            database.run(
+              `UPDATE fiscal_attempts
+               SET result_json = ?
+               WHERE id = ? AND printer_type = 'REMOTE' AND status = 'SUCCESS_CONFIRMED'`,
+              [resultJson, id],
+            );
+            database.markDirty();
+          }
+          remoteEvidenceValid = true;
+        }
+      }
+      if (receipt && remoteEvidenceValid) tryEnsureInvoiceHandoff(attempt.order_id, receipt);
+    }
   },
 
   markFailed(id: string, errorCode: string, result?: unknown): void {

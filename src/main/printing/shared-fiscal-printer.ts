@@ -436,7 +436,12 @@ export async function submitSharedFiscalPrint(
     const final = await resolveFinalFiscalResult(client, token, apiKey, config.machineId, route.printerId, result);
     if (durableAttempt) {
       if (final.printed) {
-        fiscalAttemptRepo.markSuccess(durableAttempt.id, final);
+        fiscalAttemptRepo.markSuccess(durableAttempt.id, {
+          ...final,
+          remote: true,
+          jobId: final.jobId || jobId,
+          printerId: final.printerId || route.printerId,
+        });
       } else if (final.status === 'FAILED' && final.failureClass === 'SAFE_BEFORE_PRINT') {
         fiscalAttemptRepo.markFailed(durableAttempt.id, 'REMOTE_SAFE_BEFORE_PRINT', final);
       } else {

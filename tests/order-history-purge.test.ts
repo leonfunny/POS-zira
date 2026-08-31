@@ -17,6 +17,7 @@ const SCHEMA = `
   CREATE TABLE fiscal_attempts (id TEXT PRIMARY KEY, order_id TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT);
   CREATE TABLE print_attempts (id TEXT PRIMARY KEY, order_id TEXT NOT NULL);
   CREATE TABLE receipt_print_outbox (job_id TEXT PRIMARY KEY, order_id TEXT NOT NULL, status TEXT NOT NULL);
+  CREATE TABLE invoice_handoffs (order_id TEXT PRIMARY KEY, status TEXT NOT NULL);
   CREATE TABLE pos_billiard_handoffs (checkout_id TEXT PRIMARY KEY, order_id TEXT NOT NULL UNIQUE);
   CREATE TABLE fiscal_receipt_sync_queue (id TEXT PRIMARY KEY, local_order_id TEXT NOT NULL, status TEXT NOT NULL);
   CREATE TABLE pos_event_outbox (id TEXT PRIMARY KEY, local_order_id TEXT, status TEXT NOT NULL);
@@ -76,6 +77,7 @@ describe('purgeLocalOrderHistoryBefore', () => {
     db.run("INSERT INTO fiscal_attempts VALUES ('fa1','a','SUCCESS_CONFIRMED',NULL)");
     db.run("INSERT INTO print_attempts VALUES ('pa1','a')");
     db.run("INSERT INTO receipt_print_outbox VALUES ('job1','a','COMPLETED')");
+    db.run("INSERT INTO invoice_handoffs VALUES ('a','COMPLETED')");
     db.run("INSERT INTO pos_billiard_handoffs VALUES ('co1','a')");
     db.run("INSERT INTO fiscal_receipt_sync_queue VALUES ('q1','a','SYNCED')");
     db.run("INSERT INTO pos_event_outbox VALUES ('e1','a','acked')");
@@ -85,7 +87,7 @@ describe('purgeLocalOrderHistoryBefore', () => {
 
     expect(result).toEqual({ purged: 2, remaining: 0, kept: 0, cutoff: CUTOFF });
     expect(ids()).toEqual(['today']);
-    for (const t of ['order_items', 'fiscal_attempts', 'print_attempts', 'receipt_print_outbox', 'pos_billiard_handoffs', 'fiscal_receipt_sync_queue', 'pos_event_outbox', 'local_sync_log']) {
+    for (const t of ['order_items', 'fiscal_attempts', 'print_attempts', 'receipt_print_outbox', 'invoice_handoffs', 'pos_billiard_handoffs', 'fiscal_receipt_sync_queue', 'pos_event_outbox', 'local_sync_log']) {
       expect(db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${t}`)?.n, t).toBe(t === 'order_items' ? 1 : 0);
     }
     expect(db.markDirty).toHaveBeenCalled();
@@ -115,7 +117,7 @@ describe('purgeLocalOrderHistoryBefore', () => {
     expect(ids()).toEqual(['in-open']);
   });
 
-  it('keeps orders with pending work: fiscal unknown, sync queue, event outbox, print outbox, sync log', async () => {
+  it('keeps orders with pending work: fiscal unknown, sync queue, event outbox, print/invoice outboxes, sync log', async () => {
     insertOrder('fiscal-unknown');
     db.run("INSERT INTO fiscal_attempts VALUES ('fa','fiscal-unknown','UNKNOWN_NEEDS_RECONCILIATION',NULL)");
     insertOrder('fiscal-queue');
@@ -124,6 +126,12 @@ describe('purgeLocalOrderHistoryBefore', () => {
     db.run("INSERT INTO pos_event_outbox VALUES ('e','event-pending','pending')");
     insertOrder('print-inflight');
     db.run("INSERT INTO receipt_print_outbox VALUES ('j','print-inflight','REMOTE_ACCEPTED')");
+    insertOrder('invoice-inflight');
+    db.run("INSERT INTO invoice_handoffs VALUES ('invoice-inflight','DISPATCHING')");
+    insertOrder('invoice-review');
+    db.run("INSERT INTO invoice_handoffs VALUES ('invoice-review','NEEDS_REVIEW')");
+    insertOrder('invoice-not-applicable');
+    db.run("INSERT INTO invoice_handoffs VALUES ('invoice-not-applicable','NOT_APPLICABLE')");
     insertOrder('log-pending');
     db.run("INSERT INTO local_sync_log VALUES ('l','order','log-pending','pending')");
     insertOrder('log-rejected-mirror'); // rejected mirror entries are not a keep reason
@@ -132,9 +140,11 @@ describe('purgeLocalOrderHistoryBefore', () => {
 
     const result = await purgeLocalOrderHistoryBefore(db, CUTOFF);
 
-    expect(result.purged).toBe(2);
-    expect(result.kept).toBe(5);
-    expect(ids()).toEqual(['event-pending', 'fiscal-queue', 'fiscal-unknown', 'log-pending', 'print-inflight']);
+    expect(result.purged).toBe(3);
+    expect(result.kept).toBe(7);
+    expect(ids()).toEqual(['event-pending', 'fiscal-queue', 'fiscal-unknown', 'invoice-inflight', 'invoice-review', 'log-pending', 'print-inflight']);
+    expect(db.get('SELECT * FROM invoice_handoffs WHERE order_id = ?', ['invoice-not-applicable']))
+      .toBeNull();
   });
 
   it('stale fiscal UNKNOWN attempts stop blocking once older than the threshold', async () => {

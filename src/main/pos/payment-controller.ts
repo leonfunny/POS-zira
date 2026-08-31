@@ -814,7 +814,19 @@ export class PaymentController {
           // fiscal-visibility filter on THIS terminal read local
           // fiscal_attempts. Best-effort — never fail a confirmed print.
           try {
-            fiscalAttemptRepo.recordRemoteFiscalSuccess(orderId, shared.jobId, shared.printerId);
+            fiscalAttemptRepo.recordRemoteFiscalSuccess(
+              orderId,
+              shared.jobId,
+              shared.printerId,
+              receiptData,
+            );
+            const persisted = await fiscalAttemptRepo.flush();
+            if (!persisted.success) {
+              logger.warn(
+                `[Payment] Remote fiscal journal/handoff flush failed for ${orderId}: `
+                + `${persisted.error || 'database flush failed'}`,
+              );
+            }
           } catch (journalErr) {
             logger.warn(`[Payment] Remote fiscal journal mirror failed for ${orderId}: ${journalErr}`);
           }

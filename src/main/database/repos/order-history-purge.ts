@@ -76,6 +76,7 @@ const CHILD_TABLES: Array<{ table: string; column: string }> = [
   { table: 'fiscal_attempts', column: 'order_id' },
   { table: 'print_attempts', column: 'order_id' },
   { table: 'receipt_print_outbox', column: 'order_id' },
+  { table: 'invoice_handoffs', column: 'order_id' },
   { table: 'pos_billiard_handoffs', column: 'order_id' },
   { table: 'fiscal_receipt_sync_queue', column: 'local_order_id' },
   { table: 'pos_event_outbox', column: 'local_order_id' },
@@ -127,6 +128,11 @@ const ELIGIBLE_SQL = `
         AND r.status NOT IN ('COMPLETED', 'CANCELLED', 'FAILED_SAFE', 'NEEDS_REVIEW')
     )
     AND NOT EXISTS (
+      SELECT 1 FROM invoice_handoffs ih
+      WHERE ih.order_id = o.id
+        AND ih.status NOT IN ('COMPLETED', 'NOT_APPLICABLE')
+    )
+    AND NOT EXISTS (
       SELECT 1 FROM local_sync_log l
       WHERE l.entity_type = 'order' AND l.entity_id = o.id
         AND l.status = 'pending'
@@ -152,7 +158,7 @@ export async function purgeLocalOrderHistoryBefore(
   const yieldBetweenBatches = options.yieldBetweenBatches ?? defaultYield;
 
   const required = ['orders', 'shifts', 'fiscal_attempts', 'fiscal_receipt_sync_queue',
-    'pos_event_outbox', 'receipt_print_outbox', 'local_sync_log'];
+    'pos_event_outbox', 'receipt_print_outbox', 'invoice_handoffs', 'local_sync_log'];
   for (const t of required) {
     if (!tableExists(db, t)) {
       logger.debug(`[OrderHistoryPurge] table ${t} missing; skipping purge`);

@@ -155,6 +155,12 @@ beforeEach(() => {
       completed_at TEXT,
       UNIQUE (order_id, document_type)
     );
+    CREATE TABLE fiscal_attempts (
+      id TEXT PRIMARY KEY,
+      order_id TEXT NOT NULL,
+      attempt_no INTEGER NOT NULL,
+      status TEXT NOT NULL
+    );
   `);
   vi.clearAllMocks();
 });
@@ -264,6 +270,30 @@ describe('order mutation receipt-outbox lifecycle', () => {
       printer_id: 'printer-pos1',
       remote_job_id: 'remote-job-locked',
     });
+  });
+
+  it.each([
+    'SENT',
+    'SUCCESS_CONFIRMED',
+    'UNKNOWN_NEEDS_RECONCILIATION',
+  ])('blocks edit/delete when fiscal evidence is %s', (status) => {
+    const orderId = `order-fiscal-${status}`;
+    seedCashOrder(orderId);
+    dbState.db!.run(
+      `INSERT INTO fiscal_attempts (id, order_id, attempt_no, status)
+       VALUES (?, ?, 1, ?)`,
+      [`attempt-${status}`, orderId, status],
+    );
+
+    expect(() => orderRepo.updateLocalUnsynced(orderId, {
+      paymentMethod: 'CARD',
+      paymentAmount: 1000,
+    })).toThrowError(expect.objectContaining({ code: 'FISCAL_ORDER_IMMUTABLE' }));
+    expect(() => orderRepo.deleteLocalUnsynced(orderId)).toThrowError(
+      expect.objectContaining({ code: 'FISCAL_ORDER_IMMUTABLE' }),
+    );
+    expect(orderRepo.getById(orderId)).toMatchObject({ payment_method: 'CASH' });
+    expect(orderRepo.getItemsByOrderId(orderId)).toHaveLength(1);
   });
 
   it('retains cancelled evidence after deleting a safe unsynced order', () => {

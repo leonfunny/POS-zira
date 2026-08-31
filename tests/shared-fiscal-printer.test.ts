@@ -231,6 +231,15 @@ describe('submitSharedFiscalPrint', () => {
       }),
     );
     expect(createPrintJob.mock.calls[0][1]).not.toHaveProperty('openDrawer');
+    expect(fiscalAttemptRepo.markSuccess).toHaveBeenCalledWith(
+      'remote-attempt-1',
+      expect.objectContaining({
+        remote: true,
+        jobId: 'job-1',
+        printerId: 'fiscal-printer-1',
+        printed: true,
+      }),
+    );
   });
 
   it('auto retries fiscal only after backend reports SAFE_BEFORE_PRINT', async () => {

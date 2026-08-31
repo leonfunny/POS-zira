@@ -398,6 +398,10 @@ class Database {
       // archived tenant switch the refreshed per-salon archive retains the
       // evidence; the live DB must not expose old payloads to the new tenant.
       'receipt_print_outbox',
+      // Zira Invoice handoff evidence is tenant-scoped and deliberately has
+      // no order FK. Clear it explicitly before orders after the ambiguity
+      // guard below has proved no request is currently in flight.
+      'invoice_handoffs',
       'order_items',      // Must be first (FK to orders)
       'orders',
       'forecast_order_draft_lines',
@@ -490,6 +494,10 @@ class Database {
     const validTablePattern = /^[a-z_]+$/;
 
     this.transaction(() => {
+      this.assertNoUncertainInvoiceHandoffOutcomes(
+        salonId,
+        options.archivedReviewEvidence !== true,
+      );
       this.prepareReceiptPrintOutboxForTenantExitInTransaction(
         salonId,
         'Initial receipt cancelled before clearing salon data',
@@ -547,6 +555,10 @@ class Database {
     options: { allowNeedsReview?: boolean } = {},
   ): { cancelled: number } {
     this.assertSynchronousSaveAvailable('preparing receipt state for tenant exit');
+    this.assertNoUncertainInvoiceHandoffOutcomes(
+      salonId,
+      options.allowNeedsReview !== true,
+    );
     let cancelled = 0;
     this.transaction(() => {
       cancelled = this.prepareReceiptPrintOutboxForTenantExitInTransaction(
@@ -584,6 +596,49 @@ class Database {
     if (blocker) {
       throw this.receiptPrintTenantExitBlockedError(blocker);
     }
+    // Auth/salon-switch callers already use this guard before they archive or
+    // clear a tenant. Keep the same entry point while extending it to the new
+    // local invoice side effect.
+    this.assertNoUncertainInvoiceHandoffOutcomes(salonId, false);
+  }
+
+  private assertNoUncertainInvoiceHandoffOutcomes(
+    salonId: string,
+    includeNeedsReview: boolean,
+  ): void {
+    if (!this.get<{ n: number }>(
+      "SELECT 1 AS n FROM sqlite_master WHERE type = 'table' AND name = 'invoice_handoffs'",
+    )) return;
+
+    const scope = String(salonId || '').trim();
+    const scopeClause = scope ? ' AND salon_id = ?' : '';
+    const blockedStatuses = includeNeedsReview
+      ? "'DISPATCHING', 'NEEDS_REVIEW'"
+      : "'DISPATCHING'";
+    const blocker = this.get<{
+      order_id: string;
+      status: string;
+      last_request_id: string | null;
+    }>(
+      `SELECT order_id, status, last_request_id
+       FROM invoice_handoffs
+       WHERE status IN (${blockedStatuses})${scopeClause}
+       ORDER BY seq ASC LIMIT 1`,
+      scope ? [scope] : [],
+    );
+    if (!blocker) return;
+
+    const requestIdentity = blocker.last_request_id
+      ? `, request ${blocker.last_request_id}`
+      : '';
+    const error = new Error(
+      `Không thể đăng xuất hoặc đổi salon khi kết quả chuyển đơn sang Zira Invoice chưa chắc chắn `
+      + `(${blocker.status}, order ${blocker.order_id}${requestIdentity}). `
+      + 'Hãy kiểm tra Zira Invoice và xử lý hàng đợi hóa đơn trước.',
+    ) as Error & { code?: string; invoiceHandoffOrderId?: string };
+    error.code = 'INVOICE_HANDOFF_OUTCOME_UNCERTAIN';
+    error.invoiceHandoffOrderId = blocker.order_id;
+    throw error;
   }
 
   private prepareReceiptPrintOutboxForTenantExitInTransaction(

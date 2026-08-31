@@ -99,8 +99,9 @@ describe('remote fiscal success is mirrored into the local journal', () => {
     const controllerSource = readSource('src/main/pos/payment-controller.ts');
     const repoSource = readSource('src/main/database/repos/fiscal-attempt-repo.ts');
 
-    expect(controllerSource).toContain('recordRemoteFiscalSuccess(orderId, shared.jobId, shared.printerId)');
-    expect(repoSource).toContain('recordRemoteFiscalSuccess(orderId: string');
+    expect(controllerSource).toContain('fiscalAttemptRepo.recordRemoteFiscalSuccess(');
+    expect(controllerSource).toContain('shared.printerId,\n              receiptData,');
+    expect(repoSource).toContain('recordRemoteFiscalSuccess(\n    orderId: string');
     // Idempotent: never duplicate a confirmed row for the same order.
     expect(repoSource).toContain("WHERE order_id = ? AND status = 'SUCCESS_CONFIRMED' LIMIT 1");
   });
