@@ -1,3 +1,4 @@
+import type { PrinterProtocol } from '../../shared/types';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import * as path from 'path';
@@ -40,7 +41,7 @@ export interface DetectedDevice {
   driverInstalled: boolean;
   /** Recommended printer type slot (RECEIPT, FISCAL, LABEL, A4). Set by classifyPrinterCategory(). */
   targetType?: string;
-  /** Recommended protocol (POSNET, ELZAB_STX, ZEBRA, THERMAL, WINDOWS). Set by classifyPrinterCategory(). */
+  /** Recommended protocol (see PrinterProtocol). Set by classifyPrinterCategory(). */
   recommendedProtocol?: string;
   /** When false, show the device but require manual slot selection instead of auto-setup. */
   autoSetupEligible?: boolean;
@@ -755,7 +756,10 @@ const LABEL_PATTERNS = [
  */
 export function classifyPrinterCategory(device: DetectedDevice): {
   targetType: 'RECEIPT' | 'FISCAL' | 'LABEL' | 'A4';
-  protocol: 'POSNET' | 'ELZAB_STX' | 'ZEBRA' | 'THERMAL' | 'WINDOWS';
+  // Spelled with the shared union rather than a copy of it. The copy that used
+  // to live here had lost TSPL, so no detected device could ever be routed to
+  // a slot that requires it -- the fabric tag printer among them.
+  protocol: PrinterProtocol;
 } {
   const brand = device.brand.toUpperCase();
   const model = (device.model || '').toLowerCase();
@@ -782,9 +786,19 @@ export function classifyPrinterCategory(device: DetectedDevice): {
     return { targetType: 'LABEL', protocol: 'ZEBRA' };
   }
 
-  // TSC — always label
+  // TSC — a label printer that speaks TSPL natively.
+  //
+  // Suggesting WINDOWS here sent it down the ZebraDriver path, which talks
+  // ZPL: the TSPL-EZD firmware emulates enough ZPL to look like it works, so
+  // the mistake printed rather than failed. It also put the device out of
+  // reach of the FABRIC_TAG slot, which only accepts TSPL, so a garment-tag
+  // printer could never be detected as one.
+  //
+  // LABEL stays the suggested slot because most TSC units print barcode
+  // labels; the same hardware is moved to FABRIC_TAG by hand when it is
+  // loaded with care-label ribbon.
   if (brand === 'TSC' || device.vid === '1203' || combined.includes('tsc')) {
-    return { targetType: 'LABEL', protocol: 'WINDOWS' };
+    return { targetType: 'LABEL', protocol: 'TSPL' };
   }
 
   // Honeywell — default to label

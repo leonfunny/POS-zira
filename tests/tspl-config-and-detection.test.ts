@@ -37,6 +37,24 @@ describe('TSPL is a first-class protocol end to end', () => {
     }
   });
 
+  it('recommends TSPL for a TSC, the only protocol that can reach a fabric tag slot', async () => {
+    // FABRIC_TAG accepts TSPL and nothing else, so a detected TSC that comes
+    // back as WINDOWS can never be routed to it -- which is how a garment-tag
+    // printer stayed invisible in settings while sitting on USB001. WINDOWS
+    // also sent it down the ZebraDriver path, and TSPL-EZD emulates enough ZPL
+    // that the mistake printed instead of failing.
+    const { classifyPrinterCategory } = await import('../src/main/hardware/driver-installer');
+    const tsc = classifyPrinterCategory({
+      brand: 'TSC',
+      model: 'TSC MB241',
+      windowsPrinterName: 'TSC MB241',
+      vid: '',
+    } as any);
+
+    expect(tsc.protocol).toBe('TSPL');
+    expect(ALLOWED_PROTOCOLS_BY_TYPE[PrinterType.FABRIC_TAG]).toContain(tsc.protocol);
+  });
+
   it('carries the measured origin inset from saved config through to the driver', async () => {
     // The inset is per-installation -- it depends on where the media sits
     // under the head -- so it has to survive being saved and reach the
