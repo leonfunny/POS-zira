@@ -9,6 +9,10 @@
  *   npx electron zz-fabric-probe.cjs --tag tag.json --width 20 --height 32 --out out.png [--print]
  */
 const fs = require('node:fs');
+const path = require('node:path');
+
+/** dist/ lives at the repo root; this script sits one level down in scripts/. */
+const dist = (mod) => path.join(__dirname, '..', 'dist', 'main', mod);
 const zlib = require('node:zlib');
 const { app } = require('electron');
 
@@ -137,8 +141,8 @@ app.whenReady().then(async () => {
 });
 
 async function run() {
-  const { renderFabricTagBitmap } = require('./dist/main/hardware/tsc/fabric-tag-renderer');
-  const { TscDriver } = require('./dist/main/hardware/tsc/tsc-driver');
+  const { renderFabricTagBitmap } = require(dist('hardware/tsc/fabric-tag-renderer'));
+  const { TscDriver } = require(dist('hardware/tsc/tsc-driver'));
 
   const tag = JSON.parse(fs.readFileSync(arg('tag'), 'utf8'));
   const widthMm = Number(arg('width', 20));
@@ -184,7 +188,7 @@ async function run() {
     // Send bare TSPL. Used to probe for hardware we cannot query: the RAW
     // spooler path is write-only, so the only way to learn whether a cutter
     // is fitted is to ask the printer to cut and watch it.
-    const { sendRawToPrinter } = require('./dist/main/hardware/windows-raw-print');
+    const { sendRawToPrinter } = require(dist('hardware/windows-raw-print'));
     const commands = arg('raw').split('|').map((c) => c.trim()).filter(Boolean);
     const job = Buffer.from(commands.join('\r\n') + '\r\n', 'latin1');
     console.log('RAW ->\n  ' + commands.join('\n  '));
@@ -197,8 +201,8 @@ async function run() {
     const ok = await driver.connect();
     if (!ok) { console.error('PRINT SKIPPED: printer not reachable'); return 2; }
     if (has('align')) {
-      const { TsplFormatter } = require('./dist/main/hardware/tsc/tspl-formatter');
-      const { sendRawToPrinter } = require('./dist/main/hardware/windows-raw-print');
+      const { TsplFormatter } = require(dist('hardware/tsc/tspl-formatter'));
+      const { sendRawToPrinter } = require(dist('hardware/windows-raw-print'));
       const formatter = new TsplFormatter(widthMm, heightMm, 203, {
         sensor: arg('sensor', 'none'),
         density: Number(arg('density', 12)),
