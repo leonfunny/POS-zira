@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { join } from 'node:path';
 import type { AgentConfig } from '../src/shared/types';
 
 vi.mock('electron', () => ({
@@ -132,14 +133,15 @@ describe('Zira Invoice gateway runtime', () => {
 
   it('derives the Tauri token path and never needs the token in POS config', async () => {
     const readText = vi.fn(async () => `  ${'t'.repeat(32)}\r\n`);
+    const tokenPath = join('/roaming', 'com.zira.invoice', 'pos-bridge-token');
     const provider = createZiraInvoiceBridgeTokenProvider({
       appDataDir: () => '/roaming',
       readText,
     });
 
     await expect(provider()).resolves.toBe('t'.repeat(32));
-    expect(ziraInvoiceBridgeTokenPath('/roaming')).toBe('/roaming/com.zira.invoice/pos-bridge-token');
-    expect(readText).toHaveBeenCalledWith('/roaming/com.zira.invoice/pos-bridge-token');
+    expect(ziraInvoiceBridgeTokenPath('/roaming')).toBe(tokenPath);
+    expect(readText).toHaveBeenCalledWith(tokenPath);
   });
 
   it('treats a not-yet-created token file as retryable without opening a socket', async () => {
