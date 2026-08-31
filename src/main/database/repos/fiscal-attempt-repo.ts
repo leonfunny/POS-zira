@@ -67,9 +67,10 @@ export interface InvoiceHandoffRuntimeContext {
   companyNip?: string | null;
 }
 
-// Fail-closed activation gate. Runtime must wire the secure bridge worker,
-// token/config UI, and this provider as one reviewed unit. Until then no POS
-// fiscal result can create a purge-blocking handoff row.
+// Fail-closed local activation gate. Once the owner-bound salon/NIP/channel
+// scope is valid, the provider journals eligible fiscal sales durably even if
+// the remote Zira bridge is unavailable. Remote authentication and dispatch
+// remain separate gates in InvoiceGatewayModule.
 let invoiceHandoffContextProvider: (() => InvoiceHandoffRuntimeContext | null) | null = null;
 
 export function configureInvoiceHandoffContextProvider(
@@ -174,7 +175,103 @@ function parseFiscalisedRetailSale(payloadJson: string): ReceiptData | null {
   }
 }
 
-function normalizeValidPolishNip(value: unknown): string | null {
+const INVOICE_HANDOFF_BACKFILL_CURSOR_KEY = '__zira_invoice_handoff_backfill_cursor_v2';
+const LEGACY_INVOICE_HANDOFF_BACKFILL_CURSOR_KEY = '__zira_invoice_handoff_backfill_cursor_v1';
+const INVOICE_HANDOFF_BACKFILL_PAGE_SIZE = 100;
+const INVOICE_HANDOFF_BACKFILL_MAX_SCAN = 10_000;
+
+interface InvoiceHandoffBackfillCursor {
+  version: 2;
+  orderId: string;
+  attemptNo: number | null;
+  attemptId: string | null;
+  orderComplete: boolean;
+}
+
+interface InvoiceHandoffBackfillAttempt {
+  order_id: string;
+  attempt_no: number;
+  attempt_id: string;
+  printer_type: string;
+  payload_json: string;
+  result_json: string | null;
+}
+
+function parseInvoiceHandoffBackfillCursor(value: unknown): InvoiceHandoffBackfillCursor | null {
+  try {
+    const parsed = JSON.parse(String(value || '')) as Partial<InvoiceHandoffBackfillCursor>;
+    const orderId = String(parsed.orderId || '').trim();
+    if (parsed.version !== 2 || !orderId || typeof parsed.orderComplete !== 'boolean') return null;
+    if (parsed.orderComplete) {
+      return { version: 2, orderId, attemptNo: null, attemptId: null, orderComplete: true };
+    }
+    const attemptNo = Number(parsed.attemptNo);
+    const attemptId = String(parsed.attemptId || '').trim();
+    if (
+      !Number.isSafeInteger(attemptNo)
+      || !attemptId
+    ) return null;
+    return { version: 2, orderId, attemptNo, attemptId, orderComplete: false };
+  } catch {
+    return null;
+  }
+}
+
+function readInvoiceHandoffBackfillCursor(): InvoiceHandoffBackfillCursor | null {
+  const legacy = database.get<{ value: string }>(
+    'SELECT value FROM sync_metadata WHERE key = ?',
+    [LEGACY_INVOICE_HANDOFF_BACKFILL_CURSOR_KEY],
+  );
+  if (legacy !== null && legacy !== undefined) {
+    // v1 used SQLite rowid as its tie-breaker. Never reinterpret it after the
+    // stable-id upgrade: clear both formats and rescan from the beginning.
+    clearInvoiceHandoffBackfillCursor(true);
+    return null;
+  }
+  const row = database.get<{ value: string }>(
+    'SELECT value FROM sync_metadata WHERE key = ?',
+    [INVOICE_HANDOFF_BACKFILL_CURSOR_KEY],
+  );
+  if (row === null || row === undefined) return null;
+  const cursor = parseInvoiceHandoffBackfillCursor(row.value);
+  if (!cursor) clearInvoiceHandoffBackfillCursor();
+  return cursor;
+}
+
+function writeInvoiceHandoffBackfillCursor(cursor: InvoiceHandoffBackfillCursor): void {
+  database.run(
+    `INSERT OR REPLACE INTO sync_metadata (key, value, updated_at)
+     VALUES (?, ?, datetime('now'))`,
+    [INVOICE_HANDOFF_BACKFILL_CURSOR_KEY, JSON.stringify(cursor)],
+  );
+}
+
+function clearInvoiceHandoffBackfillCursor(includeLegacy = false): void {
+  database.run(
+    includeLegacy
+      ? 'DELETE FROM sync_metadata WHERE key IN (?, ?)'
+      : 'DELETE FROM sync_metadata WHERE key = ?',
+    includeLegacy
+      ? [INVOICE_HANDOFF_BACKFILL_CURSOR_KEY, LEGACY_INVOICE_HANDOFF_BACKFILL_CURSOR_KEY]
+      : [INVOICE_HANDOFF_BACKFILL_CURSOR_KEY],
+  );
+}
+
+function cursorForBackfillAttempt(
+  attempt: InvoiceHandoffBackfillAttempt,
+): InvoiceHandoffBackfillCursor | null {
+  const orderId = String(attempt.order_id || '').trim();
+  const attemptNo = Number(attempt.attempt_no);
+  const attemptId = String(attempt.attempt_id || '').trim();
+  if (
+    !orderId
+    || !Number.isSafeInteger(attemptNo)
+    || !attemptId
+  ) return null;
+  return { version: 2, orderId, attemptNo, attemptId, orderComplete: false };
+}
+
+export function normalizeValidPolishNip(value: unknown): string | null {
   const digits = String(value || '').replace(/\D/g, '');
   if (!/^\d{10}$/.test(digits)) return null;
   // All-identical placeholders (notably 0000000000) satisfy the arithmetic
@@ -189,9 +286,9 @@ function normalizeValidPolishNip(value: unknown): string | null {
   return checksum !== 10 && checksum === Number(digits[9]) ? digits : null;
 }
 
-function tryEnsureInvoiceHandoff(orderId: string, payload: unknown): void {
+function tryEnsureInvoiceHandoff(orderId: string, payload: unknown): boolean {
   const cleanOrderId = String(orderId || '').trim();
-  if (!cleanOrderId || !isFiscalisedRetailSale(payload)) return;
+  if (!cleanOrderId || !isFiscalisedRetailSale(payload)) return false;
   try {
     const context = invoiceHandoffContextProvider?.() ?? null;
     const salonId = String(context?.salonId || '').trim();
@@ -199,7 +296,7 @@ function tryEnsureInvoiceHandoff(orderId: string, payload: unknown): void {
       logger.debug(
         `[FiscalAttemptRepo] Invoice handoff skipped for ${cleanOrderId}: no active salon`,
       );
-      return;
+      return false;
     }
     const companyNip = normalizeValidPolishNip(context?.companyNip);
     const fiscalPayloadNip = normalizeValidPolishNip((payload as ReceiptData).sellerNip);
@@ -208,7 +305,7 @@ function tryEnsureInvoiceHandoff(orderId: string, payload: unknown): void {
         `[FiscalAttemptRepo] Invoice handoff skipped for ${cleanOrderId}: `
         + 'fiscal payload seller NIP is missing, invalid, or differs from the active context',
       );
-      return;
+      return false;
     }
     invoiceHandoffRepo.enqueue({
       orderId: cleanOrderId,
@@ -216,6 +313,7 @@ function tryEnsureInvoiceHandoff(orderId: string, payload: unknown): void {
       tenantGeneration: database.getTenantGeneration(),
       companyNip,
     });
+    return true;
   } catch (error) {
     // Fiscal printing is legally/operationally primary. The durable fiscal
     // row remains backfillable on activation; bridge bookkeeping cannot turn
@@ -224,6 +322,7 @@ function tryEnsureInvoiceHandoff(orderId: string, payload: unknown): void {
       `[FiscalAttemptRepo] Invoice handoff unavailable for ${cleanOrderId}; `
       + `fiscal flow continues: ${error instanceof Error ? error.message : String(error)}`,
     );
+    return false;
   }
 }
 
@@ -233,7 +332,9 @@ export const fiscalAttemptRepo: FiscalAttemptJournal & {
   findLatestRemoteByOrder(orderId: string): FiscalAttemptRow | null;
   getConfirmedOrderIds(orderIds: string[]): string[];
   getReceiptSnapshot(orderId: string): any | null;
+  getOriginalSaleReceiptSnapshot(orderId: string): ReceiptData | null;
   backfillFiskalColumns(): number;
+  backfillInvoiceHandoffs(limit?: number): number;
   recordRemoteFiscalSuccess(
     orderId: string,
     jobId?: string | null,
@@ -483,6 +584,176 @@ export const fiscalAttemptRepo: FiscalAttemptJournal & {
     } catch {
       return null;
     }
+  },
+
+  /**
+   * Return the newest trustworthy original-sale payload, not merely the last
+   * successful fiscal operation. A later refund or reprint must never hide
+   * the immutable sale evidence used to fence backend mutations.
+   */
+  getOriginalSaleReceiptSnapshot(orderId: string): ReceiptData | null {
+    const rows = database.all<{
+      printer_type: string;
+      payload_json: string;
+      result_json: string | null;
+    }>(
+      `SELECT printer_type, payload_json, result_json
+       FROM fiscal_attempts
+       WHERE order_id = ? AND status = 'SUCCESS_CONFIRMED'
+       ORDER BY attempt_no DESC, id DESC`,
+      [orderId],
+    );
+    for (const row of rows) {
+      const receipt = parseFiscalisedRetailSale(row.payload_json);
+      if (!receipt) continue;
+      if (row.printer_type === 'REMOTE' && !canonicalRemoteEvidence(row.result_json)) {
+        continue;
+      }
+      return receipt;
+    }
+    return null;
+  },
+
+  /**
+   * Bounded activation backfill for receipts confirmed while the optional
+   * runtime was inactive. Only orders that are still COMPLETED are candidates;
+   * refunded/cancelled history belongs to the future adjustment contract and
+   * must not create a purge-blocking v1 handoff.
+   *
+   * Eligibility needs JSON, remote-evidence, and NIP checks that cannot safely
+   * be reduced to SQL. Page by the journal's stable sort key instead of applying
+   * one LIMIT before those checks: otherwise 100 legacy reprints/bad snapshots
+   * permanently hide every valid sale behind them. The cursor is only progress
+   * metadata (never fiscal evidence); a crash may repeat work but cannot skip a
+   * sale. A hard scan cap keeps activation bounded, while the persisted cursor
+   * lets a later activation continue through an unusually large legacy journal.
+   */
+  backfillInvoiceHandoffs(limit = 100): number {
+    const requested = Number.isFinite(limit) ? Math.floor(limit) : 100;
+    const boundedLimit = Math.min(500, Math.max(1, requested));
+    const scanLimit = Math.min(
+      INVOICE_HANDOFF_BACKFILL_MAX_SCAN,
+      Math.max(1_000, boundedLimit * 20),
+    );
+    let cursor = readInvoiceHandoffBackfillCursor();
+    let cursorPersisted = cursor !== null;
+    let scanned = 0;
+    let ensured = 0;
+    const handled = new Set<string>();
+
+    while (scanned < scanLimit && ensured < boundedLimit) {
+      const pageLimit = Math.min(
+        INVOICE_HANDOFF_BACKFILL_PAGE_SIZE,
+        scanLimit - scanned,
+      );
+      const cursorClause = cursor
+        ? cursor.orderComplete
+          ? 'AND fa.order_id > ?'
+          : `AND (
+               fa.order_id > ?
+               OR (
+                 fa.order_id = ?
+                 AND (
+                   fa.attempt_no < ?
+                   OR (fa.attempt_no = ? AND fa.id < ?)
+                 )
+               )
+             )`
+        : '';
+      const cursorParams = cursor
+        ? cursor.orderComplete
+          ? [cursor.orderId]
+          : [
+              cursor.orderId,
+              cursor.orderId,
+              cursor.attemptNo,
+              cursor.attemptNo,
+              cursor.attemptId,
+            ]
+        : [];
+      const attempts = database.all<InvoiceHandoffBackfillAttempt>(
+        `SELECT fa.order_id, fa.attempt_no, fa.id AS attempt_id,
+                fa.printer_type, fa.payload_json, fa.result_json
+         FROM fiscal_attempts fa
+         INNER JOIN orders o ON o.id = fa.order_id
+         WHERE fa.status = 'SUCCESS_CONFIRMED'
+           AND UPPER(COALESCE(o.status, '')) = 'COMPLETED'
+           AND NOT EXISTS (
+             SELECT 1 FROM invoice_handoffs ih WHERE ih.order_id = fa.order_id
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM pos_event_outbox e
+             WHERE e.local_order_id = fa.order_id AND e.event_type = 'RefundIssued'
+           )
+           ${cursorClause}
+         ORDER BY fa.order_id ASC, fa.attempt_no DESC, fa.id DESC
+         LIMIT ?`,
+        [...cursorParams, pageLimit],
+      );
+
+      if (attempts.length === 0) {
+        if (cursorPersisted) clearInvoiceHandoffBackfillCursor();
+        return ensured;
+      }
+
+      let stoppedEarly = false;
+      for (const attempt of attempts) {
+        const nextCursor = cursorForBackfillAttempt(attempt);
+        if (!nextCursor) {
+          logger.warn('[FiscalAttemptRepo] Invoice handoff backfill stopped on an invalid journal cursor');
+          stoppedEarly = true;
+          break;
+        }
+        scanned += 1;
+        const orderId = nextCursor.orderId;
+
+        // Once the newest eligible original attempt for an order was chosen,
+        // older duplicates must never replace it. Keep the order-complete cursor
+        // while consuming any remaining same-order rows already in this page.
+        if (handled.has(orderId)) continue;
+        cursor = nextCursor;
+
+        const receipt = parseFiscalisedRetailSale(attempt.payload_json);
+        if (!receipt) continue;
+        if (
+          attempt.printer_type === 'REMOTE'
+          && !canonicalRemoteEvidence(attempt.result_json)
+        ) {
+          continue;
+        }
+
+        if (tryEnsureInvoiceHandoff(orderId, receipt)) {
+          ensured += 1;
+          handled.add(orderId);
+          cursor = {
+            version: 2,
+            orderId,
+            attemptNo: null,
+            attemptId: null,
+            orderComplete: true,
+          };
+        }
+        if (ensured >= boundedLimit) {
+          stoppedEarly = true;
+          break;
+        }
+      }
+
+      if (!cursor) return ensured;
+      if (stoppedEarly || scanned >= scanLimit) {
+        writeInvoiceHandoffBackfillCursor(cursor);
+        return ensured;
+      }
+      if (attempts.length < pageLimit) {
+        if (cursorPersisted) clearInvoiceHandoffBackfillCursor();
+        return ensured;
+      }
+      writeInvoiceHandoffBackfillCursor(cursor);
+      cursorPersisted = true;
+    }
+
+    if (cursor) writeInvoiceHandoffBackfillCursor(cursor);
+    return ensured;
   },
 
   backfillFiskalColumns(): number {

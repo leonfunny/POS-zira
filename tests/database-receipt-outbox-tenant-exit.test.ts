@@ -51,15 +51,35 @@ function createClearSchema(target: SqlJsDatabase): void {
           seq INTEGER PRIMARY KEY AUTOINCREMENT,
           order_id TEXT NOT NULL,
           salon_id TEXT NOT NULL,
+          tenant_generation INTEGER NOT NULL DEFAULT 0,
+          backend_order_id TEXT,
           status TEXT NOT NULL,
-          last_request_id TEXT
+          last_request_id TEXT,
+          review_kind TEXT,
+          review_request_id TEXT
+        )
+      `);
+    } else if (table === 'orders') {
+      target.run('CREATE TABLE orders (id TEXT, backend_id TEXT, status TEXT)');
+    } else if (table === 'pos_event_outbox') {
+      target.run(`
+        CREATE TABLE pos_event_outbox (
+          event_id TEXT PRIMARY KEY,
+          local_order_id TEXT,
+          event_type TEXT NOT NULL
         )
       `);
     } else {
       target.run(`CREATE TABLE ${table} (id TEXT)`);
     }
   }
-  target.run('CREATE TABLE sync_metadata (id TEXT)');
+  target.run(`
+    CREATE TABLE sync_metadata (
+      key TEXT PRIMARY KEY,
+      value TEXT,
+      updated_at TEXT
+    )
+  `);
 }
 
 beforeEach(() => {
@@ -67,6 +87,8 @@ beforeEach(() => {
   createClearSchema(db);
   (database as any).db = db;
   (database as any).saving = false;
+  (database as any).tenantGeneration = 0;
+  (database as any).tenantGenerationReliable = true;
   saveSyncSpy = vi.spyOn(database, 'saveSync').mockReturnValue({
     success: true,
     dbPath: 'memory',
@@ -100,6 +122,11 @@ function insertInvoiceHandoff(status: string): void {
   );
 }
 
+function insertCompletedCorrectedInvoiceHandoff(status: 'REFUNDED' | 'PARTIAL_REFUND' | 'CANCELLED'): void {
+  db.run("INSERT INTO orders (id, status) VALUES ('invoice-order-old', ?)", [status]);
+  insertInvoiceHandoff('COMPLETED');
+}
+
 describe('database receipt outbox tenant exit', () => {
   it('blocks an unarchived clear when review evidence would be destroyed', () => {
     insertReceipt('NEEDS_REVIEW');
@@ -127,6 +154,58 @@ describe('database receipt outbox tenant exit', () => {
       'SELECT COUNT(*) AS count FROM orders',
     )?.count).toBe(0);
     expect(saveSyncSpy).toHaveBeenCalledOnce();
+  });
+
+  it('persists the tenant generation fence and restores it after a restart', () => {
+    (database as any).tenantGeneration = 4;
+
+    database.clearSalonData('salon-old', { archivedReviewEvidence: true });
+
+    expect(database.getTenantGeneration()).toBe(5);
+    expect(database.get<{ value: string }>(
+      "SELECT value FROM sync_metadata WHERE key = '__tenant_generation'",
+    )?.value).toBe('5');
+
+    (database as any).tenantGeneration = 0;
+    (database as any).restoreTenantGeneration();
+    expect(database.getTenantGeneration()).toBe(5);
+  });
+
+  it('adopts one legacy handoff generation when the metadata key is absent', () => {
+    db.run(`
+      INSERT INTO invoice_handoffs (
+        order_id, salon_id, tenant_generation, status, last_request_id
+      ) VALUES ('legacy-order', 'salon-old', 7, 'PENDING', NULL)
+    `);
+
+    (database as any).restoreTenantGeneration();
+
+    expect(database.getTenantGeneration()).toBe(7);
+    expect(database.get<{ value: string }>(
+      "SELECT value FROM sync_metadata WHERE key = '__tenant_generation'",
+    )?.value).toBe('7');
+    expect(database.isTenantGenerationReliable()).toBe(true);
+  });
+
+  it('fails the invoice gateway closed for invalid or mixed generation evidence', () => {
+    db.run(`
+      INSERT INTO sync_metadata (key, value, updated_at)
+      VALUES ('__tenant_generation', 'broken', 'now')
+    `);
+    (database as any).restoreTenantGeneration();
+    expect(database.getTenantGeneration()).toBe(0);
+    expect(database.isTenantGenerationReliable()).toBe(false);
+
+    db.run("DELETE FROM sync_metadata WHERE key = '__tenant_generation'");
+    db.run(`
+      INSERT INTO invoice_handoffs (
+        order_id, salon_id, tenant_generation, status, last_request_id
+      ) VALUES
+        ('mixed-1', 'salon-old', 1, 'PENDING', NULL),
+        ('mixed-2', 'salon-old', 2, 'PENDING', NULL)
+    `);
+    (database as any).restoreTenantGeneration();
+    expect(database.isTenantGenerationReliable()).toBe(false);
   });
 
   it('retries the disk barrier after an in-memory cancellation save fails', () => {
@@ -212,6 +291,31 @@ describe('database receipt outbox tenant exit', () => {
     )).toThrowError(expect.objectContaining({
       code: 'INVOICE_HANDOFF_OUTCOME_UNCERTAIN',
     }));
+  });
+
+  it('blocks tenant exit when a completed handoff has a later refund not yet reviewed', () => {
+    insertCompletedCorrectedInvoiceHandoff('REFUNDED');
+
+    expect(() => database.assertNoActiveReceiptPrintOutcomes('salon-old'))
+      .toThrowError(expect.objectContaining({
+        code: 'INVOICE_HANDOFF_OUTCOME_UNCERTAIN',
+        invoiceHandoffOrderId: 'invoice-order-old',
+      }));
+  });
+
+  it('blocks tenant exit on immutable refund evidence even when order status is stale', () => {
+    db.run("INSERT INTO orders (id, status) VALUES ('invoice-order-old', 'COMPLETED')");
+    insertInvoiceHandoff('COMPLETED');
+    db.run(`
+      INSERT INTO pos_event_outbox (event_id, local_order_id, event_type)
+      VALUES ('refund-event', 'invoice-order-old', 'RefundIssued')
+    `);
+
+    expect(() => database.assertNoActiveReceiptPrintOutcomes('salon-old'))
+      .toThrowError(expect.objectContaining({
+        code: 'INVOICE_HANDOFF_OUTCOME_UNCERTAIN',
+        invoiceHandoffOrderId: 'invoice-order-old',
+      }));
   });
 
   it('retains NEEDS_REVIEW until archive allowance, then clears old-tenant evidence', () => {

@@ -10,6 +10,7 @@ const {
   orderRepoMock,
   outboxRepoMock,
   invoiceHandoffRepoMock,
+  fiscalAttemptRepoMock,
   productRepoMock,
   paymentControllerMock,
   transactionState,
@@ -28,10 +29,14 @@ const {
       all: vi.fn(() => []),
       markDirty: vi.fn(),
       saveCoalesced: vi.fn(),
+      getTenantGeneration: vi.fn(() => 7),
+      isTenantGenerationReliable: vi.fn(() => true),
     },
     orderRepoMock: {
       create: vi.fn(),
       getById: vi.fn(),
+      getItemsByOrderId: vi.fn(() => []),
+      markRefunded: vi.fn(),
     },
     outboxRepoMock: {
       enqueue: vi.fn(),
@@ -40,6 +45,15 @@ const {
     },
     invoiceHandoffRepoMock: {
       enqueue: vi.fn(),
+      getByOrderIdentity: vi.fn(),
+      prepareForCancellation: vi.fn(),
+      confirmCancellation: vi.fn(),
+      prepareForRefund: vi.fn(),
+      confirmRefund: vi.fn(),
+    },
+    fiscalAttemptRepoMock: {
+      getOriginalSaleReceiptSnapshot: vi.fn(),
+      getConfirmedOrderIds: vi.fn(() => []),
     },
     productRepoMock: {
       getById: vi.fn(),
@@ -49,6 +63,7 @@ const {
       buildSaleReceiptData: vi.fn(),
       reprintReceipt: vi.fn(),
       printFiscalReceipt: vi.fn(),
+      printRefundReceipt: vi.fn(async () => true),
     },
     transactionState: state,
     lifecycle: [] as string[],
@@ -61,6 +76,7 @@ const {
       refundOrder: vi.fn(),
       correctBilliardOrder: vi.fn(),
       cancelOrder: vi.fn(),
+      getServerOrderDetail: vi.fn(),
     },
   };
 });
@@ -86,6 +102,9 @@ vi.mock('../src/main/config/store', () => ({
     salonId: 'salon-1',
     machineId: 'pos-1',
     allowOversell: false,
+    receiptSellerNip: '5220052349',
+    authUser: { id: 'staff-1', salonId: 'salon-1' },
+    ziraInvoiceGateway: { enabled: false, salonId: '', companyNip: '', channelId: '' },
   })),
   getConfigValue: vi.fn(),
   getSecureApiKey: vi.fn(),
@@ -123,11 +142,20 @@ vi.mock('../src/main/database/repos/invoice-handoff-repo', () => ({
   invoiceHandoffRepo: invoiceHandoffRepoMock,
 }));
 
+vi.mock('../src/main/database/repos/fiscal-attempt-repo', () => ({
+  fiscalAttemptRepo: fiscalAttemptRepoMock,
+  normalizeValidPolishNip(value: unknown) {
+    const digits = String(value || '').replace(/\D/g, '');
+    return digits.length === 10 ? digits : null;
+  },
+}));
+
 vi.mock('../src/main/events/pos-event-emitter', () => ({
   posEventEmitter: {
     emitOrderFinalized: vi.fn(),
     emitReceiptPrintAttempted: vi.fn(),
     emitFiscalReceiptEmitted: vi.fn(),
+    emitRefundIssued: vi.fn(),
   },
 }));
 
@@ -154,6 +182,7 @@ vi.mock('../src/main/network/api-client', () => ({
 }));
 
 import { PosModule } from '../src/main/modules/pos.module';
+import { getConfig } from '../src/main/config/store';
 
 type PaymentMethod = 'CASH' | 'BLIK' | 'CARD';
 
@@ -259,6 +288,14 @@ describe('POS initial receipt queue wiring', () => {
     lifecycle.length = 0;
     transactionState.insideOrderTransaction = false;
     vi.clearAllMocks();
+    vi.mocked(getConfig).mockReturnValue({
+      salonId: 'salon-1',
+      machineId: 'pos-1',
+      allowOversell: false,
+      receiptSellerNip: '5220052349',
+      authUser: { id: 'staff-1', salonId: 'salon-1' },
+      ziraInvoiceGateway: { enabled: false, salonId: '', companyNip: '', channelId: '' },
+    } as any);
 
     databaseMock.get.mockImplementation((sql: string) => {
       if (sql.includes('FROM shifts')) {
@@ -518,6 +555,30 @@ describe('Receipt lifecycle before external order mutation', () => {
     handlers.clear();
     lifecycle.length = 0;
     vi.clearAllMocks();
+    vi.mocked(getConfig).mockReturnValue({
+      salonId: 'salon-1',
+      machineId: 'pos-1',
+      allowOversell: false,
+      receiptSellerNip: '5220052349',
+      authUser: { id: 'staff-1', salonId: 'salon-1' },
+      ziraInvoiceGateway: { enabled: false, salonId: '', companyNip: '', channelId: '' },
+    } as any);
+    outboxRepoMock.findInitialByOrder.mockReset();
+    outboxRepoMock.prepareInitialForOrderMutation.mockReset();
+    orderRepoMock.getById.mockReset();
+    orderRepoMock.markRefunded.mockReset();
+    databaseMock.get.mockReset();
+    invoiceHandoffRepoMock.getByOrderIdentity.mockReset();
+    invoiceHandoffRepoMock.prepareForCancellation.mockReset();
+    invoiceHandoffRepoMock.confirmCancellation.mockReset();
+    invoiceHandoffRepoMock.prepareForRefund.mockReset();
+    invoiceHandoffRepoMock.confirmRefund.mockReset();
+    fiscalAttemptRepoMock.getOriginalSaleReceiptSnapshot.mockReset();
+    fiscalAttemptRepoMock.getConfirmedOrderIds.mockReset();
+    fiscalAttemptRepoMock.getConfirmedOrderIds.mockReturnValue([]);
+    apiClientMock.cancelOrder.mockReset();
+    apiClientMock.getServerOrderDetail.mockReset();
+    apiClientMock.refundOrder.mockReset();
     databaseMock.transaction.mockImplementation((work: () => void) => work());
     databaseMock.saveCoalesced.mockResolvedValue({ success: true });
     getSecureAuthTokenMock.mockReturnValue('auth-token-old-context');
@@ -648,9 +709,382 @@ describe('Receipt lifecycle before external order mutation', () => {
     expect(module.isPosAuthContextCurrent).toHaveBeenCalledTimes(1);
     expect(network()).not.toHaveBeenCalled();
   });
+
+  it('persists the invoice cancellation fence before server cancellation and confirms it after', async () => {
+    buildModule();
+    outboxRepoMock.findInitialByOrder.mockReturnValue({
+      job_id: 'job-cash',
+      order_id: 'order-cash',
+      status: 'PENDING',
+    });
+    outboxRepoMock.prepareInitialForOrderMutation.mockReturnValue({
+      job_id: 'job-cash',
+      status: 'CANCELLED',
+    });
+    orderRepoMock.getById.mockReturnValue({
+      ...order('CASH'),
+      id: 'order-cash',
+      backend_id: 'backend-order-1',
+      synced: 1,
+    });
+    invoiceHandoffRepoMock.prepareForCancellation.mockImplementation(() => {
+      lifecycle.push('invoice-prepare');
+      return { order_id: 'order-cash', status: 'NEEDS_REVIEW' };
+    });
+    invoiceHandoffRepoMock.confirmCancellation.mockImplementation(() => {
+      lifecycle.push('invoice-confirm');
+      return { order_id: 'order-cash', status: 'NEEDS_REVIEW' };
+    });
+    databaseMock.saveCoalesced.mockImplementation(async () => {
+      lifecycle.push('flush');
+      return { success: true };
+    });
+    apiClientMock.cancelOrder.mockImplementation(async () => {
+      lifecycle.push('network-cancel');
+    });
+
+    const result = await handlers.get('pos:orders:cancel')?.({}, 'order-cash');
+
+    expect(result).toEqual({ success: true });
+    expect(lifecycle).toEqual([
+      'flush',
+      'invoice-prepare',
+      'flush',
+      'network-cancel',
+      'invoice-confirm',
+      'flush',
+    ]);
+    expect(invoiceHandoffRepoMock.prepareForCancellation)
+      .toHaveBeenCalledWith('order-cash', 'backend-order-1', undefined, null);
+    expect(invoiceHandoffRepoMock.confirmCancellation)
+      .toHaveBeenCalledWith('order-cash', 'backend-order-1');
+  });
+
+  it('never calls the cancellation API when the invoice fence is not durable', async () => {
+    buildModule();
+    outboxRepoMock.findInitialByOrder.mockReturnValue({
+      job_id: 'job-cash',
+      order_id: 'order-cash',
+      status: 'PENDING',
+    });
+    outboxRepoMock.prepareInitialForOrderMutation.mockReturnValue({
+      job_id: 'job-cash',
+      status: 'CANCELLED',
+    });
+    orderRepoMock.getById.mockReturnValue({
+      ...order('CASH'),
+      id: 'order-cash',
+      backend_id: 'backend-order-1',
+      synced: 1,
+    });
+    invoiceHandoffRepoMock.prepareForCancellation.mockReturnValue({
+      order_id: 'order-cash',
+      status: 'NEEDS_REVIEW',
+    });
+    databaseMock.saveCoalesced
+      .mockResolvedValueOnce({ success: true })
+      .mockResolvedValueOnce({ success: false, error: 'disk busy' });
+
+    const result = await handlers.get('pos:orders:cancel')?.({}, 'order-cash');
+
+    expect(result).toMatchObject({
+      success: false,
+      error: expect.stringContaining('disk busy'),
+    });
+    expect(apiClientMock.cancelOrder).not.toHaveBeenCalled();
+    expect(invoiceHandoffRepoMock.prepareForCancellation).toHaveBeenCalledOnce();
+    expect(invoiceHandoffRepoMock.confirmCancellation).not.toHaveBeenCalled();
+  });
+
+  it('reconciles a pending cancellation instead of blindly repeating a non-idempotent PATCH', async () => {
+    buildModule();
+    orderRepoMock.getById.mockReturnValue({
+      ...order('CASH'),
+      id: 'order-cash',
+      backend_id: 'backend-order-1',
+      synced: 1,
+    });
+    const pending = {
+      order_id: 'order-cash',
+      status: 'NEEDS_REVIEW',
+      review_kind: 'CANCELLATION_INTENT',
+    };
+    invoiceHandoffRepoMock.getByOrderIdentity.mockReturnValue(pending);
+    invoiceHandoffRepoMock.prepareForCancellation.mockReturnValue(pending);
+    apiClientMock.getServerOrderDetail.mockResolvedValue({
+      id: 'backend-order-1',
+      status: 'CANCELLED',
+    });
+
+    const result = await handlers.get('pos:orders:cancel')?.({}, 'order-cash');
+
+    expect(result).toEqual({ success: true });
+    expect(apiClientMock.getServerOrderDetail)
+      .toHaveBeenCalledWith('auth-token-old-context', 'backend-order-1', 'cash');
+    expect(apiClientMock.cancelOrder).not.toHaveBeenCalled();
+    expect(invoiceHandoffRepoMock.confirmCancellation)
+      .toHaveBeenCalledWith('order-cash', 'backend-order-1');
+  });
+
+  it('synthesizes a blocking handoff from trusted fiscal evidence before cancellation', async () => {
+    vi.mocked(getConfig).mockReturnValue({
+      salonId: 'salon-1',
+      machineId: 'pos-1',
+      receiptSellerNip: '5220052349',
+      authUser: { id: 'staff-1', salonId: 'salon-1' },
+      ziraInvoiceGateway: {
+        enabled: true,
+        salonId: 'salon-1',
+        companyNip: '5220052349',
+        channelId: 'channel-1',
+      },
+    } as any);
+    buildModule();
+    orderRepoMock.getById.mockReturnValue({
+      ...order('CASH'),
+      id: 'order-cash',
+      backend_id: 'backend-order-1',
+      synced: 1,
+    });
+    fiscalAttemptRepoMock.getOriginalSaleReceiptSnapshot.mockReturnValue({
+      sellerNip: '5220052349',
+      items: [{ name: 'Herbata', quantity: 1, price: 1_000 }],
+      payment: { method: 'CASH', amount: 1_000 },
+      total: 1_000,
+    });
+    fiscalAttemptRepoMock.getConfirmedOrderIds.mockReturnValue(['order-cash']);
+    invoiceHandoffRepoMock.prepareForCancellation.mockReturnValue({
+      order_id: 'order-cash',
+      status: 'NEEDS_REVIEW',
+      review_kind: 'CANCELLATION_INTENT',
+    });
+    apiClientMock.cancelOrder.mockResolvedValue({ status: 'CANCELLED' });
+
+    await handlers.get('pos:orders:cancel')?.({}, 'order-cash');
+
+    expect(invoiceHandoffRepoMock.prepareForCancellation).toHaveBeenCalledWith(
+      'order-cash',
+      'backend-order-1',
+      undefined,
+      {
+        orderId: 'order-cash',
+        backendOrderId: 'backend-order-1',
+        salonId: 'salon-1',
+        tenantGeneration: 7,
+        companyNip: '5220052349',
+      },
+    );
+    expect(apiClientMock.cancelOrder).toHaveBeenCalledOnce();
+  });
+
+  it('fails closed when a confirmed fiscal operation has no trustworthy original sale', async () => {
+    vi.mocked(getConfig).mockReturnValue({
+      salonId: 'salon-1',
+      machineId: 'pos-1',
+      allowOversell: false,
+      receiptSellerNip: '5220052349',
+      authUser: { id: 'staff-1', salonId: 'salon-1' },
+      ziraInvoiceGateway: {
+        enabled: true,
+        salonId: 'salon-1',
+        companyNip: '5220052349',
+        channelId: 'channel-1',
+      },
+    } as any);
+    buildModule();
+    orderRepoMock.getById.mockReturnValue({
+      ...order('CASH'),
+      id: 'order-cash',
+      backend_id: 'backend-order-1',
+      synced: 1,
+    });
+    fiscalAttemptRepoMock.getOriginalSaleReceiptSnapshot.mockReturnValue(null);
+    fiscalAttemptRepoMock.getConfirmedOrderIds.mockReturnValue(['order-cash']);
+
+    const result = await handlers.get('pos:orders:cancel')?.({}, 'order-cash');
+
+    expect(result).toMatchObject({
+      success: false,
+      error: expect.stringContaining('trustworthy original fiscal sale'),
+    });
+    expect(invoiceHandoffRepoMock.prepareForCancellation).not.toHaveBeenCalled();
+    expect(apiClientMock.cancelOrder).not.toHaveBeenCalled();
+  });
+
+  it('does not impose invoice evidence fences on a default-off POS', async () => {
+    buildModule();
+    orderRepoMock.getById.mockReturnValue({
+      ...order('CASH'),
+      id: 'order-cash',
+      backend_id: 'backend-order-1',
+      synced: 1,
+    });
+    fiscalAttemptRepoMock.getOriginalSaleReceiptSnapshot.mockReturnValue(null);
+    fiscalAttemptRepoMock.getConfirmedOrderIds.mockReturnValue(['order-cash']);
+    apiClientMock.cancelOrder.mockResolvedValue({ status: 'CANCELLED' });
+
+    const result = await handlers.get('pos:orders:cancel')?.({}, 'order-cash');
+
+    expect(result).toEqual({ success: true });
+    expect(fiscalAttemptRepoMock.getOriginalSaleReceiptSnapshot).not.toHaveBeenCalled();
+    expect(invoiceHandoffRepoMock.prepareForCancellation).toHaveBeenCalledWith(
+      'order-cash',
+      'backend-order-1',
+      undefined,
+      null,
+    );
+    expect(apiClientMock.cancelOrder).toHaveBeenCalledOnce();
+  });
+
+  it('persists and confirms the stable refund intent around the backend mutation', async () => {
+    vi.mocked(getConfig).mockReturnValue({
+      salonId: 'salon-1',
+      machineId: 'pos-1',
+      receiptSellerNip: '5220052349',
+      authUser: { id: 'staff-1', salonId: 'salon-1' },
+      ziraInvoiceGateway: {
+        enabled: true,
+        salonId: 'salon-1',
+        companyNip: '5220052349',
+        channelId: 'channel-1',
+      },
+    } as any);
+    buildModule();
+    const refundRequestId = '11111111-1111-4111-8111-111111111111';
+    orderRepoMock.getById.mockReturnValue({
+      ...order('CASH'),
+      id: 'order-cash',
+      backend_id: 'backend-order-1',
+      synced: 1,
+      refund_amount: 0,
+      refund_lines: null,
+    });
+    fiscalAttemptRepoMock.getOriginalSaleReceiptSnapshot.mockReturnValue({
+      sellerNip: '5220052349',
+      items: [{ name: 'Herbata', quantity: 1, price: 1_000 }],
+      payment: { method: 'CASH', amount: 1_000 },
+      total: 1_000,
+    });
+    fiscalAttemptRepoMock.getConfirmedOrderIds.mockReturnValue(['order-cash']);
+    databaseMock.get.mockImplementation((sql: string) => (
+      sql.includes('FROM shifts')
+        ? { id: 'shift-1', backend_id: 'backend-shift-1', staff_id: 'staff-1' }
+        : null
+    ));
+    outboxRepoMock.findInitialByOrder.mockReturnValue({
+      job_id: 'job-cash',
+      order_id: 'order-cash',
+      status: 'PENDING',
+    });
+    outboxRepoMock.prepareInitialForOrderMutation.mockImplementation(() => {
+      lifecycle.push('receipt-cancel');
+      return { job_id: 'job-cash', status: 'CANCELLED' };
+    });
+    invoiceHandoffRepoMock.prepareForRefund.mockImplementation(() => {
+      lifecycle.push('invoice-refund-prepare');
+      return {
+        order_id: 'order-cash',
+        status: 'NEEDS_REVIEW',
+        review_kind: 'REFUND_INTENT',
+        review_request_id: refundRequestId,
+      };
+    });
+    invoiceHandoffRepoMock.confirmRefund.mockImplementation(() => {
+      lifecycle.push('invoice-refund-confirm');
+      return { order_id: 'order-cash', status: 'NOT_APPLICABLE' };
+    });
+    databaseMock.saveCoalesced.mockImplementation(async () => {
+      lifecycle.push('flush');
+      return { success: true };
+    });
+    apiClientMock.refundOrder.mockImplementation(async () => {
+      lifecycle.push('network-refund');
+      return {
+        success: true,
+        status: 'REFUNDED',
+        refundAmount: 10,
+        totalRefundedAmount: 10,
+        refundedLines: [],
+        stockMovementIds: [],
+      };
+    });
+
+    const result = await handlers.get('pos:orders:refund')?.({}, 'order-cash', {
+      type: 'FULL',
+      reason: 'customer return',
+      refundRequestId,
+    });
+
+    expect(result).toMatchObject({ success: true, status: 'REFUNDED' });
+    expect(lifecycle).toEqual([
+      'receipt-cancel',
+      'flush',
+      'invoice-refund-prepare',
+      'flush',
+      'network-refund',
+      'invoice-refund-confirm',
+      'flush',
+    ]);
+    expect(invoiceHandoffRepoMock.prepareForRefund).toHaveBeenCalledWith(
+      'order-cash',
+      'backend-order-1',
+      refundRequestId,
+      undefined,
+      {
+        orderId: 'order-cash',
+        backendOrderId: 'backend-order-1',
+        salonId: 'salon-1',
+        tenantGeneration: 7,
+        companyNip: '5220052349',
+      },
+    );
+    expect(invoiceHandoffRepoMock.confirmRefund)
+      .toHaveBeenCalledWith('order-cash', 'backend-order-1', refundRequestId);
+  });
+
+  it('never calls the refund API when the invoice correction fence is not durable', async () => {
+    buildModule();
+    const refundRequestId = '11111111-1111-4111-8111-111111111111';
+    orderRepoMock.getById.mockReturnValue({
+      ...order('CARD'),
+      id: 'order-card',
+      backend_id: 'backend-order-1',
+      synced: 1,
+      refund_amount: 0,
+    });
+    databaseMock.get.mockImplementation((sql: string) => (
+      sql.includes('FROM shifts')
+        ? { id: 'shift-1', backend_id: 'backend-shift-1', staff_id: 'staff-1' }
+        : null
+    ));
+    invoiceHandoffRepoMock.prepareForRefund.mockReturnValue({
+      order_id: 'order-card',
+      status: 'NEEDS_REVIEW',
+      review_kind: 'REFUND_INTENT',
+      review_request_id: refundRequestId,
+    });
+    databaseMock.saveCoalesced.mockResolvedValue({ success: false, error: 'disk busy' });
+
+    const result = await handlers.get('pos:orders:refund')?.({}, 'order-card', {
+      type: 'FULL',
+      reason: 'customer return',
+      refundRequestId,
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      error: expect.stringContaining('disk busy'),
+    });
+    expect(apiClientMock.refundOrder).not.toHaveBeenCalled();
+    expect(invoiceHandoffRepoMock.confirmRefund).not.toHaveBeenCalled();
+  });
 });
 
 describe('OrderRepo transaction boundary', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it('rejects an itemless paid order before opening a transaction', async () => {
     const actual = await vi.importActual<
       typeof import('../src/main/database/repos/order-repo')

@@ -634,6 +634,24 @@ describe('AuthModule LAN_FIRST config sanitization', () => {
     }));
   });
 
+  it('does not let a renderer enable or rebind the Zira Invoice gateway', async () => {
+    registerAuthHandlers();
+    const setRendererConfig = handlers.get(IPC_CHANNELS.SET_CONFIG);
+
+    await setRendererConfig!({}, {
+      ziraInvoiceGateway: {
+        enabled: true,
+        salonId: 'attacker-salon',
+        companyNip: '5220052349',
+        channelId: 'attacker-channel',
+      },
+    } as Partial<AgentConfig>);
+
+    expect(setConfigMock).not.toHaveBeenCalledWith(expect.objectContaining({
+      ziraInvoiceGateway: expect.anything(),
+    }));
+  });
+
   it('explicit LAN_FIRST kitchen pairing IPC stores receiver code without exposing it through GET_CONFIG', async () => {
     registerAuthHandlers();
 

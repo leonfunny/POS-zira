@@ -543,6 +543,14 @@ export type CustomerDisplayCatalogSection =
   | 'food';
 
 // Agent configuration stored locally
+export interface ZiraInvoiceGatewayConfig {
+  enabled: boolean;
+  /** Immutable owner-approved tenant binding; generic renderer config cannot edit it. */
+  salonId: string;
+  companyNip: string;
+  channelId: string;
+}
+
 export interface AgentConfig {
   agentId?: string;
   salonId?: string;
@@ -636,6 +644,11 @@ export interface AgentConfig {
   receiptSellerAddress?: string; // Full address (e.g., "ul. Łączności 35, 32-020 Wieliczka")
   receiptSellerNip?: string;     // Tax ID (e.g., "522-005-23-49")
   allowRealFiscalPrint?: boolean; // Live fiscal receipts enabled on this POS after service-approved go-live.
+  /**
+   * Default-off, owner-bound handoff of confirmed fiscal sales to Zira Invoice.
+   * It imports an order only; it never creates or sends a tax invoice.
+   */
+  ziraInvoiceGateway?: ZiraInvoiceGatewayConfig;
   endOfDay?: {
     enabled?: boolean;            // Auto shift close + sync + local history purge. Default true, every POS.
     hour?: number;                // Local hour, default 23.

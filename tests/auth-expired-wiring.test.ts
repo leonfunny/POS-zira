@@ -23,6 +23,15 @@
 import { describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+
+vi.mock('../src/main/config/store', () => ({
+  setSecureAuthToken: vi.fn(),
+  setSecureRefreshToken: vi.fn(),
+  getSecureRefreshToken: vi.fn(() => null),
+  clearSecureAuthTokens: vi.fn(),
+  getConfigValue: vi.fn(),
+}));
+
 import { forwardAuthExpiredToRenderer } from '../src/main/network/auth-refresh';
 
 const ROOT = path.resolve(__dirname, '..');

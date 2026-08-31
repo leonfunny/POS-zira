@@ -236,6 +236,184 @@ describe('fiscal journal invoice handoff boundary', () => {
     );
   });
 
+  it('backfills original confirmed sales while skipping newer refund and unproven remote rows', () => {
+    databaseMock.all.mockReturnValueOnce([
+      {
+        order_id: 'order-local',
+        attempt_no: 2,
+        attempt_id: 'attempt-local-refund',
+        printer_type: 'FISCAL',
+        payload_json: JSON.stringify(saleReceipt({ orderId: 'order-local', isRefund: true })),
+        result_json: null,
+      },
+      {
+        order_id: 'order-local',
+        attempt_no: 1,
+        attempt_id: 'attempt-local-sale',
+        printer_type: 'FISCAL',
+        payload_json: JSON.stringify(saleReceipt({ orderId: 'order-local' })),
+        result_json: null,
+      },
+      {
+        order_id: 'order-remote-unknown',
+        attempt_no: 1,
+        attempt_id: 'attempt-remote-unknown',
+        printer_type: 'REMOTE',
+        payload_json: JSON.stringify(saleReceipt({ orderId: 'order-remote-unknown' })),
+        result_json: JSON.stringify({ handled: true }),
+      },
+      {
+        order_id: 'order-remote-proven',
+        attempt_no: 1,
+        attempt_id: 'attempt-remote-proven',
+        printer_type: 'REMOTE',
+        payload_json: JSON.stringify(saleReceipt({ orderId: 'order-remote-proven' })),
+        result_json: JSON.stringify({
+          remote: true,
+          jobId: 'job-proven',
+          printerId: 'printer-proven',
+        }),
+      },
+    ]);
+
+    expect(fiscalAttemptRepo.backfillInvoiceHandoffs()).toBe(2);
+    expect(databaseMock.all).toHaveBeenCalledWith(
+      expect.stringContaining("UPPER(COALESCE(o.status, '')) = 'COMPLETED'"),
+      [100],
+    );
+    expect(databaseMock.all).toHaveBeenCalledWith(
+      expect.stringContaining('NOT EXISTS'),
+      [100],
+    );
+    expect(databaseMock.all).toHaveBeenCalledWith(
+      expect.stringContaining("e.event_type = 'RefundIssued'"),
+      [100],
+    );
+    expect(invoiceHandoffRepoMock.enqueue).toHaveBeenCalledTimes(2);
+    expect(invoiceHandoffRepoMock.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ orderId: 'order-local' }),
+    );
+    expect(invoiceHandoffRepoMock.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ orderId: 'order-remote-proven' }),
+    );
+  });
+
+  it('pages past more than 100 skipped attempts and selects the original sale once', () => {
+    const skipped = Array.from({ length: 200 }, (_, index) => ({
+      order_id: 'order-many-copies',
+      attempt_no: 201 - index,
+      attempt_id: `attempt-${String(201 - index).padStart(3, '0')}`,
+      printer_type: 'FISCAL',
+      payload_json: JSON.stringify(saleReceipt({
+        orderId: 'order-many-copies',
+        isReprint: true,
+      })),
+      result_json: null,
+    }));
+    databaseMock.all
+      .mockReturnValueOnce(skipped.slice(0, 100))
+      .mockReturnValueOnce(skipped.slice(100))
+      .mockReturnValueOnce([{
+        order_id: 'order-many-copies',
+        attempt_no: 1,
+        attempt_id: 'attempt-001',
+        printer_type: 'FISCAL',
+        payload_json: JSON.stringify(saleReceipt({ orderId: 'order-many-copies' })),
+        result_json: null,
+      }]);
+
+    expect(fiscalAttemptRepo.backfillInvoiceHandoffs()).toBe(1);
+
+    expect(databaseMock.all).toHaveBeenCalledTimes(3);
+    expect(databaseMock.all).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining("fa.status = 'SUCCESS_CONFIRMED'"),
+      [100],
+    );
+    expect(databaseMock.all).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('fa.id < ?'),
+      ['order-many-copies', 'order-many-copies', 102, 102, 'attempt-102', 100],
+    );
+    expect(databaseMock.all).toHaveBeenNthCalledWith(
+      3,
+      expect.stringContaining('fa.id < ?'),
+      ['order-many-copies', 'order-many-copies', 2, 2, 'attempt-002', 100],
+    );
+    expect(invoiceHandoffRepoMock.enqueue).toHaveBeenCalledTimes(1);
+    expect(invoiceHandoffRepoMock.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ orderId: 'order-many-copies' }),
+    );
+  });
+
+  it('clears a legacy rowid cursor and safely rescans from the beginning', () => {
+    databaseMock.get.mockReturnValueOnce({
+      value: JSON.stringify({
+        orderId: 'order-before-upgrade',
+        attemptNo: 7,
+        attemptRowid: 99,
+        orderComplete: false,
+      }),
+    });
+    databaseMock.all.mockReturnValueOnce([{
+      order_id: 'order-before-upgrade',
+      attempt_no: 7,
+      attempt_id: 'attempt-before-upgrade',
+      printer_type: 'FISCAL',
+      payload_json: JSON.stringify(saleReceipt({ orderId: 'order-before-upgrade' })),
+      result_json: null,
+    }]);
+
+    expect(fiscalAttemptRepo.backfillInvoiceHandoffs()).toBe(1);
+
+    expect(databaseMock.run).toHaveBeenCalledWith(
+      'DELETE FROM sync_metadata WHERE key IN (?, ?)',
+      [
+        '__zira_invoice_handoff_backfill_cursor_v2',
+        '__zira_invoice_handoff_backfill_cursor_v1',
+      ],
+    );
+    const [sql, params] = databaseMock.all.mock.calls[0];
+    expect(sql).not.toContain('fa.id < ?');
+    expect(params).toEqual([100]);
+    expect(invoiceHandoffRepoMock.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ orderId: 'order-before-upgrade' }),
+    );
+  });
+
+  it('does not let a newer original with the wrong NIP hide an older eligible original', () => {
+    databaseMock.all.mockReturnValueOnce([
+      {
+        order_id: 'order-corrected-nip',
+        attempt_no: 2,
+        attempt_id: 'attempt-corrected-nip-newer',
+        printer_type: 'FISCAL',
+        payload_json: JSON.stringify(saleReceipt({
+          orderId: 'order-corrected-nip',
+          sellerNip: '5260250274',
+        })),
+        result_json: null,
+      },
+      {
+        order_id: 'order-corrected-nip',
+        attempt_no: 1,
+        attempt_id: 'attempt-corrected-nip-older',
+        printer_type: 'FISCAL',
+        payload_json: JSON.stringify(saleReceipt({ orderId: 'order-corrected-nip' })),
+        result_json: null,
+      },
+    ]);
+
+    expect(fiscalAttemptRepo.backfillInvoiceHandoffs()).toBe(1);
+    expect(invoiceHandoffRepoMock.enqueue).toHaveBeenCalledTimes(1);
+    expect(invoiceHandoffRepoMock.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderId: 'order-corrected-nip',
+        companyNip: '5220052349',
+      }),
+    );
+  });
+
   it('does not enqueue an existing REMOTE confirmation without concrete job evidence', () => {
     databaseMock.get.mockReturnValueOnce(attempt({
       id: 'confirmed-without-evidence',

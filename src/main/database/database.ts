@@ -17,6 +17,9 @@ class Database {
   /** Bumped after every durable clearSalonData; sync writers fence on it so
    *  a fetch started under the previous tenant can never apply its payload. */
   private tenantGeneration = 0;
+  /** False when persisted/migrated generation evidence is ambiguous. The POS
+   *  may keep operating, but the invoice gateway must remain fail-closed. */
+  private tenantGenerationReliable = true;
   private saveInterval: ReturnType<typeof setInterval> | null = null;
   private dirty = false;
   private dirtyVersion = 0;
@@ -165,6 +168,7 @@ class Database {
     this.db.run('PRAGMA foreign_keys = ON');
 
     this.runMigrations();
+    this.restoreTenantGeneration();
 
     // Auto-save every 5 seconds if dirty. Skip when a save is already in
     // flight so overlapping writes don't queue up.
@@ -388,6 +392,10 @@ class Database {
       throw new Error('Database not initialized');
     }
     this.assertSynchronousSaveAvailable('clearing salon data');
+    const nextTenantGeneration = this.tenantGeneration + 1;
+    if (!Number.isSafeInteger(nextTenantGeneration)) {
+      throw new Error('Tenant generation overflow');
+    }
 
     logger.info('[DB] Clearing salon-specific data for tenant isolation...');
 
@@ -514,6 +522,11 @@ class Database {
 
       // Reset sync metadata to force full sync on next login
       this.db!.run(`DELETE FROM sync_metadata`);
+      this.db!.run(
+        `INSERT INTO sync_metadata (key, value, updated_at)
+         VALUES ('__tenant_generation', ?, datetime('now'))`,
+        [String(nextTenantGeneration)],
+      );
       logger.info('[DB] Reset sync metadata');
     });
 
@@ -535,12 +548,69 @@ class Database {
     } catch (error) {
       logger.warn(`[DB] Failed to clear product-admin pending assets: ${error instanceof Error ? error.message : String(error)}`);
     }
-    this.tenantGeneration += 1;
+    this.tenantGeneration = nextTenantGeneration;
+    this.tenantGenerationReliable = true;
     logger.info('[DB] Salon data cleared successfully');
   }
 
   getTenantGeneration(): number {
     return this.tenantGeneration;
+  }
+
+  isTenantGenerationReliable(): boolean {
+    return this.tenantGenerationReliable;
+  }
+
+  /**
+   * The tenant fence must survive a process restart. Handoff rows are durable,
+   * so a RAM-only generation would make every row written after a salon switch
+   * invisible when the app next boots with generation zero.
+   */
+  private restoreTenantGeneration(): void {
+    const row = this.get<{ value: string }>(
+      `SELECT value FROM sync_metadata WHERE key = '__tenant_generation'`,
+    );
+    const persisted = Number(row?.value);
+    if (row && Number.isSafeInteger(persisted) && persisted >= 0) {
+      this.tenantGeneration = persisted;
+      this.tenantGenerationReliable = true;
+      return;
+    }
+    if (!row) {
+      // Compatibility adoption for a DB produced by the dormant Phase-1
+      // branch: those handoff rows may already carry a non-zero generation,
+      // while the generation itself was not yet persisted. Adopt only an
+      // unambiguous single generation; mixed generations remain fail-closed.
+      const legacy = this.get<{ generations: number; generation: number | null }>(
+        `SELECT COUNT(DISTINCT tenant_generation) AS generations,
+                MAX(tenant_generation) AS generation
+         FROM invoice_handoffs`,
+      );
+      const generation = Number(legacy?.generation);
+      if (
+        Number(legacy?.generations) === 1
+        && Number.isSafeInteger(generation)
+        && generation >= 0
+      ) {
+        this.tenantGeneration = generation;
+        this.tenantGenerationReliable = true;
+        this.run(
+          `INSERT OR REPLACE INTO sync_metadata (key, value, updated_at)
+           VALUES ('__tenant_generation', ?, datetime('now'))`,
+          [String(generation)],
+        );
+        logger.info('[DB] Adopted tenant generation from legacy invoice handoffs');
+        return;
+      }
+      if (Number(legacy?.generations ?? 0) === 0) {
+        this.tenantGeneration = 0;
+        this.tenantGenerationReliable = true;
+        return;
+      }
+    }
+    this.tenantGeneration = 0;
+    this.tenantGenerationReliable = false;
+    logger.warn('[DB] Invalid or mixed tenant generation; Zira Invoice gateway disabled until tenant data is reconciled');
   }
 
   /**
@@ -611,7 +681,7 @@ class Database {
     )) return;
 
     const scope = String(salonId || '').trim();
-    const scopeClause = scope ? ' AND salon_id = ?' : '';
+    const scopeClause = scope ? ' AND ih.salon_id = ?' : '';
     const blockedStatuses = includeNeedsReview
       ? "'DISPATCHING', 'NEEDS_REVIEW'"
       : "'DISPATCHING'";
@@ -620,10 +690,34 @@ class Database {
       status: string;
       last_request_id: string | null;
     }>(
-      `SELECT order_id, status, last_request_id
-       FROM invoice_handoffs
-       WHERE status IN (${blockedStatuses})${scopeClause}
-       ORDER BY seq ASC LIMIT 1`,
+      `SELECT ih.order_id, ih.status, ih.last_request_id
+       FROM invoice_handoffs ih
+       LEFT JOIN orders o ON (
+         o.id = ih.order_id
+         OR (
+           ih.backend_order_id IS NOT NULL
+           AND ih.backend_order_id != ''
+           AND (o.id = ih.backend_order_id OR o.backend_id = ih.backend_order_id)
+         )
+       )
+       WHERE (
+         ih.status IN (${blockedStatuses})
+         OR (
+           ih.status = 'COMPLETED'
+           AND (
+             UPPER(COALESCE(o.status, '')) IN ('REFUNDED', 'PARTIAL_REFUND', 'CANCELLED', 'VOIDED')
+             OR EXISTS (
+               SELECT 1 FROM pos_event_outbox re
+               WHERE re.event_type = 'RefundIssued'
+                 AND (
+                   re.local_order_id = ih.order_id
+                   OR (ih.backend_order_id IS NOT NULL AND re.local_order_id = ih.backend_order_id)
+                 )
+             )
+           )
+         )
+       )${scopeClause}
+       ORDER BY ih.seq ASC LIMIT 1`,
       scope ? [scope] : [],
     );
     if (!blocker) return;

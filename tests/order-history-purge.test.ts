@@ -11,16 +11,20 @@ vi.mock('../src/main/logger', () => ({
 }));
 
 const SCHEMA = `
-  CREATE TABLE orders (id TEXT PRIMARY KEY, order_number TEXT, shift_id TEXT, synced INTEGER DEFAULT 0, backend_id TEXT, created_at TEXT);
+  CREATE TABLE orders (id TEXT PRIMARY KEY, order_number TEXT, status TEXT DEFAULT 'COMPLETED', shift_id TEXT, synced INTEGER DEFAULT 0, backend_id TEXT, created_at TEXT);
   CREATE TABLE order_items (id TEXT PRIMARY KEY, order_id TEXT NOT NULL);
   CREATE TABLE shifts (id TEXT PRIMARY KEY, closed_at TEXT);
   CREATE TABLE fiscal_attempts (id TEXT PRIMARY KEY, order_id TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT);
   CREATE TABLE print_attempts (id TEXT PRIMARY KEY, order_id TEXT NOT NULL);
   CREATE TABLE receipt_print_outbox (job_id TEXT PRIMARY KEY, order_id TEXT NOT NULL, status TEXT NOT NULL);
-  CREATE TABLE invoice_handoffs (order_id TEXT PRIMARY KEY, status TEXT NOT NULL);
+  CREATE TABLE invoice_handoffs (
+    order_id TEXT PRIMARY KEY,
+    backend_order_id TEXT,
+    status TEXT NOT NULL
+  );
   CREATE TABLE pos_billiard_handoffs (checkout_id TEXT PRIMARY KEY, order_id TEXT NOT NULL UNIQUE);
   CREATE TABLE fiscal_receipt_sync_queue (id TEXT PRIMARY KEY, local_order_id TEXT NOT NULL, status TEXT NOT NULL);
-  CREATE TABLE pos_event_outbox (id TEXT PRIMARY KEY, local_order_id TEXT, status TEXT NOT NULL);
+  CREATE TABLE pos_event_outbox (id TEXT PRIMARY KEY, local_order_id TEXT, status TEXT NOT NULL, event_type TEXT NOT NULL DEFAULT '');
   CREATE TABLE local_sync_log (id TEXT PRIMARY KEY, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, status TEXT NOT NULL);
 `;
 
@@ -64,8 +68,8 @@ describe('purgeLocalOrderHistoryBefore', () => {
   });
 
   const insertOrder = (id: string, o: Partial<{ shift_id: string | null; synced: number; backend_id: string | null; created_at: string }> = {}) => {
-    db.run('INSERT INTO orders (id, order_number, shift_id, synced, backend_id, created_at) VALUES (?,?,?,?,?,?)',
-      [id, `ZAM-${id}`, o.shift_id ?? null, o.synced ?? 1, o.backend_id === undefined ? `be-${id}` : o.backend_id, o.created_at ?? OLD]);
+    db.run('INSERT INTO orders (id, order_number, status, shift_id, synced, backend_id, created_at) VALUES (?,?,?,?,?,?,?)',
+      [id, `ZAM-${id}`, 'COMPLETED', o.shift_id ?? null, o.synced ?? 1, o.backend_id === undefined ? `be-${id}` : o.backend_id, o.created_at ?? OLD]);
     db.run('INSERT INTO order_items (id, order_id) VALUES (?,?)', [`it-${id}`, id]);
   };
   const ids = () => db.all<{ id: string }>('SELECT id FROM orders ORDER BY id').map((r) => r.id);
@@ -77,10 +81,10 @@ describe('purgeLocalOrderHistoryBefore', () => {
     db.run("INSERT INTO fiscal_attempts VALUES ('fa1','a','SUCCESS_CONFIRMED',NULL)");
     db.run("INSERT INTO print_attempts VALUES ('pa1','a')");
     db.run("INSERT INTO receipt_print_outbox VALUES ('job1','a','COMPLETED')");
-    db.run("INSERT INTO invoice_handoffs VALUES ('a','COMPLETED')");
+    db.run("INSERT INTO invoice_handoffs (order_id, status) VALUES ('a','COMPLETED')");
     db.run("INSERT INTO pos_billiard_handoffs VALUES ('co1','a')");
     db.run("INSERT INTO fiscal_receipt_sync_queue VALUES ('q1','a','SYNCED')");
-    db.run("INSERT INTO pos_event_outbox VALUES ('e1','a','acked')");
+    db.run("INSERT INTO pos_event_outbox (id, local_order_id, status) VALUES ('e1','a','acked')");
     db.run("INSERT INTO local_sync_log VALUES ('l1','order','a','synced')");
 
     const result = await purgeLocalOrderHistoryBefore(db, CUTOFF);
@@ -88,8 +92,12 @@ describe('purgeLocalOrderHistoryBefore', () => {
     expect(result).toEqual({ purged: 2, remaining: 0, kept: 0, cutoff: CUTOFF });
     expect(ids()).toEqual(['today']);
     for (const t of ['order_items', 'fiscal_attempts', 'print_attempts', 'receipt_print_outbox', 'invoice_handoffs', 'pos_billiard_handoffs', 'fiscal_receipt_sync_queue', 'pos_event_outbox', 'local_sync_log']) {
-      expect(db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${t}`)?.n, t).toBe(t === 'order_items' ? 1 : 0);
+      const retained = t === 'order_items' || t === 'invoice_handoffs' ? 1 : 0;
+      expect(db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM ${t}`)?.n, t).toBe(retained);
     }
+    expect(db.get<{ backend_order_id: string }>(
+      "SELECT backend_order_id FROM invoice_handoffs WHERE order_id = 'a'",
+    )?.backend_order_id).toBe('be-a');
     expect(db.markDirty).toHaveBeenCalled();
   });
 
@@ -123,15 +131,15 @@ describe('purgeLocalOrderHistoryBefore', () => {
     insertOrder('fiscal-queue');
     db.run("INSERT INTO fiscal_receipt_sync_queue VALUES ('q','fiscal-queue','PENDING')");
     insertOrder('event-pending');
-    db.run("INSERT INTO pos_event_outbox VALUES ('e','event-pending','pending')");
+    db.run("INSERT INTO pos_event_outbox (id, local_order_id, status) VALUES ('e','event-pending','pending')");
     insertOrder('print-inflight');
     db.run("INSERT INTO receipt_print_outbox VALUES ('j','print-inflight','REMOTE_ACCEPTED')");
     insertOrder('invoice-inflight');
-    db.run("INSERT INTO invoice_handoffs VALUES ('invoice-inflight','DISPATCHING')");
+    db.run("INSERT INTO invoice_handoffs (order_id, status) VALUES ('invoice-inflight','DISPATCHING')");
     insertOrder('invoice-review');
-    db.run("INSERT INTO invoice_handoffs VALUES ('invoice-review','NEEDS_REVIEW')");
+    db.run("INSERT INTO invoice_handoffs (order_id, status) VALUES ('invoice-review','NEEDS_REVIEW')");
     insertOrder('invoice-not-applicable');
-    db.run("INSERT INTO invoice_handoffs VALUES ('invoice-not-applicable','NOT_APPLICABLE')");
+    db.run("INSERT INTO invoice_handoffs (order_id, status) VALUES ('invoice-not-applicable','NOT_APPLICABLE')");
     insertOrder('log-pending');
     db.run("INSERT INTO local_sync_log VALUES ('l','order','log-pending','pending')");
     insertOrder('log-rejected-mirror'); // rejected mirror entries are not a keep reason
@@ -145,6 +153,53 @@ describe('purgeLocalOrderHistoryBefore', () => {
     expect(ids()).toEqual(['event-pending', 'fiscal-queue', 'fiscal-unknown', 'invoice-inflight', 'invoice-review', 'log-pending', 'print-inflight']);
     expect(db.get('SELECT * FROM invoice_handoffs WHERE order_id = ?', ['invoice-not-applicable']))
       .toBeNull();
+  });
+
+  it('keeps a refunded source whose original invoice handoff had already completed', async () => {
+    insertOrder('completed-then-refunded');
+    db.run("UPDATE orders SET status = 'REFUNDED' WHERE id = 'completed-then-refunded'");
+    db.run("INSERT INTO invoice_handoffs (order_id, status) VALUES ('completed-then-refunded','COMPLETED')");
+    insertOrder('ordinary-completed');
+    db.run("INSERT INTO invoice_handoffs (order_id, status) VALUES ('ordinary-completed','COMPLETED')");
+
+    const result = await purgeLocalOrderHistoryBefore(db, CUTOFF);
+
+    expect(result.purged).toBe(1);
+    expect(result.kept).toBe(1);
+    expect(ids()).toEqual(['completed-then-refunded']);
+  });
+
+  it('keeps a completed handoff when immutable refund evidence exists before status catches up', async () => {
+    insertOrder('refund-evidence');
+    db.run("INSERT INTO invoice_handoffs (order_id, status) VALUES ('refund-evidence','COMPLETED')");
+    db.run(`
+      INSERT INTO pos_event_outbox (id, local_order_id, status, event_type)
+      VALUES ('refund-event', 'refund-evidence', 'acked', 'RefundIssued')
+    `);
+
+    const result = await purgeLocalOrderHistoryBefore(db, CUTOFF);
+
+    expect(result.purged).toBe(0);
+    expect(ids()).toEqual(['refund-evidence']);
+  });
+
+  it('keeps an unjournaled fiscal sale while the invoice gateway is configured', async () => {
+    insertOrder('awaiting-invoice-backfill');
+    db.run(
+      "INSERT INTO fiscal_attempts VALUES ('fa-backfill','awaiting-invoice-backfill','SUCCESS_CONFIRMED',NULL)",
+    );
+
+    const retained = await purgeLocalOrderHistoryBefore(db, CUTOFF, {
+      retainUnjournaledFiscalSales: true,
+    });
+
+    expect(retained.purged).toBe(0);
+    expect(retained.kept).toBe(1);
+    expect(ids()).toEqual(['awaiting-invoice-backfill']);
+
+    const defaultOff = await purgeLocalOrderHistoryBefore(db, CUTOFF);
+    expect(defaultOff.purged).toBe(1);
+    expect(ids()).toEqual([]);
   });
 
   it('stale fiscal UNKNOWN attempts stop blocking once older than the threshold', async () => {

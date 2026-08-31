@@ -117,7 +117,14 @@ import {
   type PickupOrderKitchenPrintStatus,
 } from '../kitchen-self-order/pickup-queue-client';
 import { settlePickupOrderForSale, drainPickupSettleOutbox } from '../kitchen-self-order/pickup-settle';
-import { fiscalAttemptRepo } from '../database/repos/fiscal-attempt-repo';
+import {
+  fiscalAttemptRepo,
+  normalizeValidPolishNip,
+} from '../database/repos/fiscal-attempt-repo';
+import {
+  invoiceHandoffRepo,
+  type EnqueueInvoiceHandoffInput,
+} from '../database/repos/invoice-handoff-repo';
 import { purgeLocalOrderHistoryBefore, startOfLocalDayIso } from '../database/repos/order-history-purge';
 import { eodRunRepo } from '../database/repos/eod-run-repo';
 import {
@@ -1016,6 +1023,69 @@ export class PosModule extends BaseModule {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Build a tenant-bound tombstone only when immutable fiscal-sale evidence
+   * exists but the optional gateway had not created its handoff yet. This
+   * prevents a later backfill from importing an order whose refund/cancel
+   * outcome became ambiguous, without polluting non-fiscal orders.
+   */
+  private invoiceMutationHandoffFallback(
+    order: { id: string; backend_id?: string | null },
+  ): EnqueueInvoiceHandoffInput | null {
+    // The optional integration is default-off. Never make legacy/default POS
+    // refunds depend on gateway evidence until an owner has configured it.
+    if (!this.isInvoiceGatewayConfigured()) return null;
+    const receipt = fiscalAttemptRepo.getOriginalSaleReceiptSnapshot(order.id);
+    const hasConfirmedFiscalOperation = fiscalAttemptRepo
+      .getConfirmedOrderIds([order.id])
+      .includes(order.id);
+    if (!receipt) {
+      if (!hasConfirmedFiscalOperation) return null;
+      const error = new Error(
+        'A trustworthy original fiscal sale could not be recovered for the Zira Invoice correction fence',
+      ) as Error & { code?: string };
+      error.code = 'INVOICE_HANDOFF_MUTATION_FENCE_UNAVAILABLE';
+      throw error;
+    }
+    if (
+      typeof receipt !== 'object'
+      || receipt.isRefund === true
+      || receipt.isReprint === true
+      || !Array.isArray(receipt.items)
+      || receipt.items.length === 0
+      || !receipt.payment
+      || typeof receipt.payment !== 'object'
+      || !Number.isFinite(Number(receipt.total))
+    ) return null;
+
+    const config = getConfig();
+    const salonId = String(config.salonId || '').trim();
+    const authSalonId = String(config.authUser?.salonId || '').trim();
+    const companyNip = normalizeValidPolishNip(receipt.sellerNip);
+    const tenantGeneration = database.getTenantGeneration();
+    if (
+      !salonId
+      || salonId !== authSalonId
+      || !database.isTenantGenerationReliable()
+      || !Number.isSafeInteger(tenantGeneration)
+      || tenantGeneration < 0
+      || !companyNip
+    ) {
+      const error = new Error(
+        'A tenant-bound Zira Invoice correction fence could not be created for this fiscal sale',
+      ) as Error & { code?: string };
+      error.code = 'INVOICE_HANDOFF_MUTATION_FENCE_UNAVAILABLE';
+      throw error;
+    }
+    return {
+      orderId: order.id,
+      backendOrderId: order.backend_id,
+      salonId,
+      tenantGeneration,
+      companyNip,
+    };
   }
 
   private assertServerShiftConsistentForPayment(): void {
@@ -7183,6 +7253,37 @@ export class PosModule extends BaseModule {
             error: 'POS user changed while the receipt cancellation was being saved. No refund was submitted.',
           };
         }
+        const existingInvoiceHandoff = invoiceHandoffRepo.getByOrderIdentity(
+          order.id,
+          order.backend_id,
+        );
+        const invoiceRefund = invoiceHandoffRepo.prepareForRefund(
+          order.id,
+          order.backend_id,
+          refundRequestId,
+          undefined,
+          existingInvoiceHandoff ? null : this.invoiceMutationHandoffFallback(order),
+        );
+        if (invoiceRefund) {
+          const prepared = await database.saveCoalesced();
+          if (!prepared.success) {
+            const error = new Error(
+              `Could not persist the Zira Invoice refund fence: ${prepared.error || 'unknown error'}`,
+            ) as Error & { code?: string };
+            error.code = 'INVOICE_HANDOFF_REFUND_NOT_DURABLE';
+            throw error;
+          }
+        }
+        // The correction fence has its own await. Re-check immediately before
+        // opening the idempotent backend refund request.
+        if (!this.isPosAuthContextCurrent(refundAuthContext)) {
+          return {
+            success: false,
+            requiresRefresh: true,
+            refundRequestId,
+            error: 'POS user changed while the invoice refund fence was being saved. No refund was submitted; retry only with the same request ID.',
+          };
+        }
         const result = await apiClient.refundOrder(token, order.backend_id, backendPayload);
         if (result === null) return { success: false, error: 'Refund endpoint not available' };
 
@@ -7209,6 +7310,7 @@ export class PosModule extends BaseModule {
             `summary=${JSON.stringify(validation.summary)}`,
           );
           if (validation.mutationDetected) {
+            invoiceHandoffRepo.confirmRefund(order.id, order.backend_id, refundRequestId);
             lockRefundMutationLocally(orderId, order, validation, error, data.reason);
             database.markDirty();
             const mutationLockFlush = await database.saveCoalesced();
@@ -7229,6 +7331,7 @@ export class PosModule extends BaseModule {
         }
 
         // Update local DB from backend response
+        invoiceHandoffRepo.confirmRefund(order.id, order.backend_id, refundRequestId);
         const refundedAmount = validation.refundedAmountGrosze ?? 0;
         const status = result.status === 'REFUNDED' ? 'FULL' : 'PARTIAL';
         const refundReason = result.refundReason || data.reason || '';
@@ -7999,6 +8102,18 @@ export class PosModule extends BaseModule {
         const order = orderRepo.getById(orderId);
         if (!order) return { success: false, error: 'Order not found' };
         if (!order.backend_id) return { success: false, error: 'Order not synced — cannot cancel on server' };
+        if (String(order.status || '').toUpperCase() === 'CANCELLED') {
+          invoiceHandoffRepo.confirmCancellation(order.id, order.backend_id);
+          const persisted = await database.saveCoalesced();
+          return persisted.success
+            ? { success: true, alreadyCancelled: true }
+            : {
+                success: false,
+                requiresRefresh: true,
+                remoteCancelled: true,
+                error: `Order is already cancelled, but its local invoice confirmation could not be saved: ${persisted.error || 'unknown error'}`,
+              };
+        }
         const cancelAuthContext = this.capturePosAuthContext();
         const token = getSecureAuthToken();
         if (!token) return { success: false, error: 'Not authenticated' };
@@ -8013,9 +8128,93 @@ export class PosModule extends BaseModule {
             error: 'POS user changed while the receipt cancellation was being saved. No cancellation was submitted.',
           };
         }
-        await apiClient.cancelOrder(token, order.backend_id);
-        database.run("UPDATE orders SET status = 'CANCELLED' WHERE id = ?", [order.id]);
-        database.markDirty();
+        const existingInvoiceHandoff = invoiceHandoffRepo.getByOrderIdentity(
+          order.id,
+          order.backend_id,
+        );
+        const resumingCancellation = existingInvoiceHandoff?.status === 'NEEDS_REVIEW'
+          && existingInvoiceHandoff.review_kind === 'CANCELLATION_INTENT';
+        const invoiceCancellation = invoiceHandoffRepo.prepareForCancellation(
+          order.id,
+          order.backend_id,
+          undefined,
+          existingInvoiceHandoff ? null : this.invoiceMutationHandoffFallback(order),
+        );
+        if (invoiceCancellation) {
+          const prepared = await database.saveCoalesced();
+          if (!prepared.success) {
+            const error = new Error(
+              `Could not persist the Zira Invoice cancellation fence: ${prepared.error || 'unknown error'}`,
+            ) as Error & { code?: string };
+            error.code = 'INVOICE_HANDOFF_CANCELLATION_NOT_DURABLE';
+            throw error;
+          }
+        }
+        // The invoice fence has its own await. Re-check before any server
+        // reconciliation or mutation under the captured POS identity.
+        if (!this.isPosAuthContextCurrent(cancelAuthContext)) {
+          return {
+            success: false,
+            requiresRefresh: true,
+            error: 'POS user changed while the invoice cancellation fence was being saved. No cancellation was submitted; the handoff requires review.',
+          };
+        }
+        let remoteAlreadyCancelled = false;
+        if (resumingCancellation) {
+          const primaryKind = 'cash' as const;
+          let detail = await apiClient.getServerOrderDetail(
+            token,
+            order.backend_id,
+            primaryKind,
+          );
+          if (!detail) {
+            detail = await apiClient.getServerOrderDetail(
+              token,
+              order.backend_id,
+              primaryKind === 'cash' ? 'invoiced' : 'cash',
+            );
+          }
+          if (!this.isPosAuthContextCurrent(cancelAuthContext)) {
+            return {
+              success: false,
+              requiresRefresh: true,
+              error: 'POS user changed while the pending server cancellation was being reconciled.',
+            };
+          }
+          if (!detail) {
+            return {
+              success: false,
+              requiresRefresh: true,
+              error: 'The pending server cancellation could not be reconciled. No second cancellation was submitted.',
+            };
+          }
+          remoteAlreadyCancelled = String(detail.status || '').toUpperCase() === 'CANCELLED';
+        }
+        if (!remoteAlreadyCancelled) {
+          // No await is allowed between this final auth fence and opening the
+          // backend cancellation request.
+          if (!this.isPosAuthContextCurrent(cancelAuthContext)) {
+            return {
+              success: false,
+              requiresRefresh: true,
+              error: 'POS user changed before the server cancellation was submitted.',
+            };
+          }
+          await apiClient.cancelOrder(token, order.backend_id);
+        }
+        database.transaction(() => {
+          database.run("UPDATE orders SET status = 'CANCELLED' WHERE id = ?", [order.id]);
+          invoiceHandoffRepo.confirmCancellation(order.id, order.backend_id);
+        });
+        const persisted = await database.saveCoalesced();
+        if (!persisted.success) {
+          return {
+            success: false,
+            requiresRefresh: true,
+            remoteCancelled: true,
+            error: `Order was cancelled on the server, but local confirmation could not be saved: ${persisted.error || 'unknown error'}`,
+          };
+        }
         return { success: true };
       } catch (err: any) {
         return { success: false, error: err.message };
@@ -9742,8 +9941,19 @@ export class PosModule extends BaseModule {
     return {
       unsyncedOlderThanIso: daysAgo(PosModule.PURGE_UNSYNCED_AFTER_DAYS),
       staleFiscalUnknownBeforeIso: daysAgo(PosModule.PURGE_STALE_FISCAL_UNKNOWN_AFTER_DAYS),
+      retainUnjournaledFiscalSales: this.isInvoiceGatewayConfigured(),
       exportUnsynced: (orders) => this.exportPurgedUnsynced(orders),
     };
+  }
+
+  private isInvoiceGatewayConfigured(): boolean {
+    const gateway = getConfig().ziraInvoiceGateway;
+    return !!gateway && (
+      gateway.enabled === true
+      || !!String(gateway.salonId || '').trim()
+      || !!String(gateway.companyNip || '').trim()
+      || !!String(gateway.channelId || '').trim()
+    );
   }
 
   /**

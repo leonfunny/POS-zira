@@ -202,12 +202,16 @@ export class AuthModule extends BaseModule {
     // next IPC poll cycle. Forwarder logic is in auth-refresh.ts so
     // its destroyed-window guard + channel-name spelling are pinned
     // by auth-expired-wiring.test.ts behaviour tests.
-    authEvents.on(
-      AUTH_EXPIRED,
-      forwardAuthExpiredToRenderer(() =>
-        this.container.getOptional<Electron.BrowserWindow>(SERVICE_TOKENS.MAIN_WINDOW),
-      ),
+    const forwardExpired = forwardAuthExpiredToRenderer(() =>
+      this.container.getOptional<Electron.BrowserWindow>(SERVICE_TOKENS.MAIN_WINDOW),
     );
+    authEvents.on(AUTH_EXPIRED, () => {
+      // Renderer navigation is not a session fence for background modules.
+      // Publish the same terminal signal on the typed bus so local financial
+      // side effects stop as soon as refresh credentials are rejected.
+      this.eventBus?.emit('auth:expired', {});
+      forwardExpired();
+    });
 
     logger.info('[AuthModule] Initialized');
     this.setState(ModuleState.READY);
@@ -243,6 +247,7 @@ export class AuthModule extends BaseModule {
         'authToken',        // Auth credential — set through login flow
         'encryptedRefreshToken', // Managed internally by safeStorage (refresh-on-401 flow)
         'authUser',         // Set through login flow
+        'ziraInvoiceGateway', // Owner-bound local financial integration gate
         'aiApiKey',              // Credential — set through AUTH_SET_AI_API_KEY only
         'encryptedAiApiKey',     // Managed internally by safeStorage
         'encryptedTelegramToken', // Managed internally by safeStorage

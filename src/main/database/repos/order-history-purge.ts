@@ -14,7 +14,10 @@ import logger from '../../logger';
  *   4. its shift is closed (shift totals are computed from local orders)
  *
  * Anything failing these checks is kept and counted, never deleted — an
- * unsynced sale must survive until it reaches the backend.
+ * unsynced sale must survive until it reaches the backend. A completed Zira
+ * Invoice handoff is retained as a small tombstone even after the bulky order
+ * snapshot is purged, so a later server refund/cancellation can still be
+ * joined back to the original import by backend_order_id.
  */
 export interface PurgeDatabase {
   get<T = any>(sql: string, params?: any[]): T | null;
@@ -52,6 +55,12 @@ export interface OrderHistoryPurgeOptions {
    * leftovers nobody will reconcile. Omit to block on any age.
    */
   staleFiscalUnknownBeforeIso?: string;
+  /**
+   * Preserve confirmed fiscal sales that have not yet acquired an invoice
+   * handoff. Enable this once an owner has configured the optional Zira
+   * Invoice gateway, including while it is temporarily switched off.
+   */
+  retainUnjournaledFiscalSales?: boolean;
   /** rows deleted per transaction; the main process is blocked only for one batch */
   batchSize?: number;
   /** cap per run so a months-old backlog never stalls the counter; rest goes to the next tick */
@@ -76,7 +85,6 @@ const CHILD_TABLES: Array<{ table: string; column: string }> = [
   { table: 'fiscal_attempts', column: 'order_id' },
   { table: 'print_attempts', column: 'order_id' },
   { table: 'receipt_print_outbox', column: 'order_id' },
-  { table: 'invoice_handoffs', column: 'order_id' },
   { table: 'pos_billiard_handoffs', column: 'order_id' },
   { table: 'fiscal_receipt_sync_queue', column: 'local_order_id' },
   { table: 'pos_event_outbox', column: 'local_order_id' },
@@ -98,7 +106,8 @@ function tableExists(db: PurgeDatabase, table: string): boolean {
  * UTC) or as an ISO string; both compare correctly against an ISO cutoff after
  * normalising the separator, which the query does via replace().
  */
-// Params, in order: cutoff, unsyncedCutoff (or '' = never), staleFiscalBefore (or '' = never)
+// Params, in order: cutoff, unsyncedCutoff (or '' = never),
+// staleFiscalBefore (or '' = never), retainUnjournaledFiscalSales (0/1)
 const ELIGIBLE_SQL = `
   SELECT o.id, o.synced
   FROM orders o
@@ -130,7 +139,30 @@ const ELIGIBLE_SQL = `
     AND NOT EXISTS (
       SELECT 1 FROM invoice_handoffs ih
       WHERE ih.order_id = o.id
-        AND ih.status NOT IN ('COMPLETED', 'NOT_APPLICABLE')
+        AND (
+          ih.status NOT IN ('COMPLETED', 'NOT_APPLICABLE')
+          OR (
+            ih.status = 'COMPLETED'
+            AND (
+              UPPER(COALESCE(o.status, '')) IN ('REFUNDED', 'PARTIAL_REFUND', 'CANCELLED', 'VOIDED')
+              OR EXISTS (
+                SELECT 1 FROM pos_event_outbox re
+                WHERE re.local_order_id = o.id AND re.event_type = 'RefundIssued'
+              )
+            )
+          )
+        )
+    )
+    AND (
+      ? = 0
+      OR NOT EXISTS (
+        SELECT 1 FROM fiscal_attempts fi
+        WHERE fi.order_id = o.id
+          AND fi.status = 'SUCCESS_CONFIRMED'
+          AND NOT EXISTS (
+            SELECT 1 FROM invoice_handoffs ih2 WHERE ih2.order_id = o.id
+          )
+      )
     )
     AND NOT EXISTS (
       SELECT 1 FROM local_sync_log l
@@ -171,9 +203,17 @@ export async function purgeLocalOrderHistoryBefore(
 
   const unsyncedCutoff = options.unsyncedOlderThanIso ?? '';
   const staleFiscal = options.staleFiscalUnknownBeforeIso ?? '';
+  const retainUnjournaledFiscalSales = options.retainUnjournaledFiscalSales === true ? 1 : 0;
   const eligibleRows = db.all<{ id: string; synced: number }>(
     ELIGIBLE_SQL,
-    [cutoffIso, unsyncedCutoff, unsyncedCutoff, staleFiscal, staleFiscal],
+    [
+      cutoffIso,
+      unsyncedCutoff,
+      unsyncedCutoff,
+      staleFiscal,
+      staleFiscal,
+      retainUnjournaledFiscalSales,
+    ],
   );
   const eligible = eligibleRows.map((r) => r.id);
   if (eligible.length === 0) {
@@ -204,6 +244,25 @@ export async function purgeLocalOrderHistoryBefore(
     // One short transaction per batch: the event loop is blocked only for
     // this batch, then we yield so a sale in progress is served first.
     db.transaction(() => {
+      // Preserve only the minimum completed-import evidence. The backend id
+      // must be copied before deleting orders because a later mirror uses the
+      // server UUID as its local id and can no longer join on the old POS UUID.
+      db.run(
+        `UPDATE invoice_handoffs
+         SET backend_order_id = COALESCE(
+           backend_order_id,
+           (SELECT o.backend_id FROM orders o WHERE o.id = invoice_handoffs.order_id)
+         )
+         WHERE order_id IN (${marks}) AND status = 'COMPLETED'`,
+        chunk,
+      );
+      // NOT_APPLICABLE proves no Zira import exists, so it has no correction
+      // tombstone value and may be removed with the source order.
+      db.run(
+        `DELETE FROM invoice_handoffs
+         WHERE order_id IN (${marks}) AND status = 'NOT_APPLICABLE'`,
+        chunk,
+      );
       for (const child of existingChildren) {
         db.run(`DELETE FROM ${child.table} WHERE ${child.column} IN (${marks})`, chunk);
       }

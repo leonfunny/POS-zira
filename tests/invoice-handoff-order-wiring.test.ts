@@ -11,10 +11,14 @@ const paymentSource = readFileSync('src/main/pos/payment-controller.ts', 'utf8')
 describe('fiscal journal -> Zira Invoice shadow handoff wiring', () => {
   it('does not enqueue from ordinary pos:orders:create', () => {
     const createStart = posSource.indexOf("ipcMain.handle('pos:orders:create'");
-    const createEnd = posSource.indexOf("ipcMain.handle('pos:orders:list'", createStart);
+    const createEnd = posSource.indexOf(
+      '\n    ipcMain.handle(',
+      createStart + "ipcMain.handle('pos:orders:create'".length,
+    );
     const createHandler = posSource.slice(createStart, createEnd);
 
     expect(createStart).toBeGreaterThanOrEqual(0);
+    expect(createEnd).toBeGreaterThan(createStart);
     expect(createHandler).not.toContain('invoiceHandoffRepo');
     expect(createHandler).not.toContain('pos-invoice:');
     expect(posSource).not.toContain('configureInvoiceHandoffContextProvider');

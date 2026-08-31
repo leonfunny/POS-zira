@@ -43,6 +43,7 @@ import { CheckinModule } from './modules/checkin.module';
 import { BackupModule } from './modules/backup.module';
 import { AdDisplayModule } from './modules/ad-display.module';
 import { ForecastModule } from './modules/forecast.module';
+import { InvoiceGatewayModule } from './invoice-gateway/module';
 
 // Check for debug mode
 const isDebugMode = process.argv.includes('--debug') || process.env.DEBUG === '1';
@@ -298,6 +299,7 @@ async function startApp() {
       .use(new WarehouseModule(container))
       .use(new InvoiceModule(container))
       .use(new AuthModule(container))
+      .use(new InvoiceGatewayModule())
       .use(new RemoteModule(container))
       .use(new BooksyModule(container))
       .use(new TelegramModule(container))

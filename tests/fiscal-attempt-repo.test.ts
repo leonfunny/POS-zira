@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../src/main/database/database', () => ({
   database: {
     get: vi.fn(),
+    all: vi.fn(),
     run: vi.fn(),
     save: vi.fn(),
     saveCoalesced: vi.fn(),
@@ -58,5 +59,59 @@ describe('fiscalAttemptRepo', () => {
 
     await expect(fiscalAttemptRepo.flush()).resolves.toEqual({ success: true });
     expect(database.saveCoalesced).toHaveBeenCalledTimes(1);
+  });
+
+  it('recovers the original sale when a newer confirmed refund masks it', () => {
+    vi.mocked(database.all).mockReturnValueOnce([
+      {
+        printer_type: 'LOCAL',
+        payload_json: JSON.stringify({ isRefund: true, items: [{}], payment: {}, total: -100 }),
+        result_json: '{}',
+      },
+      {
+        printer_type: 'LOCAL',
+        payload_json: JSON.stringify({ items: [{}], payment: { method: 'cash' }, total: 100 }),
+        result_json: '{}',
+      },
+    ]);
+
+    expect(fiscalAttemptRepo.getOriginalSaleReceiptSnapshot('order-1')).toMatchObject({
+      total: 100,
+    });
+    expect(database.all).toHaveBeenCalledWith(
+      expect.stringContaining("status = 'SUCCESS_CONFIRMED'"),
+      ['order-1'],
+    );
+  });
+
+  it('rejects an unproven remote original sale snapshot', () => {
+    vi.mocked(database.all).mockReturnValueOnce([
+      {
+        printer_type: 'REMOTE',
+        payload_json: JSON.stringify({ items: [{}], payment: { method: 'cash' }, total: 100 }),
+        result_json: JSON.stringify({ remote: true }),
+      },
+    ]);
+
+    expect(fiscalAttemptRepo.getOriginalSaleReceiptSnapshot('order-1')).toBeNull();
+  });
+
+  it('recovers an evidenced remote original sale behind a newer reprint', () => {
+    vi.mocked(database.all).mockReturnValueOnce([
+      {
+        printer_type: 'REMOTE',
+        payload_json: JSON.stringify({ isReprint: true, items: [{}], payment: {}, total: 100 }),
+        result_json: JSON.stringify({ remote: true, jobId: 'reprint-job', printerId: 'printer-1' }),
+      },
+      {
+        printer_type: 'REMOTE',
+        payload_json: JSON.stringify({ items: [{}], payment: { method: 'cash' }, total: 100 }),
+        result_json: JSON.stringify({ remote: true, jobId: 'sale-job', printerId: 'printer-1' }),
+      },
+    ]);
+
+    expect(fiscalAttemptRepo.getOriginalSaleReceiptSnapshot('order-1')).toMatchObject({
+      total: 100,
+    });
   });
 });

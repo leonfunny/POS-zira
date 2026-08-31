@@ -105,6 +105,7 @@ describe('database.clearSalonData() tenant fence', () => {
   );
 
   it('bumps tenantGeneration after a durable clear (sync fence)', () => {
-    expect(source).toMatch(/clearSalonData[\s\S]+?tenantGeneration\s*\+=\s*1/);
+    expect(source).toMatch(/clearSalonData[\s\S]+?tenantGeneration\s*=\s*nextTenantGeneration/);
+    expect(source).toContain("'__tenant_generation'");
   });
 });

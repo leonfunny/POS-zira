@@ -2010,4 +2010,22 @@ export const migrations: Migration[] = [
         ON invoice_handoffs(order_id, status);
     `,
   },
+  {
+    version: 69,
+    name: 'invoice_handoff_retained_evidence',
+    // Keep the minimum identity needed to reconnect a server-side refund or
+    // cancellation after the nightly POS order purge. review_kind separates
+    // an ambiguous initial import from a correction of an already-completed
+    // import, so a generic retry can never erase or resend completion proof.
+    up: `
+      ALTER TABLE invoice_handoffs ADD COLUMN backend_order_id TEXT;
+      ALTER TABLE invoice_handoffs ADD COLUMN review_kind TEXT
+        CHECK (review_kind IS NULL OR review_kind IN ('INITIAL_HANDOFF', 'CANCELLATION_INTENT', 'REFUND_INTENT', 'POST_COMPLETION_CORRECTION'));
+      ALTER TABLE invoice_handoffs ADD COLUMN review_request_id TEXT;
+      CREATE INDEX IF NOT EXISTS idx_invoice_handoffs_backend_order
+        ON invoice_handoffs(salon_id, backend_order_id);
+      CREATE INDEX IF NOT EXISTS idx_fiscal_attempts_invoice_backfill
+        ON fiscal_attempts(status, order_id ASC, attempt_no DESC, id DESC);
+    `,
+  },
 ];
