@@ -779,6 +779,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       retrySync: (orderId: string) => ipcRenderer.invoke('pos:orders:retrySync', orderId),
       repairStockFailures: () => ipcRenderer.invoke('pos:orders:repairStockFailures'),
       getServerList: (params: any) => ipcRenderer.invoke('pos:orders:getServerList', params),
+      getRefundDetail: (orderId: string) => ipcRenderer.invoke('pos:orders:getRefundDetail', orderId),
       getTodayServer: () => ipcRenderer.invoke('pos:orders:getTodayServer'),
       mirrorFromServer: (orderId: string, kind: 'cash' | 'invoiced') =>
         ipcRenderer.invoke('pos:orders:mirrorFromServer', orderId, kind),

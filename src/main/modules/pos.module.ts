@@ -7771,6 +7771,53 @@ export class PosModule extends BaseModule {
       }
     });
 
+    ipcMain.handle('pos:orders:getRefundDetail', async (_e, orderId: string) => {
+      try {
+        const localOrder = orderRepo.getById(orderId);
+        if (!localOrder) return { success: false, error: 'Order not found' };
+        if (!localOrder.backend_id) return { success: false, error: 'Order not synced to server yet' };
+
+        const token = getSecureAuthToken();
+        if (!token) return { success: false, error: 'Not authenticated' };
+
+        const preferredKind: 'cash' | 'invoiced' = localOrder.customer_nip ? 'invoiced' : 'cash';
+        let serverOrder = await apiClient.getServerOrderDetail(token, localOrder.backend_id, preferredKind);
+        if (!serverOrder) {
+          const fallbackKind = preferredKind === 'cash' ? 'invoiced' : 'cash';
+          serverOrder = await apiClient.getServerOrderDetail(token, localOrder.backend_id, fallbackKind);
+        }
+        if (!serverOrder) return { success: false, error: 'Order not found on server' };
+        if (!Array.isArray(serverOrder.items) || serverOrder.items.length === 0) {
+          return { success: false, error: 'Server response missing refund items' };
+        }
+
+        const adaptedOrder = adaptServerOrder(serverOrder);
+        if (adaptedOrder.id !== localOrder.backend_id) {
+          return { success: false, error: 'Server returned a different order' };
+        }
+        const items = serverOrder.items.map((item: any) =>
+          adaptServerOrderItem(item, localOrder.id, serverOrder),
+        );
+
+        return {
+          success: true,
+          detail: {
+            order: {
+              ...localOrder,
+              ...adaptedOrder,
+              id: localOrder.id,
+              backend_id: localOrder.backend_id,
+              _origin: undefined,
+            },
+            items,
+          },
+        };
+      } catch (err: any) {
+        logger.warn(`[PosModule] Authoritative refund detail failed for ${orderId}: ${err.message}`);
+        return { success: false, error: err.message };
+      }
+    });
+
     ipcMain.handle('pos:orders:getTodayServer', async () => {
       try {
         const token = getSecureAuthToken();

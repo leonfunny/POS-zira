@@ -314,6 +314,7 @@ export function buildOrdersNamespace({ transport }: StubDeps) {
     getServerList: async () => ({
       orders: [], items: {}, total: 0, page: 1, limit: 50, source: 'unconfigured' as const,
     }),
+    getRefundDetail: async () => ({ success: false, error: 'refund-detail-unavailable' }),
     // Delegate to the transport so a shelved order is actually reset + re-drained
     // and the renderer's SyncFailurePanel sees a real {result:{status}}; the S2
     // stub returned bare success and the shelved order stayed stuck forever.

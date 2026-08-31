@@ -1917,10 +1917,12 @@ export default function OrderHistoryModal({
     setDeleteStatus(null);
     setCancelStatus(null);
     try {
-      if (serverItemsMap[orderId] && serverItemsMap[orderId].length > 0) {
-        const order = orders.find((o) => o.id === orderId);
+      const order = orders.find((candidate) => candidate.id === orderId);
+      const serverItems = serverItemsMap[orderId]
+        || (order?.backend_id ? serverItemsMap[order.backend_id] : undefined);
+      if (serverItems && serverItems.length > 0) {
         if (order) {
-          setDetail({ order, items: serverItemsMap[orderId] });
+          setDetail({ order, items: serverItems });
           setShowRefund(false);
           return;
         }
@@ -2149,6 +2151,28 @@ export default function OrderHistoryModal({
     }
   };
 
+  const loadAuthoritativeRefundDetail = async (order: OrderRow): Promise<boolean> => {
+    if (!(await ensureMirrored(order))) return false;
+
+    const orderId = order.id;
+    setMirroringId(orderId);
+    setMirrorError(null);
+    try {
+      const result = await window.electronAPI.pos.orders.getRefundDetail(orderId);
+      if (!result?.success || !result.detail || result.detail.items.length === 0) {
+        setMirrorError(result?.error || tOr(t, 'pos.history.mirrorError', 'Could not load order from server'));
+        return false;
+      }
+      setDetail(result.detail);
+      return true;
+    } catch (err: any) {
+      setMirrorError(err?.message || tOr(t, 'pos.history.mirrorError', 'Could not load order from server'));
+      return false;
+    } finally {
+      setMirroringId((current) => (current === orderId ? null : current));
+    }
+  };
+
   const requestOrderConfirm = (request: PendingOrderConfirm) => {
     if (confirmBusy) return;
     setPendingConfirm(request);
@@ -2217,7 +2241,6 @@ export default function OrderHistoryModal({
     const refundSyncError = order.sync_error && /refund/i.test(order.sync_error) ? order.sync_error : null;
     const detailRefundableResult = getRemainingRefundableItems(order, items);
     const refundBlockedByMissingLines = detailRefundableResult.unsafeMissingRefundLines;
-    const hasRefundableItem = detailRefundableResult.items.some((item) => item.maxQty > 0);
     const itemRefundBreakdowns = getItemRefundBreakdowns(order, items);
     const itemRefundBreakdownById = new Map(itemRefundBreakdowns.map((breakdown) => [breakdown.item.id, breakdown]));
     const refundEvents = getRefundEvents(order, items);
@@ -2226,9 +2249,7 @@ export default function OrderHistoryModal({
       && refundStatus !== 'full'
       && !refundOverage
       && !refundSyncError
-      && !refundBlockedByMissingLines
-      && remainingTotal > 0
-      && hasRefundableItem;
+      && remainingTotal > 0;
     const isMirroring = mirroringId === order.id;
     const notSynced = !order.backend_id && order.synced !== 1;
     const canDeleteLocal = order._origin !== 'server' && !order.backend_id && order.synced !== 1 && order.synced !== 2;
@@ -2651,7 +2672,7 @@ export default function OrderHistoryModal({
 
               {canRefund && !showRefund && (
                 <button
-                  onClick={async () => { if (await ensureMirrored(order)) setShowRefund(true); }}
+                  onClick={async () => { if (await loadAuthoritativeRefundDetail(order)) setShowRefund(true); }}
                   disabled={isMirroring}
                   className="flex min-h-12 w-full items-center justify-center rounded-lg border border-red-300 bg-red-50 px-4 text-sm font-extrabold text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-200"
                 >
