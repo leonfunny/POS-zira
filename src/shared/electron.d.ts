@@ -22,6 +22,7 @@ declare module '*.svg' {
 }
 
 import type {
+  FabricTagTemplate,
   AgentConfig,
   RemoteControlState,
   TelegramBotStatus,
@@ -125,6 +126,7 @@ import type {
   ScaleReadResult,
   ScaleAutoDetectResult,
 } from './types';
+
 
 // ── POS DB row types (mirrors repos) ──
 
@@ -1036,6 +1038,15 @@ interface ElectronAPI {
       getByBarcode: (barcode: string) => Promise<any | null>;
       getById: (id: string) => Promise<any | null>;
       searchByCode: (query: string) => Promise<any[]>;
+    };
+    /** Care-label content per garment style, keyed by variant template id. */
+    fabricTagTemplates: {
+      list: () => Promise<FabricTagTemplate[]>;
+      /** Just the ids, for marking which products can print a fabric tag. */
+      listIds: () => Promise<string[]>;
+      get: (templateId: string) => Promise<FabricTagTemplate | null>;
+      save: (template: FabricTagTemplate) => Promise<FabricTagTemplate | null>;
+      remove: (templateId: string) => Promise<void>;
     };
     masterCatalog: {
       lookupByEan: (ean: string) => Promise<{ ok: boolean; draft: any | null; error?: string }>;

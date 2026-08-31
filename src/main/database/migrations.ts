@@ -1951,4 +1951,33 @@ export const migrations: Migration[] = [
       );
     `,
   },
+  {
+    version: 67,
+    name: 'fabric_tag_templates',
+    // Care-label content for a garment style, keyed by the variant template
+    // that groups its sizes. Split deliberately: fibre composition, care
+    // symbols and origin belong to the style, so editing them once covers
+    // every size, while size itself is read from the variant rows.
+    //
+    // backend_id/synced/synced_at are here from the start even though nothing
+    // syncs yet -- adding them later means migrating rows that already exist
+    // on a live machine.
+    up: `
+      CREATE TABLE IF NOT EXISTS fabric_tag_templates (
+        template_id TEXT PRIMARY KEY,
+        brand_name TEXT,
+        logo_data_url TEXT,
+        composition TEXT,
+        care_symbols TEXT,
+        care_text TEXT,
+        fabric TEXT,
+        layout TEXT NOT NULL DEFAULT 'default',
+        backend_id TEXT,
+        synced INTEGER DEFAULT 0,
+        synced_at TEXT,
+        updated_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_fabric_tag_synced ON fabric_tag_templates(synced);
+    `,
+  },
 ];

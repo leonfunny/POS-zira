@@ -233,6 +233,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
       getByBarcode: (barcode: string) => ipcRenderer.invoke('pos:draft-products:getByBarcode', barcode),
       getById: (id: string) => ipcRenderer.invoke('pos:draft-products:getById', id),
       searchByCode: (query: string) => ipcRenderer.invoke('pos:draft-products:searchByCode', query),
+  },
+  fabricTagTemplates: {
+    list: () => ipcRenderer.invoke('pos:fabric-tag-templates:list'),
+    listIds: () => ipcRenderer.invoke('pos:fabric-tag-templates:listIds'),
+    get: (templateId: string) => ipcRenderer.invoke('pos:fabric-tag-templates:get', templateId),
+    save: (template: unknown) => ipcRenderer.invoke('pos:fabric-tag-templates:save', template),
+    remove: (templateId: string) => ipcRenderer.invoke('pos:fabric-tag-templates:remove', templateId),
     },
     masterCatalog: {
       lookupByEan: (ean: string) => ipcRenderer.invoke('pos:master-catalog:lookup-by-ean', ean),
