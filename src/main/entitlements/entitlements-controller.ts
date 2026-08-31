@@ -6,6 +6,7 @@
  * SuperAdmin can control which features are available for each salon via admin panel.
  */
 
+import { isPosMode } from '../../shared/types';
 import { ipcMain, BrowserWindow } from 'electron';
 import {
   IPC_CHANNELS,
@@ -139,8 +140,7 @@ function normalizeEntitlements(data: any): SalonEntitlements {
   }
 
   // Only accept POS modes the renderer actually has templates for.
-  const VALID_POS_MODES = ['retail', 'salon', 'b2b', 'restaurant'] as const;
-  const suggestedPosMode = VALID_POS_MODES.includes(data.suggestedPosMode)
+  const suggestedPosMode = isPosMode(data.suggestedPosMode)
     ? (data.suggestedPosMode as SalonEntitlements['suggestedPosMode'])
     : null;
 

@@ -1,3 +1,4 @@
+import { POS_MODES } from '../../shared/types';
 import Store from 'electron-store';
 import { AgentConfig, TelegramConfig, BooksySyncConfig, SecurityConfig, AuthUser } from '../../shared/types';
 import { AD_DISPLAY_DEFAULTS } from '../ad-display/ad-types';
@@ -359,7 +360,7 @@ const store = new Store<AgentConfig>({
     aiSystemPrompt: { type: 'string', default: '' },
     // POS settings
     posEnabled: { type: 'boolean', default: true },
-    posMode: { type: 'string', enum: ['retail', 'salon', 'b2b', 'restaurant'], default: 'retail' },
+    posMode: { type: 'string', enum: [...POS_MODES], default: 'retail' },
     allowOversell: { type: 'boolean', default: false },
     fiscalOnCashSale: { type: 'string', enum: ['always', 'never', 'ask'], default: 'ask' },
     labelModuleProductIds: { type: 'array', items: { type: 'string' }, default: [] },

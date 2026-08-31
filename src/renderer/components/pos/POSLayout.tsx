@@ -61,7 +61,7 @@ import type {
   UncertainTenderResolutionTarget,
 } from '../../../shared/billiard-pos-handoff';
 
-type PosMode = 'retail' | 'salon' | 'b2b' | 'restaurant';
+import type { PosMode } from '../../../shared/types';
 
 const POS_LANGS: Language[] = ['en', 'pl', 'vi', 'uk', 'ru', 'zh', 'tr'];
 const PRINT_LAST_CART_LABEL_COMMAND = '00000000';
@@ -80,6 +80,7 @@ const MODE_LABELS: Record<PosMode, string> = {
   salon: 'pos.mode.salon',
   b2b: 'pos.mode.b2b',
   restaurant: 'pos.mode.restaurant',
+  garment: 'pos.mode.garment',
 };
 
 function moneyToGrosze(value: unknown): number {

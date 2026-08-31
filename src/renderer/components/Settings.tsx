@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab, ALLOWED_PROTOCOLS_BY_TYPE, PrinterType, LiveCustomerDisplayProfile, PosnetDiagnoseResult, charsPerLineFor, ServerPrinterMapping, LocalPrinterMirrorRow, SalonPrinterMapping, SalonPrinterAssignment, SalonPrinterRole, ScaleConnectionMode, ScaleDiagnoseStep, FiscalDailyReportPrintResponse, LanFirstKitchenNetworkInfo, LanFirstKitchenPairingStatus, LanFirstKitchenTestRouteResponse } from '../../shared/types';
+import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab, ALLOWED_PROTOCOLS_BY_TYPE, PrinterType, LiveCustomerDisplayProfile, PosnetDiagnoseResult, charsPerLineFor, ServerPrinterMapping, LocalPrinterMirrorRow, SalonPrinterMapping, SalonPrinterAssignment, SalonPrinterRole, ScaleConnectionMode, ScaleDiagnoseStep, FiscalDailyReportPrintResponse, LanFirstKitchenNetworkInfo, LanFirstKitchenPairingStatus, LanFirstKitchenTestRouteResponse, POS_MODES, type PosMode } from '../../shared/types';
 import { resolveCustomerDisplayProfile } from '../../shared/customer-display-profile';
 import { DEFAULT_LAN_FIRST_KITCHEN_PORT, getReadyKitchenWifiPrinters, planLanKitchenSave, resolveLanFirstKitchenTimeoutMs } from '../../shared/lan-first-kitchen-settings';
 import { Language, languageNames, getTranslation, printerTypeIcons } from '../i18n/translations';
@@ -614,7 +614,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
 
   // POS settings
   const [posEnabled, setPosEnabled] = useState(config?.posEnabled ?? false);
-  const [posMode, setPosMode] = useState<'retail' | 'salon' | 'b2b' | 'restaurant'>(config?.posMode || 'retail');
+  const [posMode, setPosMode] = useState<PosMode>((config?.posMode as PosMode) || 'retail');
   const [posLanguage, setPosLanguage] = useState<Language | ''>(config?.posLanguage || '');
   const [allowOversell, setAllowOversell] = useState(config?.allowOversell ?? false);
   const [fiscalOnCashSale, setFiscalOnCashSale] = useState<FiscalOnCashSaleMode>(config?.fiscalOnCashSale || 'ask');
@@ -5082,10 +5082,12 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                 onChange={(e) => setPosMode(e.target.value as any)}
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
               >
-                <option value="retail">{t('pos.mode.retail')}</option>
-                <option value="salon">{t('pos.mode.salon')}</option>
-                <option value="b2b">{t('pos.mode.b2b')}</option>
-                <option value="restaurant">{t('pos.mode.restaurant')}</option>
+                {/* Rendered from the shared list: hardcoding the options here
+                    is how `garment` was missing from the only screen that can
+                    select it. */}
+                {POS_MODES.map((mode) => (
+                  <option key={mode} value={mode}>{t(`pos.mode.${mode}`)}</option>
+                ))}
               </select>
               <p className="text-xs text-slate-500 mt-1">{t('settings.posModeDesc')}</p>
             </div>

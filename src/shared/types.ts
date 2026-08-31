@@ -12,6 +12,41 @@ export enum AgentStatus {
 // Printer protocol types
 export type PrinterProtocol = 'THERMAL' | 'POSNET' | 'ELZAB_STX' | 'ZEBRA' | 'WINDOWS' | 'TSPL';
 
+/**
+ * Which trade the till is set up for.
+ *
+ * One list, because it was previously spelled out in seven places and they had
+ * already drifted -- the same failure that left TSPL out of the printer
+ * protocol union and made a fabric tag printer impossible to configure.
+ *
+ * `garment` is a print-only mode: the machine sets label content and prints
+ * care labels and EAN tags, it does not sell.
+ */
+export const POS_MODES = ['retail', 'salon', 'b2b', 'restaurant', 'garment'] as const;
+export type PosMode = typeof POS_MODES[number];
+
+export function isPosMode(value: unknown): value is PosMode {
+  return typeof value === 'string' && (POS_MODES as readonly string[]).includes(value);
+}
+
+/**
+ * Care-label content for a garment style, as the renderer sees it.
+ *
+ * Shaped by fabric-tag-template-repo, which owns the storage. Declared here
+ * rather than in electron.d.ts so the renderer can import it without pulling
+ * in a global declaration file.
+ */
+export interface FabricTagTemplate {
+  templateId: string;
+  brandName: string | null;
+  logoDataUrl: string | null;
+  composition: string | null;
+  careSymbols: CareSymbol[];
+  careText: string | null;
+  fabric: string | null;
+  layout: 'default' | 'care-first';
+}
+
 // Printer types - used for routing jobs to correct printer
 // Using const object instead of enum for better Vite/browser compatibility
 export const PrinterType = {
@@ -716,7 +751,7 @@ export interface AgentConfig {
 
   // POS settings
   posEnabled?: boolean;                // Enable POS window
-  posMode?: 'retail' | 'salon' | 'b2b' | 'restaurant';  // POS mode (default: 'retail')
+  posMode?: PosMode;  // Which trade the till is set up for (default: 'retail')
     allowOversell?: boolean;             // Allow retail/self-checkout sale when tracked stock is <= 0. Default false.
     fiscalOnCashSale?: 'always' | 'never' | 'ask'; // Fiscal receipt behavior after CASH/BLIK order-copy print. Default ask.
     autoOrderDiscount?: {

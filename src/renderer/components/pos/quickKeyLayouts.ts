@@ -1,4 +1,6 @@
-export type PosMode = 'retail' | 'salon' | 'b2b' | 'restaurant';
+import type { PosMode } from '../../../shared/types';
+
+export type { PosMode };
 
 export type QuickKeyActionId =
   | 'discount:5'

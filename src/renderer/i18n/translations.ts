@@ -546,6 +546,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'pos.mode.salon': 'Salon',
     'pos.mode.b2b': 'B2B Wholesale',
     'pos.mode.restaurant': 'Restaurant',
+    'pos.mode.garment': 'Garment labels',
 
     // Restaurant
     'pos.restaurant.tables': 'Tables',
@@ -2404,6 +2405,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'pos.mode.salon': 'Salon',
     'pos.mode.b2b': 'Bán sỉ B2B',
     'pos.mode.restaurant': 'Nhà hàng',
+    'pos.mode.garment': 'Mác quần áo',
 
     // Restaurant
     'pos.restaurant.tables': 'Bàn',
@@ -4104,6 +4106,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'pos.mode.salon': 'Salon',
     'pos.mode.b2b': 'B2B Toptan',
     'pos.mode.restaurant': 'Restoran',
+    'pos.mode.garment': 'Giysi etiketleri',
 
     // Restaurant
     'pos.restaurant.tables': 'Masalar',
@@ -5424,6 +5427,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'pos.mode.salon': '美容院',
     'pos.mode.b2b': 'B2B批发',
     'pos.mode.restaurant': '餐厅',
+    'pos.mode.garment': '服装标签',
 
     // Restaurant
     'pos.restaurant.tables': '餐桌',
@@ -6744,6 +6748,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'pos.mode.salon': 'Салон',
     'pos.mode.b2b': 'B2B Оптова',
     'pos.mode.restaurant': 'Ресторан',
+    'pos.mode.garment': 'Етикетки одягу',
 
     // Restaurant
     'pos.restaurant.tables': 'Столики',
@@ -8064,6 +8069,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'pos.mode.salon': 'Салон',
     'pos.mode.b2b': 'B2B Опт',
     'pos.mode.restaurant': 'Ресторан',
+    'pos.mode.garment': 'Этикетки одежды',
 
     // Restaurant
     'pos.restaurant.tables': 'Столики',
@@ -9507,6 +9513,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'pos.mode.salon': 'Salon',
     'pos.mode.b2b': 'Hurt B2B',
     'pos.mode.restaurant': 'Restauracja',
+    'pos.mode.garment': 'Etykiety odzieżowe',
 
     // Restaurant
     'pos.restaurant.tables': 'Stoliki',
