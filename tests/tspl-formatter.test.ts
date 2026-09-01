@@ -100,9 +100,9 @@ describe('TsplFormatter media header', () => {
 
   it('rejects non-finite dimensions and CRLF-injected media values', () => {
     expect(() => new TsplFormatter(Number.NaN, 60))
-      .toThrow(/label width.*finite number.*between 10 and 300/i);
+      .toThrow(/label width.*finite number.*between 10 and 1000/i);
     expect(() => new TsplFormatter(40, Number.POSITIVE_INFINITY))
-      .toThrow(/label height.*finite number.*between 10 and 300/i);
+      .toThrow(/label height.*finite number.*between 10 and 1000/i);
 
     const injectedSpeed = '2\r\nSELFTEST\r\nSPEED 2' as unknown as number;
     expect(() => new TsplFormatter(40, 60, 203, { speed: injectedSpeed }))
@@ -115,6 +115,13 @@ describe('TsplFormatter media header', () => {
     const out = text(formatter.formatLabel(label()));
     expect(out).not.toContain('SELFTEST');
     expect(out).toContain('SPEED 3\r\n');
+  });
+
+  it('accepts the UI dimension ceiling and rejects values above it', () => {
+    expect(new TsplFormatter(1000, 1000).getDimensions())
+      .toEqual({ widthMm: 1000, heightMm: 1000 });
+    expect(() => new TsplFormatter(1001, 60))
+      .toThrow(/label width.*between 10 and 1000/i);
   });
 
   it('validates dimension updates atomically', () => {
