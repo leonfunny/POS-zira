@@ -3,6 +3,7 @@ import Store from 'electron-store';
 import { AgentConfig, TelegramConfig, BooksySyncConfig, SecurityConfig, AuthUser } from '../../shared/types';
 import { AD_DISPLAY_DEFAULTS } from '../ad-display/ad-types';
 import { APP_USER_DATA_DIR } from '../app-identity';
+import { repairLegacyFabricTagPrinterConfig } from '../../shared/fabric-tag-printer-config';
 
 // Default Telegram configuration (moltbot-style)
 const defaultTelegramConfig: TelegramConfig = {
@@ -119,6 +120,29 @@ const printerConfigSchema = {
   },
 };
 
+// The generic schema describes a shelf/receipt label. Materialize fabric
+// defaults at the persistence boundary as well, because electron-store/AJV
+// applies schema defaults before HardwareModule sees a freshly paired slot.
+// Without a per-slot schema, an omitted server dimension becomes 50x30.
+const fabricTagPrinterConfigSchema = {
+  ...printerConfigSchema,
+  properties: {
+    ...printerConfigSchema.properties,
+    protocol: {
+      ...printerConfigSchema.properties.protocol,
+      default: 'TSPL',
+    },
+    labelWidth: { type: 'number', default: 20 },
+    labelHeight: { type: 'number', default: 60 },
+    paperWidth: { type: 'number', default: 20 },
+    charsPerLine: { type: 'number', default: 32 },
+    labelGapMm: { type: 'number', default: 0 },
+    printSpeed: { type: 'number', default: 2 },
+    printDensity: { type: 'number', default: 12 },
+    mediaSensor: { type: 'string', enum: ['gap', 'bline', 'none'], default: 'none' },
+  },
+};
+
 // Printers dictionary schema (by PrinterType)
 const printersConfigSchema = {
   type: 'object',
@@ -126,7 +150,7 @@ const printersConfigSchema = {
     RECEIPT: printerConfigSchema,
     FISCAL: printerConfigSchema,
     LABEL: printerConfigSchema,
-    FABRIC_TAG: printerConfigSchema,
+    FABRIC_TAG: fabricTagPrinterConfigSchema,
     A4: printerConfigSchema,
     TICKET: printerConfigSchema,
     KITCHEN: printerConfigSchema,
@@ -329,6 +353,18 @@ const store = new Store<AgentConfig>({
     apiKey: { type: 'string' },
     // Multi-printer dictionary config (NEW)
     printers: printersConfigSchema,
+    recoveredWindowsPrinters: {
+      type: 'object',
+      additionalProperties: {
+        type: 'object',
+        properties: {
+          previousName: { type: 'string' },
+          target: { type: 'string' },
+        },
+        required: ['previousName', 'target'],
+      },
+      default: {},
+    },
     multiPrinterMode: { type: 'boolean', default: false },
     // Legacy multi-printer config
     receiptPrinter: printerConfigSchema,
@@ -555,6 +591,15 @@ if ((store.get('posMode') as unknown) === LEGACY_GARMENT_POS_MODE) {
   store.set('posMode', 'retail');
 }
 
+{
+  const printers = store.get('printers');
+  const fabricTag = printers?.FABRIC_TAG;
+  const repaired = repairLegacyFabricTagPrinterConfig(fabricTag);
+  if (repaired && repaired !== fabricTag) {
+    store.set('printers', { ...printers, FABRIC_TAG: repaired });
+  }
+}
+
 function inferMultiPrinterMode(config: Partial<AgentConfig>): boolean {
   return !!(
     (config.printers && Object.keys(config.printers).length > 0) ||
@@ -597,9 +642,29 @@ export function getConfig(): AgentConfig {
  * Update configuration
  */
 export function setConfig(config: Partial<AgentConfig>): AgentConfig {
-  const next = (config as { posMode?: unknown }).posMode === LEGACY_GARMENT_POS_MODE
+  let next: Partial<AgentConfig> = (config as { posMode?: unknown }).posMode === LEGACY_GARMENT_POS_MODE
     ? { ...config, posMode: 'retail' as const }
     : config;
+  if (next.printers && next.recoveredWindowsPrinters === undefined) {
+    const recoveryOverrides = { ...(store.get('recoveredWindowsPrinters') || {}) };
+    let recoveryChanged = false;
+    for (const printer of Object.values(next.printers)) {
+      const printerId = printer?.serverPrinterId;
+      const selectedTarget = printer?.windowsPrinter?.trim();
+      const recovery = printerId ? recoveryOverrides[printerId] : undefined;
+      if (
+        recovery
+        && selectedTarget
+        && selectedTarget.toLowerCase() !== recovery.target.trim().toLowerCase()
+      ) {
+        // Keep the stale backend name as provenance, but bridge an explicit
+        // local queue choice until the corresponding backend PUT is observed.
+        recoveryOverrides[printerId!] = { ...recovery, target: selectedTarget };
+        recoveryChanged = true;
+      }
+    }
+    if (recoveryChanged) next = { ...next, recoveredWindowsPrinters: recoveryOverrides };
+  }
   store.set(next);
   return store.store;
 }

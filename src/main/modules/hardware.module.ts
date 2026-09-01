@@ -183,6 +183,12 @@ export class HardwareModule extends BaseModule {
   private printerReinitializeQueuedOptions: PrinterReinitializeOptions | null = null;
   private pendingStartupPrinterConnectTasks: PrinterConnectTask[] = [];
   private printerConnectInFlight = new WeakMap<PrinterDriver, Promise<boolean>>();
+  /**
+   * Serialises driver replacement against the comparatively slow fabric-tag
+   * raster + RAW write. Config saves can otherwise disconnect the driver after
+   * a tag captured it but before the bitmap reaches the spooler.
+   */
+  private printerLifecycleTail: Promise<void> = Promise.resolve();
   /** Serialises the expensive offscreen render + RAW spool sequence. */
   private readonly fabricTagPrintGate = new FabricTagPrintGate();
   // Event bus reference for emitting status changes
@@ -193,6 +199,23 @@ export class HardwareModule extends BaseModule {
 
   constructor(private container: ServiceContainer) {
     super();
+  }
+
+  private async withPrinterLifecycleLock<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.printerLifecycleTail;
+    let release!: () => void;
+    this.printerLifecycleTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    // A prior operation is responsible for its own error; a rejected one must
+    // never poison the queue and permanently block later prints/reinitializes.
+    await previous.catch(() => undefined);
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
   }
 
   async init(): Promise<void> {
@@ -939,8 +962,13 @@ export class HardwareModule extends BaseModule {
   }
 
   private getPrinterForJob(job: any): PrinterDriver | null {
-    if (job.printerId && this.printersById[job.printerId]) {
-      return this.printersById[job.printerId]!;
+    const requestedPrinterId = String(job?.printerId || '').trim();
+    if (requestedPrinterId) {
+      // A server-assigned printer ID is an exact physical route, not a hint.
+      // Falling back to the first driver of the same type can put a fabric
+      // batch (or a fiscal/receipt job) on a different counter's queue when
+      // the requested device is disabled or failed initialization.
+      return this.printersById[requestedPrinterId] || null;
     }
     const target = this.getPrinterConfigForJob(job);
     return this.getPrinterForType(target.printerType);
@@ -1537,7 +1565,6 @@ export class HardwareModule extends BaseModule {
       enabled: true,
       protocol,
     };
-
     if (protocol === 'ZEBRA' || protocol === 'TSPL' || protocol === 'WINDOWS') {
       // Label languages and WINDOWS all address the Windows spooler by name
       printerConfig.windowsPrinter = printerName;
@@ -1579,7 +1606,34 @@ export class HardwareModule extends BaseModule {
     }
 
     currentPrinters[printerType as PrinterType] = printerConfig;
-    setConfig({ multiPrinterMode: true, printers: currentPrinters });
+    const recoveryOverrides = { ...(config.recoveredWindowsPrinters || {}) };
+    const serverPrinterId = String(printerConfig.serverPrinterId || '').trim();
+    const recoveryOverride = serverPrinterId ? recoveryOverrides[serverPrinterId] : undefined;
+    if (recoveryOverride && printerName) {
+      // Auto-setup is an explicit operator choice. Retarget (rather than merely
+      // deleting) the recovery override so a stale server response that still
+      // advertises `previousName` cannot immediately put the recovered queue
+      // back. Once the backend acknowledges this chosen target, normal pruning
+      // removes the provenance entry.
+      if (recoveryOverride.previousName.trim().toLowerCase() === printerName.trim().toLowerCase()) {
+        delete recoveryOverrides[serverPrinterId];
+      } else {
+        recoveryOverrides[serverPrinterId] = {
+          previousName: recoveryOverride.previousName,
+          target: printerName,
+        };
+      }
+    }
+    setConfig({
+      multiPrinterMode: true,
+      printers: currentPrinters,
+      recoveredWindowsPrinters: recoveryOverrides,
+    });
+    if (serverPrinterId && printerName) {
+      // Mirrored rows take precedence during reinitialization. Apply the same
+      // explicit choice there before rebuilding drivers.
+      localPrinterRepo.updateWindowsPrinterName(serverPrinterId, printerName);
+    }
 
     // Step 4: Reinitialize
     await this.reinitializePrinter();
@@ -1650,27 +1704,39 @@ export class HardwareModule extends BaseModule {
     } catch (error: any) {
       return { success: false, error: error?.message || String(error) };
     }
-    const driver = this.printers[PrinterType.FABRIC_TAG];
-    if (!driver) return { success: false, error: 'No fabric tag printer configured' };
-    if (!driver.isConnected()) {
-      logger.warn('[HardwareModule] Fabric tag printer disconnected at print time; attempting reconnect');
-      const reconnected = await this.connectPrinterWithTimeout(driver, 'Fabric tag');
-      if (!reconnected || !driver.isConnected()) {
-        return { success: false, error: 'Fabric tag printer not connected' };
-      }
-    }
     try {
-      await this.printFabricTagOnDriver(driver, validated);
+      await this.printFabricTagOnDriver(
+        () => this.printers[PrinterType.FABRIC_TAG] || null,
+        validated,
+      );
       return { success: true };
     } catch (e: any) { return { success: false, error: e.message }; }
   }
 
   /** Shared by the IPC path and the server print-job path. */
-  private async printFabricTagOnDriver(driver: PrinterDriver, data: unknown): Promise<void> {
-    if (!(driver instanceof TscDriver)) {
-      throw new Error('Fabric tag printing requires a TSPL printer (TSC)');
-    }
-    await this.fabricTagPrintGate.run(data, (validated) => driver.printFabricTag(validated));
+  private async printFabricTagOnDriver(
+    resolveDriver: () => PrinterDriver | null,
+    data: unknown,
+  ): Promise<void> {
+    await this.fabricTagPrintGate.run(data, async (validated) => {
+      await this.withPrinterLifecycleLock(async () => {
+        // Resolve only after the lifecycle lock. A config change may have
+        // replaced every driver while this print was queued behind reinit.
+        const driver = resolveDriver();
+        if (!driver) throw new Error('No fabric tag printer configured');
+        if (!(driver instanceof TscDriver)) {
+          throw new Error('Fabric tag printing requires a TSPL printer (TSC)');
+        }
+        if (!driver.isConnected()) {
+          logger.warn('[HardwareModule] Fabric tag printer disconnected at print time; attempting reconnect');
+          const reconnected = await this.connectPrinterWithTimeout(driver, 'Fabric tag');
+          if (!reconnected || !driver.isConnected()) {
+            throw new Error('Fabric tag printer not connected');
+          }
+        }
+        await driver.printFabricTag(validated);
+      });
+    });
   }
 
   /**
@@ -1772,6 +1838,11 @@ export class HardwareModule extends BaseModule {
       supportsCashDrawer: config.supportsCashDrawer ?? null,
       charset: config.charset || null,
       cutMode: config.cutMode || null,
+      labelGapMm: config.labelGapMm ?? null,
+      printSpeed: config.printSpeed ?? null,
+      printDensity: config.printDensity ?? null,
+      mediaSensor: config.mediaSensor || null,
+      labelOriginInsetMm: config.labelOriginInsetMm ?? null,
     };
   }
 
@@ -1808,6 +1879,8 @@ export class HardwareModule extends BaseModule {
       printerProtocol: config.printerProtocol || null,
       printerBaudRate: config.printerBaudRate ?? null,
       zebraPrinter: config.zebraPrinter || null,
+      recoveredWindowsPrinters: Object.entries(config.recoveredWindowsPrinters || {})
+        .sort(([a], [b]) => a.localeCompare(b)),
       receiptPrinter: this.normalizePrinterConfigForSignature(config.receiptPrinter),
       labelPrinter: this.normalizePrinterConfigForSignature(config.labelPrinter),
       printers,
@@ -1934,15 +2007,19 @@ export class HardwareModule extends BaseModule {
       return;
     }
 
-    this.printerReinitializeInFlight = (async () => {
-      let currentOptions = options;
+    this.printerReinitializeInFlight = this.withPrinterLifecycleLock(async () => {
+      // Calls can be coalesced while this operation is still waiting behind an
+      // active fabric print. Honour the newest options on the first pass too;
+      // otherwise a queued `{ connect: true }` can be discarded before reinit
+      // has even started.
+      let currentOptions = this.printerReinitializeQueuedOptions ?? options;
       do {
         this.printerReinitializeQueued = false;
         this.printerReinitializeQueuedOptions = null;
         await this.reinitializePrinterNow(currentOptions);
         currentOptions = this.printerReinitializeQueuedOptions ?? {};
       } while (this.printerReinitializeQueued);
-    })();
+    });
 
     try {
       await this.printerReinitializeInFlight;
@@ -2037,8 +2114,16 @@ export class HardwareModule extends BaseModule {
         // darkness a user sets for resin-on-satin are silently dropped and the
         // driver runs on its own defaults.
         applyStoredTsplMediaTuning(pc, cfgPrinter);
-        const driver = this.createPrinterFromConfig(pc, pt);
-        if (!driver) continue;
+        const driver = this.createPrinterFromConfigSafely(
+          pc,
+          pt,
+          row.display_name || row.id,
+          initErrors,
+        );
+        if (!driver) {
+          localPrinterRepo.markOnline(row.id, false);
+          continue;
+        }
 
         this.printersById[row.id] = driver;
         if (!this.printers[pt]) this.printers[pt] = driver;
@@ -2070,7 +2155,7 @@ export class HardwareModule extends BaseModule {
         if (!pc?.enabled) continue;
         if (pc.serverPrinterId && registeredPrinterIds.has(pc.serverPrinterId)) continue;
         const pt = ptStr as PrinterType;
-        const driver = this.createPrinterFromConfig(pc, pt);
+        const driver = this.createPrinterFromConfigSafely(pc, pt, pt, initErrors);
         if (driver) {
           // Always register the driver so the health check can monitor it
           // and recover when the printer comes back online. Previously,
@@ -2116,7 +2201,12 @@ export class HardwareModule extends BaseModule {
       }
       this.receiptPrinter = null; this.labelPrinter = null; this.printerDriver = null;
     } else if (config.receiptPrinter?.enabled || config.labelPrinter?.enabled) {
-      this.receiptPrinter = this.createPrinterFromConfig(config.receiptPrinter, 'Receipt Printer' as any);
+      this.receiptPrinter = this.createPrinterFromConfigSafely(
+        config.receiptPrinter,
+        'Receipt Printer' as any,
+        'Receipt',
+        initErrors,
+      );
       if (this.receiptPrinter) {
         if (shouldConnect) {
           try {
@@ -2127,7 +2217,12 @@ export class HardwareModule extends BaseModule {
           connectTasks.push({ label: 'Receipt', driver: this.receiptPrinter });
         }
       }
-      this.labelPrinter = this.createPrinterFromConfig(config.labelPrinter, 'Label Printer' as any);
+      this.labelPrinter = this.createPrinterFromConfigSafely(
+        config.labelPrinter,
+        'Label Printer' as any,
+        'Label',
+        initErrors,
+      );
       if (this.labelPrinter) {
         if (shouldConnect) {
           try {
@@ -2220,8 +2315,10 @@ export class HardwareModule extends BaseModule {
     driver: PrinterDriver,
     cachedPrinters?: string[],
     cachedPorts?: string[],
+    printerId?: string,
   ): Promise<boolean> {
     let newIdentifier: string | null = null;
+    let previousIdentifier: string | null = null;
     let isPort = false;
 
     if (driver instanceof PosnetDriver) {
@@ -2237,25 +2334,44 @@ export class HardwareModule extends BaseModule {
       const result = await driver.recoverPrinter(cachedPrinters, cachedPorts);
       if (result.recovered && result.newIdentifier) {
         newIdentifier = result.newIdentifier;
+        previousIdentifier = result.oldIdentifier || null;
         isPort = !!newIdentifier.match(/^COM\d+$/i);
       }
-    } else if (driver instanceof ZebraDriver) {
-      logger.info(`[HardwareModule] Attempting recovery for Zebra printer (${pt})...`);
+    } else if (driver instanceof ZebraDriver || driver instanceof TscDriver) {
+      logger.info(`[HardwareModule] Attempting recovery for label printer (${pt})...`);
       const result = await driver.recoverPrinter(cachedPrinters);
       if (result.recovered && result.newIdentifier) {
         newIdentifier = result.newIdentifier;
+        previousIdentifier = result.oldIdentifier || null;
       }
     }
 
     if (!newIdentifier) return false;
 
-    // Single state mutation point — driver.reconnect() sets internal state
-    await driver.reconnect(newIdentifier);
+    // Single state mutation point — driver.reconnect() sets internal state.
+    // A spooler queue can exist while its USB device is absent, so a candidate
+    // is not a recovery until the driver confirms the new target is connected.
+    try {
+      await driver.reconnect(newIdentifier);
+    } catch (error) {
+      logger.warn(`[HardwareModule] ${pt} reconnect to ${newIdentifier} failed:`, error);
+      if (printerId) localPrinterRepo.markOnline(printerId, false);
+      return false;
+    }
+    if (!driver.isConnected()) {
+      logger.warn(`[HardwareModule] ${pt} recovery candidate ${newIdentifier} is not physically connected`);
+      if (printerId) localPrinterRepo.markOnline(printerId, false);
+      return false;
+    }
 
     // Update config to persist the new identifier
     const config = getConfig();
     const currentPrinters = { ...(config.printers || {}) };
-    if (currentPrinters[pt]) {
+    let configChanged = false;
+    if (
+      currentPrinters[pt]
+      && (!printerId || currentPrinters[pt]!.serverPrinterId === printerId)
+    ) {
       const pc = { ...currentPrinters[pt]! };
       if (isPort) {
         pc.port = newIdentifier;
@@ -2263,11 +2379,126 @@ export class HardwareModule extends BaseModule {
         pc.windowsPrinter = newIdentifier;
       }
       currentPrinters[pt] = pc;
-      setConfig({ multiPrinterMode: true, printers: currentPrinters });
+      configChanged = true;
+    }
+    const recoveryOverrides = { ...(config.recoveredWindowsPrinters || {}) };
+    if (
+      printerId
+      && !isPort
+      && previousIdentifier
+      && previousIdentifier.toLowerCase() !== newIdentifier.toLowerCase()
+    ) {
+      recoveryOverrides[printerId] = {
+        previousName: recoveryOverrides[printerId]?.previousName || previousIdentifier,
+        target: newIdentifier,
+      };
+      configChanged = true;
+    }
+    if (configChanged) {
+      setConfig({
+        multiPrinterMode: true,
+        printers: currentPrinters,
+        recoveredWindowsPrinters: recoveryOverrides,
+      });
+    }
+    if (printerId && !isPort) {
+      // Mirrored rows are preferred over electron-store during reinitialize.
+      // Persist the recovered spooler name in both places or the next config
+      // change recreates this driver with the stale, disappeared queue name.
+      localPrinterRepo.updateWindowsPrinterName(printerId, newIdentifier);
     }
 
     logger.info(`[HardwareModule] ${pt} recovered → ${newIdentifier}`);
     return true;
+  }
+
+  private async reconnectRecoveredDriver(
+    driver: PrinterDriver,
+    identifier: string,
+    label: string,
+  ): Promise<boolean> {
+    try {
+      await driver.reconnect(identifier);
+    } catch (error) {
+      logger.warn(`[HardwareModule] ${label} reconnect to ${identifier} failed:`, error);
+      return false;
+    }
+    if (!driver.isConnected()) {
+      logger.warn(
+        `[HardwareModule] ${label} recovery candidate ${identifier} did not reconnect physically`,
+      );
+      return false;
+    }
+    return true;
+  }
+
+  private async attemptLegacyDriverRecovery(
+    label: 'Receipt' | 'Label' | 'Default',
+    driver: PrinterDriver,
+    cachedPrinters: string[],
+    cachedPorts: string[],
+  ): Promise<boolean> {
+    try {
+      if (driver instanceof PosnetDriver) {
+        const newPort = await driver.recoverPort();
+        if (!newPort || !(await this.reconnectRecoveredDriver(driver, newPort, `Legacy ${label}`))) {
+          return false;
+        }
+        const config = getConfig();
+        const legacyField = label === 'Receipt' ? 'receiptPrinter' : label === 'Label' ? 'labelPrinter' : null;
+        if (legacyField && (config as any)[legacyField]) {
+          setConfig({ [legacyField]: { ...(config as any)[legacyField], port: newPort } });
+        }
+        return true;
+      }
+
+      if (driver instanceof ThermalDriver) {
+        const result = await driver.recoverPrinter(cachedPrinters, cachedPorts);
+        if (
+          !result.recovered
+          || !result.newIdentifier
+          || !(await this.reconnectRecoveredDriver(driver, result.newIdentifier, `Legacy ${label}`))
+        ) {
+          return false;
+        }
+        const config = getConfig();
+        const legacyField = label === 'Receipt' ? 'receiptPrinter' : label === 'Label' ? 'labelPrinter' : null;
+        if (legacyField && (config as any)[legacyField]) {
+          const pc = { ...(config as any)[legacyField] };
+          if (result.newIdentifier.match(/^COM\d+$/i)) pc.port = result.newIdentifier;
+          else pc.windowsPrinter = result.newIdentifier;
+          setConfig({ [legacyField]: pc });
+        }
+        return true;
+      }
+
+      if (driver instanceof ZebraDriver || driver instanceof TscDriver) {
+        const result = await driver.recoverPrinter(cachedPrinters);
+        if (
+          !result.recovered
+          || !result.newIdentifier
+          || !(await this.reconnectRecoveredDriver(driver, result.newIdentifier, `Legacy ${label}`))
+        ) {
+          return false;
+        }
+        const config = getConfig();
+        const legacyField = label === 'Label' ? 'labelPrinter' : null;
+        if (legacyField && (config as any)[legacyField]) {
+          setConfig({
+            [legacyField]: {
+              ...(config as any)[legacyField],
+              windowsPrinter: result.newIdentifier,
+            },
+          });
+        }
+        return true;
+      }
+    } catch (error) {
+      // One bad legacy driver must not abort health checks for the rest of the
+      // fleet or accidentally persist an unverified replacement.
+      logger.warn(`[HardwareModule] Legacy ${label} recovery failed:`, error);
+    }
+    return false;
   }
 
   /**
@@ -2336,7 +2567,7 @@ export class HardwareModule extends BaseModule {
         await driver.healthCheck(cachedPorts);
       } else if (driver instanceof ThermalDriver) {
         await driver.healthCheck(cachedPrinters, cachedPorts);
-      } else if (driver instanceof ZebraDriver) {
+      } else if (driver instanceof ZebraDriver || driver instanceof TscDriver) {
         await driver.healthCheck(cachedPrinters);
       } else if ('healthCheck' in driver && typeof (driver as any).healthCheck === 'function') {
         await (driver as any).healthCheck();
@@ -2356,7 +2587,15 @@ export class HardwareModule extends BaseModule {
       }
 
       // Offline — attempt recovery then update backoff
-      const recovered = await this.attemptDriverRecovery(pt as PrinterType, driver, cachedPrinters, cachedPorts);
+      const mirroredPrinterId = Object.entries(this.printersById)
+        .find(([, mirroredDriver]) => mirroredDriver === driver)?.[0];
+      const recovered = await this.attemptDriverRecovery(
+        pt as PrinterType,
+        driver,
+        cachedPrinters,
+        cachedPorts,
+        mirroredPrinterId,
+      );
       if (recovered) changed = true;
 
       // Update backoff counter
@@ -2381,7 +2620,7 @@ export class HardwareModule extends BaseModule {
         await driver.healthCheck(cachedPorts);
       } else if (driver instanceof ThermalDriver) {
         await driver.healthCheck(cachedPrinters, cachedPorts);
-      } else if (driver instanceof ZebraDriver) {
+      } else if (driver instanceof ZebraDriver || driver instanceof TscDriver) {
         await driver.healthCheck(cachedPrinters);
       } else if ('healthCheck' in driver && typeof (driver as any).healthCheck === 'function') {
         await (driver as any).healthCheck();
@@ -2397,7 +2636,13 @@ export class HardwareModule extends BaseModule {
         continue;
       }
 
-      const recovered = await this.attemptDriverRecovery(printerType, driver, cachedPrinters, cachedPorts);
+      const recovered = await this.attemptDriverRecovery(
+        printerType,
+        driver,
+        cachedPrinters,
+        cachedPorts,
+        printerId,
+      );
       if (recovered) {
         changed = true;
         this.healthCheckFailCount.delete(key);
@@ -2422,7 +2667,7 @@ export class HardwareModule extends BaseModule {
         await driver.healthCheck(cachedPorts);
       } else if (driver instanceof ThermalDriver) {
         await driver.healthCheck(cachedPrinters, cachedPorts);
-      } else if (driver instanceof ZebraDriver) {
+      } else if (driver instanceof ZebraDriver || driver instanceof TscDriver) {
         await driver.healthCheck(cachedPrinters);
       } else if ('healthCheck' in driver && typeof (driver as any).healthCheck === 'function') {
         await (driver as any).healthCheck();
@@ -2439,49 +2684,15 @@ export class HardwareModule extends BaseModule {
       } else {
         // Attempt recovery for offline legacy drivers
         // Legacy drivers don't have a PrinterType key, so we update config by legacy field name
-        let legacyRecovered = false;
-        if (driver instanceof PosnetDriver) {
-          const newPort = await driver.recoverPort();
-          if (newPort) {
-            await driver.reconnect(newPort);
-            const config = getConfig();
-            const legacyField = label === 'Receipt' ? 'receiptPrinter' : label === 'Label' ? 'labelPrinter' : null;
-            if (legacyField && (config as any)[legacyField]) {
-              setConfig({ [legacyField]: { ...(config as any)[legacyField], port: newPort } });
-            }
-            legacyRecovered = true;
-            changed = true;
-          }
-        } else if (driver instanceof ThermalDriver) {
-          const result = await driver.recoverPrinter(cachedPrinters, cachedPorts);
-          if (result.recovered && result.newIdentifier) {
-            await driver.reconnect(result.newIdentifier);
-            const config = getConfig();
-            const legacyField = label === 'Receipt' ? 'receiptPrinter' : label === 'Label' ? 'labelPrinter' : null;
-            if (legacyField && (config as any)[legacyField]) {
-              const pc = { ...(config as any)[legacyField] };
-              if (result.newIdentifier.match(/^COM\d+$/i)) { pc.port = result.newIdentifier; }
-              else { pc.windowsPrinter = result.newIdentifier; }
-              setConfig({ [legacyField]: pc });
-            }
-            legacyRecovered = true;
-            changed = true;
-          }
-        } else if (driver instanceof ZebraDriver) {
-          const result = await driver.recoverPrinter(cachedPrinters);
-          if (result.recovered && result.newIdentifier) {
-            await driver.reconnect(result.newIdentifier);
-            const config = getConfig();
-            const legacyField = label === 'Label' ? 'labelPrinter' : null;
-            if (legacyField && (config as any)[legacyField]) {
-              setConfig({ [legacyField]: { ...(config as any)[legacyField], windowsPrinter: result.newIdentifier } });
-            }
-            legacyRecovered = true;
-            changed = true;
-          }
-        }
+        const legacyRecovered = await this.attemptLegacyDriverRecovery(
+          label,
+          driver,
+          cachedPrinters,
+          cachedPorts,
+        );
 
         if (legacyRecovered) {
+          changed = true;
           this.healthCheckFailCount.delete(legacyKey);
           logger.info(`[HardwareModule] Legacy ${label} recovered`);
         } else {
@@ -2526,6 +2737,22 @@ export class HardwareModule extends BaseModule {
    * has a stale config on disk, the backend still refuses to build a driver
    * with an illegal (type, protocol) combo.
    */
+
+  private createPrinterFromConfigSafely(
+    config: PrinterConfig | undefined,
+    name: string,
+    errorLabel: string,
+    initErrors: string[],
+  ): PrinterDriver | null {
+    try {
+      return this.createPrinterFromConfig(config, name);
+    } catch (error: any) {
+      const message = error?.message || String(error);
+      logger.error(`[HardwareModule] ${errorLabel} driver configuration rejected:`, error);
+      initErrors.push(`${errorLabel}: ${message}`);
+      return null;
+    }
+  }
 
   private createPrinterFromConfig(config: PrinterConfig | undefined, name: string): PrinterDriver | null {
     if (!config || !config.enabled) return null;
@@ -2722,8 +2949,18 @@ export class HardwareModule extends BaseModule {
   private async handlePrintJob(job: any): Promise<void> {
     const { printerType, config: printerConfig } = this.getPrinterConfigForJob(job);
     const socket = this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET);
+    const isFabricTagJob = job.jobType === PrintJobType.FABRIC_TAG;
+    const isFabricTagPrinter = printerType === PrinterType.FABRIC_TAG;
+    if (isFabricTagJob !== isFabricTagPrinter) {
+      const error = isFabricTagJob
+        ? `Fabric tag job cannot run on ${printerType} printer`
+        : `${job.jobType || 'Unknown'} job cannot run on FABRIC_TAG printer`;
+      logger.error(`[HardwareModule] Job ${job.jobId}: ${error}`);
+      socket?.sendJobStatus(job.jobId, 'FAILED', error, 'FINAL');
+      return;
+    }
     let validatedFabricTag: FabricTagData | null = null;
-    if (printerType === PrinterType.FABRIC_TAG || job.jobType === PrintJobType.FABRIC_TAG) {
+    if (isFabricTagJob) {
       try {
         // Validate remote socket input before printer lookup/reconnect and
         // before emitting PRINTING. The shared gate rechecks immediately
@@ -2786,7 +3023,10 @@ export class HardwareModule extends BaseModule {
           const ticket = job.payload as KitchenTicketData;
           await this.printKitchenTicketPayload(targetPrinter, ticket);
         } else if (isFabricTag) {
-          await this.printFabricTagOnDriver(targetPrinter, validatedFabricTag);
+          await this.printFabricTagOnDriver(
+            () => this.getPrinterForJob(job),
+            validatedFabricTag,
+          );
         } else if (isLabel) {
           if (!isLabelDriver(targetPrinter)) throw new Error('Label printing requires a label printer (Zebra or TSC)');
           if (targetPrinter instanceof TscDriver) {

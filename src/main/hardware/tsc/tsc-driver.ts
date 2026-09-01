@@ -13,18 +13,11 @@ import {
   flushStuckPrintJobs,
   getStuckPrintJobStatus,
 } from '../port-utils';
-import { BRAND_PATTERNS, type RecoveryResult } from '../detection/types';
+import { matchBrand, type RecoveryResult } from '../detection/types';
 import { sendRawToPrinter } from '../windows-raw-print';
 import { TsplFormatter, type TsplMediaOptions } from './tspl-formatter';
 import { renderFabricTagBitmap } from './fabric-tag-renderer';
 import type { FabricTagData, LabelData, PrinterStatusInfo } from '../../../shared/types';
-
-/**
- * Windows printer-name fragments that identify a TSC device, reused from the
- * detection registry so a new TSC model only has to be added in one place.
- */
-const TSC_NAME_PATTERNS: string[] =
-  BRAND_PATTERNS.find((b) => b.brand === 'TSC')?.namePatterns ?? ['tsc'];
 
 export interface TscDriverOptions extends TsplMediaOptions {
   /** Print head resolution. TSC's 2-inch desktop range is 203 dpi. */
@@ -33,6 +26,19 @@ export interface TscDriverOptions extends TsplMediaOptions {
 
 /** A tag shorter than this is hard to handle and hard to sew in. */
 const MIN_TAG_LENGTH_MM = 15;
+
+class TscPreflightQueueBlockedError extends Error {
+  /** The new RAW payload has not been submitted, so a later retry is safe. */
+  readonly failureClass = 'SAFE_BEFORE_PRINT' as const;
+
+  constructor(printerName: string, status: string) {
+    super(
+      `Printer "${printerName}" still has a stuck job (${status}); `
+      + 'the new label was not sent. Clear the Windows print queue and retry.',
+    );
+    this.name = 'TscPreflightQueueBlockedError';
+  }
+}
 
 export class TscDriver {
   private printerName: string;
@@ -166,11 +172,34 @@ export class TscDriver {
         return { recovered: true, newIdentifier: oldName, oldIdentifier: oldName, message: `Printer "${oldName}" reappeared` };
       }
 
-      for (const name of printers) {
-        const nameLower = name.toLowerCase();
-        if (TSC_NAME_PATTERNS.some((p) => nameLower.includes(p))) {
-          return { recovered: true, newIdentifier: name, oldIdentifier: oldName, message: `TSC printer recovered as "${name}"` };
-        }
+      // Use the same brand-priority classifier as discovery. A raw `mb2`
+      // substring also appears in Canon MAXIFY MB2750; treating that sole
+      // office printer as a recovered TSC would persist it and send TSPL to it.
+      const candidates = printers.filter((name) => matchBrand(name)?.brand === 'TSC');
+      const oldLower = oldName.toLowerCase();
+      const affinityMatches = candidates.filter((name) => {
+        const candidate = name.toLowerCase();
+        return candidate.includes(oldLower) || oldLower.includes(candidate);
+      });
+      const unambiguous = affinityMatches.length === 1
+        ? affinityMatches[0]
+        : candidates.length === 1
+          ? candidates[0]
+          : null;
+      if (unambiguous) {
+        return {
+          recovered: true,
+          newIdentifier: unambiguous,
+          oldIdentifier: oldName,
+          message: `TSC printer recovered as "${unambiguous}"`,
+        };
+      }
+      if (candidates.length > 1) {
+        return {
+          recovered: false,
+          oldIdentifier: oldName,
+          message: `Multiple TSC printers found; select the replacement for "${oldName}" in Settings`,
+        };
       }
 
       return { recovered: false, oldIdentifier: oldName, message: 'No TSC printer found in Windows' };
@@ -186,6 +215,10 @@ export class TscDriver {
    * paying two PowerShell round-trips per label would dominate the job.
    */
   private async printRaw(payload: Buffer, options: { fast?: boolean; docName?: string } = {}): Promise<void> {
+    // Rendering a fabric tag takes several frames. A concurrent config reload
+    // may disconnect this driver during that window; never send the already
+    // rendered bytes through a stale driver instance.
+    this.assertConnected();
     const present = await isWindowsPrinterPresent(this.printerName);
     if (!present) {
       this.connected = false;
@@ -196,14 +229,28 @@ export class TscDriver {
     }
 
     if (!options.fast) {
-      try {
-        const flushed = await flushStuckPrintJobs(this.printerName);
-        if (flushed > 0) {
-          logger.warn(`[TscDriver] Pre-flight flushed ${flushed} stale job(s) from "${this.printerName}"`);
+      // A failed fabric job can remain queued after the post-flight check. Do
+      // not trust Remove-PrintJob's attempted count: Windows can suppress a
+      // removal error and leave the old RAW job in place. Submitting another
+      // tag then makes both print when the queue recovers.
+      const stuckBeforeFlush = await getStuckPrintJobStatus(this.printerName);
+      const flushed = await flushStuckPrintJobs(this.printerName);
+      if (flushed > 0) {
+        logger.warn(`[TscDriver] Pre-flight flushed ${flushed} stale job(s) from "${this.printerName}"`);
+      }
+      if (stuckBeforeFlush || flushed > 0) {
+        const stuckAfterFlush = await getStuckPrintJobStatus(this.printerName);
+        if (stuckAfterFlush) {
+          throw new TscPreflightQueueBlockedError(this.printerName, stuckAfterFlush);
         }
-      } catch { /* best-effort */ }
+      }
     }
 
+    // Presence and queue checks above cross PowerShell process boundaries.
+    // A concurrent health check can mark this driver offline while they run,
+    // so re-check at the last synchronous boundary before handing bytes to
+    // the spooler.
+    this.assertConnected();
     await sendRawToPrinter(this.printerName, payload, {
       docName: options.docName || 'Zira TSPL Label',
       tempPrefix: 'zira_tspl',

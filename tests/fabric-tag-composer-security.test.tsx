@@ -7,11 +7,14 @@ import { FABRIC_TAG_CONFIRM_THRESHOLD } from '../src/shared/types';
 import FabricTagComposer from '../src/renderer/components/label/FabricTagComposer';
 
 let container: HTMLDivElement;
-let root: Root;
+let root: Root | null;
 const printFabricTag = vi.fn();
 
 const translations: Record<string, string> = {
   'fabricTag.brand': 'Brand',
+  'fabricTag.logo': 'Choose logo',
+  'fabricTag.removeLogo': 'Remove logo',
+  'fabricTag.price': 'Price',
   'fabricTag.quantity': 'Quantity',
   'fabricTag.print': 'Print tag',
   'fabricTag.printing': 'Printing',
@@ -21,6 +24,7 @@ const translations: Record<string, string> = {
   'common.confirmTitle': 'Confirm print',
   'common.confirm': 'Confirm',
   'common.cancel': 'Cancel',
+  'products.edit.priceInvalid': 'Enter a valid price',
 };
 
 function t(key: string): string {
@@ -52,6 +56,27 @@ function buttonWithText(text: string): HTMLButtonElement {
   return button;
 }
 
+const PNG_1X1 = Uint8Array.from(Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+));
+
+function pngFile(name: string): File {
+  const file = new File([PNG_1X1], name, { type: 'image/png' });
+  Object.defineProperty(file, 'arrayBuffer', {
+    configurable: true,
+    value: vi.fn(async () => PNG_1X1.slice().buffer),
+  });
+  return file;
+}
+
+function setSelectedFile(input: HTMLInputElement, file: File): void {
+  Object.defineProperty(input, 'files', {
+    configurable: true,
+    value: [file],
+  });
+}
+
 beforeEach(async () => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   printFabricTag.mockReset();
@@ -76,7 +101,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await act(async () => root.unmount());
+  if (root) await act(async () => root?.unmount());
   container.remove();
   delete (globalThis as any).IS_REACT_ACT_ENVIRONMENT;
 });
@@ -122,5 +147,158 @@ describe('FabricTagComposer safety policy', () => {
       brandName: 'Zira',
       quantity: FABRIC_TAG_CONFIRM_THRESHOLD + 1,
     }));
+  });
+
+  it('rejects malformed or out-of-range prices and accepts a decimal comma', async () => {
+    const textInputs = container.querySelectorAll<HTMLInputElement>('input[type="text"]');
+    const brand = textInputs[0];
+    const price = textInputs[2];
+    await changeInput(brand, 'Zira');
+
+    for (const invalid of ['12abc', '12.999', '1,234.56', '10000000.00']) {
+      await changeInput(price, invalid);
+      expect(price.getAttribute('aria-invalid')).toBe('true');
+      expect(container.textContent).toContain('Enter a valid price');
+      expect(buttonWithText('Print tag').disabled).toBe(true);
+      await act(async () => buttonWithText('Print tag').click());
+    }
+    expect(printFabricTag).not.toHaveBeenCalled();
+
+    await changeInput(price, '12,34');
+    expect(price.getAttribute('aria-invalid')).toBe('false');
+    expect(buttonWithText('Print tag').disabled).toBe(false);
+    await act(async () => buttonWithText('Print tag').click());
+    await settle();
+
+    expect(printFabricTag).toHaveBeenCalledTimes(1);
+    expect(printFabricTag).toHaveBeenCalledWith(expect.objectContaining({ priceGrosze: 1234 }));
+  });
+
+  it('keeps only the latest logo read and blocks printing until it completes', async () => {
+    class ControlledFileReader {
+      static readonly LOADING = 1;
+      readyState = 0;
+      result: string | null = null;
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      abort = vi.fn(() => { this.readyState = 2; });
+      readAsDataURL = vi.fn(() => {
+        this.readyState = ControlledFileReader.LOADING;
+        readers.push(this);
+      });
+      complete(result: string): void {
+        this.readyState = 2;
+        this.result = result;
+        this.onload?.();
+      }
+    }
+    const readers: ControlledFileReader[] = [];
+    const nativeFileReader = globalThis.FileReader;
+    Object.defineProperty(globalThis, 'FileReader', {
+      configurable: true,
+      value: ControlledFileReader,
+    });
+
+    try {
+      const brand = container.querySelector<HTMLInputElement>('input[type="text"]')!;
+      const logoInput = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+      await changeInput(brand, 'Zira');
+      const printButton = buttonWithText('Print tag');
+      expect(printButton.disabled).toBe(false);
+
+      setSelectedFile(logoInput, pngFile('first.png'));
+      await act(async () => {
+        logoInput.dispatchEvent(new Event('change', { bubbles: true }));
+        // React has not rendered logoLoading yet; the synchronous ref must
+        // still keep this same-turn click away from physical print IPC.
+        printButton.click();
+        await Promise.resolve();
+      });
+      await settle();
+      expect(printFabricTag).not.toHaveBeenCalled();
+      expect(buttonWithText('Print tag').disabled).toBe(true);
+      expect(readers).toHaveLength(1);
+
+      setSelectedFile(logoInput, pngFile('second.png'));
+      await act(async () => {
+        logoInput.dispatchEvent(new Event('change', { bubbles: true }));
+        await Promise.resolve();
+      });
+      await settle();
+      expect(readers).toHaveLength(2);
+      expect(readers[0].abort).toHaveBeenCalledTimes(1);
+
+      await act(async () => readers[1].complete('data:image/png;base64,second'));
+      const preview = container.querySelector<HTMLImageElement>('img');
+      expect(preview?.src).toContain('base64,second');
+
+      await act(async () => readers[0].complete('data:image/png;base64,stale-first'));
+      expect(container.querySelector<HTMLImageElement>('img')?.src).toContain('base64,second');
+      expect(buttonWithText('Print tag').disabled).toBe(false);
+    } finally {
+      Object.defineProperty(globalThis, 'FileReader', {
+        configurable: true,
+        value: nativeFileReader,
+      });
+    }
+  });
+
+  it('cancels a pending logo read on removal and unmount', async () => {
+    class ControlledFileReader {
+      static readonly LOADING = 1;
+      readyState = 0;
+      result: string | null = null;
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      abort = vi.fn(() => { this.readyState = 2; });
+      readAsDataURL = vi.fn(() => {
+        this.readyState = ControlledFileReader.LOADING;
+        readers.push(this);
+      });
+      complete(result: string): void {
+        this.readyState = 2;
+        this.result = result;
+        this.onload?.();
+      }
+    }
+    const readers: ControlledFileReader[] = [];
+    const nativeFileReader = globalThis.FileReader;
+    Object.defineProperty(globalThis, 'FileReader', {
+      configurable: true,
+      value: ControlledFileReader,
+    });
+
+    try {
+      const logoInput = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+      setSelectedFile(logoInput, pngFile('remove.png'));
+      await act(async () => {
+        logoInput.dispatchEvent(new Event('change', { bubbles: true }));
+        await Promise.resolve();
+      });
+      await settle();
+      expect(readers).toHaveLength(1);
+
+      await act(async () => buttonWithText('Remove logo').click());
+      expect(readers[0].abort).toHaveBeenCalledTimes(1);
+      await act(async () => readers[0].complete('data:image/png;base64,removed'));
+      expect(container.querySelector('img')).toBeNull();
+
+      setSelectedFile(logoInput, pngFile('unmount.png'));
+      await act(async () => {
+        logoInput.dispatchEvent(new Event('change', { bubbles: true }));
+        await Promise.resolve();
+      });
+      await settle();
+      expect(readers).toHaveLength(2);
+      await act(async () => root?.unmount());
+      expect(readers[1].abort).toHaveBeenCalledTimes(1);
+      root = null;
+      readers[1].complete('data:image/png;base64,after-unmount');
+    } finally {
+      Object.defineProperty(globalThis, 'FileReader', {
+        configurable: true,
+        value: nativeFileReader,
+      });
+    }
   });
 });

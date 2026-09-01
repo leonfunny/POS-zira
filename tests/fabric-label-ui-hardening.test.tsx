@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const labelHarness = vi.hoisted(() => ({
   config: {} as any,
   products: [] as any[],
-  listTemplates: vi.fn(),
+  listTemplateIds: vi.fn(),
+  getTemplate: vi.fn(),
   syncProducts: vi.fn(),
 }));
 
@@ -86,6 +87,8 @@ describe('Fabric Label UI hardening', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    labelHarness.listTemplateIds.mockResolvedValue([]);
+    labelHarness.getTemplate.mockResolvedValue(null);
     root = null;
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -98,7 +101,8 @@ describe('Fabric Label UI hardening', () => {
         printLabel: vi.fn(),
         pos: {
           fabricTagTemplates: {
-            list: labelHarness.listTemplates,
+            listIds: labelHarness.listTemplateIds,
+            get: labelHarness.getTemplate,
           },
         },
       },
@@ -182,11 +186,14 @@ describe('Fabric Label UI hardening', () => {
         retail_price: 0,
       },
     ];
-    labelHarness.listTemplates.mockResolvedValue([template]);
+    labelHarness.listTemplateIds.mockResolvedValue(['LOTUS']);
+    labelHarness.getTemplate.mockResolvedValue(template);
 
     await render(<LabelModule language="vi" />);
 
-    expect(labelHarness.listTemplates).toHaveBeenCalledTimes(1);
+    expect(labelHarness.listTemplateIds).toHaveBeenCalledTimes(1);
+    expect(labelHarness.getTemplate).toHaveBeenCalledTimes(1);
+    expect(labelHarness.getTemplate).toHaveBeenCalledWith('LOTUS');
     expect(container.textContent).toContain('Chọn danh mục hoặc ghim sản phẩm');
     expect(container.textContent).toContain('Mác hướng dẫn sử dụng vải');
     expect(container.textContent).toContain('LOTUS');
@@ -223,7 +230,7 @@ describe('Fabric Label UI hardening', () => {
 
     await expect(render(<LabelModule language="vi" />)).resolves.toBeUndefined();
 
-    expect(labelHarness.listTemplates).not.toHaveBeenCalled();
+    expect(labelHarness.listTemplateIds).not.toHaveBeenCalled();
     expect(container.textContent).toContain('EAN product');
     expect(container.textContent).toContain('5901234123457');
     expect(container.textContent).not.toContain('Mác hướng dẫn sử dụng vải');
@@ -277,6 +284,32 @@ describe('Fabric Label UI hardening', () => {
 
     expect(container.textContent).toContain(`cannot exceed ${MAX_FABRIC_TAGS_PER_RUN} labels`);
     expect(buttonWithText(container, 'Print fabric labels (1200)').disabled).toBe(true);
+    expect(printFabricTag).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when normalized variant IDs are duplicated', async () => {
+    await render(
+      <FabricTagPrintPanel
+        template={template}
+        styleName="LOTUS"
+        variants={[
+          { id: 'duplicate-size', name: 'Small' },
+          { id: ' duplicate-size ', name: 'Medium' },
+        ]}
+        ready
+        t={(_key, fallback) => fallback}
+        onStatus={onStatus}
+      />,
+    );
+
+    const inputs = container.querySelectorAll<HTMLInputElement>('input');
+    expect(inputs).toHaveLength(4);
+    expect(Array.from(inputs).every((input) => input.disabled)).toBe(true);
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('duplicate ID');
+
+    const printButton = buttonWithText(container, 'Print fabric labels');
+    expect(printButton.disabled).toBe(true);
+    await act(async () => printButton.click());
     expect(printFabricTag).not.toHaveBeenCalled();
   });
 

@@ -162,4 +162,17 @@ export const localPrinterRepo = {
     );
     database.markDirty();
   },
+
+  updateWindowsPrinterName(id: string, windowsPrinterName: string): void {
+    const printerId = String(id || '').trim();
+    const printerName = String(windowsPrinterName || '').trim();
+    if (!printerId || !printerName) return;
+    database.run(
+      `UPDATE local_printers
+       SET windows_printer_name = ?, updated_at = ?
+       WHERE id = ?`,
+      [printerName, new Date().toISOString(), printerId],
+    );
+    database.markDirty();
+  },
 };

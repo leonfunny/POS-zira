@@ -710,6 +710,14 @@ export type PrintersConfig = {
   [key in PrinterType]?: PrinterConfig;
 };
 
+/** Local-only queue recovery provenance, keyed by backend printer id. */
+export interface RecoveredWindowsPrinterOverride {
+  previousName: string;
+  target: string;
+}
+
+export type RecoveredWindowsPrinterOverrides = Record<string, RecoveredWindowsPrinterOverride>;
+
 export type LiveCustomerDisplayProfile =
   | 'retail_assisted'
   | 'salon_checkin'
@@ -747,6 +755,7 @@ export interface AgentConfig {
 
   // Multi-printer settings - dictionary by PrinterType
   printers?: PrintersConfig;
+  recoveredWindowsPrinters?: RecoveredWindowsPrinterOverrides;
   multiPrinterMode?: boolean;
 
   // Legacy multi-printer settings (for backward compatibility)

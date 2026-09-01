@@ -37,17 +37,20 @@ function pngDimensions(bytes: Uint8Array): RasterImageDimensions {
 
   let offset = 8;
   let foundEnd = false;
+  let foundImageData = false;
   while (offset + 12 <= bytes.byteLength) {
     const chunkLength = data.getUint32(offset, false);
     if (chunkLength > bytes.byteLength - offset - 12) invalidImage('PNG chunk is truncated');
     const chunkType = ascii(bytes, offset + 4, 4);
     if (chunkType === 'acTL') invalidImage('animated PNG logos are not supported');
+    if (chunkType === 'IDAT') foundImageData = true;
     offset += chunkLength + 12;
     if (chunkType === 'IEND') {
       foundEnd = true;
       break;
     }
   }
+  if (!foundImageData) invalidImage('PNG image data is missing');
   if (!foundEnd) invalidImage('PNG end marker is missing');
   return dimensions;
 }

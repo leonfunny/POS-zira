@@ -8,7 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const harness = vi.hoisted(() => ({
   config: {} as any,
   products: [] as any[],
-  listTemplates: vi.fn(),
+  listTemplateIds: vi.fn(),
+  getTemplate: vi.fn(),
+  printLabel: vi.fn(),
   loggerError: vi.fn(),
   loggerWarn: vi.fn(),
 }));
@@ -38,13 +40,18 @@ vi.mock('../src/renderer/utils/logger', () => ({
 vi.mock('../src/renderer/components/label/FabricTagPrintPanel', () => ({
   default: ({ onStatus }: { onStatus: (status: { type: 'success'; message: string }) => void }) =>
     createElement(
-      'button',
-      {
-        type: 'button',
-        'data-testid': 'emit-fabric-status',
-        onClick: () => onStatus({ type: 'success', message: 'Fabric run remains visible' }),
-      },
-      'Emit fabric status',
+      'div',
+      null,
+      createElement('input', { type: 'text', 'data-testid': 'fabric-size-input' }),
+      createElement(
+        'button',
+        {
+          type: 'button',
+          'data-testid': 'emit-fabric-status',
+          onClick: () => onStatus({ type: 'success', message: 'Fabric run remains visible' }),
+        },
+        'Emit fabric status',
+      ),
     ),
 }));
 
@@ -81,6 +88,8 @@ describe('fabric-label operator feedback', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    harness.listTemplateIds.mockResolvedValue(['LOTUS']);
+    harness.getTemplate.mockResolvedValue(template);
     root = null;
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -110,15 +119,15 @@ describe('fabric-label operator feedback', () => {
         retail_price: 1499,
       },
     ];
-    harness.listTemplates.mockResolvedValue([template]);
     Object.defineProperty(window, 'electronAPI', {
       configurable: true,
       writable: true,
       value: {
-        printLabel: vi.fn(),
+        printLabel: harness.printLabel,
         pos: {
           fabricTagTemplates: {
-            list: harness.listTemplates,
+            listIds: harness.listTemplateIds,
+            get: harness.getTemplate,
           },
         },
       },
@@ -152,7 +161,7 @@ describe('fabric-label operator feedback', () => {
   });
 
   it('shows a localized operator alert when template loading fails without breaking EAN labels', async () => {
-    harness.listTemplates.mockRejectedValueOnce(new Error('template store unavailable'));
+    harness.listTemplateIds.mockRejectedValueOnce(new Error('template store unavailable'));
 
     await expect(renderLabelModule()).resolves.toBeUndefined();
 
@@ -178,7 +187,7 @@ describe('fabric-label operator feedback', () => {
 
     await expect(renderLabelModule()).resolves.toBeUndefined();
 
-    expect(harness.listTemplates).not.toHaveBeenCalled();
+    expect(harness.listTemplateIds).not.toHaveBeenCalled();
     expect(container.querySelector('[role="alert"]')).toBeNull();
     expect(container.textContent).toContain('First EAN product');
     expect(harness.loggerWarn).toHaveBeenCalledTimes(1);
@@ -198,5 +207,37 @@ describe('fabric-label operator feedback', () => {
     await act(async () => secondProduct?.click());
 
     expect(container.textContent).toContain('Fabric run remains visible');
+  });
+
+  it('does not route Enter from a fabric control into the EAN print shortcut', async () => {
+    await renderLabelModule();
+
+    const fabricButton = container.querySelector<HTMLButtonElement>('[data-testid="emit-fabric-status"]');
+    expect(fabricButton).not.toBeNull();
+    await act(async () => {
+      fabricButton?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+
+    expect(harness.printLabel).not.toHaveBeenCalled();
+  });
+
+  it('leaves the slash key untouched while an operator is typing in a fabric input', async () => {
+    await renderLabelModule();
+
+    const fabricInput = container.querySelector<HTMLInputElement>('[data-testid="fabric-size-input"]');
+    expect(fabricInput).not.toBeNull();
+    fabricInput?.focus();
+    const slash = new KeyboardEvent('keydown', {
+      key: '/',
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(async () => {
+      fabricInput?.dispatchEvent(slash);
+    });
+
+    expect(slash.defaultPrevented).toBe(false);
+    expect(document.activeElement).toBe(fabricInput);
+    expect(harness.printLabel).not.toHaveBeenCalled();
   });
 });

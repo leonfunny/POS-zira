@@ -57,16 +57,17 @@ describe('fabric tag template IPC boundary', () => {
     expect(repository.listTemplateIds).toHaveBeenCalledTimes(1);
   });
 
-  it('normalizes a backward-compatible minimal save payload before persistence', () => {
+  it('normalizes a printable save payload before persistence', () => {
     const { handlers, repository } = setupHandlers();
     const result = handlers.get(FABRIC_TAG_TEMPLATE_CHANNELS.save)!({}, {
       templateId: '  style-1  ',
+      brandName: ' Zira ',
       careSymbols: ['WASH_30', 'IRON_LOW'],
     });
 
     expect(repository.save).toHaveBeenCalledWith({
       templateId: 'style-1',
-      brandName: null,
+      brandName: 'Zira',
       logoDataUrl: null,
       composition: null,
       careSymbols: ['WASH_30', 'IRON_LOW'],
@@ -76,6 +77,16 @@ describe('fabric tag template IPC boundary', () => {
     });
     expect(repository.get).toHaveBeenCalledWith('style-1');
     expect(result).toEqual({ templateId: 'style-1' });
+  });
+
+  it('rejects a template with neither brand nor logo before persistence', () => {
+    const { handlers, repository } = setupHandlers();
+
+    expect(() => handlers.get(FABRIC_TAG_TEMPLATE_CHANNELS.save)!({}, {
+      templateId: 'style-1',
+      composition: '70% LEN, 30% WISKOZA',
+    })).toThrow(/brandName or logoDataUrl is required/i);
+    expect(repository.save).not.toHaveBeenCalled();
   });
 
   it.each([

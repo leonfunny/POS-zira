@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import { FABRIC_TAG_CONFIRM_THRESHOLD, FABRIC_TAG_LIMITS, type FabricTagTemplate } from '../../../shared/types';
-import { totalTagsToPrint } from './fabric-tag-size';
 import rlog from '../../utils/logger';
 import ConfirmActionDialog from '../pos/ConfirmActionDialog';
 
@@ -53,20 +52,47 @@ export default function FabricTagPrintPanel({
   // Re-seed when the style changes. Quantities deliberately reset: carrying a
   // previous style's numbers over is how the wrong garment gets 200 tags.
   useEffect(() => {
-    setSizes(Object.fromEntries(variants.map((variant) => [variant.id, ''])));
+    setSizes(Object.fromEntries(variants.map((variant) => [String(variant.id || '').trim(), ''])));
     setQuantities({});
     setConfirmingLargeBatch(false);
   }, [template.templateId, styleName, variants]);
 
-  const total = useMemo(() => totalTagsToPrint(quantities), [quantities]);
-  const batchTooLarge = total > MAX_FABRIC_TAGS_PER_RUN;
-  const missingSize = useMemo(
-    () => variants.some((variant) => (quantities[variant.id] ?? 0) > 0 && !sizes[variant.id]?.trim()),
-    [variants, quantities, sizes],
+  const validatedVariants = useMemo(() => {
+    const ids = new Set<string>();
+    const unique: FabricTagVariant[] = [];
+    for (const variant of variants) {
+      const id = String(variant.id || '').trim();
+      if (!id || ids.has(id)) return null;
+      ids.add(id);
+      unique.push({ ...variant, id });
+    }
+    return unique;
+  }, [variants]);
+  const invalidVariantRows = validatedVariants === null;
+  const runPlan = useMemo(() => (validatedVariants || [])
+    .map((variant) => ({
+      variant,
+      quantity: clampQuantity(quantities[variant.id]),
+      size: sizes[variant.id]?.trim() || '',
+    }))
+    .filter((row) => row.quantity > 0), [validatedVariants, quantities, sizes]);
+  const total = useMemo(
+    () => runPlan.reduce((sum, row) => sum + row.quantity, 0),
+    [runPlan],
   );
+  const batchTooLarge = total > MAX_FABRIC_TAGS_PER_RUN;
+  const missingSize = runPlan.some((row) => !row.size);
 
   const handlePrint = async (confirmed = false) => {
-    if (!ready || printing || printRunInFlight.current || total === 0 || missingSize || batchTooLarge) return;
+    if (
+      !ready
+      || printing
+      || printRunInFlight.current
+      || invalidVariantRows
+      || total === 0
+      || missingSize
+      || batchTooLarge
+    ) return;
     if (!confirmed && total > FABRIC_TAG_CONFIRM_THRESHOLD) {
       setConfirmingLargeBatch(true);
       return;
@@ -78,19 +104,16 @@ export default function FabricTagPrintPanel({
 
     let printed = 0;
     try {
-      for (const variant of variants) {
-        const quantity = clampQuantity(quantities[variant.id]);
-        if (quantity === 0) continue;
-
+      for (const row of runPlan) {
         const result = await window.electronAPI.printFabricTag({
           brandName: template.brandName || '',
           logoDataUrl: template.logoDataUrl || undefined,
-          size: sizes[variant.id]?.trim() || undefined,
+          size: row.size,
           composition: template.composition || undefined,
           careSymbols: template.careSymbols?.length ? template.careSymbols : undefined,
           careText: template.careText || undefined,
           layout: template.layout,
-          quantity,
+          quantity: row.quantity,
         } as any);
 
         if (!result?.success) {
@@ -103,7 +126,7 @@ export default function FabricTagPrintPanel({
           });
           return;
         }
-        printed += quantity;
+        printed += row.quantity;
       }
       onStatus({
         type: 'success',
@@ -141,29 +164,40 @@ export default function FabricTagPrintPanel({
         </div>
       ) : (
         <div className="space-y-2">
-          {variants.map((variant) => (
-            <div key={variant.id} className="flex items-center gap-2">
-              <span className="flex-1 min-w-0 truncate text-sm text-slate-700">{variant.name}</span>
-              <input
-                type="text"
-                value={sizes[variant.id] ?? ''}
-                onChange={(e) => setSizes((prev) => ({ ...prev, [variant.id]: e.target.value }))}
-                placeholder={t('fabricTag.sizePlaceholder', 'Size')}
-                maxLength={10}
-                className="h-11 w-20 px-2 border border-slate-300 rounded text-sm text-center outline-none focus:ring-2 focus:ring-brand-300"
-              />
-              <input
-                type="number"
-                value={quantities[variant.id] ?? ''}
-                onChange={(e) => setQuantities((prev) => ({ ...prev, [variant.id]: clampQuantity(e.target.value) }))}
-                min={0}
-                max={MAX_PER_SIZE}
-                placeholder="0"
-                className="h-11 w-20 px-2 border border-slate-300 rounded text-sm text-right outline-none focus:ring-2 focus:ring-brand-300"
-              />
-            </div>
-          ))}
+          {variants.map((variant, index) => {
+            const rowId = String(variant.id || '').trim();
+            return (
+              <div key={`${rowId || 'invalid'}:${index}`} className="flex items-center gap-2">
+                <span className="flex-1 min-w-0 truncate text-sm text-slate-700">{variant.name}</span>
+                <input
+                  type="text"
+                  value={sizes[rowId] ?? ''}
+                  onChange={(e) => setSizes((prev) => ({ ...prev, [rowId]: e.target.value }))}
+                  placeholder={t('fabricTag.sizePlaceholder', 'Size')}
+                  maxLength={10}
+                  disabled={invalidVariantRows}
+                  className="h-11 w-20 px-2 border border-slate-300 rounded text-sm text-center outline-none focus:ring-2 focus:ring-brand-300"
+                />
+                <input
+                  type="number"
+                  value={quantities[rowId] ?? ''}
+                  onChange={(e) => setQuantities((prev) => ({ ...prev, [rowId]: clampQuantity(e.target.value) }))}
+                  min={0}
+                  max={MAX_PER_SIZE}
+                  placeholder="0"
+                  disabled={invalidVariantRows}
+                  className="h-11 w-20 px-2 border border-slate-300 rounded text-sm text-right outline-none focus:ring-2 focus:ring-brand-300"
+                />
+              </div>
+            );
+          })}
         </div>
+      )}
+
+      {invalidVariantRows && (
+        <p role="alert" className="text-xs text-red-600">
+          {t('fabricTag.invalidSizeRows', 'Size rows are missing an ID or contain a duplicate ID. Reload the template before printing.')}
+        </p>
       )}
 
       {missingSize && (
@@ -187,7 +221,7 @@ export default function FabricTagPrintPanel({
 
       <button
         onClick={() => void handlePrint()}
-        disabled={!ready || printing || total === 0 || missingSize || batchTooLarge}
+        disabled={!ready || printing || invalidVariantRows || total === 0 || missingSize || batchTooLarge}
         className="w-full min-h-11 px-3 py-2 rounded-lg text-sm font-medium bg-brand-600 text-white disabled:bg-slate-200 disabled:text-slate-400 transition-colors"
       >
         {printing

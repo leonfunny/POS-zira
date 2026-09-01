@@ -102,4 +102,17 @@ describe('local printer mirror paper dimensions', () => {
     expect(staleSql).toContain('SET is_enabled = 0, is_online = 0');
     expect(database.markDirty).toHaveBeenCalled();
   });
+
+  it('persists a recovered Windows queue name in the preferred local mirror', () => {
+    (database.run as any).mockClear();
+    (database.markDirty as any).mockClear();
+
+    localPrinterRepo.updateWindowsPrinterName('fabric-1', 'TSC MB241 (Copy 1)');
+
+    expect(database.run).toHaveBeenCalledWith(
+      expect.stringContaining('SET windows_printer_name = ?'),
+      ['TSC MB241 (Copy 1)', expect.any(String), 'fabric-1'],
+    );
+    expect(database.markDirty).toHaveBeenCalledTimes(1);
+  });
 });

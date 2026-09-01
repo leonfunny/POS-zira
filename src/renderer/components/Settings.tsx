@@ -15,6 +15,15 @@ import { ShoppingCart, LayoutDashboard, FileText, Shield, Printer, Tag, Ticket, 
 import ModuleManager from './ModuleManager';
 import TextInput from './shared/TextInput';
 import { matchesSettingSection } from './settings-search';
+import {
+  DEFAULT_PRINTER_CONFIG,
+  maxLabelOriginInsetMm,
+  normalizePrintersConfig,
+  resolvePrinterConfigForType,
+  sanitizePrinterConfigForPersistence,
+  sanitizePrintersConfigForPersistence,
+  updatePrinterConfigState,
+} from './settings-printer-config';
 
 interface PortMismatchValidation {
   ok: boolean;
@@ -251,34 +260,7 @@ function printerTypeLabel(t: (key: string) => string, printerType?: string | nul
   return translated && translated !== key ? translated : value;
 }
 
-/**
- * What a fabric tag slot should look like before anyone touches it.
- *
- * The generic label defaults describe a 50x30 shelf label; care-label ribbon
- * is a 20mm continuous strip, and offering the shelf numbers means the first
- * print renders 320 dots into a 160-dot head. The height is a ceiling, not a
- * target -- the tag is trimmed to its content before printing.
- */
-const FABRIC_TAG_DEFAULTS: Partial<PrinterConfig> = {
-  labelWidth: 20,
-  labelHeight: 60,
-  mediaSensor: 'none',
-  printSpeed: 2,
-  printDensity: 12,
-};
-
-// Default printer config
-const defaultPrinterConfig: PrinterConfig = {
-  enabled: false,
-  protocol: 'THERMAL',
-  baudRate: 9600,
-  labelWidth: 50,
-  labelHeight: 30,
-  paperWidth: 80,
-  charsPerLine: 48,
-  supportsCut: true,
-  supportsCashDrawer: false,
-};
+const defaultPrinterConfig = DEFAULT_PRINTER_CONFIG;
 
 interface DetectedPrinterDevice {
   vid: string;
@@ -390,7 +372,12 @@ function buildServerPrinterPayloadFromConfig(
   const usesWindowsPrinter = pc.protocol === 'WINDOWS' || pc.protocol === 'ZEBRA'
     || pc.protocol === 'TSPL' || pc.protocol === 'THERMAL';
   const isLabelMedia = isLabelMediaType(printerType);
-  const paperWidth = pc.paperWidth || (isLabelMedia ? pc.labelWidth || 100 : 80);
+  // labelWidth drives the local formatter. It must also win in the server
+  // payload or an older paperWidth alias can revert an operator's media edit
+  // on the next backend refresh.
+  const paperWidth = isLabelMedia
+    ? pc.labelWidth || pc.paperWidth || 100
+    : pc.paperWidth || 80;
   const address = (pc.port || pc.address || '').trim();
   const windowsPrinterName = (pc.windowsPrinter || '').trim();
   const displayName = (pc.displayName || '').trim() || printerType;
@@ -441,7 +428,7 @@ function buildPrinterPayloadFromConfig(config: AgentConfig | null | undefined): 
   if (multiPrinterMode) {
     return {
       multiPrinterMode: true,
-      printers: config?.printers || {},
+      printers: sanitizePrintersConfigForPersistence(config?.printers),
       receiptPrinter: config?.receiptPrinter || { ...defaultPrinterConfig, enabled: false },
       labelPrinter: config?.labelPrinter || { ...defaultPrinterConfig, enabled: false },
       fiscalDailyReport: normalizeFiscalDailyReportSettings(config?.fiscalDailyReport),
@@ -720,7 +707,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   // Multi-printer mode (new dictionary style)
   const [multiPrinterMode, setMultiPrinterMode] = useState(deriveMultiPrinterMode(config));
   const [printers, setPrinters] = useState<PrintersConfig>(
-    config?.printers || {}
+    normalizePrintersConfig(config?.printers)
   );
   const [fiscalDailyReport, setFiscalDailyReport] = useState<NormalizedFiscalDailyReportSettings>(
     () => normalizeFiscalDailyReportSettings(config?.fiscalDailyReport),
@@ -901,7 +888,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
     if (multiPrinterMode) {
       return {
         multiPrinterMode: true,
-        printers,
+        printers: sanitizePrintersConfigForPersistence(printers),
         receiptPrinter: { ...defaultPrinterConfig, enabled: false },
         labelPrinter: { ...defaultPrinterConfig, enabled: false },
         fiscalDailyReport,
@@ -1217,7 +1204,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
         setLabelWidth(config.labelWidth || 50);
         setLabelHeight(config.labelHeight || 30);
         setMultiPrinterMode(deriveMultiPrinterMode(config));
-        setPrinters(config.printers || {});
+        setPrinters(normalizePrintersConfig(config.printers));
         setFiscalDailyReport(normalizeFiscalDailyReportSettings(config.fiscalDailyReport));
         syncedPrinterSignatureRef.current = incomingPrinterSignature;
       }
@@ -1334,13 +1321,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
 
   // Helper function for updating printers dictionary
   const updatePrinter = (printerType: PrinterTypeValue, updates: Partial<PrinterConfig>) => {
-    setPrinters(prev => ({
-      ...prev,
-      [printerType]: {
-        ...(prev[printerType as keyof typeof prev] || defaultPrinterConfig),
-        ...updates,
-      },
-    }));
+    setPrinters(prev => updatePrinterConfigState(prev, printerType, updates));
   };
 
   const updateFiscalDailyReport = (updates: Partial<FiscalDailyReportSettings>) => {
@@ -1376,24 +1357,10 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
 
   // Get printer config for a type (with default)
   const getPrinterConfig = (printerType: PrinterTypeValue): PrinterConfig => {
-    const saved = printers[printerType as keyof typeof printers];
-    const base: PrinterConfig = {
-      ...defaultPrinterConfig,
-      ...(printerType === 'FABRIC_TAG' ? FABRIC_TAG_DEFAULTS : {}),
-      ...(saved || {}),
-    };
-
-    // A slot has to start on a protocol its own type accepts. Every slot
-    // defaulted to THERMAL, which FABRIC_TAG rejects -- and since the select
-    // lists only the allowed protocols, it displayed TSPL while the value
-    // underneath stayed THERMAL. Saving then bounced with "FABRIC_TAG slot
-    // cannot use THERMAL protocol" in a log nobody was reading, so the screen
-    // looked right and nothing could be configured.
-    const allowed = (ALLOWED_PROTOCOLS_BY_TYPE as Record<string, PrinterProtocol[] | undefined>)[printerType] || [];
-    if (allowed.length > 0 && !allowed.includes(base.protocol)) {
-      return { ...base, protocol: allowed[0] };
-    }
-    return base;
+    return resolvePrinterConfigForType(
+      printerType,
+      printers[printerType as keyof typeof printers],
+    );
   };
 
   const formatTestPrintDebugText = (
@@ -1871,7 +1838,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
     const updatedConfig = await window.electronAPI.getConfig();
     const incomingPrinterSignature = getPrinterPayloadSignature(buildPrinterPayloadFromConfig(updatedConfig));
     setMultiPrinterMode(deriveMultiPrinterMode(updatedConfig));
-    setPrinters(updatedConfig?.printers || {});
+    setPrinters(normalizePrintersConfig(updatedConfig?.printers));
     setSelectedPort(updatedConfig?.printerPort || '');
     setProtocol(updatedConfig?.printerProtocol || 'THERMAL');
     setBaudRate(updatedConfig?.printerBaudRate || 9600);
@@ -2136,7 +2103,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
         const updatedConfig = await window.electronAPI.getConfig();
         const incomingPrinterSignature = getPrinterPayloadSignature(buildPrinterPayloadFromConfig(updatedConfig));
         setMultiPrinterMode(deriveMultiPrinterMode(updatedConfig));
-        setPrinters(updatedConfig?.printers || {});
+        setPrinters(normalizePrintersConfig(updatedConfig?.printers));
         setSelectedPort(updatedConfig?.printerPort || '');
         setProtocol(updatedConfig?.printerProtocol || 'THERMAL');
         setBaudRate(updatedConfig?.printerBaudRate || 9600);
@@ -2284,7 +2251,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
         const updatedConfig = await window.electronAPI.getConfig();
         const incomingPrinterSignature = getPrinterPayloadSignature(buildPrinterPayloadFromConfig(updatedConfig));
         setMultiPrinterMode(deriveMultiPrinterMode(updatedConfig));
-        setPrinters(updatedConfig?.printers || {});
+        setPrinters(normalizePrintersConfig(updatedConfig?.printers));
         setSelectedPort(updatedConfig?.printerPort || '');
         setProtocol(updatedConfig?.printerProtocol || 'THERMAL');
         setBaudRate(updatedConfig?.printerBaudRate || 9600);
@@ -3235,6 +3202,9 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
               const isLabel = isLabelMediaType(printerType);
               const isFabricTag = printerType === 'FABRIC_TAG';
               const defaultTsplPrintSpeed = isFabricTag ? 2 : 3;
+              const maxOriginInsetMm = maxLabelOriginInsetMm(
+                printerConfig.labelWidth || (isFabricTag ? 20 : 50),
+              );
               const supportsCalibrationProtocol = printerConfig.protocol === 'ZEBRA' || printerConfig.protocol === 'TSPL';
               const canCalibrateMedia = supportsLabelMediaCalibration(printerConfig, printerType);
               const isFiscalElzab = printerType === 'FISCAL' &&
@@ -3541,7 +3511,16 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                                     type="number"
                                     value={printerConfig.labelWidth || ''}
                                     onChange={(e) => updatePrinter(printerType, { labelWidth: parseInt(e.target.value) || 0 })}
-                                    onBlur={(e) => { const v = parseInt(e.target.value); if (!v || v < 10) updatePrinter(printerType, { labelWidth: isFabricTag ? 20 : 50 }); }}
+                                    onBlur={(e) => {
+                                      const safe = sanitizePrinterConfigForPersistence(printerType, {
+                                        ...printerConfig,
+                                        labelWidth: parseFloat(e.target.value),
+                                      });
+                                      updatePrinter(printerType, {
+                                        labelWidth: safe.labelWidth,
+                                        labelOriginInsetMm: safe.labelOriginInsetMm,
+                                      });
+                                    }}
                                     min={10}
                                     max={1000}
                                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
@@ -3553,7 +3532,13 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                                     type="number"
                                     value={printerConfig.labelHeight || ''}
                                     onChange={(e) => updatePrinter(printerType, { labelHeight: parseInt(e.target.value) || 0 })}
-                                    onBlur={(e) => { const v = parseInt(e.target.value); if (!v || v < 10) updatePrinter(printerType, { labelHeight: isFabricTag ? 60 : 30 }); }}
+                                    onBlur={(e) => {
+                                      const safe = sanitizePrinterConfigForPersistence(printerType, {
+                                        ...printerConfig,
+                                        labelHeight: parseFloat(e.target.value),
+                                      });
+                                      updatePrinter(printerType, { labelHeight: safe.labelHeight });
+                                    }}
                                     min={10}
                                     max={1000}
                                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
@@ -3613,6 +3598,13 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                                   type="number"
                                   value={printerConfig.labelGapMm ?? 2}
                                   onChange={(e) => updatePrinter(printerType, { labelGapMm: parseFloat(e.target.value) || 0 })}
+                                  onBlur={(e) => {
+                                    const safe = sanitizePrinterConfigForPersistence(printerType, {
+                                      ...printerConfig,
+                                      labelGapMm: parseFloat(e.target.value),
+                                    });
+                                    updatePrinter(printerType, { labelGapMm: safe.labelGapMm });
+                                  }}
                                   disabled={printerConfig.mediaSensor === 'none'}
                                   min={0}
                                   max={20}
@@ -3626,9 +3618,15 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                                   type="number"
                                   value={printerConfig.labelOriginInsetMm ?? 0}
                                   onChange={(e) => updatePrinter(printerType, { labelOriginInsetMm: parseFloat(e.target.value) || 0 })}
-                                  onBlur={(e) => { const v = parseFloat(e.target.value); if (isNaN(v) || v < 0) updatePrinter(printerType, { labelOriginInsetMm: 0 }); }}
+                                  onBlur={(e) => {
+                                    const safe = sanitizePrinterConfigForPersistence(printerType, {
+                                      ...printerConfig,
+                                      labelOriginInsetMm: parseFloat(e.target.value),
+                                    });
+                                    updatePrinter(printerType, { labelOriginInsetMm: safe.labelOriginInsetMm });
+                                  }}
                                   min={0}
-                                  max={10}
+                                  max={maxOriginInsetMm}
                                   step={0.1}
                                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
                                 />

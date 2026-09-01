@@ -31,7 +31,11 @@ import {
   ServerPrinterMapping,
 } from '../../shared/types';
 import SocketClient from '../network/socket-client';
-import { ApiClient, normalizeServerPrinterRows } from '../network/api-client';
+import {
+  ApiClient,
+  normalizeServerPrinterRows,
+  pruneRecoveredWindowsPrinterOverrides,
+} from '../network/api-client';
 import { authEvents, AUTH_EXPIRED, forwardAuthExpiredToRenderer } from '../network/auth-refresh';
 import { resolveCurrentUser } from '../network/auth-get-user';
 import { resolveStartupConnectPlan } from '../network/startup-connect-plan';
@@ -1141,11 +1145,24 @@ export class AuthModule extends BaseModule {
   private async refreshAgentPrinters(): Promise<AgentPrintersResponse> {
     const { client, token, agentId } = this.getPrinterApiContext();
     const response = await client.listAgentPrinters(token, agentId);
-    const localPrinters = normalizeServerPrinterRows(response.printers);
+    const config = getConfig();
+    const recoveryOverrides = pruneRecoveredWindowsPrinterOverrides(
+      response.printers,
+      config.recoveredWindowsPrinters,
+      config.printers,
+    );
+    const localPrinters = normalizeServerPrinterRows(
+      response.printers,
+      config.printers,
+      recoveryOverrides,
+    );
 
     if (localPrinters.length > 0) {
       localPrinterRepo.upsertMany(agentId, localPrinters);
-      setConfig({ multiPrinterMode: true });
+      setConfig({
+        multiPrinterMode: true,
+        recoveredWindowsPrinters: recoveryOverrides,
+      });
       this.eventBus?.emit('config:changed', { changedKeys: ['printers', 'multiPrinterMode'] });
       logger.info(`[AuthModule] Refreshed ${localPrinters.length} backend printer row(s) into local mirror`);
     }

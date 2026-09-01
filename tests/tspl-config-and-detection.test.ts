@@ -2,6 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import { ALLOWED_PROTOCOLS_BY_TYPE, PrinterType } from '../src/shared/types';
 import { BRAND_PATTERNS, matchBrand } from '../src/main/hardware/detection/types';
+import { repairLegacyFabricTagPrinterConfig } from '../src/shared/fabric-tag-printer-config';
+import {
+  maxLabelOriginInsetMm,
+  normalizePrintersConfig,
+  sanitizePrinterConfigForPersistence,
+  updatePrinterConfigState,
+} from '../src/renderer/components/settings-printer-config';
 
 /**
  * Regression cover for the two ways a TSPL printer went missing:
@@ -45,12 +52,138 @@ describe('TSPL is a first-class protocol end to end', () => {
     const fs = await import('node:fs/promises');
     const settings = await fs.readFile('src/renderer/components/Settings.tsx', 'utf8');
 
-    const start = settings.indexOf('const getPrinterConfig =');
-    expect(start, 'getPrinterConfig not found').toBeGreaterThan(-1);
-    const block = settings.slice(start, start + 1400);
+    expect(settings).toContain('resolvePrinterConfigForType(');
+    expect(settings).toContain('updatePrinterConfigState(prev, printerType, updates)');
+  });
 
-    expect(block).toMatch(/ALLOWED_PROTOCOLS_BY_TYPE/);
-    expect(block).toMatch(/!allowed\.includes\(base\.protocol\)/);
+  it('stores normalized fabric defaults on the first real Settings edit', () => {
+    const next = updatePrinterConfigState({}, PrinterType.FABRIC_TAG, {
+      enabled: true,
+      windowsPrinter: 'TSC MB241',
+    });
+
+    expect(next[PrinterType.FABRIC_TAG]).toMatchObject({
+      enabled: true,
+      protocol: 'TSPL',
+      windowsPrinter: 'TSC MB241',
+      labelWidth: 20,
+      labelHeight: 60,
+      mediaSensor: 'none',
+      printSpeed: 2,
+      printDensity: 12,
+    });
+  });
+
+  it('normalizes an existing stale fabric slot when Settings hydrates it', () => {
+    const normalized = normalizePrintersConfig({
+      [PrinterType.FABRIC_TAG]: {
+        enabled: true,
+        protocol: 'THERMAL',
+        windowsPrinter: 'TSC MB241',
+      },
+    });
+
+    expect(normalized[PrinterType.FABRIC_TAG]).toMatchObject({
+      enabled: true,
+      protocol: 'TSPL',
+      windowsPrinter: 'TSC MB241',
+      labelWidth: 20,
+      labelHeight: 60,
+      mediaSensor: 'none',
+      printSpeed: 2,
+      printDensity: 12,
+    });
+  });
+
+  it('repairs the fully materialized legacy THERMAL 50x30 sentinel only', () => {
+    expect(repairLegacyFabricTagPrinterConfig({
+      enabled: true,
+      protocol: 'THERMAL',
+      windowsPrinter: 'TSC MB241',
+      labelWidth: 50,
+      labelHeight: 30,
+      paperWidth: 80,
+      charsPerLine: 48,
+    })).toMatchObject({
+      protocol: 'TSPL',
+      labelWidth: 20,
+      labelHeight: 60,
+      paperWidth: 20,
+      charsPerLine: 32,
+      labelGapMm: 0,
+      mediaSensor: 'none',
+      printSpeed: 2,
+      printDensity: 12,
+    });
+
+    const intentional = {
+      enabled: true,
+      protocol: 'TSPL' as const,
+      labelWidth: 25,
+      labelHeight: 80,
+    };
+    expect(repairLegacyFabricTagPrinterConfig(intentional)).toBe(intentional);
+  });
+
+  it('does not create absent printer slots while normalizing Settings state', () => {
+    const normalized = normalizePrintersConfig({
+      [PrinterType.RECEIPT]: {
+        enabled: true,
+        protocol: 'THERMAL',
+      },
+    });
+
+    expect(normalized[PrinterType.RECEIPT]).toBeDefined();
+    expect(normalized[PrinterType.FABRIC_TAG]).toBeUndefined();
+  });
+
+  it('keeps the backend paper-width alias synchronized with the local label width', () => {
+    const sanitized = sanitizePrinterConfigForPersistence(PrinterType.FABRIC_TAG, {
+      enabled: true,
+      protocol: 'TSPL',
+      windowsPrinter: 'TSC MB241',
+      paperWidth: 20,
+      labelWidth: 25,
+      labelHeight: 60,
+    });
+
+    expect(sanitized.labelWidth).toBe(25);
+    expect(sanitized.paperWidth).toBe(25);
+  });
+
+  it('uses fabric-specific persistence defaults instead of generic 50x30 defaults', async () => {
+    const fs = await import('node:fs/promises');
+    const source = await fs.readFile('src/main/config/store.ts', 'utf8');
+    const schema = /const fabricTagPrinterConfigSchema = \{[\s\S]*?\n\};/.exec(source)?.[0] || '';
+
+    expect(schema).toContain("default: 'TSPL'");
+    expect(schema).toContain("labelWidth: { type: 'number', default: 20 }");
+    expect(schema).toContain("labelHeight: { type: 'number', default: 60 }");
+    expect(source).toContain('FABRIC_TAG: fabricTagPrinterConfigSchema');
+  });
+
+  it('clamps autosaved TSPL values to formatter invariants', () => {
+    const sanitized = sanitizePrinterConfigForPersistence(PrinterType.FABRIC_TAG, {
+      enabled: true,
+      protocol: 'TSPL',
+      windowsPrinter: 'TSC MB241',
+      labelWidth: 20,
+      labelHeight: 2000,
+      labelGapMm: 26,
+      printSpeed: 0,
+      printDensity: 99,
+      labelOriginInsetMm: 10,
+    });
+
+    expect(maxLabelOriginInsetMm(20)).toBe(9.9);
+    expect(sanitized).toMatchObject({
+      labelWidth: 20,
+      labelHeight: 1000,
+      labelGapMm: 25,
+      printSpeed: 1,
+      printDensity: 15,
+      labelOriginInsetMm: 9.9,
+    });
   });
 
   it('recommends TSPL for a TSC, the only protocol that can reach a fabric tag slot', async () => {
@@ -95,7 +228,10 @@ describe('TSPL is a first-class protocol end to end', () => {
     const block = /const printersConfigSchema = \{[\s\S]*?\n\};/.exec(source);
     expect(block).not.toBeNull();
     for (const type of Object.values(PrinterType)) {
-      expect(block![0], `printersConfigSchema is missing ${type}`).toContain(`${type}: printerConfigSchema`);
+      const schemaName = type === PrinterType.FABRIC_TAG
+        ? 'fabricTagPrinterConfigSchema'
+        : 'printerConfigSchema';
+      expect(block![0], `printersConfigSchema is missing ${type}`).toContain(`${type}: ${schemaName}`);
     }
   });
 });

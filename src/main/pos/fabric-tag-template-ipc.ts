@@ -71,6 +71,14 @@ export function parseFabricTagTemplateInput(value: unknown): FabricTagTemplate {
   };
 }
 
+function assertFabricTagTemplateHasIdentity(template: FabricTagTemplate): void {
+  if (!template.brandName && !template.logoDataUrl) {
+    throw new TypeError(
+      'Invalid fabric tag template: brandName or logoDataUrl is required before saving',
+    );
+  }
+}
+
 export function registerFabricTagTemplateIpcHandlers(
   ipc: IpcHandleRegistrar,
   repository: FabricTagTemplateRepository,
@@ -82,6 +90,9 @@ export function registerFabricTagTemplateIpcHandlers(
   );
   ipc.handle(FABRIC_TAG_TEMPLATE_CHANNELS.save, (_event, input: unknown) => {
     const template = parseFabricTagTemplateInput(input);
+    // The print boundary requires the same identity. Rejecting it here avoids
+    // persisting a template that appears in listIds but can never be printed.
+    assertFabricTagTemplateHasIdentity(template);
     repository.save(template);
     return repository.get(template.templateId);
   });

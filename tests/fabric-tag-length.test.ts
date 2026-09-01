@@ -21,9 +21,9 @@ vi.mock('../src/main/logger', () => ({
 vi.mock('../src/main/hardware/port-utils', () => ({
   listWindowsPrinters: async () => ['TSC MB241'],
   isWindowsPrinterPresent: async () => true,
-  flushStuckPrintJobs: async () => 0,
+  flushStuckPrintJobs: vi.fn(async () => 0),
   // Null means "queue is clear"; a string here would be a stuck-job reason.
-  getStuckPrintJobStatus: async () => null,
+  getStuckPrintJobStatus: vi.fn(async () => null),
 }));
 
 vi.mock('../src/main/hardware/windows-raw-print', () => ({
@@ -41,6 +41,7 @@ vi.mock('../src/main/hardware/tsc/fabric-tag-renderer', () => ({
 }));
 
 const { TscDriver } = await import('../src/main/hardware/tsc/tsc-driver');
+const { flushStuckPrintJobs, getStuckPrintJobStatus } = await import('../src/main/hardware/port-utils');
 
 const tag = { brandName: 'ZIRA', size: 'L', quantity: 1 } as any;
 
@@ -55,7 +56,12 @@ async function printOnce(overrides: Partial<{ heightMm: number; originInsetMm: n
 }
 
 describe('fabric tag length follows the content', () => {
-  beforeEach(() => { sent.length = 0; renderCalls.length = 0; });
+  beforeEach(() => {
+    sent.length = 0;
+    renderCalls.length = 0;
+    vi.mocked(flushStuckPrintJobs).mockReset().mockResolvedValue(0);
+    vi.mocked(getStuckPrintJobStatus).mockReset().mockResolvedValue(null);
+  });
 
   it('declares the measured length rather than the configured ceiling', async () => {
     const job = await printOnce();
@@ -92,6 +98,61 @@ describe('fabric tag length follows the content', () => {
     const declared = Number(size.split(',')[1].replace(/[^0-9.]/g, ''));
     expect(declared).toBeLessThanOrEqual(15);
   });
+
+  it('rechecks driver connectivity immediately before sending RAW bytes', async () => {
+    const driver = new TscDriver('TSC MB241', 20, 60, { sensor: 'none' });
+    expect(await driver.connect()).toBe(true);
+    driver.disconnect();
+
+    await expect((driver as any).printRaw(Buffer.from('CLS\r\n', 'latin1')))
+      .rejects.toThrow(/not connected/i);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('does not send RAW when a health check disconnects the driver during preflight', async () => {
+    const driver = new TscDriver('TSC MB241', 20, 60, { sensor: 'none' });
+    expect(await driver.connect()).toBe(true);
+    vi.mocked(getStuckPrintJobStatus).mockImplementationOnce(async () => {
+      driver.disconnect();
+      return null;
+    });
+
+    await expect((driver as any).printRaw(Buffer.from('CLS\r\n', 'latin1')))
+      .rejects.toThrow(/not connected/i);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('fails safely before RAW when an old stuck queue job survives removal', async () => {
+    vi.mocked(getStuckPrintJobStatus)
+      .mockResolvedValueOnce('Offline')
+      .mockResolvedValueOnce('Offline');
+    const driver = new TscDriver('TSC MB241', 20, 60, { sensor: 'none' });
+    expect(await driver.connect()).toBe(true);
+
+    await expect((driver as any).printRaw(Buffer.from('CLS\r\n', 'latin1')))
+      .rejects.toMatchObject({
+        name: 'TscPreflightQueueBlockedError',
+        failureClass: 'SAFE_BEFORE_PRINT',
+        message: expect.stringMatching(/stuck job.*new label was not sent/i),
+      });
+    expect(flushStuckPrintJobs).toHaveBeenCalledTimes(1);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('submits exactly one RAW job after the old stuck queue job is confirmed cleared', async () => {
+    vi.mocked(getStuckPrintJobStatus)
+      .mockResolvedValueOnce('PaperOut')
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null);
+    vi.mocked(flushStuckPrintJobs).mockResolvedValueOnce(1);
+    const driver = new TscDriver('TSC MB241', 20, 60, { sensor: 'none' });
+    expect(await driver.connect()).toBe(true);
+
+    await expect((driver as any).printRaw(Buffer.from('CLS\r\n', 'latin1')))
+      .resolves.toBeUndefined();
+    expect(flushStuckPrintJobs).toHaveBeenCalledTimes(1);
+    expect(sent).toHaveLength(1);
+  });
 });
 
 describe('TSC media calibration', () => {
@@ -103,6 +164,39 @@ describe('TSC media calibration', () => {
 
     await expect(driver.calibrate()).rejects.toThrow(/continuous media/i);
     expect(sent).toHaveLength(0);
+  });
+});
+
+describe('TSC queue recovery', () => {
+  it('prefers the one renamed queue that still contains the configured name', async () => {
+    const driver = new TscDriver('TSC MB241', 20, 60, { sensor: 'none' });
+
+    await expect(driver.recoverPrinter(['TSC TE200', 'TSC MB241 (Copy 1)']))
+      .resolves.toMatchObject({
+        recovered: true,
+        newIdentifier: 'TSC MB241 (Copy 1)',
+      });
+  });
+
+  it('fails closed when multiple TSC queues are plausible replacements', async () => {
+    const driver = new TscDriver('Retired TSC Queue', 20, 60, { sensor: 'none' });
+
+    await expect(driver.recoverPrinter(['TSC MB241', 'TSC TE200']))
+      .resolves.toMatchObject({
+        recovered: false,
+        message: expect.stringMatching(/Multiple TSC printers/i),
+      });
+  });
+
+  it('never recovers a TSC queue onto a Canon model containing the mb2 fragment', async () => {
+    const driver = new TscDriver('Retired TSC Queue', 20, 60, { sensor: 'none' });
+
+    await expect(driver.recoverPrinter(['Canon MAXIFY MB2750']))
+      .resolves.toMatchObject({
+        recovered: false,
+        oldIdentifier: 'Retired TSC Queue',
+        message: 'No TSC printer found in Windows',
+      });
   });
 });
 

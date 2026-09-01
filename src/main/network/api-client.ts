@@ -13,6 +13,7 @@ import {
   PrinterProtocol,
   PrintersConfig,
   PrinterType,
+  RecoveredWindowsPrinterOverrides,
   ReportLanFirstPrintResultRequest,
   ReserveLanFirstPrintJobRequest,
   SalonPrinterAssignmentResponse,
@@ -168,6 +169,12 @@ function looksLikeComPort(value?: string | null): boolean {
   return /^COM\d{1,3}$/i.test((value || '').trim());
 }
 
+function positiveFiniteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? value
+    : undefined;
+}
+
 function mapServerPrinter(item: ServerPrinter): { type: PrinterType; config: PrinterConfig } | null {
   const protocol = normalizeProtocol(item.protocol);
   if (!protocol) return null;
@@ -179,7 +186,9 @@ function mapServerPrinter(item: ServerPrinter): { type: PrinterType; config: Pri
   const address = (item.address || '').trim();
   const windowsPrinterName = (item.windowsPrinterName || '').trim();
   const target = windowsPrinterName || address;
-  const paperWidth = item.paperWidth || (isLabelPrinterType(printerType) ? 100 : 80);
+  const explicitPaperWidth = positiveFiniteNumber(item.paperWidth);
+  const paperWidth = explicitPaperWidth
+    ?? (printerType === PrinterType.FABRIC_TAG ? 20 : (isLabelPrinterType(printerType) ? 100 : 80));
   const config: PrinterConfig = {
     enabled: item.isEnabled ?? false,
     protocol,
@@ -194,8 +203,13 @@ function mapServerPrinter(item: ServerPrinter): { type: PrinterType; config: Pri
   };
 
   if (isLabelPrinterType(printerType)) {
-    config.labelWidth = paperWidth;
-    if (item.paperHeight && item.paperHeight > 0) config.labelHeight = item.paperHeight;
+    // A fallback is useful for generic receipt fields, but it must not look
+    // like an explicit server media override. Otherwise an older connect
+    // response that omits paperWidth silently changes a local 20mm fabric
+    // ribbon to the generic 100mm label default.
+    if (explicitPaperWidth !== undefined) config.labelWidth = explicitPaperWidth;
+    const explicitPaperHeight = positiveFiniteNumber(item.paperHeight);
+    if (explicitPaperHeight !== undefined) config.labelHeight = explicitPaperHeight;
   }
 
   if (protocol === 'POSNET') {
@@ -237,9 +251,35 @@ function hasPhysicalPrinterTarget(config?: PrinterConfig): boolean {
   );
 }
 
+function samePrinterName(left?: string | null, right?: string | null): boolean {
+  return !!left?.trim() && !!right?.trim()
+    && left.trim().toLowerCase() === right.trim().toLowerCase();
+}
+
+/**
+ * Return the locally recovered queue only while the server still advertises
+ * the exact stale name recovery replaced. A different server value is an
+ * explicit remote change and therefore wins normally.
+ */
+function recoveredLocalWindowsTarget(
+  serverConfig: PrinterConfig,
+  recoveryOverrides?: RecoveredWindowsPrinterOverrides,
+): string | undefined {
+  if (!serverConfig.serverPrinterId) return undefined;
+  const recovery = recoveryOverrides?.[serverConfig.serverPrinterId];
+  if (!recovery) return undefined;
+
+  const serverTarget = serverConfig.windowsPrinter?.trim();
+  if (!serverTarget || samePrinterName(serverTarget, recovery.previousName)) {
+    return recovery.target.trim();
+  }
+  return undefined;
+}
+
 function mergeServerPrintersWithLocal(
   serverPrinters: PrintersConfig,
   localPrinters?: PrintersConfig,
+  recoveryOverrides?: RecoveredWindowsPrinterOverrides,
 ): PrintersConfig {
   const merged: PrintersConfig = { ...(localPrinters || {}) };
 
@@ -247,6 +287,9 @@ function mergeServerPrintersWithLocal(
     const localConfig = localPrinters?.[type];
     const serverHasTarget = hasPhysicalPrinterTarget(serverConfig);
     const localHasTarget = hasPhysicalPrinterTarget(localConfig);
+    const recoveredWindowsTarget = recoveredLocalWindowsTarget(serverConfig, recoveryOverrides);
+    const defaultLabelWidth = type === PrinterType.FABRIC_TAG ? 20 : undefined;
+    const defaultLabelHeight = type === PrinterType.FABRIC_TAG ? 60 : undefined;
 
     if (!serverHasTarget && localHasTarget && localConfig) {
       const config = {
@@ -260,8 +303,8 @@ function mergeServerPrintersWithLocal(
         baudRate: localConfig.baudRate ?? serverConfig.baudRate,
         charset: localConfig.charset ?? serverConfig.charset,
         cutMode: localConfig.cutMode ?? serverConfig.cutMode,
-        labelWidth: localConfig.labelWidth ?? serverConfig.labelWidth,
-        labelHeight: localConfig.labelHeight ?? serverConfig.labelHeight,
+        labelWidth: localConfig.labelWidth ?? serverConfig.labelWidth ?? defaultLabelWidth,
+        labelHeight: localConfig.labelHeight ?? serverConfig.labelHeight ?? defaultLabelHeight,
       };
       applyStoredTsplMediaTuning(config, localConfig);
       merged[type] = config;
@@ -273,11 +316,12 @@ function mergeServerPrintersWithLocal(
       ...serverConfig,
       charset: localConfig?.charset ?? serverConfig.charset,
       cutMode: localConfig?.cutMode ?? serverConfig.cutMode,
+      windowsPrinter: recoveredWindowsTarget ?? serverConfig.windowsPrinter,
       // Older connect responses omit label dimensions even when they carry a
       // physical target. Preserve the local media size unless the server sent
       // an explicit replacement.
-      labelWidth: serverConfig.labelWidth ?? localConfig?.labelWidth,
-      labelHeight: serverConfig.labelHeight ?? localConfig?.labelHeight,
+      labelWidth: serverConfig.labelWidth ?? localConfig?.labelWidth ?? defaultLabelWidth,
+      labelHeight: serverConfig.labelHeight ?? localConfig?.labelHeight ?? defaultLabelHeight,
     };
     applyStoredTsplMediaTuning(config, localConfig);
     merged[type] = config;
@@ -325,13 +369,31 @@ function normalizeAgentPrinterUpdatePayload(body: Partial<ServerPrinterMapping>)
   return payload;
 }
 
-export function normalizeServerPrinterRows(printers?: ConnectResponse['printers']): LocalPrinterUpsert[] {
+export function normalizeServerPrinterRows(
+  printers?: ConnectResponse['printers'],
+  localPrinters?: PrintersConfig,
+  recoveryOverrides?: RecoveredWindowsPrinterOverrides,
+): LocalPrinterUpsert[] {
   if (!printers?.length) return [];
 
   const rows: LocalPrinterUpsert[] = [];
   for (const item of printers) {
     const result = mapServerPrinter(item);
     if (!result) continue;
+    const localConfig = localPrinters?.[result.type];
+    const explicitPaperWidth = positiveFiniteNumber(item.paperWidth);
+    const explicitPaperHeight = positiveFiniteNumber(item.paperHeight);
+    const paperWidth = explicitPaperWidth
+      ?? (isLabelPrinterType(result.type) ? localConfig?.labelWidth : localConfig?.paperWidth)
+      ?? result.config.paperWidth;
+    const paperHeight = explicitPaperHeight
+      ?? (isLabelPrinterType(result.type) ? localConfig?.labelHeight : undefined)
+      ?? result.config.labelHeight
+      ?? (result.type === PrinterType.FABRIC_TAG ? 60 : undefined)
+      ?? null;
+    const charsPerLine = item.charsPerLine
+      ?? localConfig?.charsPerLine
+      ?? (paperWidth && paperWidth <= 58 ? 32 : 48);
 
     rows.push({
       id: item.id,
@@ -339,13 +401,16 @@ export function normalizeServerPrinterRows(printers?: ConnectResponse['printers'
       displayName: item.displayName || result.config.displayName || result.type,
       name: item.displayName || result.type,
       protocol: result.config.protocol,
-      windowsPrinterName: result.config.windowsPrinter || item.windowsPrinterName || null,
+      windowsPrinterName: recoveredLocalWindowsTarget(result.config, recoveryOverrides)
+        ?? result.config.windowsPrinter
+        ?? item.windowsPrinterName
+        ?? null,
       address: item.address || null,
       port: result.config.port || null,
       baudRate: result.config.baudRate,
-      paperWidth: result.config.paperWidth,
-      paperHeight: item.paperHeight ?? (result.config.labelHeight || null),
-      charsPerLine: result.config.charsPerLine,
+      paperWidth,
+      paperHeight,
+      charsPerLine,
       supportsCut: result.config.supportsCut,
       supportsCashDrawer: result.config.supportsCashDrawer,
       isEnabled: result.config.enabled,
@@ -353,6 +418,41 @@ export function normalizeServerPrinterRows(printers?: ConnectResponse['printers'
     });
   }
   return rows;
+}
+
+/**
+ * Retain an override only while that exact backend row is absent or still
+ * advertises the stale queue it replaced. A genuinely new server target (or
+ * the recovered target being accepted server-side) clears the provenance.
+ */
+export function pruneRecoveredWindowsPrinterOverrides(
+  printers: ConnectResponse['printers'] | undefined,
+  recoveryOverrides?: RecoveredWindowsPrinterOverrides,
+  localPrinters?: PrintersConfig,
+): RecoveredWindowsPrinterOverrides {
+  const next: RecoveredWindowsPrinterOverrides = {};
+  for (const [printerId, recovery] of Object.entries(recoveryOverrides || {})) {
+    const localConfig = Object.values(localPrinters || {}).find(
+      (candidate) => candidate?.serverPrinterId === printerId,
+    );
+    // A queue chosen after automatic recovery is an explicit local decision.
+    // Retarget (rather than delete) the override so an in-flight stale server
+    // response still preserves that choice until the matching PUT is visible.
+    const effectiveRecovery = localConfig?.windowsPrinter?.trim()
+      && !samePrinterName(localConfig.windowsPrinter, recovery.target)
+      ? { ...recovery, target: localConfig.windowsPrinter.trim() }
+      : recovery;
+    const serverPrinter = printers?.find((printer) => printer.id === printerId);
+    if (!serverPrinter) {
+      next[printerId] = effectiveRecovery;
+      continue;
+    }
+    const serverTarget = (serverPrinter.windowsPrinterName || serverPrinter.address || '').trim();
+    if (!serverTarget || samePrinterName(serverTarget, effectiveRecovery.previousName)) {
+      next[printerId] = effectiveRecovery;
+    }
+  }
+  return next;
 }
 
 /**
@@ -1420,8 +1520,19 @@ export class ApiClient {
    * or printer mirror from becoming visible beside old-tenant outbox rows.
    */
   applyConnectResponse(data: ConnectResponse): void {
+    const currentConfig = getConfig();
+    const currentPrinters = currentConfig.printers;
+    const recoveryOverrides = pruneRecoveredWindowsPrinterOverrides(
+      data.printers,
+      currentConfig.recoveredWindowsPrinters,
+      currentPrinters,
+    );
     const serverPrinters = normalizeServerPrinters(data.printers);
-    const localPrinters = normalizeServerPrinterRows(data.printers);
+    const localPrinters = normalizeServerPrinterRows(
+      data.printers,
+      currentPrinters,
+      recoveryOverrides,
+    );
     const legacyPrinterProtocol = normalizeProtocol(data.printerConfig?.protocol);
     const nextConfig: Parameters<typeof setConfig>[0] = {
       agentId: data.agentId,
@@ -1433,6 +1544,7 @@ export class ApiClient {
       ...(data.salonCode && { salonCode: data.salonCode }),
       serverUrl: this.baseUrl,
       isPaired: true,
+      recoveredWindowsPrinters: recoveryOverrides,
       // Apply printer config if provided
       ...(data.printerConfig?.port && { printerPort: data.printerConfig.port }),
       ...(legacyPrinterProtocol && { printerProtocol: legacyPrinterProtocol }),
@@ -1440,7 +1552,11 @@ export class ApiClient {
     };
 
     if (serverPrinters) {
-      const mergedPrinters = mergeServerPrintersWithLocal(serverPrinters, getConfig().printers);
+      const mergedPrinters = mergeServerPrintersWithLocal(
+        serverPrinters,
+        currentPrinters,
+        recoveryOverrides,
+      );
       nextConfig.printers = mergedPrinters;
       nextConfig.multiPrinterMode = true;
       logger.info(`[ApiClient] Applied ${Object.keys(serverPrinters).length} server printer mapping(s) with local target preservation`);
@@ -4062,6 +4178,7 @@ export const printerMappingForTests = {
   normalizeAgentPrinterUpdatePayload,
   normalizeServerPrinters,
   normalizeServerPrinterRows,
+  pruneRecoveredWindowsPrinterOverrides,
 };
 
 // Singleton instance

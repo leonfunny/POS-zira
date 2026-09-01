@@ -352,6 +352,197 @@ describe('ELZAB fiscal protocol routing', () => {
     });
   });
 
+  it('preserves local fabric dimensions through the real mapper and SQL mirror when server omits them', async () => {
+    const { printerMappingForTests } = await import('../src/main/network/api-client');
+    const response = [{
+      id: 'fabric-1',
+      printerType: 'FABRIC_TAG',
+      protocol: 'TSPL',
+      windowsPrinterName: 'Server TSC MB241',
+      paperWidth: null,
+      paperHeight: null,
+      isEnabled: true,
+    }];
+    const local = {
+      [PrinterType.FABRIC_TAG]: {
+        enabled: true,
+        protocol: 'TSPL' as const,
+        windowsPrinter: 'Local TSC MB241',
+        labelWidth: 20,
+        labelHeight: 60,
+        labelGapMm: 0,
+        printSpeed: 2,
+        printDensity: 12,
+        mediaSensor: 'none' as const,
+        labelOriginInsetMm: 1.1,
+      },
+    };
+
+    const server = printerMappingForTests.normalizeServerPrinters(response);
+    expect(server?.[PrinterType.FABRIC_TAG]?.labelWidth).toBeUndefined();
+    expect(printerMappingForTests.mergeServerPrintersWithLocal(server!, local)[PrinterType.FABRIC_TAG])
+      .toMatchObject({
+        windowsPrinter: 'Server TSC MB241',
+        labelWidth: 20,
+        labelHeight: 60,
+      });
+    expect(printerMappingForTests.normalizeServerPrinterRows(response, local)[0])
+      .toMatchObject({ paperWidth: 20, paperHeight: 60 });
+  });
+
+  it('materializes 20x60 fabric dimensions for a fresh server pairing that omits them', async () => {
+    const { printerMappingForTests } = await import('../src/main/network/api-client');
+    const response = [{
+      id: 'fresh-fabric-1',
+      printerType: 'FABRIC_TAG',
+      protocol: 'TSPL',
+      windowsPrinterName: 'TSC MB241',
+      paperWidth: null,
+      paperHeight: null,
+      isEnabled: true,
+    }];
+
+    const server = printerMappingForTests.normalizeServerPrinters(response);
+    const merged = printerMappingForTests.mergeServerPrintersWithLocal(server!);
+
+    expect(merged[PrinterType.FABRIC_TAG]).toMatchObject({
+      protocol: 'TSPL',
+      windowsPrinter: 'TSC MB241',
+      labelWidth: 20,
+      labelHeight: 60,
+    });
+    expect(printerMappingForTests.normalizeServerPrinterRows(response)[0]).toMatchObject({
+      paperWidth: 20,
+      paperHeight: 60,
+    });
+  });
+
+  it('keeps a recovered local queue through stale refresh but accepts a new server target', async () => {
+    const { printerMappingForTests } = await import('../src/main/network/api-client');
+    const staleResponse = [{
+      id: 'fabric-1',
+      printerType: 'FABRIC_TAG',
+      protocol: 'TSPL',
+      windowsPrinterName: 'TSC MB241',
+      paperWidth: 20,
+      paperHeight: 60,
+      isEnabled: true,
+    }];
+    const local = {
+      [PrinterType.FABRIC_TAG]: {
+        enabled: true,
+        protocol: 'TSPL' as const,
+        serverPrinterId: 'fabric-1',
+        windowsPrinter: 'TSC MB241 (Copy 1)',
+      },
+    };
+    const recoveryOverrides = {
+      'fabric-1': {
+        previousName: 'TSC MB241',
+        target: 'TSC MB241 (Copy 1)',
+      },
+    };
+
+    const staleServer = printerMappingForTests.normalizeServerPrinters(staleResponse)!;
+    expect(printerMappingForTests.mergeServerPrintersWithLocal(
+      staleServer,
+      local,
+      recoveryOverrides,
+    )[PrinterType.FABRIC_TAG])
+      .toMatchObject({
+        windowsPrinter: 'TSC MB241 (Copy 1)',
+      });
+    expect(printerMappingForTests.normalizeServerPrinterRows(
+      staleResponse,
+      local,
+      recoveryOverrides,
+    )[0])
+      .toMatchObject({ windowsPrinterName: 'TSC MB241 (Copy 1)' });
+
+    const changedResponse = [{ ...staleResponse[0], windowsPrinterName: 'TSC MB241 Production' }];
+    const changedServer = printerMappingForTests.normalizeServerPrinters(changedResponse)!;
+    const pruned = printerMappingForTests.pruneRecoveredWindowsPrinterOverrides(
+      changedResponse,
+      recoveryOverrides,
+    );
+    expect(pruned).toEqual({});
+    expect(printerMappingForTests.mergeServerPrintersWithLocal(changedServer, local, pruned)[PrinterType.FABRIC_TAG])
+      .toMatchObject({ windowsPrinter: 'TSC MB241 Production' });
+    expect(printerMappingForTests.normalizeServerPrinterRows(changedResponse, local, pruned)[0])
+      .toMatchObject({ windowsPrinterName: 'TSC MB241 Production' });
+  });
+
+  it('does not restore a recovered queue over a later explicit local selection', async () => {
+    const { printerMappingForTests } = await import('../src/main/network/api-client');
+    const staleResponse = [{
+      id: 'fabric-1',
+      printerType: 'FABRIC_TAG',
+      protocol: 'TSPL',
+      windowsPrinterName: 'TSC Old Queue',
+      isEnabled: true,
+    }];
+    const recoveryOverrides = {
+      'fabric-1': {
+        previousName: 'TSC Old Queue',
+        target: 'TSC Auto Recovered Queue',
+      },
+    };
+    const local = {
+      [PrinterType.FABRIC_TAG]: {
+        enabled: true,
+        protocol: 'TSPL' as const,
+        serverPrinterId: 'fabric-1',
+        windowsPrinter: 'TSC Operator Queue',
+      },
+    };
+
+    const pruned = printerMappingForTests.pruneRecoveredWindowsPrinterOverrides(
+      staleResponse,
+      recoveryOverrides,
+      local,
+    );
+    expect(pruned).toEqual({
+      'fabric-1': {
+        previousName: 'TSC Old Queue',
+        target: 'TSC Operator Queue',
+      },
+    });
+
+    const server = printerMappingForTests.normalizeServerPrinters(staleResponse)!;
+    expect(printerMappingForTests.mergeServerPrintersWithLocal(server, local, pruned)[PrinterType.FABRIC_TAG])
+      .toMatchObject({ windowsPrinter: 'TSC Operator Queue' });
+  });
+
+  it('applies recovered queue names independently to multiple rows of one printer type', async () => {
+    const { printerMappingForTests } = await import('../src/main/network/api-client');
+    const response = [
+      {
+        id: 'label-1',
+        printerType: 'LABEL',
+        protocol: 'TSPL',
+        windowsPrinterName: 'TSC Primary',
+        isEnabled: true,
+      },
+      {
+        id: 'label-2',
+        printerType: 'LABEL',
+        protocol: 'TSPL',
+        windowsPrinterName: 'TSC Secondary',
+        isEnabled: true,
+      },
+    ];
+
+    const rows = printerMappingForTests.normalizeServerPrinterRows(response, undefined, {
+      'label-2': {
+        previousName: 'TSC Secondary',
+        target: 'TSC Secondary (Copy 1)',
+      },
+    });
+
+    expect(rows.find((row: any) => row.id === 'label-1')?.windowsPrinterName).toBe('TSC Primary');
+    expect(rows.find((row: any) => row.id === 'label-2')?.windowsPrinterName).toBe('TSC Secondary (Copy 1)');
+  });
+
   it('routes print jobs by ELZAB server printerId through ElzabDriver', async () => {
     const row = {
       id: 'elzab-1',

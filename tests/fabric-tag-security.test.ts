@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { BrowserWindow } from 'electron';
 import { describe, expect, it, vi } from 'vitest';
 import {
   FABRIC_TAG_LIMITS,
@@ -12,7 +13,12 @@ import {
   parseFabricTagLogoDataUrl,
 } from '../src/main/hardware/tsc/fabric-tag-input';
 import { applyStoredTsplMediaTuning } from '../src/main/hardware/tsc/tspl-config-merge';
-import { resolveFabricTagFitHeight } from '../src/main/hardware/tsc/fabric-tag-renderer';
+import {
+  assertNoHorizontalEdgeContact,
+  buildFabricTagHtml,
+  renderFabricTagBitmap,
+  resolveFabricTagFitHeight,
+} from '../src/main/hardware/tsc/fabric-tag-renderer';
 
 vi.mock('electron', () => ({ BrowserWindow: vi.fn() }));
 
@@ -140,6 +146,12 @@ describe('fabric tag main-process trust boundary', () => {
     )).toThrow(/logoDataUrl/);
   });
 
+  it('rejects a PNG header with no image-data chunk', () => {
+    const headerOnlyPng =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAAElFTkSuQmCC';
+    expect(() => parseFabricTagLogoDataUrl(headerOnlyPng)).toThrow(/image data is missing/i);
+  });
+
   it('keeps line and flat drying independent until that workshop policy is approved', () => {
     expect(parseFabricTagData(validTag({ careSymbols: ['DRY_LINE', 'DRY_FLAT'] })).careSymbols)
       .toEqual(['DRY_LINE', 'DRY_FLAT']);
@@ -177,6 +189,130 @@ describe('fabric tag main-process trust boundary', () => {
 });
 
 describe('fabric tag defence in depth', () => {
+  it('wraps every operator-entered text block inside the printable width', () => {
+    const html = buildFabricTagHtml({
+      brandName: 'UNBROKEN-BRAND-NAME-THAT-IS-LONG',
+      composition: 'UNBROKENCOMPOSITIONTHATISLONG',
+      careText: 'UNBROKENCARETEXTTHATISLONG',
+      quantity: 1,
+    }, 160, 480);
+
+    expect(html).toContain('.brand, .size, .composition, .care-text, .price');
+    expect(html).toContain('overflow-wrap: anywhere');
+    expect(html).toContain('max-width: 100%');
+  });
+
+  it('fails closed before RAW when rasterised ink still reaches a horizontal edge', () => {
+    const clipped = Buffer.alloc(4, 0xff);
+    clipped[0] &= 0x7f; // first dot of the first row is black
+
+    expect(() => assertNoHorizontalEdgeContact({
+      widthDots: 16,
+      heightDots: 2,
+      widthBytes: 2,
+      data: clipped,
+    })).toThrow(/left edge.*being cut off/i);
+
+    const inset = Buffer.alloc(4, 0xff);
+    inset[0] &= 0xbf; // second dot is black, leaving the boundary white
+    expect(() => assertNoHorizontalEdgeContact({
+      widthDots: 16,
+      heightDots: 2,
+      widthBytes: 2,
+      data: inset,
+    })).not.toThrow();
+  });
+
+  it('applies the horizontal edge guard to the captured bitmap before returning it', async () => {
+    const bgra = Buffer.alloc(16 * 2 * 4, 0xff);
+    // First pixel: opaque black BGRA. Every other pixel remains opaque white.
+    bgra[0] = 0;
+    bgra[1] = 0;
+    bgra[2] = 0;
+    bgra[3] = 0xff;
+    const destroy = vi.fn();
+    vi.mocked(BrowserWindow).mockImplementationOnce(function MockBrowserWindow() {
+      const image = {
+        getSize: () => ({ width: 16, height: 2 }),
+        resize: vi.fn(),
+        toBitmap: () => bgra,
+      };
+      return {
+        loadURL: vi.fn(async () => undefined),
+        webContents: { capturePage: vi.fn(async () => image) },
+        destroy,
+      } as any;
+    });
+
+    await expect(renderFabricTagBitmap({ brandName: 'Zira', quantity: 1 }, 16, 2))
+      .rejects.toThrow(/left edge.*being cut off/i);
+    expect(destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails before capture when Chromium cannot decode a header-valid logo', async () => {
+    const capturePage = vi.fn();
+    const destroy = vi.fn();
+    vi.mocked(BrowserWindow).mockImplementationOnce(function MockBrowserWindow() {
+      return {
+        loadURL: vi.fn(async () => undefined),
+        webContents: {
+          executeJavaScript: vi.fn(async () => ({
+            decodedOk: false,
+            complete: true,
+            naturalWidth: 0,
+            naturalHeight: 0,
+          })),
+          capturePage,
+        },
+        isDestroyed: vi.fn(() => false),
+        destroy,
+      } as any;
+    });
+
+    await expect(renderFabricTagBitmap({
+      brandName: '',
+      logoDataUrl: `data:image/png;base64,${ONE_PIXEL_PNG.toString('base64')}`,
+      quantity: 1,
+    }, 160, 120)).rejects.toMatchObject({
+      name: 'FabricTagInputError',
+      failureClass: 'FINAL',
+    });
+    expect(capturePage).not.toHaveBeenCalled();
+    expect(destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails before capture when image.decode rejects despite matching dimensions', async () => {
+    const capturePage = vi.fn();
+    const destroy = vi.fn();
+    vi.mocked(BrowserWindow).mockImplementationOnce(function MockBrowserWindow() {
+      return {
+        loadURL: vi.fn(async () => undefined),
+        webContents: {
+          executeJavaScript: vi.fn(async () => ({
+            decodedOk: false,
+            complete: true,
+            naturalWidth: 1,
+            naturalHeight: 1,
+          })),
+          capturePage,
+        },
+        isDestroyed: vi.fn(() => false),
+        destroy,
+      } as any;
+    });
+
+    await expect(renderFabricTagBitmap({
+      brandName: '',
+      logoDataUrl: `data:image/png;base64,${ONE_PIXEL_PNG.toString('base64')}`,
+      quantity: 1,
+    }, 160, 120)).rejects.toMatchObject({
+      name: 'FabricTagInputError',
+      failureClass: 'FINAL',
+    });
+    expect(capturePage).not.toHaveBeenCalled();
+    expect(destroy).toHaveBeenCalledTimes(1);
+  });
+
   it('fails closed when natural content exceeds the configured media height', () => {
     expect(resolveFabricTagFitHeight(120, 120)).toBe(120);
     expect(resolveFabricTagFitHeight(111, 120)).toBe(112);

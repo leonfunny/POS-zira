@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CARE_SYMBOLS,
   FABRIC_TAG_CONFIRM_THRESHOLD,
@@ -11,6 +11,7 @@ import {
 } from '../../../shared/types';
 import { careSymbolSvg } from '../../../shared/care-symbols';
 import { readRasterImageDimensions } from '../../../shared/fabric-tag-image';
+import { parseProductMoneyInputToGrosze } from '../../../shared/product-money';
 import rlog from '../../utils/logger';
 import ConfirmActionDialog from '../pos/ConfirmActionDialog';
 
@@ -63,17 +64,59 @@ export default function FabricTagComposer({ t, labelWidthMm, labelHeightMm, read
   const [status, setStatus] = useState<Status>({ type: 'idle', message: '' });
   const [confirmingLargeBatch, setConfirmingLargeBatch] = useState(false);
   const printInFlight = useRef(false);
+  const logoReadGeneration = useRef(0);
+  const logoReader = useRef<FileReader | null>(null);
+  const logoReadInFlight = useRef(false);
+  const [logoLoading, setLogoLoading] = useState(false);
 
   // Preview keeps the media aspect ratio so a 40x60 tag does not look square.
   const previewWidth = 160;
   const previewHeight = Math.round(previewWidth * (labelHeightMm / Math.max(1, labelWidthMm)));
 
+  const parsedPriceGrosze = useMemo(() => (
+    parseProductMoneyInputToGrosze(price, { allowBlank: true, allowZero: true })
+  ), [price]);
+  const priceInvalid = parsedPriceGrosze === undefined
+    || (typeof parsedPriceGrosze === 'number' && parsedPriceGrosze > FABRIC_TAG_LIMITS.priceGrosze);
   const priceGrosze = useMemo(() => {
-    const parsed = Number.parseFloat(price.replace(',', '.'));
-    return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 100) : undefined;
-  }, [price]);
+    if (
+      typeof parsedPriceGrosze !== 'number'
+      || parsedPriceGrosze <= 0
+      || parsedPriceGrosze > FABRIC_TAG_LIMITS.priceGrosze
+    ) return undefined;
+    return parsedPriceGrosze;
+  }, [parsedPriceGrosze]);
 
-  const canPrint = ready && (brandName.trim().length > 0 || !!logoDataUrl) && status.type !== 'working';
+  const canPrint = ready
+    && (brandName.trim().length > 0 || !!logoDataUrl)
+    && !priceInvalid
+    && !logoLoading
+    && status.type !== 'working';
+
+  useEffect(() => () => {
+    logoReadGeneration.current += 1;
+    logoReadInFlight.current = false;
+    const reader = logoReader.current;
+    logoReader.current = null;
+    if (reader && reader.readyState === 1) reader.abort();
+  }, []);
+
+  const completeLogoRead = (generation: number): boolean => {
+    if (generation !== logoReadGeneration.current) return false;
+    logoReader.current = null;
+    logoReadInFlight.current = false;
+    setLogoLoading(false);
+    return true;
+  };
+
+  const cancelLogoRead = () => {
+    logoReadGeneration.current += 1;
+    logoReadInFlight.current = false;
+    const reader = logoReader.current;
+    logoReader.current = null;
+    if (reader && reader.readyState === 1) reader.abort();
+    setLogoLoading(false);
+  };
 
   const toggleSymbol = (symbol: CareSymbol) => {
     setCareSymbols((current) => {
@@ -95,13 +138,25 @@ export default function FabricTagComposer({ t, labelWidthMm, labelHeightMm, read
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
+
+    // A replacement owns a new generation immediately. That makes late
+    // arrayBuffer/FileReader completions from the previous selection inert.
+    cancelLogoRead();
+    const generation = logoReadGeneration.current;
+    logoReadInFlight.current = true;
+    setLogoLoading(true);
+
     const mimeType = file.type.toLowerCase();
     if (!(FABRIC_TAG_RASTER_MIME_TYPES as readonly string[]).includes(mimeType)) {
-      setStatus({ type: 'error', message: t('fabricTag.logoReadFailed') });
+      if (completeLogoRead(generation)) {
+        setStatus({ type: 'error', message: t('fabricTag.logoReadFailed') });
+      }
       return;
     }
     if (file.size > FABRIC_TAG_LIMITS.logoBytes) {
-      setStatus({ type: 'error', message: t('fabricTag.logoTooLarge') });
+      if (completeLogoRead(generation)) {
+        setStatus({ type: 'error', message: t('fabricTag.logoTooLarge') });
+      }
       return;
     }
     try {
@@ -109,6 +164,7 @@ export default function FabricTagComposer({ t, labelWidthMm, labelHeightMm, read
       // compressed image with a huge declared canvas away from the renderer's
       // image decoder and live preview.
       const bytes = new Uint8Array(await file.arrayBuffer());
+      if (generation !== logoReadGeneration.current) return;
       const { width, height } = readRasterImageDimensions(bytes, mimeType as FabricTagRasterMime);
       if (
         width < 1
@@ -121,20 +177,35 @@ export default function FabricTagComposer({ t, labelWidthMm, labelHeightMm, read
       }
 
       const reader = new FileReader();
+      logoReader.current = reader;
       reader.onload = () => {
-        setLogoDataUrl(typeof reader.result === 'string' ? reader.result : null);
-        setStatus({ type: 'idle', message: '' });
+        if (!completeLogoRead(generation)) return;
+        const result = typeof reader.result === 'string' ? reader.result : null;
+        setLogoDataUrl(result);
+        setStatus(result
+          ? { type: 'idle', message: '' }
+          : { type: 'error', message: t('fabricTag.logoReadFailed') });
       };
-      reader.onerror = () => setStatus({ type: 'error', message: t('fabricTag.logoReadFailed') });
+      reader.onerror = () => {
+        if (!completeLogoRead(generation)) return;
+        setStatus({ type: 'error', message: t('fabricTag.logoReadFailed') });
+      };
       reader.readAsDataURL(file);
     } catch (error) {
+      if (!completeLogoRead(generation)) return;
       rlog.warn('[FabricTagComposer] Rejected logo before preview:', error);
       setStatus({ type: 'error', message: t('fabricTag.logoReadFailed') });
     }
   };
 
+  const handleRemoveLogo = () => {
+    cancelLogoRead();
+    setLogoDataUrl(null);
+    setStatus((current) => current.type === 'working' ? current : { type: 'idle', message: '' });
+  };
+
   const handlePrint = async (confirmed = false) => {
-    if (!canPrint || printInFlight.current) return;
+    if (!canPrint || logoReadInFlight.current || printInFlight.current) return;
     if (!confirmed && quantity > FABRIC_TAG_CONFIRM_THRESHOLD) {
       setConfirmingLargeBatch(true);
       return;
@@ -225,7 +296,20 @@ export default function FabricTagComposer({ t, labelWidthMm, labelHeightMm, read
           </div>
           <div>
             <label className={labelClass}>{t('fabricTag.price')}</label>
-            <input type="text" inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} className={inputClass} />
+            <input
+              type="text"
+              inputMode="decimal"
+              value={price}
+              onChange={(e) => setPrice(e.target.value)}
+              aria-invalid={priceInvalid}
+              aria-describedby={priceInvalid ? 'fabric-tag-price-error' : undefined}
+              className={`${inputClass} ${priceInvalid ? 'border-red-400 focus:ring-red-200 focus:border-red-400' : ''}`}
+            />
+            {priceInvalid && (
+              <p id="fabric-tag-price-error" role="alert" className="mt-1 text-xs text-red-600">
+                {t('products.edit.priceInvalid')}
+              </p>
+            )}
           </div>
           <div className="col-span-2">
             <label className={labelClass}>{t('fabricTag.composition')}</label>
@@ -300,19 +384,24 @@ export default function FabricTagComposer({ t, labelWidthMm, labelHeightMm, read
       </div>
 
       <div className="flex items-center gap-2">
-        <label className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer">
+        <label
+          aria-busy={logoLoading}
+          className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
+        >
           {t('fabricTag.logo')}
           <input
             type="file"
             accept={FABRIC_TAG_RASTER_MIME_TYPES.join(',')}
             onChange={handleLogoChange}
+            disabled={status.type === 'working'}
             className="hidden"
           />
         </label>
-        {logoDataUrl && (
+        {(logoDataUrl || logoLoading) && (
           <button
             type="button"
-            onClick={() => setLogoDataUrl(null)}
+            onClick={handleRemoveLogo}
+            disabled={status.type === 'working'}
             className="px-3 py-2 rounded-lg text-sm text-slate-500 hover:bg-slate-50 transition-colors cursor-pointer"
           >
             {t('fabricTag.removeLogo')}

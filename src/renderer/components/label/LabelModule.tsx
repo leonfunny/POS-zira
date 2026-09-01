@@ -405,7 +405,8 @@ export default function LabelModule({ language }: LabelModuleProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedProductId, setSelectedProductId] = useState('');
   const [selectedFabricTemplateId, setSelectedFabricTemplateId] = useState('');
-  const [fabricTemplates, setFabricTemplates] = useState<Map<string, FabricTagTemplate>>(new Map());
+  const [fabricTemplateIds, setFabricTemplateIds] = useState<string[]>([]);
+  const [selectedFabricTemplate, setSelectedFabricTemplate] = useState<FabricTagTemplate | null>(null);
   const [fabricTemplatesLoadFailed, setFabricTemplatesLoadFailed] = useState(false);
 
   useEffect(() => {
@@ -414,14 +415,19 @@ export default function LabelModule({ language }: LabelModuleProps) {
     // fabric panel, not the whole window. Reaching straight through here
     // white-screened the app the first time the two preloads disagreed.
     const api = window.electronAPI?.pos?.fabricTagTemplates;
-    if (!api) {
+    if (!api || typeof api.listIds !== 'function' || typeof api.get !== 'function') {
       rlog.warn('[LabelModule] fabricTagTemplates bridge missing; fabric panel unavailable');
       return;
     }
-    api.list()
-      .then((rows: FabricTagTemplate[]) => {
+    api.listIds()
+      .then((rows: string[]) => {
         if (cancelled) return;
-        setFabricTemplates(new Map(rows.map((row) => [row.templateId, row])));
+        const uniqueIds = Array.from(new Set(
+          (Array.isArray(rows) ? rows : [])
+            .map((row) => String(row || '').trim())
+            .filter(Boolean),
+        ));
+        setFabricTemplateIds(uniqueIds);
         setFabricTemplatesLoadFailed(false);
       })
       .catch((err: unknown) => {
@@ -510,18 +516,18 @@ export default function LabelModule({ language }: LabelModuleProps) {
     });
   }, [configuredCategoryIds, pinnedProductIds, printableProducts, setupConfigured]);
 
-  const availableFabricTemplates = useMemo(() => {
-    const available = new Map<string, FabricTagTemplate>();
+  const availableFabricTemplateIds = useMemo(() => {
+    const knownTemplateIds = new Set(fabricTemplateIds);
+    const available = new Set<string>();
     // Fabric templates are data-gated independently from the EAN selection.
     // Catalogue siblings currently represent colours, so expose each style
     // key once instead of turning colour rows into separate print identities.
     for (const product of printableProducts) {
       const templateId = String(product.template_id || '').trim();
-      const template = fabricTemplates.get(templateId);
-      if (template && !available.has(templateId)) available.set(templateId, template);
+      if (templateId && knownTemplateIds.has(templateId)) available.add(templateId);
     }
-    return Array.from(available.values());
-  }, [fabricTemplates, printableProducts]);
+    return Array.from(available);
+  }, [fabricTemplateIds, printableProducts]);
 
   const filterCategories = useMemo(() => {
     const representedCategoryIds = new Set(
@@ -561,19 +567,42 @@ export default function LabelModule({ language }: LabelModuleProps) {
   );
 
   useEffect(() => {
-    if (availableFabricTemplates.length === 0) {
+    if (availableFabricTemplateIds.length === 0) {
       if (selectedFabricTemplateId) setSelectedFabricTemplateId('');
       return;
     }
-    if (!availableFabricTemplates.some((template) => template.templateId === selectedFabricTemplateId)) {
-      setSelectedFabricTemplateId(availableFabricTemplates[0].templateId);
+    if (!availableFabricTemplateIds.includes(selectedFabricTemplateId)) {
+      setSelectedFabricTemplateId(availableFabricTemplateIds[0]);
     }
-  }, [availableFabricTemplates, selectedFabricTemplateId]);
+  }, [availableFabricTemplateIds, selectedFabricTemplateId]);
 
-  const selectedFabricTemplate = useMemo(
-    () => availableFabricTemplates.find((template) => template.templateId === selectedFabricTemplateId) || null,
-    [availableFabricTemplates, selectedFabricTemplateId],
-  );
+  useEffect(() => {
+    let cancelled = false;
+    const api = window.electronAPI?.pos?.fabricTagTemplates;
+    if (!selectedFabricTemplateId || !api || typeof api.get !== 'function') {
+      setSelectedFabricTemplate(null);
+      return;
+    }
+
+    setSelectedFabricTemplate(null);
+    api.get(selectedFabricTemplateId)
+      .then((template: FabricTagTemplate | null) => {
+        if (cancelled) return;
+        if (!template || template.templateId !== selectedFabricTemplateId) {
+          throw new Error(`Template ${selectedFabricTemplateId} was not found`);
+        }
+        setSelectedFabricTemplate(template);
+        setFabricTemplatesLoadFailed(false);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        rlog.error('[LabelModule] Failed to load fabric tag templates:', err);
+        setSelectedFabricTemplate(null);
+        setFabricTemplatesLoadFailed(true);
+      });
+
+    return () => { cancelled = true; };
+  }, [selectedFabricTemplateId]);
 
   const fabricTagPrinterReady = isFabricTagPrinterReady(config?.printers?.FABRIC_TAG);
 
@@ -824,7 +853,11 @@ export default function LabelModule({ language }: LabelModuleProps) {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       const tagName = target?.tagName;
-      const isTyping = tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT';
+      const isTyping = tagName === 'INPUT'
+        || tagName === 'TEXTAREA'
+        || tagName === 'SELECT'
+        || !!target?.isContentEditable;
+      const isInteractive = !!target?.closest('button, a, [role="button"], [role="dialog"]');
 
       if (settingsOpen) {
         if (event.key === 'Escape') {
@@ -833,6 +866,8 @@ export default function LabelModule({ language }: LabelModuleProps) {
         }
         return;
       }
+
+      if (isTyping || isInteractive) return;
 
       if (event.key === '/' || (event.ctrlKey && event.key.toLowerCase() === 'f')) {
         event.preventDefault();
@@ -845,8 +880,6 @@ export default function LabelModule({ language }: LabelModuleProps) {
         setQuery('');
         return;
       }
-
-      if (isTyping) return;
 
       if (event.key === 'Enter') {
         event.preventDefault();
@@ -999,7 +1032,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
               </div>
             )}
 
-            {selectedFabricTemplate && (
+            {availableFabricTemplateIds.length > 0 && (
               <section className="space-y-2" aria-label={tOr('fabricTag.printRunTitle', 'Fabric care labels')}>
                 <label className="block space-y-1">
                   <span className="text-xs font-extrabold uppercase tracking-wide text-slate-400">
@@ -1007,28 +1040,30 @@ export default function LabelModule({ language }: LabelModuleProps) {
                   </span>
                   <select
                     aria-label={tOr('fabricTag.title', 'Fabric tag')}
-                    value={selectedFabricTemplate.templateId}
+                    value={selectedFabricTemplateId}
                     onChange={(event) => {
                       setSelectedFabricTemplateId(event.target.value);
                       setFabricStatus(null);
                     }}
                     className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-extrabold text-slate-900 outline-none focus:ring-2 focus:ring-emerald-200"
                   >
-                    {availableFabricTemplates.map((template) => (
-                      <option key={template.templateId} value={template.templateId}>{template.templateId}</option>
+                    {availableFabricTemplateIds.map((templateId) => (
+                      <option key={templateId} value={templateId}>{templateId}</option>
                     ))}
                   </select>
                 </label>
-                <FabricTagPrintPanel
-                  template={selectedFabricTemplate}
-                  styleName={selectedFabricTemplate.templateId}
-                  // Catalogue siblings are colours for the current LOTUS data,
-                  // not sizes. Wait for approved size data instead of guessing.
-                  variants={NO_FABRIC_TAG_SIZES}
-                  ready={fabricTagPrinterReady}
-                  t={tOr}
-                  onStatus={setFabricStatus}
-                />
+                {selectedFabricTemplate && (
+                  <FabricTagPrintPanel
+                    template={selectedFabricTemplate}
+                    styleName={selectedFabricTemplate.templateId}
+                    // Catalogue siblings are colours for the current LOTUS data,
+                    // not sizes. Wait for approved size data instead of guessing.
+                    variants={NO_FABRIC_TAG_SIZES}
+                    ready={fabricTagPrinterReady}
+                    t={tOr}
+                    onStatus={setFabricStatus}
+                  />
+                )}
                 {fabricStatus && (
                   <div
                     role="status"

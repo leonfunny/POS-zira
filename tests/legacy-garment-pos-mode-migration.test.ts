@@ -66,4 +66,31 @@ describe('legacy garment POS mode migration', () => {
     setConfigValue('posMode', 'garment' as any);
     expect(storeData.get('posMode')).toBe('retail');
   });
+
+  it('retargets recovery provenance when an operator selects another Windows queue', () => {
+    storeData.set('recoveredWindowsPrinters', {
+      'fabric-1': {
+        previousName: 'TSC Old Queue',
+        target: 'TSC Auto Recovered Queue',
+      },
+    });
+
+    setConfig({
+      printers: {
+        FABRIC_TAG: {
+          enabled: true,
+          protocol: 'TSPL',
+          serverPrinterId: 'fabric-1',
+          windowsPrinter: 'TSC Operator Queue',
+        },
+      },
+    });
+
+    expect(storeData.get('recoveredWindowsPrinters')).toEqual({
+      'fabric-1': {
+        previousName: 'TSC Old Queue',
+        target: 'TSC Operator Queue',
+      },
+    });
+  });
 });

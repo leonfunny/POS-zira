@@ -88,14 +88,25 @@ export const fabricTagTemplateRepo = {
   /** Template ids that have care-label content, for marking them in the UI. */
   listTemplateIds(): string[] {
     const rows = database.all<{ template_id: string }>(
-      'SELECT template_id FROM fabric_tag_templates',
+      `SELECT template_id
+       FROM fabric_tag_templates
+       WHERE TRIM(COALESCE(brand_name, '')) <> ''
+          OR TRIM(COALESCE(logo_data_url, '')) <> ''`,
     );
     return rows.map((row) => row.template_id);
   },
 
   list(): FabricTagTemplate[] {
+    // Keep this legacy summary endpoint blob-free. A valid logo can be 512KiB;
+    // selecting every logo into SQL.js and structured-cloning the result can
+    // multiply hundreds of MiB across main/renderer. Call get(id) for the one
+    // template whose full payload is actually needed.
     const rows = database.all<FabricTagTemplateRow>(
-      'SELECT * FROM fabric_tag_templates ORDER BY updated_at DESC',
+      `SELECT template_id, brand_name, NULL AS logo_data_url, composition,
+              care_symbols, care_text, fabric, layout, backend_id, synced,
+              synced_at, updated_at
+       FROM fabric_tag_templates
+       ORDER BY updated_at DESC`,
     );
     return rows.map(toTemplate);
   },

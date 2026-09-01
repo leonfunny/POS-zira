@@ -19,7 +19,11 @@ import { BrowserWindow } from 'electron';
 import type { FabricTagData } from '../../../shared/types';
 import { careSymbolSvg } from '../../../shared/care-symbols';
 import logger from '../../logger';
-import { parseFabricTagLogoDataUrl } from './fabric-tag-input';
+import {
+  FabricTagInputError,
+  parseFabricTagLogoDataUrl,
+  type ParsedFabricTagLogo,
+} from './fabric-tag-input';
 
 /** A packed monochrome image, one bit per dot, rows padded to whole bytes. */
 export interface MonoBitmap {
@@ -63,6 +67,53 @@ export function validateFabricTagRasterDimensions(widthDots: number, heightDots:
   if (widthDots * heightDots > FABRIC_TAG_RENDER_LIMITS.maxPixels) {
     throw new RangeError(
       `Fabric tag raster may not exceed ${FABRIC_TAG_RENDER_LIMITS.maxPixels} pixels`,
+    );
+  }
+}
+
+interface DecodedLogoState {
+  decodedOk: boolean;
+  complete: boolean;
+  naturalWidth: number;
+  naturalHeight: number;
+}
+
+async function assertFabricTagLogoDecoded(
+  webContents: Electron.WebContents,
+  expected: ParsedFabricTagLogo,
+): Promise<void> {
+  // Header parsing prevents declared-canvas bombs, but it cannot prove that
+  // Chromium can decode the full file. Await the actual image decoder before
+  // capture; a broken image otherwise suppresses the brand and produces a
+  // plausible all-white bitmap that the spooler reports as successful.
+  const state = await webContents.executeJavaScript(`(() => {
+    const image = document.querySelector('img.logo');
+    if (!image) return null;
+    const read = (decodedOk) => ({
+      decodedOk,
+      complete: image.complete,
+      naturalWidth: image.naturalWidth,
+      naturalHeight: image.naturalHeight,
+    });
+    if (typeof image.decode === 'function') {
+      return image.decode().then(() => read(true), () => read(false));
+    }
+    if (image.complete) return read(image.naturalWidth > 0 && image.naturalHeight > 0);
+    return new Promise((resolve) => {
+      image.addEventListener('load', () => resolve(read(true)), { once: true });
+      image.addEventListener('error', () => resolve(read(false)), { once: true });
+    });
+  })()`);
+  const decoded = state as DecodedLogoState | null;
+  if (
+    !decoded?.decodedOk
+    || !decoded.complete
+    || decoded.naturalWidth !== expected.width
+    || decoded.naturalHeight !== expected.height
+  ) {
+    throw new FabricTagInputError(
+      'logoDataUrl',
+      'a raster image that decodes to its declared dimensions',
     );
   }
 }
@@ -165,10 +216,14 @@ export function buildFabricTagHtml(
     overflow: hidden;
   }
   .logo { max-width: 100%; max-height: ${Math.round((heightDots ?? widthDots * 3) * 0.3)}px; object-fit: contain; }
+  .brand, .size, .composition, .care-text, .price {
+    max-width: 100%; min-width: 0;
+    overflow-wrap: anywhere; word-break: break-word;
+  }
   .brand { font-size: ${brandSize}px; letter-spacing: ${Math.round(brandSize * 0.08)}px; line-height: 1.1; text-transform: uppercase; }
   .size { font-size: ${sizeSize}px; line-height: 1.05; }
   .composition { font-size: ${bodySize}px; line-height: 1.25; }
-  .symbols { display: flex; flex-wrap: wrap; justify-content: center; gap: ${Math.round(symbolPx * symbolGapRatio)}px; }
+  .symbols { display: flex; flex-wrap: wrap; justify-content: center; max-width: 100%; min-width: 0; gap: ${Math.round(symbolPx * symbolGapRatio)}px; }
   .care { display: block; }
   .care-text { font-size: ${smallSize}px; line-height: 1.25; }
   .price { font-size: ${bodySize}px; }
@@ -265,11 +320,11 @@ export function resolveFabricTagFitHeight(
 }
 
 /**
- * Warn when ink reaches a side edge. On a 20mm ribbon there is no room to
+ * Reject when ink reaches a side edge. On a 20mm ribbon there is no room to
  * spare, and silent clipping is how "NATURALNY LEN" first printed as
  * "ATURALNY LE" -- the kind of fault nobody notices until the garments ship.
  */
-function warnOnEdgeContact(bitmap: MonoBitmap): void {
+export function assertNoHorizontalEdgeContact(bitmap: MonoBitmap): void {
   const columnHasInk = (x: number): boolean => {
     for (let y = 0; y < bitmap.heightDots; y++) {
       const bit = (bitmap.data[y * bitmap.widthBytes + (x >> 3)] >> (7 - (x & 7))) & 1;
@@ -280,7 +335,7 @@ function warnOnEdgeContact(bitmap: MonoBitmap): void {
   const left = columnHasInk(0);
   const right = columnHasInk(bitmap.widthDots - 1);
   if (left || right) {
-    logger.warn(
+    throw new RangeError(
       `[FabricTag] Ink reaches the ${left && right ? 'left and right edges' : left ? 'left edge' : 'right edge'} ` +
       `of a ${(bitmap.widthDots / 8).toFixed(1)}mm tag -- content is being cut off. ` +
       'Shorten the text or widen the media.',
@@ -296,6 +351,7 @@ export async function renderFabricTagBitmap(
 ): Promise<MonoBitmap> {
   validateFabricTagRasterDimensions(widthDots, heightDots);
   const fit = options.fitHeight === true;
+  const parsedLogo = parseFabricTagLogoDataUrl(data.logoDataUrl);
   const html = buildFabricTagHtml(data, widthDots, fit ? null : heightDots);
   const win = new BrowserWindow({
     show: false,
@@ -312,6 +368,7 @@ export async function renderFabricTagBitmap(
 
   try {
     await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    if (parsedLogo) await assertFabricTagLogoDecoded(win.webContents, parsedLogo);
     // Give the compositor a frame to paint the logo and web fonts.
     await new Promise((r) => setTimeout(r, 350));
 
@@ -352,7 +409,7 @@ export async function renderFabricTagBitmap(
     }
 
     const bitmap = packMonochrome(bgra, widthDots, targetHeight);
-    warnOnEdgeContact(bitmap);
+    assertNoHorizontalEdgeContact(bitmap);
     logger.info(`[FabricTag] Rasterised ${widthDots}x${targetHeight} dots (${bitmap.data.length} bytes)`);
     return bitmap;
   } finally {
