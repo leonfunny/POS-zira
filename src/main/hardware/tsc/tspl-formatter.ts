@@ -17,6 +17,7 @@
  *    BITMAP block, because a fabric tag needs Vietnamese diacritics, a logo,
  *    and ISO 3758 care symbols that no internal font can render.
  */
+import QRCode from 'qrcode';
 import type { BarcodeType, FabricTagData, LabelData } from '../../../shared/types';
 import type { MonoBitmap } from './fabric-tag-renderer';
 
@@ -66,6 +67,10 @@ const BARCODE_ZONE_MM = 13;
  * the gaps at that width. Below this the caller switches to a QR code.
  */
 const MIN_BARCODE_MODULE_DOTS = 2;
+
+/** QR cells smaller than this are unreliable on a 203dpi fabric print. */
+const MIN_QR_CELL_DOTS = 3;
+const MAX_QR_CELL_DOTS = 8;
 
 export interface TsplMediaOptions {
   /** Gap between labels in mm. Ignored when sensor is 'none'. */
@@ -236,19 +241,30 @@ export class TsplFormatter {
     return Math.min(3, fitted);
   }
 
-  /**
-   * QR cell size in dots, sized to the media.
-   *
-   * A version-2 QR is 25 modules across. It is square, so it has to fit the
-   * shorter of the two axes: constraining only the width lets the symbol run
-   * off the bottom of a short tag. Clamped to 3..8 — below 3 a phone camera
-   * struggles at 203dpi.
-   */
-  private qrCellSize(usableDots: number, availableHeightDots?: number): number {
-    const box = availableHeightDots !== undefined
-      ? Math.min(usableDots, availableHeightDots)
-      : usableDots;
-    return Math.max(3, Math.min(8, Math.floor(box / 25)));
+  /** QR cell size in dots, based on the module count of this exact payload. */
+  private qrCellSize(content: string, usableWidthDots: number, availableHeightDots: number): number {
+    let modules: number;
+    try {
+      // TSPL's `M` argument selects the same error-correction level. Using the
+      // encoder here prevents a long payload from silently outgrowing the
+      // version-2/25-module estimate that used to drive this calculation.
+      modules = QRCode.create(content, { errorCorrectionLevel: 'M' }).modules.size;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`QR code payload cannot be encoded: ${detail}`);
+    }
+
+    const width = Math.max(0, Math.floor(usableWidthDots));
+    const height = Math.max(0, Math.floor(availableHeightDots));
+    const fitted = Math.min(MAX_QR_CELL_DOTS, Math.floor(Math.min(width, height) / modules));
+    if (fitted < MIN_QR_CELL_DOTS) {
+      throw new Error(
+        `QR code (${modules} modules) does not fit at the minimum cell size of ` +
+        `${MIN_QR_CELL_DOTS} dots: requires ${modules * MIN_QR_CELL_DOTS} dots, ` +
+        `available ${width}x${height} dots`,
+      );
+    }
+    return fitted;
   }
 
   private copies(quantity: number): number {
@@ -316,7 +332,7 @@ export class TsplFormatter {
       const module = type === 'QR' ? 0 : this.barcodeModuleWidth(type, barcode, inner);
       if (type === 'QR' || module === 0) {
         // Too narrow for bars — a QR still scans in the space a 1D symbol needs.
-        const cell = this.qrCellSize(inner, this.heightDots - y - margin);
+        const cell = this.qrCellSize(barcode, inner, this.heightDots - y - margin);
         b.cmd(`QRCODE ${margin},${y},M,${cell},A,0,${this.quote(barcode)}`);
         y += this.mmToDots(20);
       } else {
@@ -371,7 +387,7 @@ export class TsplFormatter {
       // A narrow fabric ribbon cannot hold a 1D symbol at a scannable module
       // width, so fall back to QR rather than print bars that run off the edge.
       if (data.useQrCode || type === 'QR' || module === 0) {
-        const cell = this.qrCellSize(inner, effectiveHeightDots - y - margin);
+        const cell = this.qrCellSize(barcode, inner, effectiveHeightDots - y - margin);
         b.cmd(`QRCODE ${margin},${y},M,${cell},A,0,${this.quote(barcode)}`);
       } else {
         const barHeight = Math.max(this.mmToDots(6), effectiveHeightDots - y - this.mmToDots(5));

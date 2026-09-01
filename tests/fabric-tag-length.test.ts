@@ -105,3 +105,19 @@ describe('TSC media calibration', () => {
     expect(sent).toHaveLength(0);
   });
 });
+
+describe('TSC QR safety', () => {
+  beforeEach(() => { sent.length = 0; renderCalls.length = 0; });
+
+  it('does not send a print job when the QR cannot fit at a scannable cell size', async () => {
+    const driver = new TscDriver('TSC MB241', 20, 60, { sensor: 'none' });
+    expect(await driver.connect()).toBe(true);
+
+    await expect(driver.printFabricTag({
+      ...tag,
+      barcode: 'A'.repeat(500),
+      useQrCode: true,
+    })).rejects.toThrow(/QR code.*does not fit/i);
+    expect(sent).toHaveLength(0);
+  });
+});

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import QRCode from 'qrcode';
 
 import { TsplFormatter } from '../src/main/hardware/tsc/tspl-formatter';
 import type { MonoBitmap } from '../src/main/hardware/tsc/fabric-tag-renderer';
@@ -35,7 +36,7 @@ function declaredHeightDots(output: string, formatter: TsplFormatter): number {
   return formatter.mmToDots(Number(match![1]));
 }
 
-function nativeSymbolBottomDots(output: string, formatter: TsplFormatter): number {
+function nativeSymbolBottomDots(output: string, formatter: TsplFormatter, qrPayload?: string): number {
   const line = output.split('\r\n').find((candidate) => (
     candidate.startsWith('QRCODE ') || candidate.startsWith('BARCODE ')
   ));
@@ -44,9 +45,10 @@ function nativeSymbolBottomDots(output: string, formatter: TsplFormatter): numbe
   const fields = line!.split(',');
   const y = Number(fields[1]);
   if (line!.startsWith('QRCODE ')) {
+    expect(qrPayload, 'QR payload is required to calculate its module count').toBeDefined();
     const cell = Number(fields[3]);
-    // The formatter sizes QR codes against a version-2 symbol (25 modules).
-    return y + cell * 25;
+    const modules = QRCode.create(qrPayload!, { errorCorrectionLevel: 'M' }).modules.size;
+    return y + cell * modules;
   }
 
   const barHeight = Number(fields[3]);
@@ -157,14 +159,16 @@ describe('TsplFormatter fabric tags', () => {
     {
       name: 'QR',
       widthMm: 20,
+      qrPayload: '5901234123457',
       data: fabricTag({ barcode: '5901234123457', useQrCode: true }),
     },
     {
       name: '1D',
       widthMm: 100,
+      qrPayload: undefined,
       data: fabricTag({ barcode: '5901234123457' }),
     },
-  ])('keeps a $name symbol inside a dynamically shortened tag', ({ widthMm, data }) => {
+  ])('keeps a $name symbol inside a dynamically shortened tag', ({ widthMm, data, qrPayload }) => {
     const formatter = new TsplFormatter(widthMm, 60);
     const output = text(formatter.formatFabricTag(
       data,
@@ -172,8 +176,39 @@ describe('TsplFormatter fabric tags', () => {
       31,
     ));
 
-    expect(nativeSymbolBottomDots(output, formatter))
+    expect(nativeSymbolBottomDots(output, formatter, qrPayload))
       .toBeLessThanOrEqual(declaredHeightDots(output, formatter));
+  });
+
+  it('sizes a long QR payload from its actual module count', () => {
+    const payload = 'A'.repeat(100);
+    const modules = QRCode.create(payload, { errorCorrectionLevel: 'M' }).modules.size;
+    expect(modules).toBeGreaterThan(25);
+
+    const formatter = new TsplFormatter(20, 60);
+    const output = text(formatter.formatFabricTag(
+      fabricTag({ barcode: payload, useQrCode: true }),
+      fakeGraphic(formatter.widthDots, 144),
+      40,
+    ));
+    const line = output.split('\r\n').find((candidate) => candidate.startsWith('QRCODE '))!;
+    const cell = Number(line.split(',')[3]);
+    const usableWidthDots = formatter.widthDots - formatter.mmToDots(2) * 2;
+
+    expect(cell).toBeGreaterThanOrEqual(3);
+    expect(cell * modules).toBeLessThanOrEqual(usableWidthDots);
+    expect(nativeSymbolBottomDots(output, formatter, payload))
+      .toBeLessThanOrEqual(declaredHeightDots(output, formatter));
+  });
+
+  it('rejects a QR when the shortened tag is too short for a scannable cell', () => {
+    const formatter = new TsplFormatter(20, 60);
+
+    expect(() => formatter.formatFabricTag(
+      fabricTag({ barcode: '5901234123457', useQrCode: true }),
+      fakeGraphic(formatter.widthDots, 120),
+      25,
+    )).toThrow(/QR code.*does not fit.*minimum cell.*3 dots/i);
   });
 
   it('reserves height for the barcode zone only when there is a barcode', () => {
@@ -213,14 +248,15 @@ describe('TsplFormatter narrow media', () => {
   });
 
   it('keeps the QR symbol inside the usable width', () => {
+    const payload = 'ZIRA-1';
     const formatter = new TsplFormatter(20, 40);
     const out = text(formatter.formatFabricTag(
-      fabricTag({ barcode: 'ZIRA-1', useQrCode: true }),
+      fabricTag({ barcode: payload, useQrCode: true }),
       fakeGraphic(formatter.widthDots, 200),
     ));
     const cell = Number(out.split('\r\n').find((l) => l.startsWith('QRCODE '))!.split(',')[3]);
-    // A version-2 QR is 25 modules across.
-    expect(cell * 25).toBeLessThanOrEqual(RIBBON_USABLE_DOTS);
+    const modules = QRCode.create(payload, { errorCorrectionLevel: 'M' }).modules.size;
+    expect(cell * modules).toBeLessThanOrEqual(RIBBON_USABLE_DOTS);
     expect(cell).toBeGreaterThanOrEqual(3);
   });
 
