@@ -1,45 +1,87 @@
-import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-/**
- * A channel handled in the main process is useless until a preload exposes it,
- * and the app has more than one preload. Binding the fabric tag bridge only in
- * preload-pos left `pos.fabricTagTemplates` undefined in the main window --
- * where the Label tab actually lives -- and the first read of it white-screened
- * the whole app with "Cannot read properties of undefined".
- *
- * Nothing else notices: both files compile, and the gap only appears at runtime
- * in one window.
- */
+const electron = vi.hoisted(() => {
+  const exposures: Array<{ name: string; api: any }> = [];
+  return {
+    exposures,
+    exposeInMainWorld: vi.fn((name: string, api: any) => exposures.push({ name, api })),
+    invoke: vi.fn(),
+    send: vi.fn(),
+    on: vi.fn(),
+    removeListener: vi.fn(),
+  };
+});
+
+vi.mock('electron', () => ({
+  contextBridge: { exposeInMainWorld: electron.exposeInMainWorld },
+  ipcRenderer: {
+    invoke: electron.invoke,
+    send: electron.send,
+    on: electron.on,
+    removeListener: electron.removeListener,
+  },
+}));
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
-const FABRIC_CHANNELS = [
-  'pos:fabric-tag-templates:list',
-  'pos:fabric-tag-templates:listIds',
-  'pos:fabric-tag-templates:get',
-  'pos:fabric-tag-templates:save',
-  'pos:fabric-tag-templates:remove',
-];
+async function loadPreload(preload: 'main' | 'pos'): Promise<any> {
+  if (preload === 'main') {
+    await import('../src/preload/preload');
+  } else {
+    await import('../src/preload/preload-pos');
+  }
+
+  const exposure = electron.exposures.find(({ name }) => name === 'electronAPI');
+  expect(exposure, `${preload} preload did not expose electronAPI`).toBeDefined();
+  return exposure!.api;
+}
+
+beforeEach(() => {
+  vi.resetModules();
+  electron.exposures.length = 0;
+  electron.exposeInMainWorld.mockClear();
+  electron.invoke.mockReset();
+  electron.invoke.mockImplementation(async (channel: string, ...args: unknown[]) => ({ channel, args }));
+  electron.send.mockClear();
+  electron.on.mockClear();
+  electron.removeListener.mockClear();
+});
 
 describe('the fabric tag bridge reaches every window that needs it', () => {
-  it('handles each channel in the main process', () => {
-    const module = read('src/main/modules/pos.module.ts');
-    for (const channel of FABRIC_CHANNELS) {
-      expect(module, `${channel} has no handler`).toContain(`ipcMain.handle('${channel}'`);
-    }
-  });
-
   it.each([
-    ['src/preload/preload.ts', 'the main window, which renders the Label tab'],
-    ['src/preload/preload-pos.ts', 'the POS window'],
-  ])('exposes each channel through %s', (path) => {
-    const preload = read(path);
-    for (const channel of FABRIC_CHANNELS) {
-      // Quoted, because ...:list is a prefix of ...:listIds -- a bare substring
-      // check passed while the `list` binding was actually missing.
-      expect(preload, `${channel} is not bridged in ${path}`).toContain(`'${channel}'`);
-    }
+    ['main', 'the main window, which renders the Label tab'],
+    ['pos', 'the POS window'],
+  ] as const)('exposes the exact runtime bridge through the %s preload (%s)', async (preload) => {
+    const api = await loadPreload(preload);
+    const bridge = api.pos.fabricTagTemplates;
+    const template = {
+      templateId: 'style-1',
+      brandName: 'Zira',
+      logoDataUrl: null,
+      composition: '100% cotton',
+      careSymbols: ['WASH_30'],
+      careText: null,
+      fabric: null,
+      layout: 'default',
+    };
+
+    expect(Object.keys(bridge)).toEqual(['list', 'listIds', 'get', 'save', 'remove']);
+
+    await bridge.list();
+    expect(electron.invoke).toHaveBeenLastCalledWith('pos:fabric-tag-templates:list');
+
+    await bridge.listIds();
+    expect(electron.invoke).toHaveBeenLastCalledWith('pos:fabric-tag-templates:listIds');
+
+    await bridge.get('style-1');
+    expect(electron.invoke).toHaveBeenLastCalledWith('pos:fabric-tag-templates:get', 'style-1');
+
+    await bridge.save(template);
+    expect(electron.invoke).toHaveBeenLastCalledWith('pos:fabric-tag-templates:save', template);
+
+    await bridge.remove('style-1');
+    expect(electron.invoke).toHaveBeenLastCalledWith('pos:fabric-tag-templates:remove', 'style-1');
   });
 
   it('degrades to no fabric panel when the bridge is missing', () => {

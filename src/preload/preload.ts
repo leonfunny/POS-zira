@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer as electronIpcRenderer } from 'electron';
 import { createBootRetryInvoke } from './boot-invoke-retry';
+import { createFabricTagTemplatesBridge } from '../shared/fabric-tag-template-ipc';
 import {
   IPC_CHANNELS,
   AgentConfig,
@@ -881,20 +882,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       getById: (id: string) => ipcRenderer.invoke('pos:draft-products:getById', id),
       searchByCode: (query: string) => ipcRenderer.invoke('pos:draft-products:searchByCode', query),
     },
-    /**
-     * Care-label content per garment style.
-     *
-     * Also bound in preload-pos.ts. The Label tab lives in the main window, so
-     * exposing it only there left `pos.fabricTagTemplates` undefined here and
-     * took the whole app down with it.
-     */
-    fabricTagTemplates: {
-      list: () => ipcRenderer.invoke('pos:fabric-tag-templates:list'),
-      listIds: () => ipcRenderer.invoke('pos:fabric-tag-templates:listIds'),
-      get: (templateId: string) => ipcRenderer.invoke('pos:fabric-tag-templates:get', templateId),
-      save: (template: unknown) => ipcRenderer.invoke('pos:fabric-tag-templates:save', template),
-      remove: (templateId: string) => ipcRenderer.invoke('pos:fabric-tag-templates:remove', templateId),
-    },
+    /** Shared with preload-pos.ts because the Label tab lives in this window. */
+    fabricTagTemplates: createFabricTagTemplatesBridge(ipcRenderer.invoke),
     masterCatalog: {
       lookupByEan: (ean: string) => ipcRenderer.invoke('pos:master-catalog:lookup-by-ean', ean),
       lookupExternalByEan: (ean: string) => ipcRenderer.invoke('pos:master-catalog:lookup-external-by-ean', ean),

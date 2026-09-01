@@ -4,7 +4,8 @@
  * Owns PosStore, PaymentController, ShiftController, and all POS IPC handlers.
  */
 
-import { fabricTagTemplateRepo, type FabricTagTemplate } from '../database/repos/fabric-tag-template-repo';
+import { fabricTagTemplateRepo } from '../database/repos/fabric-tag-template-repo';
+import { registerFabricTagTemplateIpcHandlers } from '../pos/fabric-tag-template-ipc';
 import { ipcMain, dialog, shell, BrowserWindow, app, type IpcMainInvokeEvent } from 'electron';
 import * as path from 'path';
 import { pathToFileURL } from 'url';
@@ -4855,14 +4856,7 @@ export class PosModule extends BaseModule {
 
     // Care-label content per garment style. Read by the Label tab to decide
     // which products can print a fabric tag and what goes on it.
-    ipcMain.handle('pos:fabric-tag-templates:list', () => fabricTagTemplateRepo.list());
-    ipcMain.handle('pos:fabric-tag-templates:listIds', () => fabricTagTemplateRepo.listTemplateIds());
-    ipcMain.handle('pos:fabric-tag-templates:get', (_e, templateId: string) => fabricTagTemplateRepo.get(templateId));
-    ipcMain.handle('pos:fabric-tag-templates:save', (_e, template: FabricTagTemplate) => {
-      fabricTagTemplateRepo.save(template);
-      return fabricTagTemplateRepo.get(template.templateId);
-    });
-    ipcMain.handle('pos:fabric-tag-templates:remove', (_e, templateId: string) => fabricTagTemplateRepo.remove(templateId));
+    registerFabricTagTemplateIpcHandlers(ipcMain, fabricTagTemplateRepo);
 
     // Local-first import: materialize a draft into product_variants without
     // a server roundtrip so the cashier can sell immediately even when the
