@@ -329,8 +329,14 @@ typecheck main + renderer sạch; production build xanh. Full-suite checkpoint
 tái hiện được (`electron-store` không có Electron userData, đường dẫn Windows
 chạy trên Linux, và E2E thiếu X display), không nằm trong feature mác. Ba
 regression TSC/routing cuối được thêm sau checkpoint này và đều nằm trong bộ
-236 test xanh. Kết quả Windows cuối cùng cần được điền sau khi chuyển bundle về
-`tnh`.
+236 test xanh.
+
+**Kiểm chứng cuối trên Windows `tnh`:** 236/236 test tập trung xanh; typecheck
+main + renderer sạch; production build xanh; Electron E2E smoke 13/13 xanh.
+Full suite đạt 353/354 file, 3300 test xanh, 1 skip. Test duy nhất đỏ là
+`ssh-tunnel-startup.test.ts` hết timeout 5 giây khi chạy song song dưới tải;
+chạy riêng ngay sau đó xanh trong 1,188 giây. Đây là flaky theo tải đã được cô
+lập, không phải regression của feature mác.
 
 ---
 
