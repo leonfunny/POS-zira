@@ -85,6 +85,7 @@ interface LabelCopy {
   noMatch: string;
   loading: string;
   loadError: string;
+  fabricTemplatesLoadError: string;
   labelPreview: string;
   productInfo: string;
   noSelection: string;
@@ -145,6 +146,7 @@ const COPY: Record<string, LabelCopy> = {
     noMatch: 'No matching label products',
     loading: 'Loading products...',
     loadError: 'Could not load products',
+    fabricTemplatesLoadError: 'Could not load fabric-label templates. Reopen the Label tab; if the problem continues, contact support.',
     labelPreview: 'Label preview',
     productInfo: 'Product info',
     noSelection: 'No product selected',
@@ -199,6 +201,7 @@ const COPY: Record<string, LabelCopy> = {
     noMatch: 'Không tìm thấy sản phẩm tem',
     loading: 'Đang tải sản phẩm...',
     loadError: 'Không tải được sản phẩm',
+    fabricTemplatesLoadError: 'Không tải được danh sách mẫu mác vải. Hãy mở lại tab Label; nếu vẫn lỗi, liên hệ hỗ trợ.',
     labelPreview: 'Xem trước tem',
     productInfo: 'Thông tin sản phẩm',
     noSelection: 'Chưa chọn sản phẩm',
@@ -253,6 +256,7 @@ const COPY: Record<string, LabelCopy> = {
     noMatch: 'Brak pasujących produktów',
     loading: 'Ładowanie produktów...',
     loadError: 'Nie udało się załadować produktów',
+    fabricTemplatesLoadError: 'Nie udało się wczytać szablonów metek materiałowych. Otwórz ponownie kartę Label; jeśli problem nie ustąpi, skontaktuj się z pomocą.',
     labelPreview: 'Podgląd etykiety',
     productInfo: 'Informacje o produkcie',
     noSelection: 'Nie wybrano produktu',
@@ -402,6 +406,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
   const [selectedProductId, setSelectedProductId] = useState('');
   const [selectedFabricTemplateId, setSelectedFabricTemplateId] = useState('');
   const [fabricTemplates, setFabricTemplates] = useState<Map<string, FabricTagTemplate>>(new Map());
+  const [fabricTemplatesLoadFailed, setFabricTemplatesLoadFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -417,11 +422,14 @@ export default function LabelModule({ language }: LabelModuleProps) {
       .then((rows: FabricTagTemplate[]) => {
         if (cancelled) return;
         setFabricTemplates(new Map(rows.map((row) => [row.templateId, row])));
+        setFabricTemplatesLoadFailed(false);
       })
       .catch((err: unknown) => {
+        if (cancelled) return;
         // Loud on purpose: silently showing no fabric panel is exactly how the
         // printer looked broken for an afternoon.
         rlog.error('[LabelModule] Failed to load fabric tag templates:', err);
+        setFabricTemplatesLoadFailed(true);
       });
     return () => { cancelled = true; };
   }, []);
@@ -692,7 +700,6 @@ export default function LabelModule({ language }: LabelModuleProps) {
 
   const selectProduct = (product: LabelProduct) => {
     setSelectedProductId(product.id);
-    setFabricStatus(null);
     if (status.type !== 'printing') {
       clearStatusResetTimeout();
       setStatus({ type: 'idle', message: '' });
@@ -981,6 +988,16 @@ export default function LabelModule({ language }: LabelModuleProps) {
               {status.type === 'printing' ? <RefreshCw size={20} className="animate-spin" /> : <Printer size={20} />}
               {printButtonText}
             </button>
+
+            {fabricTemplatesLoadFailed && (
+              <div
+                role="alert"
+                className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-800 inline-flex items-start gap-2"
+              >
+                <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+                <span>{copy.fabricTemplatesLoadError}</span>
+              </div>
+            )}
 
             {selectedFabricTemplate && (
               <section className="space-y-2" aria-label={tOr('fabricTag.printRunTitle', 'Fabric care labels')}>

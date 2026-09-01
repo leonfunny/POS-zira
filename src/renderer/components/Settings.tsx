@@ -3234,6 +3234,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
               const printerConfig = getPrinterConfig(printerType);
               const isLabel = isLabelMediaType(printerType);
               const isFabricTag = printerType === 'FABRIC_TAG';
+              const defaultTsplPrintSpeed = isFabricTag ? 2 : 3;
               const supportsCalibrationProtocol = printerConfig.protocol === 'ZEBRA' || printerConfig.protocol === 'TSPL';
               const canCalibrateMedia = supportsLabelMediaCalibration(printerConfig, printerType);
               const isFiscalElzab = printerType === 'FISCAL' &&
@@ -3559,9 +3560,11 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                                   />
                                 </div>
                               </div>
-                              <p className="text-xs text-slate-500">
-                                {t('settings.popularSizes')}
-                              </p>
+                              {!isFabricTag && (
+                                <p className="text-xs text-slate-500">
+                                  {t('settings.popularSizes')}
+                                </p>
+                              )}
                             </>
                           )}
 
@@ -3572,9 +3575,9 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                                 <label className="block text-xs font-medium text-slate-600 mb-1">{t('settings.printSpeed')} (ips)</label>
                                 <input
                                   type="number"
-                                  value={printerConfig.printSpeed ?? 3}
+                                  value={printerConfig.printSpeed ?? defaultTsplPrintSpeed}
                                   onChange={(e) => updatePrinter(printerType, { printSpeed: parseInt(e.target.value) || 0 })}
-                                  onBlur={(e) => { const v = parseInt(e.target.value); if (!v || v < 1 || v > 12) updatePrinter(printerType, { printSpeed: 3 }); }}
+                                  onBlur={(e) => { const v = parseInt(e.target.value); if (!v || v < 1 || v > 12) updatePrinter(printerType, { printSpeed: defaultTsplPrintSpeed }); }}
                                   min={1}
                                   max={12}
                                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
