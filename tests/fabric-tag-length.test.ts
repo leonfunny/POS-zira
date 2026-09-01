@@ -93,3 +93,15 @@ describe('fabric tag length follows the content', () => {
     expect(declared).toBeLessThanOrEqual(15);
   });
 });
+
+describe('TSC media calibration', () => {
+  beforeEach(() => { sent.length = 0; renderCalls.length = 0; });
+
+  it('rejects calibration for continuous media without sending a printer command', async () => {
+    const driver = new TscDriver('TSC MB241', 20, 60, { sensor: 'none' });
+    expect(await driver.connect()).toBe(true);
+
+    await expect(driver.calibrate()).rejects.toThrow(/continuous media/i);
+    expect(sent).toHaveLength(0);
+  });
+});

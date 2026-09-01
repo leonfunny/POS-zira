@@ -38,6 +38,7 @@ export class TscDriver {
   private printerName: string;
   private connected = false;
   private formatter: TsplFormatter;
+  private mediaSensor: 'gap' | 'bline' | 'none';
 
   constructor(
     printerName: string,
@@ -47,6 +48,7 @@ export class TscDriver {
   ) {
     this.printerName = printerName;
     const { dpi, ...media } = options;
+    this.mediaSensor = media.sensor ?? 'gap';
     this.formatter = new TsplFormatter(labelWidthMm, labelHeightMm, dpi ?? 203, media);
     logger.info(
       `[TscDriver] Initialized for "${printerName}" (${labelWidthMm}x${labelHeightMm}mm, ` +
@@ -63,6 +65,7 @@ export class TscDriver {
   }
 
   setMedia(media: TsplMediaOptions): void {
+    if (media.sensor !== undefined) this.mediaSensor = media.sensor;
     this.formatter.setMedia(media);
   }
 
@@ -287,12 +290,15 @@ export class TscDriver {
   }
 
   /**
-   * Run the media sensor calibration so the printer learns the gap position
-   * and label length. It feeds a few labels — that is the command working,
-   * not a fault.
+   * Run media sensor calibration so the printer learns a gap or black mark.
+   * Continuous media has no mark to detect, so calibrating it would only feed
+   * ribbon while the printer searches for a boundary that does not exist.
    */
-  async calibrate(sensor: 'gap' | 'bline' | 'none' = 'gap'): Promise<void> {
+  async calibrate(sensor: 'gap' | 'bline' | 'none' = this.mediaSensor): Promise<void> {
     this.assertConnected();
+    if (sensor === 'none') {
+      throw new Error('Calibration is not available for continuous media (sensor: none)');
+    }
     const command = sensor === 'bline' ? 'BLINEDETECT' : 'GAPDETECT';
     logger.info(`[TscDriver] Sending calibration (${command})...`);
     await this.printRaw(Buffer.from(`${command}\r\n`, 'latin1'), { docName: 'Zira TSPL Calibration' });

@@ -356,6 +356,8 @@ export class TsplFormatter {
     labelHeightMmOverride?: number,
   ): Buffer {
     const b = this.header(new TsplBuilder(), labelHeightMmOverride);
+    const effectiveHeightMm = labelHeightMmOverride ?? this.labelHeightMm;
+    const effectiveHeightDots = this.mmToDots(effectiveHeightMm);
     const margin = this.mmToDots(2);
     const barcode = String(data.barcode || '').trim();
 
@@ -369,10 +371,10 @@ export class TsplFormatter {
       // A narrow fabric ribbon cannot hold a 1D symbol at a scannable module
       // width, so fall back to QR rather than print bars that run off the edge.
       if (data.useQrCode || type === 'QR' || module === 0) {
-        const cell = this.qrCellSize(inner, this.heightDots - y - margin);
+        const cell = this.qrCellSize(inner, effectiveHeightDots - y - margin);
         b.cmd(`QRCODE ${margin},${y},M,${cell},A,0,${this.quote(barcode)}`);
       } else {
-        const barHeight = Math.max(this.mmToDots(6), this.heightDots - y - this.mmToDots(5));
+        const barHeight = Math.max(this.mmToDots(6), effectiveHeightDots - y - this.mmToDots(5));
         b.cmd(`BARCODE ${margin},${y},"${BARCODE_COMMANDS[type]}",${barHeight},1,0,${module},${module * 2},${this.quote(barcode)}`);
       }
     }

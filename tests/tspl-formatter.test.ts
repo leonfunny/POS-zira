@@ -28,6 +28,32 @@ function fakeGraphic(widthDots: number, heightDots: number): MonoBitmap {
   };
 }
 
+function declaredHeightDots(output: string, formatter: TsplFormatter): number {
+  const size = output.split('\r\n').find((line) => line.startsWith('SIZE '));
+  const match = size?.match(/^SIZE [\d.]+ mm,([\d.]+) mm$/);
+  expect(match, 'TSPL SIZE command not found').not.toBeNull();
+  return formatter.mmToDots(Number(match![1]));
+}
+
+function nativeSymbolBottomDots(output: string, formatter: TsplFormatter): number {
+  const line = output.split('\r\n').find((candidate) => (
+    candidate.startsWith('QRCODE ') || candidate.startsWith('BARCODE ')
+  ));
+  expect(line, 'native barcode command not found').toBeDefined();
+
+  const fields = line!.split(',');
+  const y = Number(fields[1]);
+  if (line!.startsWith('QRCODE ')) {
+    const cell = Number(fields[3]);
+    // The formatter sizes QR codes against a version-2 symbol (25 modules).
+    return y + cell * 25;
+  }
+
+  const barHeight = Number(fields[3]);
+  // Human-readable digits are enabled and occupy the 5mm reserve below bars.
+  return y + barHeight + formatter.mmToDots(5);
+}
+
 describe('TsplFormatter media header', () => {
   it('declares size, gap, speed and density before clearing the buffer', () => {
     const out = text(new TsplFormatter(40, 60, 203, { gapMm: 3, speed: 2, density: 13 }).formatLabel(label()));
@@ -125,6 +151,29 @@ describe('TsplFormatter fabric tags', () => {
     expect(barcodeLine).toBeDefined();
     const y = Number(barcodeLine!.split(',')[1]);
     expect(y).toBeGreaterThan(300);
+  });
+
+  it.each([
+    {
+      name: 'QR',
+      widthMm: 20,
+      data: fabricTag({ barcode: '5901234123457', useQrCode: true }),
+    },
+    {
+      name: '1D',
+      widthMm: 100,
+      data: fabricTag({ barcode: '5901234123457' }),
+    },
+  ])('keeps a $name symbol inside a dynamically shortened tag', ({ widthMm, data }) => {
+    const formatter = new TsplFormatter(widthMm, 60);
+    const output = text(formatter.formatFabricTag(
+      data,
+      fakeGraphic(formatter.widthDots, 144),
+      31,
+    ));
+
+    expect(nativeSymbolBottomDots(output, formatter))
+      .toBeLessThanOrEqual(declaredHeightDots(output, formatter));
   });
 
   it('reserves height for the barcode zone only when there is a barcode', () => {
