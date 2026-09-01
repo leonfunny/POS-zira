@@ -382,15 +382,31 @@ một lần theo revision, bounded handle read và default inset 1.1 mm. Full su
 3258 test xanh, 14 test đỏ và 14 skip; các lỗi đỏ đã tái hiện khi chạy riêng và
 đều thuộc giới hạn môi trường Linux đã biết (đường dẫn Windows,
 `electron-store` ngoài Electron, E2E thiếu X display), không chạm file feature.
-Vẫn phải chạy lại full suite và package ở Windows trước khi bàn giao build.
+
+**Artwork-library MVP kiểm chứng và package trên Windows `tnh`:** commit code
+`6ff88bb89e4e88acf3bbb08de0c964ae40f6c203`; 15/15 file và 267/267 test tập
+trung xanh. Full suite xanh hoàn toàn: 360/360 file, 3382 test pass và 1 skip;
+Electron E2E cũng chạy thật trong suite, không có uncaught renderer error.
+`npm run build` xanh (renderer typecheck, main compile, renderer production
+bundle). Preview Windows x64/NSIS được tạo riêng tại:
+
+```text
+C:\Users\X-Strike\POS-zira\release\fabric-preview-20260901-141307-6ff88bb89e4e\Zira Setup 1.0.26.exe
+```
+
+Kích thước installer: 118.615.594 byte. SHA-256:
+`79B7963D78FE8AB377AA66CC82A839FE878CE656656817B50606D2056C2CF276`.
+Package còn đủ `.blockmap`, `latest.yml` và `win-unpacked\Zira.exe`. Build này
+không ký số; chưa chạy installer, chưa mở/restart app cài sẵn và chưa gửi lệnh
+in hay RAW tới máy in.
 
 ---
 
 ## 8. Việc tồn đọng / thứ tự làm tiếp
 
-- **Build trước, chưa in:** chuyển commit đã review sang `tnh`, chạy focused +
-  full suite Windows, `npm run build`, rồi package vào thư mục preview mới.
-  Không cài, không mở app, không restart POS và không gửi RAW trong bước này.
+- **Build trước, chưa in — đã xong:** commit đã review ở `tnh`, focused + full
+  suite Windows, production build và package preview đều xanh. Installer chưa
+  được chạy; app cài sẵn và máy in không bị chạm tới.
 - `Document2.btw` có thể dùng để smoke bước import: kết quả đúng phải là
   `NEEDS_CONVERSION`. Không dùng nó để smoke print vì nguồn khai rộng 25.1 mm.
 - Khi nhận file thật, yêu cầu bên thiết kế/BarTender xuất một PNG production
