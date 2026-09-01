@@ -1954,10 +1954,10 @@ export const migrations: Migration[] = [
   {
     version: 67,
     name: 'fabric_tag_templates',
-    // Care-label content for a garment style, keyed by the variant template
-    // that groups its sizes. Split deliberately: fibre composition, care
-    // symbols and origin belong to the style, so editing them once covers
-    // every size, while size itself is read from the variant rows.
+    // Care-label content for a garment style, keyed temporarily by the
+    // catalogue template id. Do not infer sizes from its sibling variants:
+    // measured LOTUS rows under one template are colours. A future migration
+    // will add the owner-provided size list once that contract is fixed.
     //
     // backend_id/synced/synced_at are here from the start even though nothing
     // syncs yet -- adding them later means migrating rows that already exist

@@ -87,21 +87,22 @@ mọi assertion mới đều mutation-test (phá hành vi thì test phải đỏ
 
 ---
 
-## 4. Vấn đề ĐANG MỞ — cần giải quyết trước khi làm tiếp
+## 4. Quyết định mới và vấn đề còn mở
 
 ### 4.1 Cổng chặn bằng `posMode` là sai (Paul nêu, tôi đồng ý)
 
-Panel hiện chỉ hiện khi `posMode === 'garment'`. Nhưng **salon này không bán
-hàng**, nên bắt vào Cài đặt đổi "chế độ POS" mới dùng được tab Label là vô lý.
+Trước đợt hardening, panel chỉ hiện khi `posMode === 'garment'`. Nhưng **salon
+này không bán hàng**, nên bắt vào Cài đặt đổi "chế độ POS" mới dùng được tab
+Label là vô lý.
 
-Hướng thay thế cần bàn:
-- Gate theo **dữ liệu**: mã hàng nào có bản ghi mác vải thì hiện nút. Trực tiếp
-  hơn, không cần chế độ.
-- Gate theo **máy in**: có cấu hình `FABRIC_TAG` thì hiện.
-- Một công tắc riêng cho tab Label, không dính tới POS.
+**Đã chốt 2026-09-01:** bỏ `posMode` khỏi luồng in mác. Module Manager hiện có
+là công tắc bật/ẩn tab Label; dữ liệu quyết định empty state hay panel mẫu mác;
+cấu hình/sẵn sàng của `FABRIC_TAG` chỉ quyết định nút Print có được bấm hay
+không. Không thêm một toggle mới.
 
-Chế độ `garment` đã dựng vẫn có thể giữ cho việc khác (ẩn bớt màn hình bán
-hàng), nhưng **không nên là điều kiện để in**.
+`garment` cũng không còn là một POS mode công khai. Bản sửa phải chấp nhận giá
+trị legacy đủ lâu để đổi cấu hình đã lưu về `retail`, nếu không cả bản mới lẫn
+bản rollback 1.0.26 có thể fail validation lúc khởi động.
 
 ### 4.2 🚨 Size KHÔNG TỒN TẠI trong catalog — điểm chặn lớn nhất
 
@@ -129,20 +130,25 @@ không phải nơi đặt nó.
 Hệ quả: panel hiện tại sẽ hiện **7 dòng màu**, ô size trống hết (hàm đoán trả
 rỗng vì `beżowy` không phải size — đúng thiết kế).
 
-**Đề xuất cần duyệt:** vì máy chỉ in, size không cần mã vạch / tồn kho / giá.
+**Hướng đang ưu tiên nhưng chưa triển khai:** vì máy chỉ in, size có thể không
+cần mã vạch / tồn kho / giá.
 Biến size thành sản phẩm là thừa (6 màu × 5 size = 30 dòng catalog cho thứ
-không bao giờ bán). Thay vào đó **lưu danh sách size ngay trên mẫu mác**, ví dụ
-cột `sizes` = `"S,M,L,XL"`. Panel đọc danh sách đó dựng các dòng nhập số lượng.
+không bao giờ bán). Một phương án là **lưu danh sách size ngay trên mẫu mác**
+dưới dạng mảng JSON, ví dụ `["S", "M", "L", "XL"]`. Chưa tạo migration/editor
+cho đến khi xem bảng A4 và mẫu mác thật; tuyệt đối không đoán từ các dòng màu
+trong catalog.
 
-### 4.3 Ba câu hỏi cho chủ xưởng (chưa có đáp án)
+### 4.3 Thông tin chủ xưởng đang chuẩn bị
 
-1. **Màu có in lên mác không?** Quyết định panel cần một trục (size) hay hai
-   (màu × size).
-2. **Xưởng có file `.btw` thật ở máy nào không?** Máy `tnh` **không có** — xem
-   mục 5.
-3. **Mác là thiết kế cố định do khách duyệt, hay đổi theo mã hàng?** Nếu mỗi mã
-   một thành phần sợi/size/màu thì đó là **dữ liệu**, thuộc về CSDL, không thuộc
-   về file thiết kế.
+1. **Màu tạm thời không in lên mác.** Luồng đầu tiên chỉ có một trục size, không
+   dựng ma trận màu × size.
+2. Chủ xưởng sẽ gửi mẫu mác vải, mẫu tem EAN và một bảng A4 ghi rõ mã áo, nội
+   dung, size, số lượng và cách in để cùng review bố cục/luồng thao tác.
+3. Cần xác nhận hai file `.btw` mới tìm thấy ở mục 5 có phải thiết kế thật đã
+   duyệt không, và khổ vật liệu chính xác là 20 mm hay 25.1 mm.
+4. Cần chốt mác là thiết kế cố định hay đổi theo mã hàng/khách hàng.
+5. Nếu Honeywell/EAN nằm trong scope, cần chốt nguồn EAN và EAN đại diện cho
+   style, màu, size hay tổ hợp của chúng.
 
 ### 4.4 Không sản phẩm nào có EAN
 
@@ -165,11 +171,13 @@ chúng**. Đây là cụm lớn, cần backend + API + hàng đợi offline.
 
 ## 5. Sự thật đã đo — đừng phải tìm lại
 
-### `.btw` / BarTender: không dùng được
+### `.btw` / BarTender: chỉ dùng làm nguồn tham khảo sau khi xác nhận
 
-- Mọi file `.btw` trên máy đều là **mẫu kèm bản cài** (AIAG, Caterpillar, DoD,
-  EU Energy, GHS — cùng ngày sửa 2018-03-22). Desktop/Documents/Downloads
-  **không có** file nào của xưởng.
+- Ngoài các mẫu kèm bản cài, `tnh` có
+  `Documents\BarTender\BarTender Documents\Document2.btw` và `sm.btw`, tạo/sửa
+  ngày 2026-08-12, author `X-Strike`, printer `TSC MB241`/`USB001`, template
+  `25.1 × 40 mm`, `DataEntryForms=1`. Tên file chưa chứng minh đây là bản đã
+  duyệt; kích thước cũng mâu thuẫn cấu hình/cuộn 20 mm đang đo.
 - Bản cài là **BarTender 2016 R7 UltraLite**. Thư mục
   `C:\Program Files (x86)\Seagull\BarTender UltraLite\` chỉ có `BarTend.exe`,
   `BtwConv.exe`, `Register.exe`, `SupportCollector.exe`, `SysInfo.exe`.
@@ -247,9 +255,12 @@ phá đúng hành vi nó mô tả thì nó phải đỏ. Nhiều lần trong đ�
 
 ## 8. Việc tồn đọng
 
-- **10+ commit chưa push lên GitHub.** Máy Windows không push được (GCM cần
+- Tại mốc `efcb726` có **12 commit chưa push lên GitHub**. Máy Windows không push được (GCM cần
   TTY, `wincredman` không dùng được trong phiên đăng nhập mạng). Đường vòng đã
   dùng: `git bundle` từ `tnh` → scp sang Netcup → push từ đó (Netcup xác thực
   GitHub bằng SSH với tư cách `leonfunny`).
+- Bundle bảo toàn trước đợt hardening:
+  `C:\Users\X-Strike\fabric-label-efcb726-20260901.bundle`, SHA-256
+  `0461A8B3116487214B26BE0EFF4A641F7BC4EA1E3A00CB94121A08FBFE65E03D`.
 - `tests/hardware-posnet-config.test.ts` **flaky dưới tải song song** trên CPU
   này (AMD A8). Chạy riêng thì xanh. Không liên quan tới thay đổi nào ở đây.

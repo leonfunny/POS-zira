@@ -6,10 +6,10 @@ import logger from '../../logger';
 /**
  * Care-label content for a garment style.
  *
- * Keyed by `template_id` -- the id that groups a style's size variants -- so
- * fibre composition, care symbols and origin are entered once and every size
- * inherits them. Size itself is never stored here: it is read from the variant
- * row at print time, which is what keeps the two from drifting apart.
+ * Temporarily keyed by the catalogue `template_id`, which groups the rows for
+ * one style. On the first measured LOTUS data those sibling rows are colours,
+ * not sizes, so this repository must not infer size from them. The owner-provided
+ * size list will be added by a later migration once its data contract is fixed.
  */
 export interface FabricTagTemplateRow {
   template_id: string;
