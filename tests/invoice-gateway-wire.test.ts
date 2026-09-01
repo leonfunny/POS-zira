@@ -1,3 +1,4 @@
+import { createServer, type Socket } from 'node:net';
 import { describe, expect, it } from 'vitest';
 import { WebSocketServer, type RawData } from 'ws';
 import {
@@ -130,6 +131,48 @@ describe('invoice gateway real WebSocket wire contract', () => {
       expect(capabilities).toEqual(expectedCapabilities);
     } finally {
       await closeServer(server);
+    }
+  });
+
+  it('rejects a hung CONNECTING handshake without an unhandled late socket error', async () => {
+    const sockets = new Set<Socket>();
+    const server = createServer((socket) => {
+      sockets.add(socket);
+      socket.once('close', () => sockets.delete(socket));
+      // Deliberately accept TCP but never answer the WebSocket upgrade.
+    });
+    server.listen(0, '127.0.0.1');
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once('listening', resolve);
+        server.once('error', reject);
+      });
+      const address = server.address();
+      if (!address || typeof address === 'string') {
+        throw new Error('Hung-handshake server did not expose a TCP port');
+      }
+      const transport = new LocalInvoiceGatewayWebSocketTransport({
+        tokenProvider: () => 'hung-token-0123456789abcdef0123456789abcdef',
+        url: `ws://127.0.0.1:${address.port}`,
+        timeoutMs: 1_000,
+      });
+      const client = new ZiraInvoiceBridgeClient(transport, () => 'hung-request-1');
+
+      await expect(client.capabilities()).rejects.toEqual(expect.objectContaining({
+        code: 'BRIDGE_TIMEOUT',
+        retryable: true,
+      }));
+      // Let the abortHandshake error scheduled by `ws` reach the event loop.
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) reject(error);
+          else resolve();
+        });
+      });
     }
   });
 });

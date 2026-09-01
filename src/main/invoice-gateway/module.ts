@@ -1,6 +1,4 @@
 import { app } from 'electron';
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import type { AgentConfig, ZiraInvoiceGatewayConfig } from '../../shared/types';
 import { getConfig, getSecureAuthToken } from '../config/store';
 import { BaseModule, ModuleState } from '../core/module';
@@ -30,11 +28,22 @@ import {
   InvoiceHandoffWorker,
   type InvoiceGatewayScope,
 } from './worker';
+import {
+  createZiraInvoiceBridgeFileTokenProvider,
+  type ZiraInvoiceBridgeFileTokenProviderOptions,
+} from './token';
+
+export {
+  createZiraInvoiceBridgeFileTokenProvider,
+  ziraInvoiceBridgeTokenPath,
+  ZIRA_INVOICE_BRIDGE_DEFAULT_APP_IDENTIFIER,
+  ZIRA_INVOICE_BRIDGE_E2E_APP_IDENTIFIER,
+  ZIRA_INVOICE_BRIDGE_TOKEN_FILENAME,
+} from './token';
 
 const HANDOFF_POLL_MS = 30_000;
 const PREFLIGHT_TIMEOUT_MS = 5_000;
 const SHUTDOWN_GRACE_MS = 2_000;
-const MAX_TOKEN_BYTES = 512;
 
 export interface InvoiceGatewayRuntimeWorker {
   wake(): Promise<void>;
@@ -74,37 +83,13 @@ export interface InvoiceGatewayModuleDeps {
   clearInterval: (timer: ReturnType<typeof setInterval>) => void;
 }
 
-export function ziraInvoiceBridgeTokenPath(appDataDir: string): string {
-  return join(appDataDir, 'com.zira.invoice', 'pos-bridge-token');
-}
-
-export function createZiraInvoiceBridgeTokenProvider(options: {
-  appDataDir?: () => string;
-  readText?: (path: string) => Promise<string>;
-} = {}): InvoiceGatewayTokenProvider {
-  const appDataDir = options.appDataDir ?? (() => app.getPath('appData'));
-  const readText = options.readText ?? ((path) => readFile(path, 'utf8'));
-  return async () => {
-    let raw: string;
-    try {
-      raw = await readText(ziraInvoiceBridgeTokenPath(appDataDir()));
-    } catch {
-      throw new InvoiceGatewayBridgeError(
-        'Zira Invoice bridge token is not available yet',
-        'BRIDGE_TOKEN_UNAVAILABLE',
-        true,
-      );
-    }
-    const token = raw.trim();
-    if (token.length < 32 || Buffer.byteLength(token, 'utf8') > MAX_TOKEN_BYTES) {
-      throw new InvoiceGatewayBridgeError(
-        'Zira Invoice bridge token is missing, truncated, or oversized',
-        'BRIDGE_TOKEN_INVALID',
-        false,
-      );
-    }
-    return token;
-  };
+export function createZiraInvoiceBridgeTokenProvider(
+  options: ZiraInvoiceBridgeFileTokenProviderOptions = {},
+): InvoiceGatewayTokenProvider {
+  return createZiraInvoiceBridgeFileTokenProvider({
+    ...options,
+    appDataDir: options.appDataDir ?? (() => app.getPath('appData')),
+  });
 }
 
 function bridgeError(message: string, code: string, retryable: boolean): never {

@@ -4,6 +4,7 @@ node_modules/
 # Build output
 dist/
 release/
+src/main/invoice-gateway/invoice-bridge-e2e-build-stamp.ts
 backups/
 /backup-*/
 /installed-dist-backup-*/

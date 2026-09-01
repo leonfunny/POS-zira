@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import WebSocket, { type RawData } from 'ws';
+import { InvoiceGatewayBridgeError } from './errors';
 import {
   INVOICE_GATEWAY_CONTRACT_VERSION,
   INVOICE_GATEWAY_DOCUMENT_INTENT,
@@ -30,16 +31,7 @@ export interface LocalInvoiceGatewayWebSocketTransportOptions {
   webSocketFactory?: (url: string) => WebSocket;
 }
 
-export class InvoiceGatewayBridgeError extends Error {
-  constructor(
-    message: string,
-    readonly code: string,
-    readonly retryable: boolean,
-  ) {
-    super(message);
-    this.name = 'InvoiceGatewayBridgeError';
-  }
-}
+export { InvoiceGatewayBridgeError } from './errors';
 
 function asReplyFrame(value: unknown): InvoiceGatewayReplyFrame {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -114,6 +106,11 @@ export class LocalInvoiceGatewayWebSocketTransport implements InvoiceGatewayTran
       const cleanup = (): void => {
         clearTimeout(timer);
         socket.removeAllListeners();
+        // `ws.close()` while CONNECTING aborts the handshake and emits an
+        // asynchronous error. Keep a one-shot sink installed after detaching
+        // the request handlers so a normal timeout cannot become an uncaught
+        // process-level error.
+        socket.once('error', () => undefined);
         if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
           socket.close();
         }
