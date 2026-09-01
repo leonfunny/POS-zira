@@ -36,7 +36,12 @@ function declaredHeightDots(output: string, formatter: TsplFormatter): number {
   return formatter.mmToDots(Number(match![1]));
 }
 
-function nativeSymbolBottomDots(output: string, formatter: TsplFormatter, qrPayload?: string): number {
+function nativeSymbolBottomDots(
+  output: string,
+  formatter: TsplFormatter,
+  qrPayload?: string,
+  humanReadableReserveMm = 5,
+): number {
   const line = output.split('\r\n').find((candidate) => (
     candidate.startsWith('QRCODE ') || candidate.startsWith('BARCODE ')
   ));
@@ -52,8 +57,16 @@ function nativeSymbolBottomDots(output: string, formatter: TsplFormatter, qrPayl
   }
 
   const barHeight = Number(fields[3]);
-  // Human-readable digits are enabled and occupy the 5mm reserve below bars.
-  return y + barHeight + formatter.mmToDots(5);
+  // Human-readable digits are enabled and need their own reserve below bars.
+  return y + barHeight + formatter.mmToDots(humanReadableReserveMm);
+}
+
+function commandY(output: string, prefix: string, content: string): number {
+  const line = output.split('\r\n').find((candidate) => (
+    candidate.startsWith(prefix) && candidate.includes(`"${content}"`)
+  ));
+  expect(line, `${prefix.trim()} command for ${content} not found`).toBeDefined();
+  return Number(line!.split(',')[1]);
 }
 
 describe('TsplFormatter media header', () => {
@@ -74,9 +87,42 @@ describe('TsplFormatter media header', () => {
       .toContain('GAP 0 mm,0 mm');
   });
 
-  it('clamps darkness into the range the firmware accepts', () => {
-    expect(text(new TsplFormatter(40, 60, 203, { density: 99 }).formatLabel(label()))).toContain('DENSITY 15');
-    expect(text(new TsplFormatter(40, 60, 203, { density: -4 }).formatLabel(label()))).toContain('DENSITY 0');
+  it('rejects media numerics outside the range the firmware accepts', () => {
+    expect(() => new TsplFormatter(40, 60, 203, { gapMm: 26 }))
+      .toThrow(/gap.*between 0 and 25/i);
+    expect(() => new TsplFormatter(40, 60, 203, { speed: 0 }))
+      .toThrow(/speed.*between 1 and 12/i);
+    expect(() => new TsplFormatter(40, 60, 203, { density: 16 }))
+      .toThrow(/density.*between 0 and 15/i);
+    expect(() => new TsplFormatter(20, 60, 203, { originInsetMm: 10 }))
+      .toThrow(/origin inset.*less than half.*width/i);
+  });
+
+  it('rejects non-finite dimensions and CRLF-injected media values', () => {
+    expect(() => new TsplFormatter(Number.NaN, 60))
+      .toThrow(/label width.*finite number.*between 10 and 300/i);
+    expect(() => new TsplFormatter(40, Number.POSITIVE_INFINITY))
+      .toThrow(/label height.*finite number.*between 10 and 300/i);
+
+    const injectedSpeed = '2\r\nSELFTEST\r\nSPEED 2' as unknown as number;
+    expect(() => new TsplFormatter(40, 60, 203, { speed: injectedSpeed }))
+      .toThrow(/speed.*finite number.*between 1 and 12/i);
+
+    const formatter = new TsplFormatter();
+    expect(() => formatter.setMedia({ speed: injectedSpeed }))
+      .toThrow(/speed.*finite number.*between 1 and 12/i);
+
+    const out = text(formatter.formatLabel(label()));
+    expect(out).not.toContain('SELFTEST');
+    expect(out).toContain('SPEED 3\r\n');
+  });
+
+  it('validates dimension updates atomically', () => {
+    const formatter = new TsplFormatter(20, 60, 203, { originInsetMm: 9 });
+
+    expect(() => formatter.setDimensions(15, 60))
+      .toThrow(/origin inset.*less than half.*width/i);
+    expect(formatter.getDimensions()).toEqual({ widthMm: 20, heightMm: 60 });
   });
 });
 
@@ -89,7 +135,36 @@ describe('TsplFormatter product labels', () => {
   it('honours an explicit QR request over the digit heuristic', () => {
     const out = text(new TsplFormatter().formatLabel(label({ barcode: '5901234123457', barcodeType: 'QR' })));
     expect(out).toContain('QRCODE ');
+    expect(out).toContain(',A,0,M2,"5901234123457"');
     expect(out).not.toContain('BARCODE ');
+  });
+
+  it('advances by the encoded QR size and reserves room for following text', () => {
+    const payload = 'A'.repeat(100);
+    const formatter = new TsplFormatter(100, 50);
+    const out = text(formatter.formatLabel(label({
+      barcode: payload,
+      barcodeType: 'QR',
+      text1: 'TITLE',
+      text2: '99.00 PLN',
+      text3: 'SKU-100',
+    })));
+
+    const qrBottom = nativeSymbolBottomDots(out, formatter, payload);
+    const priceY = commandY(out, 'TEXT ', '99.00 PLN');
+    const detailY = commandY(out, 'TEXT ', 'SKU-100');
+
+    expect(priceY).toBeGreaterThanOrEqual(qrBottom);
+    expect(detailY).toBeGreaterThan(priceY);
+    expect(detailY + formatter.mmToDots(3))
+      .toBeLessThanOrEqual(declaredHeightDots(out, formatter));
+  });
+
+  it('rejects a product 1D barcode when bars and readable text cannot fit', () => {
+    const formatter = new TsplFormatter(100, 10);
+
+    expect(() => formatter.formatLabel(label({ barcode: '5901234123457' })))
+      .toThrow(/1D barcode.*does not fit.*human-readable/i);
   });
 
   it('folds non-ASCII text down to what the internal fonts can render', () => {
@@ -195,6 +270,7 @@ describe('TsplFormatter fabric tags', () => {
     const cell = Number(line.split(',')[3]);
     const usableWidthDots = formatter.widthDots - formatter.mmToDots(2) * 2;
 
+    expect(line).toContain(',A,0,M2,');
     expect(cell).toBeGreaterThanOrEqual(3);
     expect(cell * modules).toBeLessThanOrEqual(usableWidthDots);
     expect(nativeSymbolBottomDots(output, formatter, payload))
@@ -209,6 +285,16 @@ describe('TsplFormatter fabric tags', () => {
       fakeGraphic(formatter.widthDots, 120),
       25,
     )).toThrow(/QR code.*does not fit.*minimum cell.*3 dots/i);
+  });
+
+  it('rejects a 10mm fabric tag when bars and readable text cannot fit', () => {
+    const formatter = new TsplFormatter(100, 10);
+
+    expect(() => formatter.formatFabricTag(
+      fabricTag({ barcode: '5901234123457' }),
+      fakeGraphic(formatter.widthDots, formatter.mmToDots(4)),
+      10,
+    )).toThrow(/1D barcode.*does not fit.*human-readable/i);
   });
 
   it('reserves height for the barcode zone only when there is a barcode', () => {

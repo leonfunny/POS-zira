@@ -72,6 +72,24 @@ const MIN_BARCODE_MODULE_DOTS = 2;
 const MIN_QR_CELL_DOTS = 3;
 const MAX_QR_CELL_DOTS = 8;
 
+const MIN_LABEL_DIMENSION_MM = 10;
+const MAX_LABEL_DIMENSION_MM = 300;
+const MIN_DPI = 100;
+const MAX_DPI = 1200;
+const MAX_GAP_MM = 25;
+const MIN_SPEED = 1;
+const MAX_SPEED = 12;
+const MIN_DENSITY = 0;
+const MAX_DENSITY = 15;
+
+const PRODUCT_MIN_BAR_HEIGHT_MM = 8;
+const PRODUCT_HUMAN_READABLE_MM = 6;
+const FABRIC_MIN_BAR_HEIGHT_MM = 6;
+const FABRIC_HUMAN_READABLE_MM = 5;
+const PRODUCT_PRICE_HEIGHT_MM = 7;
+const PRODUCT_DETAIL_HEIGHT_MM = 3;
+const QR_TO_TEXT_GAP_MM = 1;
+
 export interface TsplMediaOptions {
   /** Gap between labels in mm. Ignored when sensor is 'none'. */
   gapMm?: number;
@@ -123,19 +141,68 @@ export class TsplFormatter {
     private labelHeightMm: number = 60,
     private dpi: number = 203,
     private media: TsplMediaOptions = {},
-  ) {}
+  ) {
+    // Config enters through IPC at runtime, where TypeScript's numeric types
+    // provide no protection against strings containing extra TSPL commands.
+    // Copy and validate before any formatter method can emit bytes.
+    this.media = { ...media };
+    this.validateConfiguration();
+  }
 
   setDimensions(widthMm: number, heightMm: number): void {
+    this.validateDimensions(widthMm, heightMm);
+    this.validateMedia(this.media, widthMm);
     this.labelWidthMm = widthMm;
     this.labelHeightMm = heightMm;
   }
 
   setMedia(media: TsplMediaOptions): void {
-    this.media = { ...this.media, ...media };
+    const next = { ...this.media, ...media };
+    this.validateMedia(next, this.labelWidthMm);
+    this.media = next;
   }
 
   getDimensions(): { widthMm: number; heightMm: number } {
     return { widthMm: this.labelWidthMm, heightMm: this.labelHeightMm };
+  }
+
+  private assertFiniteRange(name: string, value: number, minimum: number, maximum: number): void {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < minimum || value > maximum) {
+      throw new Error(`${name} must be a finite number between ${minimum} and ${maximum}`);
+    }
+  }
+
+  private validateDimensions(widthMm: number, heightMm: number): void {
+    this.assertFiniteRange('Label width', widthMm, MIN_LABEL_DIMENSION_MM, MAX_LABEL_DIMENSION_MM);
+    this.assertFiniteRange('Label height', heightMm, MIN_LABEL_DIMENSION_MM, MAX_LABEL_DIMENSION_MM);
+  }
+
+  private validateMedia(media: TsplMediaOptions, widthMm: number): void {
+    if (media.gapMm !== undefined) this.assertFiniteRange('Media gap', media.gapMm, 0, MAX_GAP_MM);
+    if (media.speed !== undefined) this.assertFiniteRange('Print speed', media.speed, MIN_SPEED, MAX_SPEED);
+    if (media.density !== undefined) {
+      this.assertFiniteRange('Print density', media.density, MIN_DENSITY, MAX_DENSITY);
+    }
+    if (media.originInsetMm !== undefined) {
+      this.assertFiniteRange('Origin inset', media.originInsetMm, 0, MAX_LABEL_DIMENSION_MM);
+      if (media.originInsetMm >= widthMm / 2) {
+        throw new Error('Origin inset must be less than half the label width');
+      }
+    }
+  }
+
+  private validateConfiguration(labelHeightMmOverride?: number): void {
+    this.validateDimensions(this.labelWidthMm, this.labelHeightMm);
+    this.assertFiniteRange('Printer DPI', this.dpi, MIN_DPI, MAX_DPI);
+    this.validateMedia(this.media, this.labelWidthMm);
+    if (labelHeightMmOverride !== undefined) {
+      this.assertFiniteRange(
+        'Label height override',
+        labelHeightMmOverride,
+        MIN_LABEL_DIMENSION_MM,
+        MAX_LABEL_DIMENSION_MM,
+      );
+    }
   }
 
   /** Dots for a millimetre value at the printer's head resolution. */
@@ -241,8 +308,12 @@ export class TsplFormatter {
     return Math.min(3, fitted);
   }
 
-  /** QR cell size in dots, based on the module count of this exact payload. */
-  private qrCellSize(content: string, usableWidthDots: number, availableHeightDots: number): number {
+  /** QR geometry in dots, based on the module count of this exact payload. */
+  private qrGeometry(
+    content: string,
+    usableWidthDots: number,
+    availableHeightDots: number,
+  ): { cell: number; modules: number; sizeDots: number } {
     let modules: number;
     try {
       // TSPL's `M` argument selects the same error-correction level. Using the
@@ -264,7 +335,36 @@ export class TsplFormatter {
         `available ${width}x${height} dots`,
       );
     }
-    return fitted;
+    return { cell: fitted, modules, sizeDots: fitted * modules };
+  }
+
+  /**
+   * Fit a 1D barcode inside a vertical zone that also contains the firmware's
+   * human-readable line. A too-short label must fail instead of growing beyond
+   * SIZE: Math.max(minimum, available) caused exactly that overflow before.
+   */
+  private oneDimensionalBarcodeHeight(
+    availableZoneDots: number,
+    minimumBarHeightDots: number,
+    humanReadableReserveDots: number,
+    preferredBarHeightDots: number,
+  ): number {
+    const available = Number.isFinite(availableZoneDots)
+      ? Math.max(0, Math.floor(availableZoneDots))
+      : 0;
+    const required = minimumBarHeightDots + humanReadableReserveDots;
+    if (available < required) {
+      throw new Error(
+        `1D barcode does not fit with its human-readable text: requires at least ` +
+        `${required} dots (${minimumBarHeightDots} dots of bars + ` +
+        `${humanReadableReserveDots} dots human-readable reserve), available ${available} dots`,
+      );
+    }
+
+    const preferred = Number.isFinite(preferredBarHeightDots)
+      ? Math.max(minimumBarHeightDots, Math.floor(preferredBarHeightDots))
+      : minimumBarHeightDots;
+    return Math.min(preferred, available - humanReadableReserveDots);
   }
 
   private copies(quantity: number): number {
@@ -277,6 +377,9 @@ export class TsplFormatter {
    * geometry of whatever was printed before it.
    */
   header(builder: TsplBuilder, labelHeightMmOverride?: number): TsplBuilder {
+    // Recheck at the last safe boundary too. This keeps header fail-closed even
+    // if an untyped caller mutates a formatter instance after construction.
+    this.validateConfiguration(labelHeightMmOverride);
     const sensor = this.media.sensor ?? 'gap';
     const gapMm = this.media.gapMm ?? 2;
     // Continuous media has no pitch to honour, so a tag may declare the length
@@ -289,7 +392,7 @@ export class TsplFormatter {
     builder.cmd('DIRECTION 1,0');
     builder.cmd('REFERENCE 0,0');
     builder.cmd(`SPEED ${this.media.speed ?? 3}`);
-    builder.cmd(`DENSITY ${Math.max(0, Math.min(15, Math.round(this.media.density ?? 10)))}`);
+    builder.cmd(`DENSITY ${Math.round(this.media.density ?? 10)}`);
     builder.cmd('SET TEAR ON');
     builder.cmd('CLS');
     return builder;
@@ -326,30 +429,44 @@ export class TsplFormatter {
       y += this.mmToDots(8);
     }
 
+    const price = this.toAscii(data.text2 || '', 24);
+    const detail = this.toAscii(data.text3 || '', 40);
+    const trailingTextHeight =
+      (price ? this.mmToDots(PRODUCT_PRICE_HEIGHT_MM) : 0) +
+      (detail ? this.mmToDots(PRODUCT_DETAIL_HEIGHT_MM) : 0);
+
     const barcode = String(data.barcode || '').trim();
     if (barcode) {
       const type = this.resolveBarcodeType(barcode, data.barcodeType);
       const module = type === 'QR' ? 0 : this.barcodeModuleWidth(type, barcode, inner);
       if (type === 'QR' || module === 0) {
         // Too narrow for bars — a QR still scans in the space a 1D symbol needs.
-        const cell = this.qrCellSize(barcode, inner, this.heightDots - y - margin);
-        b.cmd(`QRCODE ${margin},${y},M,${cell},A,0,${this.quote(barcode)}`);
-        y += this.mmToDots(20);
+        const gap = trailingTextHeight > 0 ? this.mmToDots(QR_TO_TEXT_GAP_MM) : 0;
+        const qr = this.qrGeometry(
+          barcode,
+          inner,
+          this.heightDots - y - margin - trailingTextHeight - gap,
+        );
+        b.cmd(`QRCODE ${margin},${y},M,${qr.cell},A,0,M2,${this.quote(barcode)}`);
+        y += qr.sizeDots + gap;
       } else {
-        const barHeight = Math.max(this.mmToDots(8), Math.round(this.heightDots * 0.3));
+        const humanReadableReserve = this.mmToDots(PRODUCT_HUMAN_READABLE_MM);
+        const barHeight = this.oneDimensionalBarcodeHeight(
+          this.heightDots - y - margin - trailingTextHeight,
+          this.mmToDots(PRODUCT_MIN_BAR_HEIGHT_MM),
+          humanReadableReserve,
+          Math.round(this.heightDots * 0.3),
+        );
         b.cmd(`BARCODE ${margin},${y},"${BARCODE_COMMANDS[type]}",${barHeight},1,0,${module},${module * 2},${this.quote(barcode)}`);
-        // +6mm clears the human-readable digits the printer draws under the bars.
-        y += barHeight + this.mmToDots(6);
+        y += barHeight + humanReadableReserve;
       }
     }
 
-    const price = this.toAscii(data.text2 || '', 24);
     if (price) {
       b.cmd(`TEXT ${margin},${y},"3",0,2,2,${this.quote(price)}`);
-      y += this.mmToDots(7);
+      y += this.mmToDots(PRODUCT_PRICE_HEIGHT_MM);
     }
 
-    const detail = this.toAscii(data.text3 || '', 40);
     if (detail) {
       b.cmd(`TEXT ${margin},${y},"2",0,1,1,${this.quote(detail)}`);
     }
@@ -387,10 +504,16 @@ export class TsplFormatter {
       // A narrow fabric ribbon cannot hold a 1D symbol at a scannable module
       // width, so fall back to QR rather than print bars that run off the edge.
       if (data.useQrCode || type === 'QR' || module === 0) {
-        const cell = this.qrCellSize(barcode, inner, effectiveHeightDots - y - margin);
-        b.cmd(`QRCODE ${margin},${y},M,${cell},A,0,${this.quote(barcode)}`);
+        const qr = this.qrGeometry(barcode, inner, effectiveHeightDots - y - margin);
+        b.cmd(`QRCODE ${margin},${y},M,${qr.cell},A,0,M2,${this.quote(barcode)}`);
       } else {
-        const barHeight = Math.max(this.mmToDots(6), effectiveHeightDots - y - this.mmToDots(5));
+        const humanReadableReserve = this.mmToDots(FABRIC_HUMAN_READABLE_MM);
+        const barHeight = this.oneDimensionalBarcodeHeight(
+          effectiveHeightDots - y,
+          this.mmToDots(FABRIC_MIN_BAR_HEIGHT_MM),
+          humanReadableReserve,
+          effectiveHeightDots - y - humanReadableReserve,
+        );
         b.cmd(`BARCODE ${margin},${y},"${BARCODE_COMMANDS[type]}",${barHeight},1,0,${module},${module * 2},${this.quote(barcode)}`);
       }
     }

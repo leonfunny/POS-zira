@@ -34,7 +34,7 @@ vi.mock('../src/main/hardware/windows-raw-print', () => ({
 vi.mock('../src/main/hardware/tsc/fabric-tag-renderer', () => ({
   renderFabricTagBitmap: async (_data: any, widthDots: number, heightDots: number, options: any) => {
     renderCalls.push({ widthDots, heightDots, options });
-    const height = options?.fitHeight ? MEASURED_HEIGHT_DOTS : heightDots;
+    const height = options?.fitHeight ? Math.min(MEASURED_HEIGHT_DOTS, heightDots) : heightDots;
     const widthBytes = Math.ceil(widthDots / 8);
     return { widthDots, heightDots: height, widthBytes, data: Buffer.alloc(widthBytes * height, 0xff) };
   },
@@ -118,6 +118,21 @@ describe('TSC QR safety', () => {
       barcode: 'A'.repeat(500),
       useQrCode: true,
     })).rejects.toThrow(/QR code.*does not fit/i);
+    expect(sent).toHaveLength(0);
+  });
+});
+
+describe('TSC 1D barcode safety', () => {
+  beforeEach(() => { sent.length = 0; renderCalls.length = 0; });
+
+  it('does not send RAW when a 10mm fabric tag cannot fit bars and readable text', async () => {
+    const driver = new TscDriver('TSC MB241', 100, 10, { sensor: 'none' });
+    expect(await driver.connect()).toBe(true);
+
+    await expect(driver.printFabricTag({
+      ...tag,
+      barcode: '5901234123457',
+    })).rejects.toThrow(/1D barcode.*does not fit.*human-readable/i);
     expect(sent).toHaveLength(0);
   });
 });
