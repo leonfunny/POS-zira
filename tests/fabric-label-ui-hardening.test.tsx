@@ -306,4 +306,39 @@ describe('Fabric Label UI hardening', () => {
     expect(printFabricTag).toHaveBeenCalledTimes(2);
     expect(onStatus).toHaveBeenLastCalledWith({ type: 'error', message: 'Printer offline (10/20)' });
   });
+
+  it('uses a synchronous latch so rapid clicks cannot enqueue the same physical run twice', async () => {
+    let completePrint!: (result: { success: boolean }) => void;
+    printFabricTag.mockReturnValue(
+      new Promise((resolve) => {
+        completePrint = resolve;
+      }),
+    );
+    await render(
+      <FabricTagPrintPanel
+        template={template}
+        styleName="LOTUS"
+        variants={[rows[0]]}
+        ready
+        t={(_key, fallback) => fallback}
+        onStatus={onStatus}
+      />,
+    );
+
+    const inputs = container.querySelectorAll<HTMLInputElement>('input');
+    await changeInput(inputs[0], 'S');
+    await changeInput(inputs[1], '1');
+    const button = buttonWithText(container, 'Print fabric labels (1)');
+    await act(async () => {
+      button.click();
+      button.click();
+      await Promise.resolve();
+    });
+
+    expect(printFabricTag).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      completePrint({ success: true });
+    });
+    await settle();
+  });
 });

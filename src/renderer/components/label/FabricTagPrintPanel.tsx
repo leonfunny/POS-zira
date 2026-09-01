@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 
-import type { FabricTagTemplate } from '../../../shared/types';
+import { FABRIC_TAG_CONFIRM_THRESHOLD, FABRIC_TAG_LIMITS, type FabricTagTemplate } from '../../../shared/types';
 import { totalTagsToPrint } from './fabric-tag-size';
 import rlog from '../../utils/logger';
 import ConfirmActionDialog from '../pos/ConfirmActionDialog';
@@ -28,9 +28,9 @@ interface Props {
 }
 
 /** One print run should not be able to swallow a whole roll by a typo. */
-const MAX_PER_SIZE = 999;
-export const MAX_FABRIC_TAGS_PER_RUN = 999;
-export const FABRIC_TAG_CONFIRM_THRESHOLD = 100;
+const MAX_PER_SIZE = FABRIC_TAG_LIMITS.quantity;
+export const MAX_FABRIC_TAGS_PER_RUN = FABRIC_TAG_LIMITS.quantity;
+export { FABRIC_TAG_CONFIRM_THRESHOLD };
 
 function clampQuantity(value: unknown): number {
   const n = Math.floor(Number(value));
@@ -45,6 +45,10 @@ export default function FabricTagPrintPanel({
   const [sizes, setSizes] = useState<Record<string, string>>({});
   const [printing, setPrinting] = useState(false);
   const [confirmingLargeBatch, setConfirmingLargeBatch] = useState(false);
+  // React state is applied on the next render. A physical print action needs a
+  // synchronous latch too, otherwise two clicks in one event turn can enqueue
+  // the same run twice before `printing` becomes true.
+  const printRunInFlight = useRef(false);
 
   // Re-seed when the style changes. Quantities deliberately reset: carrying a
   // previous style's numbers over is how the wrong garment gets 200 tags.
@@ -62,11 +66,12 @@ export default function FabricTagPrintPanel({
   );
 
   const handlePrint = async (confirmed = false) => {
-    if (!ready || printing || total === 0 || missingSize || batchTooLarge) return;
+    if (!ready || printing || printRunInFlight.current || total === 0 || missingSize || batchTooLarge) return;
     if (!confirmed && total > FABRIC_TAG_CONFIRM_THRESHOLD) {
       setConfirmingLargeBatch(true);
       return;
     }
+    printRunInFlight.current = true;
     setConfirmingLargeBatch(false);
     setPrinting(true);
     onStatus({ type: 'printing', message: t('fabricTag.printingRun', 'Printing fabric tags...') });
@@ -111,6 +116,7 @@ export default function FabricTagPrintPanel({
         message: `${err?.message || t('fabricTag.printFailed', 'Print failed')} (${printed}/${total})`,
       });
     } finally {
+      printRunInFlight.current = false;
       setPrinting(false);
     }
   };
