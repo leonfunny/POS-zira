@@ -171,13 +171,38 @@ chúng**. Đây là cụm lớn, cần backend + API + hàng đợi offline.
 
 ## 5. Sự thật đã đo — đừng phải tìm lại
 
-### `.btw` / BarTender: chỉ dùng làm nguồn tham khảo sau khi xác nhận
+### `.btw` / BarTender: có thiết kế của xưởng, dùng làm nguồn tham khảo sau khi xác nhận
 
-- Ngoài các mẫu kèm bản cài, `tnh` có
-  `Documents\BarTender\BarTender Documents\Document2.btw` và `sm.btw`, tạo/sửa
-  ngày 2026-08-12, author `X-Strike`, printer `TSC MB241`/`USB001`, template
-  `25.1 × 40 mm`, `DataEntryForms=1`. Tên file chưa chứng minh đây là bản đã
-  duyệt; kích thước cũng mâu thuẫn cấu hình/cuộn 20 mm đang đo.
+**Đính chính:** bản đầu của tài liệu này viết "không có file `.btw` nào của
+xưởng". Sai — do bộ lọc tìm kiếm loại trừ cả thư mục `BarTender Documents`, mà
+hai file thật lại nằm ngay thư mục gốc của nó.
+
+- **Có đúng 2 file do xưởng tạo**, trong
+  `C:\Users\X-Strike\Documents\BarTender\BarTender Documents\`:
+  `Document2.btw` (94.257 B) và `sm.btw` (94.258 B), đều tạo/sửa **12-08-2026**.
+  `sm.btw` là bản Save As của file kia — **ảnh xem trước nhúng bên trong giống
+  hệt nhau**.
+- Header trong file cho biết: `Edition=UltraLite`, và
+  **`Printer: Name=TSC MB241; Port=USB001`** — thiết kế nhắm đúng máy in mác
+  vải, `Author=X-Strike`, khổ `25.1 × 40 mm`, `DataEntryForms=1`. Tên file chưa
+  chứng minh đây là bản đã duyệt; khổ này cũng mâu thuẫn với cuộn 20 mm đã đo.
+- **Nội dung mác** (rút từ PNG nhúng trong file):
+
+  ```
+  S/M
+  70% LEN
+  30% wiskoza
+  [5 ký hiệu giặt]
+  NATURALNY LEN
+  Zalecany płyn do płukania dla miękkości
+  ```
+
+  Đây **chính là tem thứ ba** trong ảnh dải vải đầu tiên — tức bản in đó ra từ
+  **BarTender**, không phải từ app. (Lỗi `.care-text` font-weight 400 trong
+  renderer của ta là lỗi thật và đã sửa, nhưng quy tem trong ảnh đó cho nó là
+  quy sai địa chỉ.)
+- Tất cả 99 file `.btw` còn lại là **mẫu kèm bản cài** (AIAG, Caterpillar, DoD,
+  EU Energy, GHS, Oracle, GM... — cùng ngày sửa 2018-03-22).
 - Bản cài là **BarTender 2016 R7 UltraLite**. Thư mục
   `C:\Program Files (x86)\Seagull\BarTender UltraLite\` chỉ có `BarTend.exe`,
   `BtwConv.exe`, `Register.exe`, `SupportCollector.exe`, `SysInfo.exe`.
