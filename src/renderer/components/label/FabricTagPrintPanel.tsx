@@ -1,16 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
 import type { FabricTagTemplate } from '../../../shared/types';
-import { deriveSizeFromVariantName, totalTagsToPrint } from './fabric-tag-size';
+import { totalTagsToPrint } from './fabric-tag-size';
 import rlog from '../../utils/logger';
+import ConfirmActionDialog from '../pos/ConfirmActionDialog';
 
 /**
  * Print a style's care labels, one quantity per size.
  *
- * Sizes are the style's variant rows, so the list is whatever the catalogue
- * already holds -- nothing here invents a size. The size text is editable
- * because it is derived from the variant name and the derivation can be wrong;
- * showing it keeps a bad guess visible before it reaches cloth.
+ * Rows must come from an explicit size source. Catalogue siblings are not
+ * accepted as a proxy because the current garment catalogue groups colours.
  */
 
 export interface FabricTagVariant {
@@ -22,7 +21,7 @@ interface Props {
   template: FabricTagTemplate;
   styleName: string;
   variants: FabricTagVariant[];
-  /** False while the fabric tag printer is not configured or not connected. */
+  /** False while the fabric tag printer slot is disabled or incomplete. */
   ready: boolean;
   t: (key: string, fallback: string) => string;
   onStatus: (status: { type: 'success' | 'error' | 'printing'; message: string }) => void;
@@ -30,6 +29,8 @@ interface Props {
 
 /** One print run should not be able to swallow a whole roll by a typo. */
 const MAX_PER_SIZE = 999;
+export const MAX_FABRIC_TAGS_PER_RUN = 999;
+export const FABRIC_TAG_CONFIRM_THRESHOLD = 100;
 
 function clampQuantity(value: unknown): number {
   const n = Math.floor(Number(value));
@@ -43,26 +44,30 @@ export default function FabricTagPrintPanel({
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [sizes, setSizes] = useState<Record<string, string>>({});
   const [printing, setPrinting] = useState(false);
+  const [confirmingLargeBatch, setConfirmingLargeBatch] = useState(false);
 
   // Re-seed when the style changes. Quantities deliberately reset: carrying a
   // previous style's numbers over is how the wrong garment gets 200 tags.
   useEffect(() => {
-    const seeded: Record<string, string> = {};
-    for (const variant of variants) {
-      seeded[variant.id] = deriveSizeFromVariantName(variant.name, styleName);
-    }
-    setSizes(seeded);
+    setSizes(Object.fromEntries(variants.map((variant) => [variant.id, ''])));
     setQuantities({});
+    setConfirmingLargeBatch(false);
   }, [template.templateId, styleName, variants]);
 
   const total = useMemo(() => totalTagsToPrint(quantities), [quantities]);
+  const batchTooLarge = total > MAX_FABRIC_TAGS_PER_RUN;
   const missingSize = useMemo(
     () => variants.some((variant) => (quantities[variant.id] ?? 0) > 0 && !sizes[variant.id]?.trim()),
     [variants, quantities, sizes],
   );
 
-  const handlePrint = async () => {
-    if (!ready || printing || total === 0 || missingSize) return;
+  const handlePrint = async (confirmed = false) => {
+    if (!ready || printing || total === 0 || missingSize || batchTooLarge) return;
+    if (!confirmed && total > FABRIC_TAG_CONFIRM_THRESHOLD) {
+      setConfirmingLargeBatch(true);
+      return;
+    }
+    setConfirmingLargeBatch(false);
     setPrinting(true);
     onStatus({ type: 'printing', message: t('fabricTag.printingRun', 'Printing fabric tags...') });
 
@@ -101,7 +106,10 @@ export default function FabricTagPrintPanel({
       });
     } catch (err: any) {
       rlog.error('[FabricTagPrintPanel] print run failed:', err);
-      onStatus({ type: 'error', message: err?.message || t('fabricTag.printFailed', 'Print failed') });
+      onStatus({
+        type: 'error',
+        message: `${err?.message || t('fabricTag.printFailed', 'Print failed')} (${printed}/${total})`,
+      });
     } finally {
       setPrinting(false);
     }
@@ -117,9 +125,14 @@ export default function FabricTagPrintPanel({
       </div>
 
       {variants.length === 0 ? (
-        <p className="text-xs text-slate-500">
-          {t('fabricTag.noVariants', 'This style has no size variants to print.')}
-        </p>
+        <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-3">
+          <p className="text-sm font-semibold text-slate-700">
+            {t('fabricTag.noSizesConfigured', 'Sizes are not configured for this care-label template yet.')}
+          </p>
+          <p className="mt-1 text-xs text-slate-500">
+            {t('fabricTag.awaitingApprovedData', 'Add sizes after the approved production sheet is reviewed.')}
+          </p>
+        </div>
       ) : (
         <div className="space-y-2">
           {variants.map((variant) => (
@@ -131,7 +144,7 @@ export default function FabricTagPrintPanel({
                 onChange={(e) => setSizes((prev) => ({ ...prev, [variant.id]: e.target.value }))}
                 placeholder={t('fabricTag.sizePlaceholder', 'Size')}
                 maxLength={10}
-                className="w-20 px-2 py-1 border border-slate-300 rounded text-sm text-center outline-none focus:ring-2 focus:ring-brand-300"
+                className="h-11 w-20 px-2 border border-slate-300 rounded text-sm text-center outline-none focus:ring-2 focus:ring-brand-300"
               />
               <input
                 type="number"
@@ -140,7 +153,7 @@ export default function FabricTagPrintPanel({
                 min={0}
                 max={MAX_PER_SIZE}
                 placeholder="0"
-                className="w-20 px-2 py-1 border border-slate-300 rounded text-sm text-right outline-none focus:ring-2 focus:ring-brand-300"
+                className="h-11 w-20 px-2 border border-slate-300 rounded text-sm text-right outline-none focus:ring-2 focus:ring-brand-300"
               />
             </div>
           ))}
@@ -153,10 +166,23 @@ export default function FabricTagPrintPanel({
         </p>
       )}
 
+      {total > FABRIC_TAG_CONFIRM_THRESHOLD && !batchTooLarge && (
+        <p className="text-xs text-amber-600">
+          {t('fabricTag.largeBatchWarning', 'This large print run requires confirmation.')}
+        </p>
+      )}
+
+      {batchTooLarge && (
+        <p className="text-xs text-red-600">
+          {t('fabricTag.batchTooLarge', 'A single print run cannot exceed {count} labels.')
+            .replace('{count}', String(MAX_FABRIC_TAGS_PER_RUN))}
+        </p>
+      )}
+
       <button
-        onClick={handlePrint}
-        disabled={!ready || printing || total === 0 || missingSize}
-        className="w-full px-3 py-2 rounded-lg text-sm font-medium bg-brand-600 text-white disabled:bg-slate-200 disabled:text-slate-400 transition-colors"
+        onClick={() => void handlePrint()}
+        disabled={!ready || printing || total === 0 || missingSize || batchTooLarge}
+        className="w-full min-h-11 px-3 py-2 rounded-lg text-sm font-medium bg-brand-600 text-white disabled:bg-slate-200 disabled:text-slate-400 transition-colors"
       >
         {printing
           ? t('fabricTag.printingRun', 'Printing fabric tags...')
@@ -168,6 +194,20 @@ export default function FabricTagPrintPanel({
           {t('fabricTag.printerNotReady', 'Configure the fabric tag printer in Settings first.')}
         </p>
       )}
+
+      <ConfirmActionDialog
+        open={confirmingLargeBatch}
+        tier="light"
+        title={t('common.confirmTitle', 'Please confirm')}
+        body={t('fabricTag.largeBatchConfirm', 'You are about to print {count} fabric labels. Continue?')
+          .replace('{count}', String(total))}
+        itemName={styleName}
+        confirmLabel={t('common.confirm', 'Confirm')}
+        cancelLabel={t('common.cancel', 'Cancel')}
+        busy={printing}
+        onConfirm={() => void handlePrint(true)}
+        onCancel={() => setConfirmingLargeBatch(false)}
+      />
     </div>
   );
 }

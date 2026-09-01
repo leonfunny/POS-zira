@@ -80,7 +80,6 @@ const MODE_LABELS: Record<PosMode, string> = {
   salon: 'pos.mode.salon',
   b2b: 'pos.mode.b2b',
   restaurant: 'pos.mode.restaurant',
-  garment: 'pos.mode.garment',
 };
 
 function moneyToGrosze(value: unknown): number {

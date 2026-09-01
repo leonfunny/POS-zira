@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab, ALLOWED_PROTOCOLS_BY_TYPE, PrinterType, LiveCustomerDisplayProfile, PosnetDiagnoseResult, charsPerLineFor, ServerPrinterMapping, LocalPrinterMirrorRow, SalonPrinterMapping, SalonPrinterAssignment, SalonPrinterRole, ScaleConnectionMode, ScaleDiagnoseStep, FiscalDailyReportPrintResponse, LanFirstKitchenNetworkInfo, LanFirstKitchenPairingStatus, LanFirstKitchenTestRouteResponse, POS_MODES, type PosMode } from '../../shared/types';
+import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab, ALLOWED_PROTOCOLS_BY_TYPE, PrinterType, LiveCustomerDisplayProfile, PosnetDiagnoseResult, charsPerLineFor, ServerPrinterMapping, LocalPrinterMirrorRow, SalonPrinterMapping, SalonPrinterAssignment, SalonPrinterRole, ScaleConnectionMode, ScaleDiagnoseStep, FiscalDailyReportPrintResponse, LanFirstKitchenNetworkInfo, LanFirstKitchenPairingStatus, LanFirstKitchenTestRouteResponse, POS_MODES, isPosMode, type PosMode } from '../../shared/types';
 import { resolveCustomerDisplayProfile } from '../../shared/customer-display-profile';
 import { DEFAULT_LAN_FIRST_KITCHEN_PORT, getReadyKitchenWifiPrinters, planLanKitchenSave, resolveLanFirstKitchenTimeoutMs } from '../../shared/lan-first-kitchen-settings';
 import { Language, languageNames, getTranslation, printerTypeIcons } from '../i18n/translations';
@@ -8,6 +8,7 @@ import CategoryRankingSettings from './pos/CategoryRankingSettings';
 import StaffManagementSettings from './pos/StaffManagementSettings';
 import ConfirmActionDialog from './pos/ConfirmActionDialog';
 import FabricTagComposer from './label/FabricTagComposer';
+import { isFabricTagPrinterReady, supportsLabelMediaCalibration } from './label/fabric-tag-printer';
 import rlog from '../utils/logger';
 import QRCode from 'qrcode';
 import { ShoppingCart, LayoutDashboard, FileText, Shield, Printer, Tag, Ticket, UtensilsCrossed, Shirt, Plus, Pencil, Trash2, X, CheckCircle2, AlertTriangle, Share2, Wand2, Scale, LayoutGrid, Clock, Image as ImageIcon, Video, ArrowUp, ArrowDown, Upload } from 'lucide-react';
@@ -614,7 +615,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
 
   // POS settings
   const [posEnabled, setPosEnabled] = useState(config?.posEnabled ?? false);
-  const [posMode, setPosMode] = useState<PosMode>((config?.posMode as PosMode) || 'retail');
+  const [posMode, setPosMode] = useState<PosMode>(() => isPosMode(config?.posMode) ? config.posMode : 'retail');
   const [posLanguage, setPosLanguage] = useState<Language | ''>(config?.posLanguage || '');
   const [allowOversell, setAllowOversell] = useState(config?.allowOversell ?? false);
   const [retailSimpleGrid, setRetailSimpleGrid] = useState(config?.retailSimpleGrid ?? false);
@@ -1157,7 +1158,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
       setLanguage(config.language || 'en');
       // POS settings
       setPosEnabled(config.posEnabled ?? false);
-      setPosMode(config.posMode || 'retail');
+      setPosMode(isPosMode(config.posMode) ? config.posMode : 'retail');
       setPosLanguage(config.posLanguage || '');
       setAllowOversell(config.allowOversell ?? false);
       setRetailSimpleGrid(config.retailSimpleGrid ?? false);
@@ -1376,9 +1377,10 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   // Get printer config for a type (with default)
   const getPrinterConfig = (printerType: PrinterTypeValue): PrinterConfig => {
     const saved = printers[printerType as keyof typeof printers];
-    const base: PrinterConfig = saved || {
+    const base: PrinterConfig = {
       ...defaultPrinterConfig,
       ...(printerType === 'FABRIC_TAG' ? FABRIC_TAG_DEFAULTS : {}),
+      ...(saved || {}),
     };
 
     // A slot has to start on a protocol its own type accepts. Every slot
@@ -3232,6 +3234,8 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
               const printerConfig = getPrinterConfig(printerType);
               const isLabel = isLabelMediaType(printerType);
               const isFabricTag = printerType === 'FABRIC_TAG';
+              const supportsCalibrationProtocol = printerConfig.protocol === 'ZEBRA' || printerConfig.protocol === 'TSPL';
+              const canCalibrateMedia = supportsLabelMediaCalibration(printerConfig, printerType);
               const isFiscalElzab = printerType === 'FISCAL' &&
                 printerConfig.protocol === 'ELZAB_STX';
 
@@ -3637,8 +3641,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                           t={t}
                           labelWidthMm={printerConfig.labelWidth || 20}
                           labelHeightMm={printerConfig.labelHeight || 60}
-                          ready={!!printerConfig.enabled && !!printerConfig.windowsPrinter
-                            && (ALLOWED_PROTOCOLS_BY_TYPE.FABRIC_TAG || []).includes(printerConfig.protocol)}
+                          ready={isFabricTagPrinterReady(printerConfig)}
                         />
                       )}
 
@@ -3929,14 +3932,14 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                           </div>
                         )}
 
-                        {/* Calibrate Button — label languages only (ZPL ~JC / TSPL GAPDETECT) */}
-                        {(printerConfig.protocol === 'ZEBRA' || printerConfig.protocol === 'TSPL') && (
+                        {/* Gap/mark calibration must never run on continuous media. */}
+                        {supportsCalibrationProtocol && (
                           <>
                             <button
                               onClick={() => handleCalibrate(printerType)}
-                              disabled={calibratingPrinter === printerType}
-                              className={`w-full mt-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
-                                calibratingPrinter === printerType
+                              disabled={calibratingPrinter === printerType || !canCalibrateMedia}
+                              className={`w-full min-h-11 mt-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                                calibratingPrinter === printerType || !canCalibrateMedia
                                   ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
                                   : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
                               }`}
@@ -3958,6 +3961,14 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                                 </>
                               )}
                             </button>
+                            {printerConfig.mediaSensor === 'none' && (
+                              <p className="mt-2 text-xs text-slate-500">
+                                {tOr(
+                                  'calibrate.continuousDisabled',
+                                  'Calibration is unavailable for continuous media without a gap or black mark.',
+                                )}
+                              </p>
+                            )}
                             {calibrateResult && calibrateResult.printerType === printerType && (
                               <div className={`mt-2 px-3 py-2 rounded-lg text-xs ${
                                 calibrateResult.success
@@ -5086,9 +5097,8 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                 onChange={(e) => setPosMode(e.target.value as any)}
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none"
               >
-                {/* Rendered from the shared list: hardcoding the options here
-                    is how `garment` was missing from the only screen that can
-                    select it. */}
+                {/* Rendered from the shared list so every supported POS trade
+                    uses the same validated values. */}
                 {POS_MODES.map((mode) => (
                   <option key={mode} value={mode}>{t(`pos.mode.${mode}`)}</option>
                 ))}

@@ -81,6 +81,14 @@ const defaultConfig: AgentConfig = {
   ...AD_DISPLAY_DEFAULTS,
 };
 
+/**
+ * `garment` briefly shipped as a POS mode even though Label already has its
+ * own module switch. Keep accepting it while opening the config so an
+ * affected installation can start, then persist `retail` for rollback to
+ * versions whose schema never knew about `garment`.
+ */
+const LEGACY_GARMENT_POS_MODE = 'garment';
+
 // Printer config schema
 const printerConfigSchema = {
   type: 'object',
@@ -361,7 +369,7 @@ const store = new Store<AgentConfig>({
     aiSystemPrompt: { type: 'string', default: '' },
     // POS settings
     posEnabled: { type: 'boolean', default: true },
-    posMode: { type: 'string', enum: [...POS_MODES], default: 'retail' },
+    posMode: { type: 'string', enum: [...POS_MODES, LEGACY_GARMENT_POS_MODE], default: 'retail' },
     allowOversell: { type: 'boolean', default: false },
     // Fair / market-stall till: one product grid, no categories, no unit filter.
     retailSimpleGrid: { type: 'boolean', default: false },
@@ -543,6 +551,10 @@ const store = new Store<AgentConfig>({
   } as any,
 });
 
+if ((store.get('posMode') as unknown) === LEGACY_GARMENT_POS_MODE) {
+  store.set('posMode', 'retail');
+}
+
 function inferMultiPrinterMode(config: Partial<AgentConfig>): boolean {
   return !!(
     (config.printers && Object.keys(config.printers).length > 0) ||
@@ -585,7 +597,10 @@ export function getConfig(): AgentConfig {
  * Update configuration
  */
 export function setConfig(config: Partial<AgentConfig>): AgentConfig {
-  store.set(config);
+  const next = (config as { posMode?: unknown }).posMode === LEGACY_GARMENT_POS_MODE
+    ? { ...config, posMode: 'retail' as const }
+    : config;
+  store.set(next);
   return store.store;
 }
 
@@ -608,7 +623,7 @@ export function getConfigValue<K extends keyof AgentConfig>(key: K): AgentConfig
  * Set specific value
  */
 export function setConfigValue<K extends keyof AgentConfig>(key: K, value: AgentConfig[K]): void {
-  store.set(key, value);
+  store.set(key, key === 'posMode' && (value as unknown) === LEGACY_GARMENT_POS_MODE ? 'retail' : value);
 }
 
 // safeStorage backs DPAPI encryption on Windows. Imported via the ESM

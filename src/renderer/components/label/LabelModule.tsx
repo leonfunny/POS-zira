@@ -22,8 +22,9 @@ import {
 import type { AgentConfig } from '../../../shared/types';
 import { useConfig } from '../../hooks/useConfig';
 import { useProducts } from '../../hooks/useProducts';
-import type { FabricTagTemplate, PosMode } from '../../../shared/types';
+import type { FabricTagTemplate } from '../../../shared/types';
 import FabricTagPrintPanel, { type FabricTagVariant } from './FabricTagPrintPanel';
+import { isFabricTagPrinterReady } from './fabric-tag-printer';
 import type { ProductListItem } from '../../hooks/useProducts';
 import type { Category } from '../../hooks/usePosDb';
 import { getTranslation, type Language } from '../../i18n/translations';
@@ -41,11 +42,6 @@ import ConfirmActionDialog from '../pos/ConfirmActionDialog';
 
 interface LabelModuleProps {
   language: Language;
-  /**
-   * Fabric care labels only make sense in a garment shop, so the panel is
-   * gated on the trade rather than shown to every till that has a TSC.
-   */
-  posMode?: PosMode;
 }
 
 type LabelProduct = ProductListItem & { ean?: string | null };
@@ -129,6 +125,7 @@ interface LabelCopy {
 
 const HIGH_COPY_CONFIRM_THRESHOLD = 10;
 const RECENT_PRINT_LIMIT = 5;
+const NO_FABRIC_TAG_SIZES: FabricTagVariant[] = [];
 
 const COPY: Record<string, LabelCopy> = {
   en: {
@@ -387,7 +384,7 @@ function BarcodePreview({ barcode }: { barcode: string }) {
   );
 }
 
-export default function LabelModule({ language, posMode }: LabelModuleProps) {
+export default function LabelModule({ language }: LabelModuleProps) {
   const { config, saveConfig } = useConfig();
   const labelLanguage: LabelLanguage = PRODUCT_LABEL_NAME_LOCALE;
   const copy = COPY[language] || COPY.vi;
@@ -404,10 +401,8 @@ export default function LabelModule({ language, posMode }: LabelModuleProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedProductId, setSelectedProductId] = useState('');
   const [fabricTemplates, setFabricTemplates] = useState<Map<string, FabricTagTemplate>>(new Map());
-  const isGarmentMode = posMode === 'garment';
 
   useEffect(() => {
-    if (!isGarmentMode) { setFabricTemplates(new Map()); return; }
     let cancelled = false;
     // Optional: a renderer whose preload predates this binding must lose the
     // fabric panel, not the whole window. Reaching straight through here
@@ -428,9 +423,10 @@ export default function LabelModule({ language, posMode }: LabelModuleProps) {
         rlog.error('[LabelModule] Failed to load fabric tag templates:', err);
       });
     return () => { cancelled = true; };
-  }, [isGarmentMode]);
+  }, []);
   const [copies, setCopies] = useState(1);
   const [status, setStatus] = useState<LabelStatus>({ type: 'idle', message: '' });
+  const [fabricStatus, setFabricStatus] = useState<{ type: 'success' | 'error' | 'printing'; message: string } | null>(null);
   const [recentPrints, setRecentPrints] = useState<RecentPrint[]>([]);
   const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
   const [optimisticCategoryIds, setOptimisticCategoryIds] = useState<string[]>([]);
@@ -542,24 +538,14 @@ export default function LabelModule({ language, posMode }: LabelModuleProps) {
     [labelProducts, selectedProductId],
   );
 
-  /**
-   * The style behind the selected product, and every size that belongs to it.
-   *
-   * Sizes are sibling variants sharing a template id, read from the full
-   * catalogue rather than the filtered Label list: a size the operator has not
-   * pinned is still a size that needs a label.
-   */
-  const selectedFabricStyle = useMemo(() => {
-    if (!isGarmentMode || !selectedProduct) return null;
+  const selectedFabricTemplate = useMemo(() => {
+    if (!selectedProduct) return null;
     const templateId = selectedProduct.template_id;
     if (!templateId) return null;
-    const template = fabricTemplates.get(templateId);
-    if (!template) return null;
-    const variants: FabricTagVariant[] = allProducts
-      .filter((product) => product.template_id === templateId)
-      .map((product) => ({ id: product.id, name: product.name }));
-    return { template, variants };
-  }, [isGarmentMode, selectedProduct, fabricTemplates, allProducts]);
+    return fabricTemplates.get(templateId) || null;
+  }, [selectedProduct, fabricTemplates]);
+
+  const fabricTagPrinterReady = isFabricTagPrinterReady(config?.printers?.FABRIC_TAG);
 
   const selectedBarcode = resolveLabelCode(selectedProduct);
   const selectedNameResolution = selectedProduct
@@ -684,6 +670,7 @@ export default function LabelModule({ language, posMode }: LabelModuleProps) {
 
   const selectProduct = (product: LabelProduct) => {
     setSelectedProductId(product.id);
+    setFabricStatus(null);
     if (status.type !== 'printing') {
       clearStatusResetTimeout();
       setStatus({ type: 'idle', message: '' });
@@ -973,17 +960,33 @@ export default function LabelModule({ language, posMode }: LabelModuleProps) {
               {printButtonText}
             </button>
 
-            {selectedFabricStyle && (
-              <FabricTagPrintPanel
-                template={selectedFabricStyle.template}
-                styleName={selectedName || selectedProduct?.name || ''}
-                variants={selectedFabricStyle.variants}
-                ready
-                // Not translated yet: the strings land with the editing form,
-                // which is where an operator will actually read them.
-                t={(_key, fallback) => fallback}
-                onStatus={(next) => setStatus(next as typeof status)}
-              />
+            {selectedFabricTemplate && (
+              <section className="space-y-2" aria-label={tOr('fabricTag.printRunTitle', 'Fabric care labels')}>
+                <FabricTagPrintPanel
+                  template={selectedFabricTemplate}
+                  styleName={selectedName || selectedProduct?.name || ''}
+                  // Catalogue siblings are colours for the current LOTUS data,
+                  // not sizes. Wait for approved size data instead of guessing.
+                  variants={NO_FABRIC_TAG_SIZES}
+                  ready={fabricTagPrinterReady}
+                  t={tOr}
+                  onStatus={setFabricStatus}
+                />
+                {fabricStatus && (
+                  <div
+                    role="status"
+                    className={`rounded-lg border px-3 py-2 text-xs font-bold ${
+                      fabricStatus.type === 'success'
+                        ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                        : fabricStatus.type === 'printing'
+                          ? 'border-sky-200 bg-sky-50 text-sky-800'
+                          : 'border-red-200 bg-red-50 text-red-800'
+                    }`}
+                  >
+                    {fabricStatus.message}
+                  </div>
+                )}
+              </section>
             )}
           </div>
 

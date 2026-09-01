@@ -19,10 +19,9 @@ export type PrinterProtocol = 'THERMAL' | 'POSNET' | 'ELZAB_STX' | 'ZEBRA' | 'WI
  * already drifted -- the same failure that left TSPL out of the printer
  * protocol union and made a fabric tag printer impossible to configure.
  *
- * `garment` is a print-only mode: the machine sets label content and prints
- * care labels and EAN tags, it does not sell.
+ * Label printing is controlled by the Label module, not by a POS trade mode.
  */
-export const POS_MODES = ['retail', 'salon', 'b2b', 'restaurant', 'garment'] as const;
+export const POS_MODES = ['retail', 'salon', 'b2b', 'restaurant'] as const;
 export type PosMode = typeof POS_MODES[number];
 
 export function isPosMode(value: unknown): value is PosMode {
