@@ -59,19 +59,19 @@
   "dependencies": {
     "@nut-tree-fork/nut-js": "^4.2.6",
     "bonjour-service": "^1.4.0",
-    "electron-store": "^8.1.0",
-    "electron-updater": "^6.7.3",
+    "electron-store": "^8.2.0",
+    "electron-updater": "^6.8.9",
     "grammy": "^1.21.0",
     "lucide-react": "^0.563.0",
-    "openai": "^4.77.0",
+    "openai": "^4.104.0",
     "pdf-lib": "^1.17.1",
     "qrcode": "^1.5.4",
     "react-zoom-pan-pinch": "^3.7.0",
     "rebrowser-playwright-core": "^1.52.0",
-    "socket.io-client": "^4.8.1",
+    "socket.io-client": "^4.8.3",
     "sql.js": "^1.13.0",
     "winston": "^3.17.0",
-    "ws": "^8.19.0"
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@aws-sdk/client-s3": "^3.982.0",
@@ -86,7 +86,7 @@
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
-    "concurrently": "^9.1.0",
+    "concurrently": "^9.2.4",
     "electron": "^33.2.1",
     "electron-builder": "^25.1.8",
     "happy-dom": "^20.11.0",
@@ -96,8 +96,8 @@
     "react-dom": "^18.3.1",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.2",
-    "vite": "^6.0.7",
-    "vitest": "^4.0.18",
+    "vite": "^6.4.3",
+    "vitest": "^4.1.11",
     "yaml": "2.9.0"
   },
   "build": {
