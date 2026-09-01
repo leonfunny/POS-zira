@@ -16,6 +16,7 @@ import {
   assertSafeInvoiceBridgeNodeModules,
   buildInvoiceBridgeE2ePackage,
   cleanInvoiceBridgeE2eBuildOutputs,
+  resolveInvoiceBridgeSpawn,
 } from '../scripts/build-invoice-bridge-e2e-package.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -69,6 +70,30 @@ afterEach(async () => {
 });
 
 describe('isolated POS invoice bridge package lane', () => {
+  it('runs npm.cmd through the exact npm CLI and Node executable on Windows', () => {
+    expect(resolveInvoiceBridgeSpawn('npm.cmd', ['ci'], {
+      platform: 'win32',
+      execPath: 'C:\\node20\\node.exe',
+      npmExecPath: 'C:\\npm10\\node_modules\\npm\\bin\\npm-cli.js',
+    })).toEqual({
+      command: 'C:\\node20\\node.exe',
+      args: ['C:\\npm10\\node_modules\\npm\\bin\\npm-cli.js', 'ci'],
+    });
+  });
+
+  it('fails closed instead of spawning npm.cmd through a shell or ambiguous PATH', () => {
+    expect(() => resolveInvoiceBridgeSpawn('npm.cmd', ['ci'], {
+      platform: 'win32',
+      execPath: 'C:\\node20\\node.exe',
+      npmExecPath: 'npm-cli.js',
+    })).toThrow('absolute npm_execpath');
+    expect(() => resolveInvoiceBridgeSpawn('npm.cmd', ['ci'], {
+      platform: 'win32',
+      execPath: 'C:\\node20\\node.exe',
+      npmExecPath: 'C:\\npm10\\not-npm.js',
+    })).toThrow('absolute npm_execpath');
+  });
+
   it('removes only canonical dist and release/win-unpacked outputs', async () => {
     const fixture = await createCleanBuildRoot();
     await mkdir(join(fixture.root, 'dist'), { recursive: true });

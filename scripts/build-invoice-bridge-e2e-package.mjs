@@ -122,9 +122,43 @@ function parseArgs(argv) {
   return options;
 }
 
+export function resolveInvoiceBridgeSpawn(
+  command,
+  args,
+  {
+    platform = process.platform,
+    execPath = process.execPath,
+    npmExecPath = process.env.npm_execpath,
+  } = {},
+) {
+  if (platform !== 'win32' || command.toLowerCase() !== 'npm.cmd') {
+    return { command, args };
+  }
+
+  const windowsPath = path.win32;
+  if (
+    !npmExecPath
+    || !windowsPath.isAbsolute(npmExecPath)
+    || windowsPath.basename(npmExecPath).toLowerCase() !== 'npm-cli.js'
+  ) {
+    throw new Error(
+      'Windows E2E packaging requires an absolute npm_execpath ending in npm-cli.js; run the package script through npm',
+    );
+  }
+  if (!windowsPath.isAbsolute(execPath)) {
+    throw new Error('Windows E2E packaging requires an absolute Node executable path');
+  }
+
+  return {
+    command: execPath,
+    args: [npmExecPath, ...args],
+  };
+}
+
 function run(command, args, cwd) {
+  const invocation = resolveInvoiceBridgeSpawn(command, args);
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+    const child = spawn(invocation.command, invocation.args, {
       cwd,
       stdio: 'inherit',
       windowsHide: true,
@@ -208,8 +242,11 @@ async function main() {
 }
 
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
-  main().catch(() => {
-    process.stderr.write('POS invoice bridge isolated E2E package build failed\n');
+  main().catch((error) => {
+    const detail = error instanceof Error && error.message
+      ? `: ${error.message}`
+      : '';
+    process.stderr.write(`POS invoice bridge isolated E2E package build failed${detail}\n`);
     process.exitCode = 1;
   });
 }
