@@ -435,6 +435,9 @@ export const orderRepo = {
     items: OrderItemRow[],
     options?: { afterInsertInTransaction?: () => void },
   ): string {
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new Error('POS order must contain at least one item');
+    }
     // Generate order number INSIDE transaction for atomicity (prevents race condition)
     let finalOrderNumber: string = '';
 
@@ -770,6 +773,10 @@ export const orderRepo = {
   markSyncFailed(id: string): void {
     // Revert from syncing (2) back to pending (0) for retry
     database.run('UPDATE orders SET synced = 0 WHERE id = ? AND synced = 2', [id]);
+  },
+
+  shelve(id: string, error: string): void {
+    database.run('UPDATE orders SET synced = -1, sync_error = ? WHERE id = ?', [error, id]);
   },
 
   /**

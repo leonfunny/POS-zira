@@ -955,6 +955,7 @@ interface ElectronAPI {
         page?: number;
         limit?: number;
       }) => Promise<{ orders: any[]; items: Record<string, any[]>; total: number; page: number; limit: number; source: 'server' | 'unconfigured' | 'network-error'; error?: string }>;
+      getRefundDetail: (orderId: string) => Promise<{ success: boolean; detail?: { order: any; items: any[] }; error?: string }>;
       getTodayServer: () => Promise<{ success: boolean; orders?: any[]; count?: number; error?: string }>;
       mirrorFromServer: (orderId: string, kind: 'cash' | 'invoiced') => Promise<{ success: boolean; localOrderId?: string; error?: string; wasSplit?: boolean }>;
     };

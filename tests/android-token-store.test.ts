@@ -1,13 +1,14 @@
 /**
  * Packet S4 — TokenStore (Android parity port) tests.
  *
- * Covers the two storage paths the shim's token store exposes:
+ * Covers the storage policies the shim's token store exposes:
  *   • NATIVE  — `window.Capacitor.Plugins.SecureKV` is present (a fake of the
  *     SecureKVPlugin Java plugin). Verifies get/set/remove/clear call shapes,
  *     isSecure === true, and that access/refresh tokens round-trip + clear().
- *   • FALLBACK — the native plugin is absent (plain browser / vitest). Verifies
- *     plaintext localStorage persistence under the `zira.dev-insecure.` prefix,
- *     isSecure === false, and the same round-trip + clear() semantics.
+ *   • FALLBACK — the native plugin is absent and dev/test explicitly opts in.
+ *     Verifies plaintext localStorage persistence under the
+ *     `zira.dev-insecure.` prefix, isSecure === false, and round-trip semantics.
+ *   • PRODUCTION — no native plugin means fail closed, never plaintext storage.
  *
  * The fake plugin also asserts the secure-storage boundary is honored: token
  * values only ever travel through the typed plugin methods (never logged).
@@ -160,11 +161,11 @@ describe('TokenStore — fallback localStorage path', () => {
   });
 
   it('reports isSecure === false', () => {
-    expect(new TokenStore({ storage }).isSecure).toBe(false);
+    expect(new TokenStore({ storage, allowInsecureFallback: true }).isSecure).toBe(false);
   });
 
   it('persists tokens under the zira.dev-insecure. prefix', async () => {
-    const store = new TokenStore({ storage });
+    const store = new TokenStore({ storage, allowInsecureFallback: true });
     await store.setTokens('access-1', 'refresh-1');
 
     expect(storage.setItem).toHaveBeenCalledWith('zira.dev-insecure.access_token', 'access-1');
@@ -174,7 +175,7 @@ describe('TokenStore — fallback localStorage path', () => {
   });
 
   it('round-trips access + refresh and clear() wipes both', async () => {
-    const store = new TokenStore({ storage });
+    const store = new TokenStore({ storage, allowInsecureFallback: true });
     await store.setTokens('access-ABC', 'refresh-ABC');
 
     expect(await store.getAccessToken()).toBe('access-ABC');
@@ -189,13 +190,26 @@ describe('TokenStore — fallback localStorage path', () => {
   });
 
   it('setTokens(access, null) removes the stale refresh key', async () => {
-    const store = new TokenStore({ storage });
+    const store = new TokenStore({ storage, allowInsecureFallback: true });
     await store.setTokens('access-1', 'refresh-1');
     await store.setTokens('access-2', null);
 
     expect(await store.getAccessToken()).toBe('access-2');
     expect(await store.getRefreshToken()).toBeNull();
     expect(storage.removeItem).toHaveBeenCalledWith('zira.dev-insecure.refresh_token');
+  });
+});
+
+describe('TokenStore — production fail-closed path', () => {
+  it('never writes plaintext tokens when SecureKV is unavailable', async () => {
+    const storage = makeFakeStorage();
+    const store = new TokenStore({ storage, allowInsecureFallback: false });
+
+    await expect(store.setTokens('access-1', 'refresh-1')).rejects.toMatchObject({
+      code: 'SECURE_TOKEN_STORAGE_UNAVAILABLE',
+    });
+    expect(await store.getAccessToken()).toBeNull();
+    expect(storage.setItem).not.toHaveBeenCalled();
   });
 });
 

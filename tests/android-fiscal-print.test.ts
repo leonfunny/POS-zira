@@ -408,7 +408,7 @@ describe('android fiscal-print real-transport wiring (E-FISCAL)', () => {
 
   function build() {
     const configStore = new ShimConfigStore({ storage: memoryStorage() });
-    const tokenStore = new TokenStore({ storage: memoryStorage() });
+    const tokenStore = new TokenStore({ storage: memoryStorage(), allowInsecureFallback: true });
     const transport = createRealTransport({
       configStore,
       tokenStore,

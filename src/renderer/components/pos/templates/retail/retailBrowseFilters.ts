@@ -19,6 +19,20 @@ export const RETAIL_UNIT_FILTERS: Array<{
   { id: 'kg', labelKey: 'pos.unitFilter.kg', fallback: 'Kg' },
 ];
 
+/**
+ * The retail home screen is the category gallery -- unless the device runs in
+ * "simple grid" (fair / market-stall) mode, where the whole catalogue is the
+ * home screen and categories never appear.
+ */
+export function shouldShowCategoryGallery(input: {
+  simpleGrid: boolean;
+  gridSearchQuery: string;
+  activeCategoryId: string | null;
+}): boolean {
+  if (input.simpleGrid) return false;
+  return !input.gridSearchQuery && input.activeCategoryId === null;
+}
+
 export function getRetailProductUnit(product: Product): Exclude<RetailUnitFilter, 'all'> {
   return classifyProductSale(product).isWeighted ? 'kg' : 'piece';
 }

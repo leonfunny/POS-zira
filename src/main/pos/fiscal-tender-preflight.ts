@@ -50,11 +50,19 @@ function allocatedBilliardDiscount(line: TenderFiscalLine): number {
     try { jsonDiscount = Number(JSON.parse(line.billiard_json)?.allocatedDiscountGrosze || 0); }
     catch { /* frozen Billiard order validation owns malformed metadata */ }
   }
+  // `allocated_discount` on order_items is shared by two features: a frozen
+  // Billiard per-VAT-line allocation (which the ELZAB sidecar really cannot
+  // print) and the cashier's manual per-product discount (e5e517a6), which
+  // is only itemised on the paper order copy -- its sum already rides in the
+  // whole-receipt rabat that ReceiptEndEx prints. Only the Billiard flavour
+  // (marked by `billiard`/`billiard_json` metadata) may block an ELZAB tender;
+  // reading the column unconditionally refused every manually discounted
+  // retail sale at commit time (chesaigon POS, 2026-08-28).
+  const isBilliardLine = Boolean(line.billiard) || Boolean(String(line.billiard_json || '').trim());
   return Number(
     line.billiard?.allocatedDiscountGrosze
     ?? line.allocatedDiscountGrosze
-    ?? line.allocated_discount
-    ?? jsonDiscount,
+    ?? (isBilliardLine ? (line.allocated_discount ?? jsonDiscount) : 0),
   );
 }
 

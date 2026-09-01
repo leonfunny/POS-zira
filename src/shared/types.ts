@@ -154,6 +154,7 @@ export interface DailyReportData {
   transactionCount: number;
   grossSales: number;      // In grosze/cents
   discounts: number;       // In grosze/cents
+  tips?: number;           // In grosze/cents; excluded from sales revenue
   refunds?: number;        // In grosze/cents
   netSales: number;        // In grosze/cents
   vatSummary?: Array<{
@@ -753,6 +754,7 @@ export interface AgentConfig {
   posEnabled?: boolean;                // Enable POS window
   posMode?: PosMode;  // Which trade the till is set up for (default: 'retail')
     allowOversell?: boolean;             // Allow retail/self-checkout sale when tracked stock is <= 0. Default false.
+    retailSimpleGrid?: boolean;          // Fair / market-stall till: one product grid, no categories or unit filter. Default false.
     fiscalOnCashSale?: 'always' | 'never' | 'ask'; // Fiscal receipt behavior after CASH/BLIK order-copy print. Default ask.
     autoOrderDiscount?: {
       enabled: boolean;

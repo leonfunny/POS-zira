@@ -33,7 +33,7 @@ const LOGIN_BODY = {
 
 function build() {
   const configStore = new ShimConfigStore({ storage: memoryStorage() });
-  const tokenStore = new TokenStore({ storage: memoryStorage() });
+  const tokenStore = new TokenStore({ storage: memoryStorage(), allowInsecureFallback: true });
   const transport = createRealTransport({ configStore, tokenStore, dbInit: { locateFile: NODE_LOCATE_FILE } });
   return { configStore, tokenStore, transport };
 }

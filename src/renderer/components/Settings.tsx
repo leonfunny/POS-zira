@@ -617,6 +617,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   const [posMode, setPosMode] = useState<PosMode>((config?.posMode as PosMode) || 'retail');
   const [posLanguage, setPosLanguage] = useState<Language | ''>(config?.posLanguage || '');
   const [allowOversell, setAllowOversell] = useState(config?.allowOversell ?? false);
+  const [retailSimpleGrid, setRetailSimpleGrid] = useState(config?.retailSimpleGrid ?? false);
   const [fiscalOnCashSale, setFiscalOnCashSale] = useState<FiscalOnCashSaleMode>(config?.fiscalOnCashSale || 'ask');
   const [autoDiscountEnabled, setAutoDiscountEnabled] = useState(config?.autoOrderDiscount?.enabled ?? false);
   const [autoDiscountPercent, setAutoDiscountPercent] = useState(String(config?.autoOrderDiscount?.percent || 5));
@@ -842,6 +843,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
     posMode,
     posLanguage: (posLanguage || '') as AgentConfig['posLanguage'],
     allowOversell,
+    retailSimpleGrid,
     fiscalOnCashSale,
     autoOrderDiscount: {
       enabled: autoDiscountEnabled,
@@ -884,7 +886,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
     ...overrides,
   }), [
     name, autoStart, language,
-    posEnabled, posMode, posLanguage, allowOversell, fiscalOnCashSale,
+    posEnabled, posMode, posLanguage, allowOversell, retailSimpleGrid, fiscalOnCashSale,
     autoDiscountEnabled, autoDiscountPercent, autoDiscountEndDate,
     scaleConnection, scalePort, scaleChipset, scaleModel, scaleDriverStatus, scaleShareEnabled, scaleSharePort, scaleShareToken,
     scaleRemoteHost, scaleRemotePort, scaleRemoteToken,
@@ -1158,6 +1160,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
       setPosMode(config.posMode || 'retail');
       setPosLanguage(config.posLanguage || '');
       setAllowOversell(config.allowOversell ?? false);
+      setRetailSimpleGrid(config.retailSimpleGrid ?? false);
       setFiscalOnCashSale(config.fiscalOnCashSale || 'ask');
       setAutoDiscountEnabled(config.autoOrderDiscount?.enabled ?? false);
       setAutoDiscountPercent(String(config.autoOrderDiscount?.percent || 5));
@@ -2595,6 +2598,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
     t('settings.posMode'), 'POS mode',
     t('settings.posLanguage'), 'POS language',
     t('settings.allowOversell'), 'Allow oversell',
+    tOr('settings.retailSimpleGrid', 'Simple product grid (fair / market stall)'), 'simple grid', 'fair', 'hội chợ', 'no categories',
     tOr('settings.fiscalOnCashSale', 'Fiscal receipt on cash/BLIK sale'),
     ...FISCAL_ON_CASH_SALE_OPTIONS.map(option => tOr(option.labelKey, option.fallback)),
     tOr('settings.autoOrderDiscount', 'Automatic discount on every order'),
@@ -5134,6 +5138,35 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                 <span
                   className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
                     allowOversell ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+
+            <div className="flex items-start justify-between gap-3 rounded-lg border border-slate-200 bg-white p-3">
+              <div className="flex min-w-0 gap-3">
+                <LayoutGrid size={18} className="mt-0.5 shrink-0 text-brand-600" />
+                <div className="min-w-0">
+                  <label className="block text-sm font-semibold text-slate-700">
+                    {tOr('settings.retailSimpleGrid', 'Simple product grid (fair / market stall)')}
+                  </label>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">
+                    {tOr('settings.retailSimpleGridDesc', 'Retail POS shows every product on one grid from the start. Category tiles and the kg/piece filter are hidden; search and payment work as usual.')}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={retailSimpleGrid}
+                onClick={() => setRetailSimpleGrid(!retailSimpleGrid)}
+                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+                  retailSimpleGrid ? 'bg-brand-600' : 'bg-slate-300'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    retailSimpleGrid ? 'translate-x-6' : 'translate-x-1'
                   }`}
                 />
               </button>

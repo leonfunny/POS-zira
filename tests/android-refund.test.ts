@@ -68,7 +68,7 @@ const CATALOG_PAGE = {
 
 function build() {
   const configStore = new ShimConfigStore({ storage: memoryStorage(), seed: {} as never });
-  const tokenStore = new TokenStore({ storage: memoryStorage() });
+  const tokenStore = new TokenStore({ storage: memoryStorage(), allowInsecureFallback: true });
   const transport = createRealTransport({
     configStore,
     tokenStore,

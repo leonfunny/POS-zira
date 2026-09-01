@@ -18,11 +18,10 @@
  * global at runtime with zero static import. This is the approved pattern.
  *
  * ─── Fallback (dev / plain browser) ────────────────────────────────────────
- * When the native plugin is absent (desktop Chromium, vitest, or any non-app
- * WebView), TokenStore falls back to `localStorage` under the
- * `zira.dev-insecure.` prefix and reports `isSecure === false`. Callers (S7
- * auth wiring) can surface a dev warning from that flag. The fallback NEVER
- * runs on a real device, where Capacitor always injects the plugin.
+ * When the native plugin is absent, plaintext fallback is available only in a
+ * Vite development build or when a test explicitly opts in. Production reads
+ * fail closed and writes reject; tokens can never silently enter WebView
+ * localStorage because a native plugin was omitted or failed to register.
  *
  * ─── Logging ───────────────────────────────────────────────────────────────
  * This module NEVER logs token values. Errors are surfaced as null results
@@ -103,6 +102,17 @@ function nativeSecureKv(): SecureKVPlugin | null {
 export interface TokenStoreOptions {
   /** Inject a localStorage-like adapter (tests). Defaults to globalThis.localStorage. */
   storage?: TokenStoreStorage;
+  /** Explicit test/dev escape hatch. Production defaults to false. */
+  allowInsecureFallback?: boolean;
+}
+
+export class SecureTokenStorageUnavailableError extends Error {
+  readonly code = 'SECURE_TOKEN_STORAGE_UNAVAILABLE';
+
+  constructor() {
+    super('Secure token storage is unavailable');
+    this.name = 'SecureTokenStorageUnavailableError';
+  }
 }
 
 /**
@@ -112,9 +122,11 @@ export interface TokenStoreOptions {
  */
 export class TokenStore {
   private readonly storage: TokenStoreStorage;
+  private readonly allowInsecureFallback: boolean;
 
   constructor(options: TokenStoreOptions = {}) {
     this.storage = options.storage ?? defaultStorage();
+    this.allowInsecureFallback = options.allowInsecureFallback ?? import.meta.env.DEV;
   }
 
   /**
@@ -194,6 +206,7 @@ export class TokenStore {
         return null;
       }
     }
+    if (!this.allowInsecureFallback) return null;
     return this.storage.getItem(INSECURE_PREFIX + key);
   }
 
@@ -203,6 +216,7 @@ export class TokenStore {
       await plugin.set({ key, value });
       return;
     }
+    if (!this.allowInsecureFallback) throw new SecureTokenStorageUnavailableError();
     this.storage.setItem(INSECURE_PREFIX + key, value);
   }
 

@@ -109,6 +109,7 @@ describe('IPC channel contracts - POS methods must be in BOTH preloads', () => {
     { scope: 'orders', method: 'retrySync', ipc: 'pos:orders:retrySync' },
     { scope: 'orders', method: 'repairStockFailures', ipc: 'pos:orders:repairStockFailures' },
     { scope: 'orders', method: 'getServerList', ipc: 'pos:orders:getServerList' },
+    { scope: 'orders', method: 'getRefundDetail', ipc: 'pos:orders:getRefundDetail' },
     { scope: 'orders', method: 'getTodayServer', ipc: 'pos:orders:getTodayServer' },
     { scope: 'customers', method: 'lookupNip', ipc: 'pos:customers:lookupNip' },
     { scope: 'shift', method: 'getActive', ipc: 'pos:shift:getActive' },
@@ -262,7 +263,7 @@ describe('Refund payload passes lines[] end-to-end', () => {
       reason: 'Customer request',
       computedRefundTotal: 1234,
       lines: [
-        { name: 'Bulka', quantity: 2, unitPrice: 200, refundAmount: 400, restock: true },
+        { name: 'Bulka', quantity: 2, unitPrice: 617, refundAmount: 1234, restock: true },
       ],
     })).toEqual({
       type: 'FULL',
@@ -270,9 +271,25 @@ describe('Refund payload passes lines[] end-to-end', () => {
       reason: 'Customer request',
       amount: 1234,
       lines: [
-        { name: 'Bulka', quantity: 2, unitPrice: 200, refundAmount: 400, restock: true },
+        { name: 'Bulka', quantity: 2, unitPrice: 617, refundAmount: 1234, restock: true },
       ],
     });
+  });
+
+  it('loads authoritative server items before opening a synced order refund', () => {
+    expect(posModule).toContain("ipcMain.handle('pos:orders:getRefundDetail'");
+    expect(posModule).toContain('apiClient.getServerOrderDetail(token, localOrder.backend_id');
+    expect(posModule).toContain('adaptServerOrderItem(item, localOrder.id, serverOrder)');
+    expect(orderHistoryModal).toContain('loadAuthoritativeRefundDetail(order)');
+    expect(orderHistoryModal).toContain('window.electronAPI.pos.orders.getRefundDetail(orderId)');
+    expect(orderHistoryModal).toContain("if (await loadAuthoritativeRefundDetail(order)) setShowRefund(true)");
+    expect(orderHistoryModal).not.toContain('&& hasRefundableItem');
+  });
+
+  it('resolves server item maps by backend ID for a local synced order', () => {
+    expect(orderHistoryModal).toContain(
+      'order?.backend_id ? serverItemsMap[order.backend_id] : undefined',
+    );
   });
 
   it('renderer generates refundRequestId only inside the actual refund attempt', () => {
@@ -842,7 +859,6 @@ describe('Refund payload passes lines[] end-to-end', () => {
     expect(orderHistoryModal).toContain('getSafeRemainingTotal(order)');
     expect(orderHistoryModal).toContain('unsafeMissingRefundLines');
     expect(orderHistoryModal).toContain("refundStatus !== 'full'");
-    expect(orderHistoryModal).toContain('detailRefundableResult.items.some');
     expect(orderHistoryModal).toContain('!refundBlockedByMissingLines');
     expect(orderHistoryModal).toContain('(result as any).mutationDetected || (result as any).requiresRefresh');
     expect(orderHistoryModal).toContain("tOr(t, 'pos.refund.review', 'Review refund')");

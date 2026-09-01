@@ -97,6 +97,7 @@ function markResolved(id: string, status: FiscalAttemptStatus, errorCode?: strin
 export const fiscalAttemptRepo: FiscalAttemptJournal & {
   markOpenSentAsUnknownOnStartup(): number;
   findLatestByOrder(orderId: string): FiscalAttemptRow | null;
+  findLatestRemoteByOrder(orderId: string): FiscalAttemptRow | null;
   getConfirmedOrderIds(orderIds: string[]): string[];
   getReceiptSnapshot(orderId: string): any | null;
   backfillFiskalColumns(): number;
@@ -163,6 +164,22 @@ export const fiscalAttemptRepo: FiscalAttemptJournal & {
     return database.get<FiscalAttemptRow>(
       `SELECT * FROM fiscal_attempts
        WHERE order_id = ?
+       ORDER BY attempt_no DESC
+       LIMIT 1`,
+      [orderId],
+    );
+  },
+
+  /**
+   * Durable identity/snapshot for fiscal jobs delegated to another POS.
+   * Retaining the first payload is essential: order sync may replace the
+   * display number while the backend idempotency key intentionally stays tied
+   * to the immutable local order id.
+   */
+  findLatestRemoteByOrder(orderId: string): FiscalAttemptRow | null {
+    return database.get<FiscalAttemptRow>(
+      `SELECT * FROM fiscal_attempts
+       WHERE order_id = ? AND printer_type = 'REMOTE'
        ORDER BY attempt_no DESC
        LIMIT 1`,
       [orderId],

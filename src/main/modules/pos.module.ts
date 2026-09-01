@@ -59,6 +59,7 @@ import {
 import { sanitizeBilliardRefundRequest } from '../pos/billiard-refund-policy';
 import { assertPosPaymentAccounting, assertProtectedPosPaymentMethods } from '../pos/payment-accounting';
 import { ShiftController } from '../pos/shift-controller';
+import { isShiftAlreadyClosedError, shouldCloseActiveShiftSession } from '../../shared/shift-close';
 import { toQuickAddVariantRow } from '../pos/quick-add-product';
 import {
   captureProductAdminSessionContext,
@@ -922,6 +923,20 @@ export class PosModule extends BaseModule {
       this.ordinaryPaymentPreflights.clear();
       logger.error(`[PosModule] Payment blocked by verified shift mismatch: ${error}`);
     }
+  }
+
+  /** Clear only the session owned by the close flow that just finished. */
+  private closeSessionIfShiftMatches(closingShiftIds: Iterable<string>): boolean {
+    const activeShiftId = this.posStore?.getState().session.shiftId;
+    if (!shouldCloseActiveShiftSession(activeShiftId, closingShiftIds)) {
+      logger.info(
+        `[PosModule] Leaving active shift ${activeShiftId || 'none'} open; ` +
+        'the completed close flow belongs to a different shift',
+      );
+      return false;
+    }
+    this.posStore?.dispatch({ type: 'session/close' });
+    return true;
   }
 
   /** Must match PaymentController's local-first fiscal route selection. */
@@ -7782,6 +7797,53 @@ export class PosModule extends BaseModule {
       }
     });
 
+    ipcMain.handle('pos:orders:getRefundDetail', async (_e, orderId: string) => {
+      try {
+        const localOrder = orderRepo.getById(orderId);
+        if (!localOrder) return { success: false, error: 'Order not found' };
+        if (!localOrder.backend_id) return { success: false, error: 'Order not synced to server yet' };
+
+        const token = getSecureAuthToken();
+        if (!token) return { success: false, error: 'Not authenticated' };
+
+        const preferredKind: 'cash' | 'invoiced' = localOrder.customer_nip ? 'invoiced' : 'cash';
+        let serverOrder = await apiClient.getServerOrderDetail(token, localOrder.backend_id, preferredKind);
+        if (!serverOrder) {
+          const fallbackKind = preferredKind === 'cash' ? 'invoiced' : 'cash';
+          serverOrder = await apiClient.getServerOrderDetail(token, localOrder.backend_id, fallbackKind);
+        }
+        if (!serverOrder) return { success: false, error: 'Order not found on server' };
+        if (!Array.isArray(serverOrder.items) || serverOrder.items.length === 0) {
+          return { success: false, error: 'Server response missing refund items' };
+        }
+
+        const adaptedOrder = adaptServerOrder(serverOrder);
+        if (adaptedOrder.id !== localOrder.backend_id) {
+          return { success: false, error: 'Server returned a different order' };
+        }
+        const items = serverOrder.items.map((item: any) =>
+          adaptServerOrderItem(item, localOrder.id, serverOrder),
+        );
+
+        return {
+          success: true,
+          detail: {
+            order: {
+              ...localOrder,
+              ...adaptedOrder,
+              id: localOrder.id,
+              backend_id: localOrder.backend_id,
+              _origin: undefined,
+            },
+            items,
+          },
+        };
+      } catch (err: any) {
+        logger.warn(`[PosModule] Authoritative refund detail failed for ${orderId}: ${err.message}`);
+        return { success: false, error: err.message };
+      }
+    });
+
     ipcMain.handle('pos:orders:getTodayServer', async () => {
       try {
         const token = getSecureAuthToken();
@@ -8467,7 +8529,7 @@ export class PosModule extends BaseModule {
           } catch (err: any) {
             logger.warn(`[PosModule] Failed to close server ghost shift ${data.shiftId.substring(0, 8)}: ${err?.message ?? err}`);
           }
-          this.posStore?.dispatch({ type: 'session/close' });
+          this.closeSessionIfShiftMatches([data.shiftId]);
           this.invalidateShiftVerification();
           this.setServerShiftMismatch(null);
           return { success: true, report: null };
@@ -8496,12 +8558,21 @@ export class PosModule extends BaseModule {
         }
         const report = this.shiftController.closeShift(data.shiftId, data.closingCash, Boolean(data.fiscalOnly));
         billiardShiftLink.close(data.closingCash, data.shiftId);
-        this.posStore?.dispatch({ type: 'session/close' });
+        this.closeSessionIfShiftMatches([data.shiftId]);
         this.invalidateShiftVerification();
         this.setServerShiftMismatch(null);
         await this.shiftController.printZReport(report);
         return { success: true, report };
-      } catch (e: any) { return { success: false, error: e.message }; }
+      } catch (e: any) {
+        if (isShiftAlreadyClosedError(e)) {
+          logger.info(`[PosModule] Shift ${data.shiftId.substring(0, 8)} was already closed by another close flow`);
+          this.closeSessionIfShiftMatches([data.shiftId]);
+          this.invalidateShiftVerification();
+          this.setServerShiftMismatch(null);
+          return { success: true, report: null };
+        }
+        return { success: false, error: e.message };
+      }
     });
 
     // Self-checkout kiosk: "Wezwij obsługę" round-trip. Renderer is
@@ -9282,12 +9353,21 @@ export class PosModule extends BaseModule {
           ]);
         }
         for (const shift of openShifts) {
-          const report = this.shiftController.closeShift(shift.id, null, false);
+          let report;
+          try {
+            report = this.shiftController.closeShift(shift.id, null, false);
+          } catch (error) {
+            if (isShiftAlreadyClosedError(error)) {
+              logger.info(`[EOD] shift ${shift.id} was closed concurrently; skipping duplicate Z-report`);
+              continue;
+            }
+            throw error;
+          }
           try { this.billiardShiftLink?.close(report.closingCash, shift.id); } catch { /* best effort */ }
           shiftsClosed += 1;
           await this.shiftController.printZReport(report);
         }
-        this.posStore?.dispatch({ type: 'session/close' });
+        this.closeSessionIfShiftMatches(openShifts.map((shift) => shift.id));
         this.invalidateShiftVerification();
         this.setServerShiftMismatch(null);
       }

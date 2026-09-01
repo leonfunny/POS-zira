@@ -67,14 +67,17 @@ describe('ShiftController transfer totals', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(database.all).mockReturnValue([]);
-    vi.mocked(database.get).mockReturnValue({
-      id: 'shift-1',
-      staff_id: 'staff-1',
-      staff_name: 'Cashier',
-      opened_at: '2026-04-27T08:00:00.000Z',
-      opening_cash: 10000,
-      backend_id: null,
-    } as any);
+    vi.mocked(database.get).mockImplementation((sql: string) => {
+      if (/SELECT changes\(\)/i.test(sql)) return { count: 1 } as any;
+      return {
+        id: 'shift-1',
+        staff_id: 'staff-1',
+        staff_name: 'Cashier',
+        opened_at: '2026-04-27T08:00:00.000Z',
+        opening_cash: 10000,
+        backend_id: null,
+      } as any;
+    });
     vi.mocked(orderRepo.getUnsyncedCountByShift).mockReturnValue(0);
     vi.mocked(orderRepo.getRefundCashflowBetween).mockReturnValue({
       refund_count: 0,
@@ -135,6 +138,67 @@ describe('ShiftController transfer totals', () => {
 
     expect(report.transferTotal).toBe(3000);
     expect(report.cashTotal).toBe(4000);
+  });
+
+  it('does not subtract discounts from an already-discounted order total', () => {
+    vi.mocked(orderRepo.getByShift).mockReturnValue([
+      order({
+        total: 9000,
+        discount: 1000,
+        payment_method: 'CARD',
+        payment_amount: 9000,
+      }),
+    ]);
+
+    const report = new ShiftController(() => null, () => false).closeShift('shift-1', 10000);
+
+    expect(report.totalSales).toBe(9000);
+    expect(report.totalDiscounts).toBe(1000);
+  });
+
+  it('includes single-payment tips in the tender bucket but not sales revenue', () => {
+    vi.mocked(orderRepo.getByShift).mockReturnValue([
+      order({
+        total: 9000,
+        tip: 500,
+        payment_method: 'CASH',
+        payment_amount: 10000,
+        change_amount: 500,
+      }),
+    ]);
+
+    const report = new ShiftController(() => null, () => false).closeShift('shift-1', 19500);
+
+    expect(report.totalSales).toBe(9000);
+    expect(report.totalTips).toBe(500);
+    expect(report.cashTotal).toBe(9500);
+    expect(report.difference).toBe(0);
+  });
+
+  it('refuses to close the same local shift twice', () => {
+    let open = true;
+    vi.mocked(database.get).mockImplementation((sql: string) => {
+      if (/SELECT changes\(\)/i.test(sql)) return { count: 1 } as any;
+      if (/closed_at IS NULL/i.test(sql)) {
+        return open ? {
+          id: 'shift-1',
+          staff_id: 'staff-1',
+          staff_name: 'Cashier',
+          opened_at: '2026-04-27T08:00:00.000Z',
+          opening_cash: 10000,
+        } as any : null;
+      }
+      return { id: 'shift-1' } as any;
+    });
+    vi.mocked(database.run).mockImplementation((sql: string) => {
+      if (/UPDATE shifts SET closed_at/i.test(sql)) open = false;
+    });
+    vi.mocked(orderRepo.getByShift).mockReturnValue([]);
+
+    const controller = new ShiftController(() => null, () => false);
+    controller.closeShift('shift-1', 10000);
+
+    expect(() => controller.closeShift('shift-1', 10000)).toThrow(/already closed/i);
   });
 
   it('subtracts refunds issued during this shift even when the sale belongs to an older shift', () => {

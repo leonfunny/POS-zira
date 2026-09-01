@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import {
   CreatePrintJobRequest,
   CreatePrintJobResponse,
@@ -10,6 +11,7 @@ import {
   SalonPrinterRole,
 } from '../../shared/types';
 import { getConfig, getSecureApiKey, getSecureAuthToken } from '../config/store';
+import { fiscalAttemptRepo, type FiscalAttemptRow } from '../database/repos/fiscal-attempt-repo';
 import { ApiClient } from '../network/api-client';
 import logger from '../logger';
 import {
@@ -27,6 +29,31 @@ const ASSIGNMENT_ENDPOINT_NEGATIVE_TTL_MS = 60_000;
 const FISCAL_JOB_TIMEOUT_MS = 60_000;
 
 let fiscalEndpointUnavailableUntil = 0;
+
+function parseStoredReceipt(attempt: FiscalAttemptRow | null): ReceiptData | null {
+  if (!attempt?.payload_json) return null;
+  try {
+    const parsed = JSON.parse(attempt.payload_json);
+    return parsed && typeof parsed === 'object' ? parsed as ReceiptData : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseStoredJobId(attempt: FiscalAttemptRow | null): string | undefined {
+  if (!attempt?.result_json) return undefined;
+  try {
+    const parsed = JSON.parse(attempt.result_json);
+    const jobId = parsed?.jobId ?? parsed?.id;
+    return typeof jobId === 'string' && jobId.trim() ? jobId : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function hashReceiptPayload(receiptData: ReceiptData): string {
+  return `sha256:${createHash('sha256').update(JSON.stringify(receiptData), 'utf8').digest('hex')}`;
+}
 
 export interface SharedFiscalPrintMeta {
   referenceType?: string;
@@ -331,7 +358,46 @@ export async function submitSharedFiscalPrint(
   const config = getConfig();
   const referenceType = meta.referenceType || 'POS_FISCAL_RECEIPT';
   const referenceId = meta.referenceId || receiptData.orderId || receiptData.orderNumber || null;
-  const idempotencyKey = buildSharedPrintIdempotencyKey('fiscal', config.machineId, String(referenceId || ''), 'default');
+  const durableOrderId = String(referenceId || '').trim();
+  let durableAttempt = durableOrderId
+    ? fiscalAttemptRepo.findLatestRemoteByOrder(durableOrderId)
+    : null;
+  const storedReceipt = parseStoredReceipt(durableAttempt);
+  const stableReceiptData = storedReceipt || receiptData;
+  const generatedIdempotencyKey = buildSharedPrintIdempotencyKey('fiscal', config.machineId, durableOrderId, 'default');
+  const idempotencyKey = durableAttempt?.idempotency_key || generatedIdempotencyKey;
+
+  if (durableAttempt?.status === 'SUCCESS_CONFIRMED') {
+    return {
+      handled: true,
+      printed: true,
+      printerId: route.printerId,
+      jobId: parseStoredJobId(durableAttempt),
+      status: 'COMPLETED',
+    };
+  }
+
+  if (!durableAttempt && durableOrderId && idempotencyKey) {
+    durableAttempt = fiscalAttemptRepo.createPending({
+      orderId: durableOrderId,
+      attemptNo: fiscalAttemptRepo.getNextAttemptNo(durableOrderId, null),
+      idempotencyKey,
+      printerType: 'REMOTE',
+      payloadJson: JSON.stringify(stableReceiptData),
+      payloadHash: hashReceiptPayload(stableReceiptData),
+    });
+    fiscalAttemptRepo.markSent(durableAttempt.id);
+    const persisted = await fiscalAttemptRepo.flush();
+    if (!persisted.success) {
+      return {
+        handled: true,
+        printed: false,
+        printerId: route.printerId,
+        error: `Cannot persist remote fiscal attempt before printing: ${persisted.error || 'database flush failed'}`,
+      };
+    }
+  }
+
   const body: CreatePrintJobRequest = {
     jobType: PrintJobType.RECEIPT,
     printerType: PrinterType.FISCAL,
@@ -341,7 +407,7 @@ export async function submitSharedFiscalPrint(
     referenceType,
     referenceId,
     ...(idempotencyKey ? { idempotencyKey } : {}),
-    payload: receiptData,
+    payload: stableReceiptData,
   };
 
   try {
@@ -350,18 +416,37 @@ export async function submitSharedFiscalPrint(
       `paymentMethod=${String(receiptData.payment?.method || 'none')}`,
     );
     let result: CreatePrintJobResponse;
-    try {
-      result = await createFiscalJob(client, token, apiKey, config.machineId, body);
-    } catch (err) {
-      if (!body.idempotencyKey || !isUnsupportedIdempotencyFieldError(err)) throw err;
-      logger.warn('[SharedFiscalPrinter] Backend does not accept idempotencyKey yet; using legacy fiscal create without auto retry');
-      const { idempotencyKey: _idempotencyKey, ...legacyBody } = body;
-      result = await createFiscalJob(client, token, apiKey, config.machineId, legacyBody);
+    const knownJobId = parseStoredJobId(durableAttempt);
+    if (knownJobId) {
+      logger.info(`[SharedFiscalPrinter] resuming durable fiscal job ${knownJobId} for order ${durableOrderId}`);
+      result = await getFiscalJobStatus(client, token, apiKey, config.machineId, knownJobId);
+    } else {
+      try {
+        result = await createFiscalJob(client, token, apiKey, config.machineId, body);
+      } catch (err) {
+        if (!body.idempotencyKey || !isUnsupportedIdempotencyFieldError(err)) throw err;
+        logger.warn('[SharedFiscalPrinter] Backend does not accept idempotencyKey yet; using legacy fiscal create without auto retry');
+        const { idempotencyKey: _idempotencyKey, ...legacyBody } = body;
+        result = await createFiscalJob(client, token, apiKey, config.machineId, legacyBody);
+      }
     }
     const jobId = (result.jobId || result.id) as string | undefined;
     const status = finalStatusFromResponse(result);
 
     const final = await resolveFinalFiscalResult(client, token, apiKey, config.machineId, route.printerId, result);
+    if (durableAttempt) {
+      if (final.printed) {
+        fiscalAttemptRepo.markSuccess(durableAttempt.id, final);
+      } else if (final.status === 'FAILED' && final.failureClass === 'SAFE_BEFORE_PRINT') {
+        fiscalAttemptRepo.markFailed(durableAttempt.id, 'REMOTE_SAFE_BEFORE_PRINT', final);
+      } else {
+        fiscalAttemptRepo.markUnknown(durableAttempt.id, 'REMOTE_FISCAL_OUTCOME_UNCERTAIN', final);
+      }
+      const persisted = await fiscalAttemptRepo.flush();
+      if (!persisted.success) {
+        logger.error(`[SharedFiscalPrinter] Failed to persist final remote fiscal state: ${persisted.error || 'database flush failed'}`);
+      }
+    }
     if (final.printed) {
       logger.info(`[SharedFiscalPrinter] fiscal receipt completed on shared printer ${route.printerId}${jobId ? ` as job ${jobId}` : ''}`);
       return final;
@@ -376,6 +461,13 @@ export async function submitSharedFiscalPrint(
     return { ...final, error };
   } catch (err: any) {
     const error = err?.message || String(err);
+    if (durableAttempt) {
+      fiscalAttemptRepo.markUnknown(durableAttempt.id, 'REMOTE_FISCAL_REQUEST_FAILED', { error });
+      const persisted = await fiscalAttemptRepo.flush();
+      if (!persisted.success) {
+        logger.error(`[SharedFiscalPrinter] Failed to persist uncertain remote fiscal state: ${persisted.error || 'database flush failed'}`);
+      }
+    }
     logger.error(`[SharedFiscalPrinter] Shared fiscal print failed for printer ${route.printerId}: ${error}`);
     return { handled: true, printed: false, printerId: route.printerId, error };
   }

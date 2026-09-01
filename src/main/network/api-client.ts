@@ -3075,7 +3075,8 @@ export class ApiClient {
   }
 
   /**
-   * Finalize a POS order (locks it from further edits, triggers stock deduction).
+   * Legacy compatibility finalization for older draft-order workflows.
+   * Current POS creates are already authoritative/DELIVERED and skip this call.
    * POST /api/v1/b2b/pos/orders/:id/finish
    */
   async finishOrder(token: string, backendOrderId: string): Promise<any> {
