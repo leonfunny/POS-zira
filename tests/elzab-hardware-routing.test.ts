@@ -311,6 +311,47 @@ describe('ELZAB fiscal protocol routing', () => {
     });
   });
 
+  it.each([
+    ['server target', 'Server TSC MB241'],
+    ['local target fallback', undefined],
+  ])('preserves local TSPL media tuning through a %s merge', async (_scenario, serverTarget) => {
+    const { printerMappingForTests } = await import('../src/main/network/api-client');
+    const merged = printerMappingForTests.mergeServerPrintersWithLocal({
+      [PrinterType.FABRIC_TAG]: {
+        enabled: true,
+        protocol: 'TSPL',
+        serverPrinterId: 'fabric-1',
+        windowsPrinter: serverTarget,
+        labelWidth: serverTarget ? undefined : 20,
+        labelHeight: serverTarget ? undefined : 60,
+      },
+    }, {
+      [PrinterType.FABRIC_TAG]: {
+        enabled: true,
+        protocol: 'TSPL',
+        windowsPrinter: 'Local TSC MB241',
+        labelWidth: 20,
+        labelHeight: 60,
+        labelGapMm: 0,
+        printSpeed: 3,
+        printDensity: 12,
+        mediaSensor: 'none',
+        labelOriginInsetMm: 1.1,
+      },
+    });
+
+    expect(merged[PrinterType.FABRIC_TAG]).toMatchObject({
+      windowsPrinter: serverTarget || 'Local TSC MB241',
+      labelWidth: 20,
+      labelHeight: 60,
+      labelGapMm: 0,
+      printSpeed: 3,
+      printDensity: 12,
+      mediaSensor: 'none',
+      labelOriginInsetMm: 1.1,
+    });
+  });
+
   it('routes print jobs by ELZAB server printerId through ElzabDriver', async () => {
     const row = {
       id: 'elzab-1',

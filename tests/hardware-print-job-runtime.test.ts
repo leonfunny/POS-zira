@@ -28,6 +28,7 @@ const mock = vi.hoisted(() => ({
   thermalInstances: [] as any[],
   thermalPrintBusy: false,
   thermalSupportsBundledDrawer: false,
+  tscInstances: [] as any[],
 }));
 
 vi.mock('electron', () => ({
@@ -134,6 +135,32 @@ vi.mock('../src/main/hardware/zebra/zebra-driver', () => {
   return { ZebraDriver };
 });
 
+vi.mock('../src/main/hardware/tsc/tsc-driver', () => {
+  class TscDriver {
+    connected = true;
+    constructor(
+      public printerName: string,
+      public labelWidth: number,
+      public labelHeight: number,
+      public media: Record<string, unknown>,
+    ) {
+      mock.tscInstances.push(this);
+    }
+    connect = vi.fn(async () => {
+      this.connected = true;
+      return true;
+    });
+    disconnect = vi.fn(() => { this.connected = false; });
+    isConnected = vi.fn(() => this.connected);
+    printFabricTag = vi.fn(async () => undefined);
+    printLabel = vi.fn(async () => undefined);
+    printInfoLabel = vi.fn(async () => undefined);
+    printTest = vi.fn(async () => undefined);
+    calibrate = vi.fn(async () => undefined);
+  }
+  return { TscDriver };
+});
+
 vi.mock('../src/main/hardware/pdf/pdf-printer', () => ({
   printLabelToDevice: vi.fn(),
   printInfoLabelToDevice: vi.fn(),
@@ -154,6 +181,7 @@ describe('HardwareModule print job runtime guards', () => {
     mock.thermalInitiallyConnected = true;
     mock.thermalPrintBusy = false;
     mock.thermalSupportsBundledDrawer = false;
+    mock.tscInstances.length = 0;
     mock.currentConfig = { multiPrinterMode: true, printers: {} };
     mock.lanFirstBeginPrintAttempt.mockResolvedValue({ action: 'PRINT', row: { status: 'PRINTING' } });
     mock.lanFirstMarkCompleted.mockResolvedValue(null);
@@ -182,6 +210,240 @@ describe('HardwareModule print job runtime guards', () => {
     mock.getAll.mockReturnValue([row]);
     mock.getById.mockReturnValue(row);
     mock.rowToPrinterConfig.mockReturnValue(config);
+  });
+
+  function configureFabricTagPrinter(): void {
+    const row = {
+      id: 'fabric-printer-1',
+      printer_type: PrinterType.FABRIC_TAG,
+      display_name: 'TSC MB241 fabric',
+      protocol: 'TSPL',
+      is_enabled: 1,
+      windows_printer_name: 'TSC MB241',
+    };
+    const mirroredConfig: PrinterConfig = {
+      enabled: true,
+      protocol: 'TSPL',
+      serverPrinterId: 'fabric-printer-1',
+      windowsPrinter: 'TSC MB241',
+      labelWidth: 20,
+      labelHeight: 60,
+    };
+    mock.currentConfig = {
+      multiPrinterMode: true,
+      printers: {
+        [PrinterType.FABRIC_TAG]: {
+          ...mirroredConfig,
+          labelGapMm: 0,
+          printSpeed: 3,
+          printDensity: 12,
+          mediaSensor: 'none',
+          labelOriginInsetMm: 1.1,
+        },
+      },
+    };
+    mock.getEnabled.mockReturnValue([row]);
+    mock.getAll.mockReturnValue([row]);
+    mock.getById.mockImplementation((id: string) => (id === row.id ? row : null));
+    mock.rowToPrinterConfig.mockReturnValue(mirroredConfig);
+  }
+
+  it('restores labelOriginInsetMm and the other TSPL tuning before constructing a mirrored driver', async () => {
+    configureFabricTagPrinter();
+    const container = { set: vi.fn(), getOptional: vi.fn(() => null) };
+    const { HardwareModule } = await import('../src/main/modules/hardware.module');
+    const module = new HardwareModule(container as any);
+
+    await module.reinitializePrinter();
+
+    expect(mock.tscInstances).toHaveLength(1);
+    expect(mock.tscInstances[0]).toMatchObject({
+      printerName: 'TSC MB241',
+      labelWidth: 20,
+      labelHeight: 60,
+      media: {
+        gapMm: 0,
+        speed: 3,
+        density: 12,
+        sensor: 'none',
+        originInsetMm: 1.1,
+      },
+    });
+  });
+
+  it('rejects malformed direct and socket fabric-tag payloads before the driver runs', async () => {
+    configureFabricTagPrinter();
+    const socket = { sendJobStatus: vi.fn(), isConnected: vi.fn(() => false), sendDeviceStatus: vi.fn() };
+    const getOptional = vi.fn(() => null as unknown);
+    const container = { set: vi.fn(), getOptional };
+    const { HardwareModule } = await import('../src/main/modules/hardware.module');
+    const module = new HardwareModule(container as any);
+    await module.reinitializePrinter();
+    const driver = mock.tscInstances[0];
+
+    await expect(module.printFabricTag({
+      brandName: 'Zira',
+      quantity: Number.POSITIVE_INFINITY,
+    })).resolves.toMatchObject({ success: false, error: expect.stringMatching(/quantity/) });
+    expect(driver.printFabricTag).not.toHaveBeenCalled();
+
+    getOptional.mockReturnValue(socket);
+    await (module as any).handlePrintJob({
+      jobId: 'fabric-invalid-1',
+      jobType: PrintJobType.FABRIC_TAG,
+      printerType: PrinterType.FABRIC_TAG,
+      printerId: 'fabric-printer-1',
+      payload: { brandName: 'Zira', quantity: 0 },
+    });
+
+    expect(driver.printFabricTag).not.toHaveBeenCalled();
+    expect(socket.sendJobStatus).toHaveBeenCalledWith(
+      'fabric-invalid-1',
+      'FAILED',
+      expect.stringMatching(/quantity/),
+      'FINAL',
+    );
+  });
+
+  it('serializes direct fabric-tag rendering and fails overlap before a second driver call', async () => {
+    configureFabricTagPrinter();
+    const container = { set: vi.fn(), getOptional: vi.fn(() => null) };
+    const { HardwareModule } = await import('../src/main/modules/hardware.module');
+    const module = new HardwareModule(container as any);
+    await module.reinitializePrinter();
+    const driver = mock.tscInstances[0];
+    let release!: () => void;
+    driver.printFabricTag.mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }));
+
+    const first = module.printFabricTag({ brandName: 'Zira', quantity: 1 });
+    await vi.waitFor(() => expect(driver.printFabricTag).toHaveBeenCalledTimes(1));
+    await expect(module.printFabricTag({ brandName: 'Zira', quantity: 1 })).resolves.toMatchObject({
+      success: false,
+      error: expect.stringMatching(/busy/i),
+    });
+    expect(driver.printFabricTag).toHaveBeenCalledTimes(1);
+
+    release();
+    await expect(first).resolves.toEqual({ success: true });
+  });
+
+  it('classifies a busy socket fabric-tag job as safe and retries after the active print', async () => {
+    vi.useFakeTimers();
+    configureFabricTagPrinter();
+    const socket = { sendJobStatus: vi.fn(), isConnected: vi.fn(() => false), sendDeviceStatus: vi.fn() };
+    const container = { set: vi.fn(), getOptional: vi.fn(() => socket) };
+    const { HardwareModule } = await import('../src/main/modules/hardware.module');
+    const module = new HardwareModule(container as any);
+    await module.reinitializePrinter();
+    const driver = mock.tscInstances[0];
+    let release!: () => void;
+    driver.printFabricTag.mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }));
+
+    const direct = module.printFabricTag({ brandName: 'Zira', quantity: 1 });
+    expect(driver.printFabricTag).toHaveBeenCalledTimes(1);
+    const socketPrint = (module as any).handlePrintJob({
+      jobId: 'fabric-busy-1',
+      jobType: PrintJobType.FABRIC_TAG,
+      printerType: PrinterType.FABRIC_TAG,
+      printerId: 'fabric-printer-1',
+      payload: { brandName: 'Zira', quantity: 1 },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(driver.printFabricTag).toHaveBeenCalledTimes(1);
+
+    release();
+    await direct;
+    await vi.advanceTimersByTimeAsync(PRINT_JOB_RETRY_DELAY_MS);
+    await socketPrint;
+
+    expect(driver.printFabricTag).toHaveBeenCalledTimes(2);
+    expect(socket.sendJobStatus).toHaveBeenCalledWith('fabric-busy-1', 'COMPLETED');
+    expect(socket.sendJobStatus).not.toHaveBeenCalledWith(
+      'fabric-busy-1',
+      'FAILED',
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it('reports formatter construction failures as the config step before connect/send', async () => {
+    const container = { set: vi.fn(), getOptional: vi.fn(() => null) };
+    const { HardwareModule } = await import('../src/main/modules/hardware.module');
+    const module = new HardwareModule(container as any);
+    vi.spyOn(module as any, 'createPrinterFromConfig').mockImplementation(() => {
+      throw new RangeError('Invalid TSPL speed');
+    });
+
+    const result = await module.testPrinterByConfig({
+      enabled: true,
+      protocol: 'TSPL',
+      windowsPrinter: 'TSC MB241',
+      labelWidth: 20,
+      labelHeight: 60,
+    }, PrinterType.FABRIC_TAG);
+
+    expect(result.success).toBe(false);
+    expect(result.steps).toEqual([
+      expect.objectContaining({ step: 'config', ok: false, error: 'Invalid TSPL speed' }),
+    ]);
+    expect(mock.tscInstances).toHaveLength(0);
+  });
+
+  it.each([
+    ['fresh setup', undefined, undefined, 2, 12],
+    ['existing tuning', 4, 9, 4, 9],
+  ])('auto-setup applies fabric media defaults without overwriting %s', async (
+    _scenario,
+    savedSpeed,
+    savedDensity,
+    expectedSpeed,
+    expectedDensity,
+  ) => {
+    mock.currentConfig = {
+      multiPrinterMode: true,
+      printers: {
+        [PrinterType.FABRIC_TAG]: {
+          enabled: true,
+          protocol: 'TSPL',
+          printSpeed: savedSpeed,
+          printDensity: savedDensity,
+        },
+      },
+    };
+    const container = { set: vi.fn(), getOptional: vi.fn(() => null) };
+    const { HardwareModule } = await import('../src/main/modules/hardware.module');
+    const { setConfig } = await import('../src/main/config/store');
+    const module = new HardwareModule(container as any);
+    vi.spyOn(module, 'reinitializePrinter').mockResolvedValue(undefined);
+
+    await (module as any).autoSetupWindowsPrinter(
+      PrinterType.FABRIC_TAG,
+      'TSPL',
+      {
+        vid: '1203',
+        pid: '0001',
+        brand: 'TSC',
+        model: 'MB241',
+        windowsPrinterName: 'TSC MB241',
+        comPort: null,
+        portName: 'USB001',
+        connectionType: 'USB',
+        driverInstalled: true,
+      },
+    );
+
+    expect(setConfig).toHaveBeenCalledWith({
+      multiPrinterMode: true,
+      printers: expect.objectContaining({
+        [PrinterType.FABRIC_TAG]: expect.objectContaining({
+          labelWidth: 20,
+          labelHeight: 60,
+          mediaSensor: 'none',
+          printSpeed: expectedSpeed,
+          printDensity: expectedDensity,
+        }),
+      }),
+    });
   });
 
   it('prints a routed thermal receipt when the optional Elzab constructor is unavailable', async () => {

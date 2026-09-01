@@ -19,6 +19,8 @@ import { DeviceProfileRegistry } from '../hardware/posnet/device-profile-registr
 import { FiscalPrinterAdapter } from '../hardware/posnet/fiscal-printer-adapter';
 import { ZebraDriver } from '../hardware/zebra/zebra-driver';
 import { TscDriver } from '../hardware/tsc/tsc-driver';
+import { FabricTagPrintGate, parseFabricTagData } from '../hardware/tsc/fabric-tag-input';
+import { applyStoredTsplMediaTuning } from '../hardware/tsc/tspl-config-merge';
 import { UniversalDetectionService, UniversalDeviceRegistry } from '../hardware/detection';
 import { printLabelToDevice, printInfoLabelToDevice, cleanupOldLabels } from '../hardware/pdf/pdf-printer';
 import { ThermalDriver } from '../hardware/thermal/thermal-driver';
@@ -181,6 +183,8 @@ export class HardwareModule extends BaseModule {
   private printerReinitializeQueuedOptions: PrinterReinitializeOptions | null = null;
   private pendingStartupPrinterConnectTasks: PrinterConnectTask[] = [];
   private printerConnectInFlight = new WeakMap<PrinterDriver, Promise<boolean>>();
+  /** Serialises the expensive offscreen render + RAW spool sequence. */
+  private readonly fabricTagPrintGate = new FabricTagPrintGate();
   // Event bus reference for emitting status changes
   private bus: EventBus | null = null;
   private handleAgentConnected = () => {
@@ -395,7 +399,7 @@ export class HardwareModule extends BaseModule {
       return this.printLabel(barcode, text, options);
     });
 
-    ipcMain.handle(IPC_CHANNELS.PRINT_FABRIC_TAG, async (_event, data: FabricTagData) => {
+    ipcMain.handle(IPC_CHANNELS.PRINT_FABRIC_TAG, async (_event, data: unknown) => {
       return this.printFabricTag(data);
     });
 
@@ -1215,6 +1219,7 @@ export class HardwareModule extends BaseModule {
   async testPrinterByConfig(config: PrinterConfig, printerType?: string): Promise<TestPrintResult> {
     const steps: TestPrintStep[] = [];
     const result: TestPrintResult = { success: false, steps };
+    const configured = { driver: null as PrinterDriver | null };
 
     // STEP 1 — config validation
     const configOk = await this.runStep(steps, 'config', async () => {
@@ -1240,18 +1245,20 @@ export class HardwareModule extends BaseModule {
           );
         }
       }
+      // Driver/formatter constructors are part of config validation: they may
+      // reject a malformed dimension or TSPL tuning value synchronously. Keep
+      // those failures in the structured config step, before connect/send.
+      configured.driver = this.createPrinterFromConfig(
+        { ...config, enabled: true },
+        printerType || 'test',
+      );
+      if (!configured.driver) {
+        throw new Error('createPrinterFromConfig returned null (invalid combination)');
+      }
       return { detail: `protocol=${config.protocol} target=${config.port || config.address || config.windowsPrinter}` };
     });
-    if (!configOk) return result;
-
-    // Build driver (no side effects yet)
-    const driver = this.createPrinterFromConfig({ ...config, enabled: true }, printerType || 'test');
-    if (!driver) {
-      const entry: TestPrintStep = { step: 'config', ok: false, error: 'createPrinterFromConfig returned null (invalid combination)' };
-      steps.push(entry);
-      this.emitTestPrintProgress(entry);
-      return result;
-    }
+    const driver = configured.driver;
+    if (!configOk || !driver) return result;
 
     try {
       // STEP 2 — connect
@@ -1561,6 +1568,11 @@ export class HardwareModule extends BaseModule {
       // sensor the printer hunts for a notch that is not there, feeds the roll
       // looking for it, and stops on a media error.
       printerConfig.mediaSensor = printerConfig.mediaSensor || 'none';
+      // Slow feed + higher heat is the tested resin-on-satin baseline. Match
+      // the Settings defaults on the very first auto-setup, while retaining
+      // any installation-specific values already saved.
+      printerConfig.printSpeed ??= 2;
+      printerConfig.printDensity ??= 12;
     } else if (printerType === PrinterType.LABEL) {
       printerConfig.labelWidth = printerConfig.labelWidth || 50;
       printerConfig.labelHeight = printerConfig.labelHeight || 30;
@@ -1630,9 +1642,13 @@ export class HardwareModule extends BaseModule {
    * product on different media (satin/polyester + resin ribbon), and a shop
    * with both prints barcodes and tags on two different machines.
    */
-  async printFabricTag(data: FabricTagData): Promise<{ success: boolean; error?: string }> {
-    if (!data?.brandName && !data?.logoDataUrl) {
-      return { success: false, error: 'Fabric tag needs a brand name or a logo' };
+  async printFabricTag(data: unknown): Promise<{ success: boolean; error?: string }> {
+    let validated: FabricTagData;
+    try {
+      // Validate renderer IPC before looking up or reconnecting hardware.
+      validated = parseFabricTagData(data);
+    } catch (error: any) {
+      return { success: false, error: error?.message || String(error) };
     }
     const driver = this.printers[PrinterType.FABRIC_TAG];
     if (!driver) return { success: false, error: 'No fabric tag printer configured' };
@@ -1644,20 +1660,17 @@ export class HardwareModule extends BaseModule {
       }
     }
     try {
-      await this.printFabricTagOnDriver(driver, data);
+      await this.printFabricTagOnDriver(driver, validated);
       return { success: true };
     } catch (e: any) { return { success: false, error: e.message }; }
   }
 
   /** Shared by the IPC path and the server print-job path. */
-  private async printFabricTagOnDriver(driver: PrinterDriver, data: FabricTagData): Promise<void> {
+  private async printFabricTagOnDriver(driver: PrinterDriver, data: unknown): Promise<void> {
     if (!(driver instanceof TscDriver)) {
       throw new Error('Fabric tag printing requires a TSPL printer (TSC)');
     }
-    await driver.printFabricTag({
-      ...data,
-      quantity: Math.max(1, Math.min(999, Math.round(Number(data.quantity) || 1))),
-    });
+    await this.fabricTagPrintGate.run(data, (validated) => driver.printFabricTag(validated));
   }
 
   /**
@@ -2023,12 +2036,7 @@ export class HardwareModule extends BaseModule {
         // these only ever live in electron-store. Without this the speed and
         // darkness a user sets for resin-on-satin are silently dropped and the
         // driver runs on its own defaults.
-        if (cfgPrinter && pc.protocol === 'TSPL') {
-          if (typeof cfgPrinter.labelGapMm === 'number') pc.labelGapMm = cfgPrinter.labelGapMm;
-          if (typeof cfgPrinter.printSpeed === 'number') pc.printSpeed = cfgPrinter.printSpeed;
-          if (typeof cfgPrinter.printDensity === 'number') pc.printDensity = cfgPrinter.printDensity;
-          if (cfgPrinter.mediaSensor) pc.mediaSensor = cfgPrinter.mediaSensor;
-        }
+        applyStoredTsplMediaTuning(pc, cfgPrinter);
         const driver = this.createPrinterFromConfig(pc, pt);
         if (!driver) continue;
 
@@ -2714,6 +2722,23 @@ export class HardwareModule extends BaseModule {
   private async handlePrintJob(job: any): Promise<void> {
     const { printerType, config: printerConfig } = this.getPrinterConfigForJob(job);
     const socket = this.container.getOptional<SocketClient>(SERVICE_TOKENS.SOCKET);
+    let validatedFabricTag: FabricTagData | null = null;
+    if (printerType === PrinterType.FABRIC_TAG || job.jobType === PrintJobType.FABRIC_TAG) {
+      try {
+        // Validate remote socket input before printer lookup/reconnect and
+        // before emitting PRINTING. The shared gate rechecks immediately
+        // before renderer/spool execution.
+        validatedFabricTag = parseFabricTagData(job.payload);
+      } catch (error: any) {
+        socket?.sendJobStatus(
+          job.jobId,
+          'FAILED',
+          error?.message || String(error),
+          getExplicitPrintFailureClass(error) ?? 'FINAL',
+        );
+        return;
+      }
+    }
     const fiscal = this.isFiscalJob(job);
     const lanFirstDedupe = await this.applyLanFirstSocketDedupe(job, socket);
     if (!lanFirstDedupe.shouldPrint) return;
@@ -2761,7 +2786,7 @@ export class HardwareModule extends BaseModule {
           const ticket = job.payload as KitchenTicketData;
           await this.printKitchenTicketPayload(targetPrinter, ticket);
         } else if (isFabricTag) {
-          await this.printFabricTagOnDriver(targetPrinter, job.payload as FabricTagData);
+          await this.printFabricTagOnDriver(targetPrinter, validatedFabricTag);
         } else if (isLabel) {
           if (!isLabelDriver(targetPrinter)) throw new Error('Label printing requires a label printer (Zebra or TSC)');
           if (targetPrinter instanceof TscDriver) {
@@ -2892,7 +2917,8 @@ export class HardwareModule extends BaseModule {
           return;
         }
 
-        const failureClass = classifyPrintFailureAfterDriverCall(error, fiscal);
+        const failureClass = getExplicitPrintFailureClass(error)
+          ?? classifyPrintFailureAfterDriverCall(error, fiscal);
         if (failureClass === 'SAFE_BEFORE_PRINT' && attempt < PRINT_JOB_MAX_RETRIES) {
           logger.info(
             `[HardwareModule] Job ${job.jobId}: failure is SAFE_BEFORE_PRINT; ` +

@@ -1,6 +1,14 @@
 import type { IpcMain } from 'electron';
-import { isCareSymbol, type FabricTagTemplate } from '../../shared/types';
+import { FABRIC_TAG_LIMITS, type FabricTagTemplate } from '../../shared/types';
 import { FABRIC_TAG_TEMPLATE_CHANNELS } from '../../shared/fabric-tag-template-ipc';
+import {
+  parseFabricTagCareSymbols,
+  parseFabricTagLogoDataUrl,
+  parseFabricTagText,
+} from '../hardware/tsc/fabric-tag-input';
+
+/** Backward-compatible export; template and print jobs share one policy. */
+export const FABRIC_TAG_TEMPLATE_LIMITS = FABRIC_TAG_LIMITS;
 
 export interface FabricTagTemplateRepository {
   list(): unknown;
@@ -12,56 +20,51 @@ export interface FabricTagTemplateRepository {
 
 type IpcHandleRegistrar = Pick<IpcMain, 'handle'>;
 
-function invalid(field: string, expected: string): never {
-  throw new TypeError(`Invalid fabric tag template ${field}: expected ${expected}`);
-}
-
 export function parseFabricTagTemplateId(value: unknown): string {
-  if (typeof value !== 'string') invalid('templateId', 'a non-empty string');
-  const templateId = value.trim();
-  if (!templateId) invalid('templateId', 'a non-empty string');
-  return templateId;
+  return parseFabricTagText(
+    value,
+    'templateId',
+    FABRIC_TAG_TEMPLATE_LIMITS.templateId,
+    { context: 'fabric tag template', required: true },
+  )!;
 }
 
 function nullableString(
   record: Record<string, unknown>,
-  field: keyof Omit<FabricTagTemplate, 'templateId' | 'careSymbols' | 'layout'>,
+  field: 'brandName' | 'composition' | 'careText' | 'fabric',
 ): string | null {
-  const value = record[field];
-  if (value == null) return null;
-  if (typeof value !== 'string') invalid(String(field), 'a string or null');
-  return value;
+  return parseFabricTagText(
+    record[field],
+    field,
+    FABRIC_TAG_TEMPLATE_LIMITS[field],
+    { context: 'fabric tag template' },
+  );
+}
+
+function nullableLogoDataUrl(record: Record<string, unknown>): string | null {
+  return parseFabricTagLogoDataUrl(record.logoDataUrl, 'fabric tag template')?.dataUrl ?? null;
 }
 
 /** Validate and normalize untrusted renderer input before it reaches SQLite. */
 export function parseFabricTagTemplateInput(value: unknown): FabricTagTemplate {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    invalid('payload', 'an object');
+    throw new TypeError('Invalid fabric tag template payload: expected an object');
   }
 
   const record = value as Record<string, unknown>;
-  const rawCareSymbols = record.careSymbols;
-  if (rawCareSymbols != null && !Array.isArray(rawCareSymbols)) {
-    invalid('careSymbols', 'an array');
-  }
-  // Array.from materializes sparse slots as undefined so they cannot bypass
-  // Array.prototype.every and reach persistence as invalid symbols.
-  const careSymbols = rawCareSymbols == null ? [] : Array.from(rawCareSymbols);
-  if (!careSymbols.every(isCareSymbol)) {
-    invalid('careSymbols', 'only supported care symbols');
-  }
+  const careSymbols = parseFabricTagCareSymbols(record.careSymbols, 'fabric tag template');
 
   const rawLayout = record.layout;
   if (rawLayout != null && rawLayout !== 'default' && rawLayout !== 'care-first') {
-    invalid('layout', '"default" or "care-first"');
+    throw new TypeError('Invalid fabric tag template layout: expected "default" or "care-first"');
   }
 
   return {
     templateId: parseFabricTagTemplateId(record.templateId),
     brandName: nullableString(record, 'brandName'),
-    logoDataUrl: nullableString(record, 'logoDataUrl'),
+    logoDataUrl: nullableLogoDataUrl(record),
     composition: nullableString(record, 'composition'),
-    careSymbols: [...careSymbols],
+    careSymbols,
     careText: nullableString(record, 'careText'),
     fabric: nullableString(record, 'fabric'),
     layout: rawLayout ?? 'default',

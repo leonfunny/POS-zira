@@ -255,9 +255,56 @@ export const CARE_SYMBOLS = [
 ] as const;
 export type CareSymbol = typeof CARE_SYMBOLS[number];
 
+/**
+ * Mutually exclusive choices within one ISO 3758 instruction family. Line
+ * and flat drying remain independent until the workshop approves that policy.
+ */
+export const FABRIC_TAG_EXCLUSIVE_CARE_SYMBOL_GROUPS: readonly (readonly CareSymbol[])[] = [
+  ['WASH_30', 'WASH_40', 'WASH_60', 'WASH_HAND', 'WASH_NO'],
+  ['BLEACH_OK', 'BLEACH_NO'],
+  ['TUMBLE_LOW', 'TUMBLE_NORMAL', 'TUMBLE_NO'],
+  ['IRON_LOW', 'IRON_MEDIUM', 'IRON_HIGH', 'IRON_NO'],
+  ['DRYCLEAN_ANY', 'DRYCLEAN_P', 'DRYCLEAN_F', 'DRYCLEAN_NO'],
+];
+
+/** Physical runs above this count require an explicit operator confirmation. */
+export const FABRIC_TAG_CONFIRM_THRESHOLD = 100;
+
 export function isCareSymbol(value: unknown): value is CareSymbol {
   return typeof value === 'string' && (CARE_SYMBOLS as readonly string[]).includes(value);
 }
+
+/** Raster logo formats accepted by the fabric-tag trust boundary. */
+export const FABRIC_TAG_RASTER_MIME_TYPES = [
+  'image/png',
+  'image/jpeg',
+  'image/jpg',
+  'image/gif',
+  'image/webp',
+] as const;
+export type FabricTagRasterMime = typeof FABRIC_TAG_RASTER_MIME_TYPES[number];
+
+/**
+ * Hard limits shared by the renderer hints and the authoritative main-process
+ * parser. They keep one malformed IPC/socket payload from filling the SQL.js
+ * database, exhausting Chromium while rasterising, or swallowing a label roll.
+ */
+export const FABRIC_TAG_LIMITS = {
+  templateId: 255,
+  brandName: 40,
+  size: 10,
+  composition: 120,
+  careText: 80,
+  fabric: 120,
+  barcode: 48,
+  currency: 8,
+  logoBytes: 512 * 1024,
+  logoMaxDimension: 4096,
+  logoMaxPixels: 4 * 1024 * 1024,
+  careSymbols: CARE_SYMBOLS.length,
+  quantity: 999,
+  priceGrosze: 999_999_999,
+} as const;
 
 /**
  * Fabric/care tag payload (mác vải). Printed on a FABRIC_TAG printer.
@@ -270,7 +317,11 @@ export function isCareSymbol(value: unknown): value is CareSymbol {
 export interface FabricTagData {
   /** Brand line, printed largest at the top. */
   brandName: string;
-  /** Optional logo as a data: URI (PNG/JPEG/SVG). Replaces the brand text when set. */
+  /**
+   * Optional bounded raster-image data URI (PNG/JPEG/GIF/WebP). Active formats
+   * such as SVG are deliberately excluded before the offscreen print renderer.
+   * Replaces the brand text when set.
+   */
   logoDataUrl?: string;
   /** Garment size, e.g. "M", "38", "XL". */
   size?: string;
@@ -1019,7 +1070,7 @@ export interface PrintJobEvent {
   jobType: PrintJobType;
   printerType?: PrinterType;  // NEW: Explicit printer routing from server
   printerId?: string | null;  // Server printer mapping id
-  payload: ReceiptData | LabelData | InfoLabelData | DocumentData | DailyReportData | KitchenTicketData;
+  payload: ReceiptData | LabelData | InfoLabelData | FabricTagData | DocumentData | DailyReportData | KitchenTicketData;
   referenceType: string | null;
   referenceId: string | null;
   openDrawer?: boolean;

@@ -19,6 +19,7 @@ import { BrowserWindow } from 'electron';
 import type { FabricTagData } from '../../../shared/types';
 import { careSymbolSvg } from '../../../shared/care-symbols';
 import logger from '../../logger';
+import { parseFabricTagLogoDataUrl } from './fabric-tag-input';
 
 /** A packed monochrome image, one bit per dot, rows padded to whole bytes. */
 export interface MonoBitmap {
@@ -33,11 +34,38 @@ export interface MonoBitmap {
   data: Buffer;
 }
 
-/** Only inline images are allowed into the offscreen window. */
-const LOGO_DATA_URL = /^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml);base64,[A-Za-z0-9+/=]+$/;
-
 /** Pixels above this luminance count as white. Below it, the dot burns. */
 const BLACK_THRESHOLD = 150;
+
+/** Bound Chromium's backing surface before constructing BrowserWindow. */
+export const FABRIC_TAG_RENDER_LIMITS = {
+  maxDimensionDots: 8_192,
+  maxPixels: 16 * 1024 * 1024,
+} as const;
+
+export function validateFabricTagRasterDimensions(widthDots: number, heightDots: number): void {
+  if (
+    !Number.isSafeInteger(widthDots)
+    || !Number.isSafeInteger(heightDots)
+    || widthDots < 1
+    || heightDots < 1
+  ) {
+    throw new RangeError('Fabric tag raster dimensions must be positive finite integers');
+  }
+  if (
+    widthDots > FABRIC_TAG_RENDER_LIMITS.maxDimensionDots
+    || heightDots > FABRIC_TAG_RENDER_LIMITS.maxDimensionDots
+  ) {
+    throw new RangeError(
+      `Fabric tag raster dimensions may not exceed ${FABRIC_TAG_RENDER_LIMITS.maxDimensionDots} dots`,
+    );
+  }
+  if (widthDots * heightDots > FABRIC_TAG_RENDER_LIMITS.maxPixels) {
+    throw new RangeError(
+      `Fabric tag raster may not exceed ${FABRIC_TAG_RENDER_LIMITS.maxPixels} pixels`,
+    );
+  }
+}
 
 function esc(text: string): string {
   return String(text ?? '')
@@ -86,12 +114,12 @@ export function buildFabricTagHtml(
   // Below ~14px the glyphs turn to mush, so a very long row is allowed to wrap.
   const symbolPx = Math.max(14, Math.min(Math.round(widthDots * 0.155), symbolFit));
 
-  const logo = data.logoDataUrl && LOGO_DATA_URL.test(data.logoDataUrl)
-    ? `<img class="logo" src="${data.logoDataUrl}" alt="">`
+  // Revalidate at the final HTML boundary so direct/internal callers cannot
+  // bypass the IPC/socket parser or smuggle active SVG into Chromium.
+  const parsedLogo = parseFabricTagLogoDataUrl(data.logoDataUrl);
+  const logo = parsedLogo
+    ? `<img class="logo" src="${parsedLogo.dataUrl}" alt="">`
     : '';
-  if (data.logoDataUrl && !logo) {
-    logger.warn('[FabricTag] Ignoring logo: not an inline base64 image data URI');
-  }
 
   const brand = !logo && data.brandName
     ? `<div class="brand">${esc(data.brandName)}</div>`
@@ -206,6 +234,37 @@ function ceilToMm(dots: number, dotsPerMm = 8): number {
 }
 
 /**
+ * Resolve a continuous-ribbon tag length without ever clipping content.
+ * Returning the configured ceiling for overflowing content used to hide the
+ * last row with `overflow:hidden` and send a plausible-looking bad tag to RAW.
+ */
+export function resolveFabricTagFitHeight(
+  naturalHeightDots: number,
+  configuredHeightDots: number,
+  minHeightDots = 8,
+): number {
+  if (!Number.isSafeInteger(configuredHeightDots) || configuredHeightDots < 1) {
+    throw new RangeError('Configured fabric tag height must be a positive finite integer');
+  }
+  if (!Number.isSafeInteger(naturalHeightDots) || naturalHeightDots < 1) {
+    throw new RangeError('Fabric tag content height must be a positive finite integer');
+  }
+  if (naturalHeightDots > configuredHeightDots) {
+    throw new RangeError(
+      `Fabric tag content needs ${naturalHeightDots} dots but configured media allows `
+      + `${configuredHeightDots}; increase label height or shorten the content`,
+    );
+  }
+  const floor = Number.isFinite(minHeightDots)
+    ? Math.max(1, Math.ceil(minHeightDots))
+    : 8;
+  return Math.min(
+    configuredHeightDots,
+    Math.max(floor, ceilToMm(naturalHeightDots)),
+  );
+}
+
+/**
  * Warn when ink reaches a side edge. On a 20mm ribbon there is no room to
  * spare, and silent clipping is how "NATURALNY LEN" first printed as
  * "ATURALNY LE" -- the kind of fault nobody notices until the garments ship.
@@ -235,6 +294,7 @@ export async function renderFabricTagBitmap(
   heightDots: number,
   options: RenderFabricTagOptions = {},
 ): Promise<MonoBitmap> {
+  validateFabricTagRasterDimensions(widthDots, heightDots);
   const fit = options.fitHeight === true;
   const html = buildFabricTagHtml(data, widthDots, fit ? null : heightDots);
   const win = new BrowserWindow({
@@ -242,7 +302,12 @@ export async function renderFabricTagBitmap(
     width: widthDots,
     height: heightDots,
     useContentSize: true,
-    webPreferences: { offscreen: true, nodeIntegration: false, contextIsolation: true },
+    webPreferences: {
+      offscreen: true,
+      sandbox: true,
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
   });
 
   try {
@@ -257,8 +322,11 @@ export async function renderFabricTagBitmap(
       const natural = Number(await win.webContents.executeJavaScript(
         'Math.ceil(document.body.getBoundingClientRect().height)',
       ));
-      const floor = options.minHeightDots ?? 8;
-      targetHeight = Math.min(heightDots, Math.max(floor, ceilToMm(natural || heightDots)));
+      targetHeight = resolveFabricTagFitHeight(
+        natural,
+        heightDots,
+        options.minHeightDots,
+      );
       win.setContentSize(widthDots, targetHeight);
       // The resize needs a frame of its own before the capture is valid.
       await new Promise((r) => setTimeout(r, 120));

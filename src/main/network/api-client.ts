@@ -63,6 +63,7 @@ import {
 } from '../../shared/types';
 import { getConfig, setConfig, getConfigValue } from '../config/store';
 import { localPrinterRepo, type LocalPrinterUpsert } from '../database/repos/local-printer-repo';
+import { applyStoredTsplMediaTuning } from '../hardware/tsc/tspl-config-merge';
 
 export function normalizeOpenShiftResponse(value: unknown): { shiftId: string } {
   const response = value as { id?: unknown; shiftId?: unknown } | null;
@@ -248,7 +249,7 @@ function mergeServerPrintersWithLocal(
     const localHasTarget = hasPhysicalPrinterTarget(localConfig);
 
     if (!serverHasTarget && localHasTarget && localConfig) {
-      merged[type] = {
+      const config = {
         ...serverConfig,
         enabled: localConfig.enabled ?? serverConfig.enabled,
         displayName: type === PrinterType.RECEIPT ? 'Order' : (localConfig.displayName || serverConfig.displayName),
@@ -262,15 +263,24 @@ function mergeServerPrintersWithLocal(
         labelWidth: localConfig.labelWidth ?? serverConfig.labelWidth,
         labelHeight: localConfig.labelHeight ?? serverConfig.labelHeight,
       };
+      applyStoredTsplMediaTuning(config, localConfig);
+      merged[type] = config;
       logger.info(`[ApiClient] Preserved local ${type} printer target while applying server mapping without a physical target`);
       continue;
     }
 
-    merged[type] = {
+    const config = {
       ...serverConfig,
       charset: localConfig?.charset ?? serverConfig.charset,
       cutMode: localConfig?.cutMode ?? serverConfig.cutMode,
+      // Older connect responses omit label dimensions even when they carry a
+      // physical target. Preserve the local media size unless the server sent
+      // an explicit replacement.
+      labelWidth: serverConfig.labelWidth ?? localConfig?.labelWidth,
+      labelHeight: serverConfig.labelHeight ?? localConfig?.labelHeight,
     };
+    applyStoredTsplMediaTuning(config, localConfig);
+    merged[type] = config;
   }
 
   return merged;

@@ -1,7 +1,18 @@
-import React, { useMemo, useState } from 'react';
-import { CARE_SYMBOLS, CareSymbol, FabricTagData } from '../../../shared/types';
+import React, { useMemo, useRef, useState } from 'react';
+import {
+  CARE_SYMBOLS,
+  FABRIC_TAG_CONFIRM_THRESHOLD,
+  FABRIC_TAG_EXCLUSIVE_CARE_SYMBOL_GROUPS,
+  FABRIC_TAG_LIMITS,
+  FABRIC_TAG_RASTER_MIME_TYPES,
+  type CareSymbol,
+  type FabricTagData,
+  type FabricTagRasterMime,
+} from '../../../shared/types';
 import { careSymbolSvg } from '../../../shared/care-symbols';
+import { readRasterImageDimensions } from '../../../shared/fabric-tag-image';
 import rlog from '../../utils/logger';
+import ConfirmActionDialog from '../pos/ConfirmActionDialog';
 
 /**
  * Compose and print a garment care tag (mác vải).
@@ -22,9 +33,6 @@ const SYMBOL_GROUPS: { key: string; symbols: CareSymbol[] }[] = [
   { key: 'iron', symbols: ['IRON_LOW', 'IRON_MEDIUM', 'IRON_HIGH', 'IRON_NO'] },
   { key: 'professional', symbols: ['DRYCLEAN_ANY', 'DRYCLEAN_P', 'DRYCLEAN_F', 'DRYCLEAN_NO'] },
 ];
-
-/** Keeps the whole tag payload well inside a single spool job. */
-const MAX_LOGO_BYTES = 512 * 1024;
 
 interface FabricTagComposerProps {
   t: (key: string) => string;
@@ -53,6 +61,8 @@ export default function FabricTagComposer({ t, labelWidthMm, labelHeightMm, read
   const [layout, setLayout] = useState<NonNullable<FabricTagData['layout']>>('default');
   const [quantity, setQuantity] = useState(1);
   const [status, setStatus] = useState<Status>({ type: 'idle', message: '' });
+  const [confirmingLargeBatch, setConfirmingLargeBatch] = useState(false);
+  const printInFlight = useRef(false);
 
   // Preview keeps the media aspect ratio so a 40x60 tag does not look square.
   const previewWidth = 160;
@@ -66,33 +76,71 @@ export default function FabricTagComposer({ t, labelWidthMm, labelHeightMm, read
   const canPrint = ready && (brandName.trim().length > 0 || !!logoDataUrl) && status.type !== 'working';
 
   const toggleSymbol = (symbol: CareSymbol) => {
-    setCareSymbols((current) => (
-      current.includes(symbol)
-        ? current.filter((s) => s !== symbol)
-        // Keep the canonical ISO reading order regardless of click order.
-        : [...current, symbol].sort((a, b) => CARE_SYMBOLS.indexOf(a) - CARE_SYMBOLS.indexOf(b))
-    ));
+    setCareSymbols((current) => {
+      if (current.includes(symbol)) return current.filter((selected) => selected !== symbol);
+      const exclusiveGroup = FABRIC_TAG_EXCLUSIVE_CARE_SYMBOL_GROUPS.find(
+        (group) => group.includes(symbol),
+      );
+      const compatible = exclusiveGroup
+        ? current.filter((selected) => !exclusiveGroup.includes(selected))
+        : current;
+      // Keep canonical ISO reading order regardless of click order while
+      // making mutually-exclusive families behave like radio groups.
+      return [...compatible, symbol]
+        .sort((a, b) => CARE_SYMBOLS.indexOf(a) - CARE_SYMBOLS.indexOf(b));
+    });
   };
 
-  const handleLogoChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleLogoChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
-    if (file.size > MAX_LOGO_BYTES) {
+    const mimeType = file.type.toLowerCase();
+    if (!(FABRIC_TAG_RASTER_MIME_TYPES as readonly string[]).includes(mimeType)) {
+      setStatus({ type: 'error', message: t('fabricTag.logoReadFailed') });
+      return;
+    }
+    if (file.size > FABRIC_TAG_LIMITS.logoBytes) {
       setStatus({ type: 'error', message: t('fabricTag.logoTooLarge') });
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      setLogoDataUrl(typeof reader.result === 'string' ? reader.result : null);
-      setStatus({ type: 'idle', message: '' });
-    };
-    reader.onerror = () => setStatus({ type: 'error', message: t('fabricTag.logoReadFailed') });
-    reader.readAsDataURL(file);
+    try {
+      // Inspect bounded header bytes before assigning src; this keeps a tiny
+      // compressed image with a huge declared canvas away from the renderer's
+      // image decoder and live preview.
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const { width, height } = readRasterImageDimensions(bytes, mimeType as FabricTagRasterMime);
+      if (
+        width < 1
+        || height < 1
+        || width > FABRIC_TAG_LIMITS.logoMaxDimension
+        || height > FABRIC_TAG_LIMITS.logoMaxDimension
+        || width * height > FABRIC_TAG_LIMITS.logoMaxPixels
+      ) {
+        throw new Error('Logo dimensions exceed the fabric-tag limit');
+      }
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        setLogoDataUrl(typeof reader.result === 'string' ? reader.result : null);
+        setStatus({ type: 'idle', message: '' });
+      };
+      reader.onerror = () => setStatus({ type: 'error', message: t('fabricTag.logoReadFailed') });
+      reader.readAsDataURL(file);
+    } catch (error) {
+      rlog.warn('[FabricTagComposer] Rejected logo before preview:', error);
+      setStatus({ type: 'error', message: t('fabricTag.logoReadFailed') });
+    }
   };
 
-  const handlePrint = async () => {
-    if (!canPrint) return;
+  const handlePrint = async (confirmed = false) => {
+    if (!canPrint || printInFlight.current) return;
+    if (!confirmed && quantity > FABRIC_TAG_CONFIRM_THRESHOLD) {
+      setConfirmingLargeBatch(true);
+      return;
+    }
+    printInFlight.current = true;
+    setConfirmingLargeBatch(false);
     setStatus({ type: 'working', message: t('fabricTag.printing') });
 
     const payload: FabricTagData = {
@@ -119,6 +167,8 @@ export default function FabricTagComposer({ t, labelWidthMm, labelHeightMm, read
     } catch (err: any) {
       rlog.error('[FabricTagComposer] printFabricTag failed:', err);
       setStatus({ type: 'error', message: err?.message || t('fabricTag.printFailed') });
+    } finally {
+      printInFlight.current = false;
     }
   };
 
@@ -252,7 +302,12 @@ export default function FabricTagComposer({ t, labelWidthMm, labelHeightMm, read
       <div className="flex items-center gap-2">
         <label className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer">
           {t('fabricTag.logo')}
-          <input type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" onChange={handleLogoChange} className="hidden" />
+          <input
+            type="file"
+            accept={FABRIC_TAG_RASTER_MIME_TYPES.join(',')}
+            onChange={handleLogoChange}
+            className="hidden"
+          />
         </label>
         {logoDataUrl && (
           <button
@@ -265,7 +320,7 @@ export default function FabricTagComposer({ t, labelWidthMm, labelHeightMm, read
         )}
         <button
           type="button"
-          onClick={handlePrint}
+          onClick={() => void handlePrint()}
           disabled={!canPrint}
           className={`ml-auto px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
             canPrint ? 'bg-brand-50 text-brand-700 hover:bg-brand-100 cursor-pointer' : 'bg-slate-100 text-slate-400 cursor-not-allowed'
@@ -276,7 +331,23 @@ export default function FabricTagComposer({ t, labelWidthMm, labelHeightMm, read
       </div>
 
       {status.message && <p className={`text-xs ${statusClass}`}>{status.message}</p>}
+      {quantity > FABRIC_TAG_CONFIRM_THRESHOLD && (
+        <p className="text-xs text-amber-600">{t('fabricTag.largeBatchWarning')}</p>
+      )}
       {!ready && <p className="text-xs text-amber-700">{t('fabricTag.notReady')}</p>}
+
+      <ConfirmActionDialog
+        open={confirmingLargeBatch}
+        tier="light"
+        title={t('common.confirmTitle')}
+        body={t('fabricTag.largeBatchConfirm').replace('{count}', String(quantity))}
+        itemName={brandName.trim() || t('fabricTag.title')}
+        confirmLabel={t('common.confirm')}
+        cancelLabel={t('common.cancel')}
+        busy={status.type === 'working'}
+        onConfirm={() => void handlePrint(true)}
+        onCancel={() => setConfirmingLargeBatch(false)}
+      />
     </div>
   );
 }
