@@ -17,6 +17,7 @@
  * the fiscal/label print path is not in scope for adding a new driver.
  */
 import { execFile } from 'child_process';
+import { randomUUID } from 'crypto';
 import { promisify } from 'util';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -32,6 +33,19 @@ export interface RawPrintOptions {
   timeoutMs?: number;
   /** Prefix for the temp spool file, for easier log forensics. */
   tempPrefix?: string;
+}
+
+/**
+ * Give every in-flight spool operation its own staging file. PID + timestamp
+ * is not unique when two queues submit in the same millisecond; a collision
+ * can make one job read or delete the other job's bytes.
+ */
+export function createRawPrintTempFilePath(tempPrefix = 'zira_raw'): string {
+  const safePrefix = tempPrefix.replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 48) || 'zira_raw';
+  return path.join(
+    os.tmpdir(),
+    `${safePrefix}_${process.pid}_${Date.now()}_${randomUUID()}.bin`,
+  );
 }
 
 /** Single-quote escaping for a PowerShell literal string. */
@@ -148,10 +162,7 @@ export async function sendRawToPrinter(
   }
 
   const docName = options.docName || 'Zira Raw Job';
-  const tempFile = path.join(
-    os.tmpdir(),
-    `${options.tempPrefix || 'zira_raw'}_${process.pid}_${Date.now()}.bin`,
-  );
+  const tempFile = createRawPrintTempFilePath(options.tempPrefix);
 
   try {
     fs.writeFileSync(tempFile, payload);
