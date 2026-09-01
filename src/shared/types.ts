@@ -46,6 +46,81 @@ export interface FabricTagTemplate {
   layout: 'default' | 'care-first';
 }
 
+/**
+ * Customer-supplied fabric-label artwork.
+ *
+ * The proprietary BTW file is retained as an immutable source document only.
+ * A row becomes printable only after a validated production PNG has been
+ * attached. Storage paths intentionally stay in the main process; renderer
+ * callers address artwork exclusively by `id`.
+ */
+export type FabricTagArtworkSourceType = 'BTW' | 'PNG';
+export type FabricTagArtworkStatus = 'NEEDS_CONVERSION' | 'READY' | 'RETIRED';
+
+export const FABRIC_TAG_ARTWORK_MEDIA = {
+  dpi: 203,
+  dotsPerMm: 8,
+  physicalWidthMm: 20,
+  fullCanvasWidthPx: 160,
+  edgeInsetPx: 9,
+  printableWidthPx: 142,
+  minHeightPx: 80,
+  maxHeightPx: 480,
+} as const;
+
+export const FABRIC_TAG_ARTWORK_LIMITS = {
+  customerName: 120,
+  orderCode: 80,
+  variant: 120,
+  revision: 80,
+  originalFilename: 255,
+  sourceBytes: 25 * 1024 * 1024,
+  productionPngBytes: 4 * 1024 * 1024,
+  quantity: 999,
+} as const;
+
+export interface FabricTagArtwork {
+  id: string;
+  salonId: string;
+  customerName: string;
+  orderCode: string | null;
+  /** Arbitrary customer-facing size/variant text: M, S/M, 44/46, L/XL, ... */
+  variant: string;
+  revision: string;
+  originalFilename: string;
+  sourceType: FabricTagArtworkSourceType;
+  status: FabricTagArtworkStatus;
+  sourceSha256: string;
+  productionFilename: string | null;
+  productionSha256: string | null;
+  widthPx: number | null;
+  heightPx: number | null;
+  physicalWidthMm: number | null;
+  physicalLengthMm: number | null;
+  createdAt: string;
+  updatedAt: string;
+  retiredAt: string | null;
+}
+
+export interface FabricTagArtworkImportInput {
+  customerName: string;
+  orderCode?: string | null;
+  variant: string;
+  revision: string;
+}
+
+export interface FabricTagArtworkPreview {
+  assetId: string;
+  dataUrl: string;
+  widthPx: number;
+  heightPx: number;
+}
+
+export interface FabricTagArtworkPrintRequest {
+  assetId: string;
+  quantity: number;
+}
+
 // Printer types - used for routing jobs to correct printer
 // Using const object instead of enum for better Vite/browser compatibility
 export const PrinterType = {

@@ -237,7 +237,18 @@ export function buildFabricTagHtml(
  * Pack a BGRA buffer into TSPL's 1-bit-per-dot layout.
  * Bit 0 = black so the head burns; bit 1 = white so it does not.
  */
-function packMonochrome(bgra: Buffer, widthDots: number, heightDots: number): MonoBitmap {
+export function packFabricTagMonochrome(
+  bgra: Buffer,
+  widthDots: number,
+  heightDots: number,
+): MonoBitmap {
+  validateFabricTagRasterDimensions(widthDots, heightDots);
+  const expectedBytes = widthDots * heightDots * 4;
+  if (bgra.byteLength !== expectedBytes) {
+    throw new RangeError(
+      `Fabric tag bitmap must contain exactly ${expectedBytes} BGRA bytes; got ${bgra.byteLength}`,
+    );
+  }
   const widthBytes = Math.ceil(widthDots / 8);
   // Start all-white (0xFF); clear a bit to burn its dot.
   const data = Buffer.alloc(widthBytes * heightDots, 0xff);
@@ -408,7 +419,7 @@ export async function renderFabricTagBitmap(
       throw new Error(`Rasteriser returned ${bgra.length} bytes, expected ${expected}`);
     }
 
-    const bitmap = packMonochrome(bgra, widthDots, targetHeight);
+    const bitmap = packFabricTagMonochrome(bgra, widthDots, targetHeight);
     assertNoHorizontalEdgeContact(bitmap);
     logger.info(`[FabricTag] Rasterised ${widthDots}x${targetHeight} dots (${bitmap.data.length} bytes)`);
     return bitmap;

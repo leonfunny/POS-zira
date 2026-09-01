@@ -8,6 +8,12 @@ const labelHarness = vi.hoisted(() => ({
   products: [] as any[],
   listTemplateIds: vi.fn(),
   getTemplate: vi.fn(),
+  listArtworks: vi.fn(),
+  importArtwork: vi.fn(),
+  attachProduction: vi.fn(),
+  getArtworkPreview: vi.fn(),
+  retireArtwork: vi.fn(),
+  printArtwork: vi.fn(),
   syncProducts: vi.fn(),
 }));
 
@@ -26,7 +32,12 @@ vi.mock('../src/renderer/hooks/useProducts', () => ({
   }),
 }));
 
-import { PrinterType, type FabricTagTemplate, type PrinterConfig } from '../src/shared/types';
+import {
+  PrinterType,
+  type FabricTagArtwork,
+  type FabricTagTemplate,
+  type PrinterConfig,
+} from '../src/shared/types';
 import FabricTagPrintPanel, {
   FABRIC_TAG_CONFIRM_THRESHOLD,
   MAX_FABRIC_TAGS_PER_RUN,
@@ -52,6 +63,28 @@ const rows = [
   { id: 'size-s', name: 'Small' },
   { id: 'size-m', name: 'Medium' },
 ];
+
+const receivedArtwork: FabricTagArtwork = {
+  id: 'artwork-1',
+  salonId: 'salon-a',
+  customerName: 'Customer A',
+  orderCode: 'ORDER-7',
+  variant: 'S/M',
+  revision: 'r1',
+  originalFilename: 'customer-label.btw',
+  sourceType: 'BTW',
+  status: 'NEEDS_CONVERSION',
+  sourceSha256: 'a'.repeat(64),
+  productionFilename: null,
+  productionSha256: null,
+  widthPx: null,
+  heightPx: null,
+  physicalWidthMm: null,
+  physicalLengthMm: null,
+  createdAt: '2026-09-01T10:00:00.000Z',
+  updatedAt: '2026-09-01T10:00:00.000Z',
+  retiredAt: null,
+};
 
 async function settle(rounds = 4) {
   for (let index = 0; index < rounds; index += 1) {
@@ -89,6 +122,12 @@ describe('Fabric Label UI hardening', () => {
     vi.clearAllMocks();
     labelHarness.listTemplateIds.mockResolvedValue([]);
     labelHarness.getTemplate.mockResolvedValue(null);
+    labelHarness.listArtworks.mockResolvedValue([]);
+    labelHarness.importArtwork.mockResolvedValue(null);
+    labelHarness.attachProduction.mockResolvedValue(null);
+    labelHarness.getArtworkPreview.mockResolvedValue(null);
+    labelHarness.retireArtwork.mockResolvedValue(null);
+    labelHarness.printArtwork.mockResolvedValue({ success: true });
     root = null;
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -103,6 +142,14 @@ describe('Fabric Label UI hardening', () => {
           fabricTagTemplates: {
             listIds: labelHarness.listTemplateIds,
             get: labelHarness.getTemplate,
+          },
+          fabricTagArtworks: {
+            list: labelHarness.listArtworks,
+            importSource: labelHarness.importArtwork,
+            attachProduction: labelHarness.attachProduction,
+            getPreview: labelHarness.getArtworkPreview,
+            retire: labelHarness.retireArtwork,
+            print: labelHarness.printArtwork,
           },
         },
       },
@@ -158,7 +205,7 @@ describe('Fabric Label UI hardening', () => {
     )).toBe(false);
   });
 
-  it('loads care templates without POS or EAN setup and never turns LOTUS colours into size rows', async () => {
+  it('loads customer artwork without POS/EAN setup and never turns LOTUS colours into size rows', async () => {
     labelHarness.config = {
       labelModuleProductIds: [],
       labelModuleCategoryIds: [],
@@ -186,22 +233,25 @@ describe('Fabric Label UI hardening', () => {
         retail_price: 0,
       },
     ];
-    labelHarness.listTemplateIds.mockResolvedValue(['LOTUS']);
-    labelHarness.getTemplate.mockResolvedValue(template);
+    labelHarness.listArtworks.mockResolvedValue([receivedArtwork]);
 
     await render(<LabelModule language="vi" />);
 
-    expect(labelHarness.listTemplateIds).toHaveBeenCalledTimes(1);
-    expect(labelHarness.getTemplate).toHaveBeenCalledTimes(1);
-    expect(labelHarness.getTemplate).toHaveBeenCalledWith('LOTUS');
-    expect(container.textContent).toContain('Chọn danh mục hoặc ghim sản phẩm');
-    expect(container.textContent).toContain('Mác hướng dẫn sử dụng vải');
-    expect(container.textContent).toContain('LOTUS');
+    expect(labelHarness.listArtworks).toHaveBeenCalledTimes(1);
+    expect(labelHarness.listTemplateIds).not.toHaveBeenCalled();
+    expect(labelHarness.getTemplate).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('Mác vải từ file khách');
+    expect(container.textContent).toContain('Customer A');
+    expect(container.textContent).toContain('ORDER-7');
+    expect(container.textContent).toContain('S/M');
+    expect(container.textContent).toContain('customer-label.btw');
+    expect(container.textContent).toContain('.btw đã được lưu an toàn nhưng chưa thể in');
     expect(container.textContent).not.toContain('LOTUS beżowy');
-    expect(container.textContent).toContain('Chưa cấu hình size cho mẫu mác vải này.');
-    expect(container.textContent).toContain('Hãy cấu hình máy in mác vải trong Cài đặt trước.');
     expect(container.textContent).not.toContain('LOTUS czarny');
-    expect(container.querySelectorAll('input[placeholder="Size"]')).toHaveLength(0);
+    const select = container.querySelector<HTMLInputElement>(
+      'input[aria-label="Chọn để in: S/M"]',
+    );
+    expect(select?.disabled).toBe(true);
   });
 
   it('keeps the EAN label workflow alive when the optional fabric bridge is missing', async () => {
@@ -231,6 +281,12 @@ describe('Fabric Label UI hardening', () => {
     await expect(render(<LabelModule language="vi" />)).resolves.toBeUndefined();
 
     expect(labelHarness.listTemplateIds).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="alert"]')?.textContent)
+      .toContain('Chưa có kết nối quản lý file mác vải');
+
+    await act(async () => buttonWithText(container, 'Tem mã sản phẩm / EAN').click());
+    await settle();
+
     expect(container.textContent).toContain('EAN product');
     expect(container.textContent).toContain('5901234123457');
     expect(container.textContent).not.toContain('Mác hướng dẫn sử dụng vải');

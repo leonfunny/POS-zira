@@ -11,6 +11,7 @@ const harness = vi.hoisted(() => ({
   listTemplateIds: vi.fn(),
   getTemplate: vi.fn(),
   printLabel: vi.fn(),
+  fabricAction: vi.fn(),
   loggerError: vi.fn(),
   loggerWarn: vi.fn(),
 }));
@@ -37,42 +38,60 @@ vi.mock('../src/renderer/utils/logger', () => ({
   },
 }));
 
-vi.mock('../src/renderer/components/label/FabricTagPrintPanel', () => ({
-  default: ({ onStatus }: { onStatus: (status: { type: 'success'; message: string }) => void }) =>
-    createElement(
+vi.mock('../src/renderer/components/label/FabricArtworkPanel', () => ({
+  default: ({ active = true, onPrintingChange }: any) => {
+    const [size, setSize] = React.useState('');
+    return createElement(
       'div',
-      null,
-      createElement('input', { type: 'text', 'data-testid': 'fabric-size-input' }),
+      { 'data-testid': 'fabric-artwork-panel' },
+      createElement('input', {
+        type: 'text',
+        value: size,
+        disabled: !active,
+        'data-testid': 'fabric-size-input',
+        onInput: (event: React.FormEvent<HTMLInputElement>) => setSize(event.currentTarget.value),
+      }),
       createElement(
         'button',
         {
           type: 'button',
+          disabled: !active,
           'data-testid': 'emit-fabric-status',
-          onClick: () => onStatus({ type: 'success', message: 'Fabric run remains visible' }),
+          onClick: harness.fabricAction,
         },
-        'Emit fabric status',
+        'Fabric action',
       ),
-    ),
+      createElement(
+        'button',
+        {
+          type: 'button',
+          disabled: !active,
+          'data-testid': 'start-fabric-print',
+          onClick: () => onPrintingChange?.(true),
+        },
+        'Start fabric print',
+      ),
+      createElement(
+        'button',
+        {
+          type: 'button',
+          disabled: !active,
+          'data-testid': 'finish-fabric-print',
+          onClick: () => onPrintingChange?.(false),
+        },
+        'Finish fabric print',
+      ),
+      createElement('div', null, 'Fabric run remains visible'),
+    );
+  },
 }));
 
-import type { FabricTagTemplate } from '../src/shared/types';
 import LabelModule from '../src/renderer/components/label/LabelModule';
 
 const settingsSource = readFileSync(
   join(__dirname, '../src/renderer/components/Settings.tsx'),
   'utf8',
 );
-
-const template: FabricTagTemplate = {
-  templateId: 'LOTUS',
-  brandName: 'Royal Fashion',
-  logoDataUrl: null,
-  composition: '100% polyester',
-  careSymbols: [],
-  careText: null,
-  fabric: null,
-  layout: 'default',
-};
 
 async function settle(rounds = 4) {
   for (let index = 0; index < rounds; index += 1) {
@@ -88,8 +107,6 @@ describe('fabric-label operator feedback', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    harness.listTemplateIds.mockResolvedValue(['LOTUS']);
-    harness.getTemplate.mockResolvedValue(template);
     root = null;
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -147,6 +164,14 @@ describe('fabric-label operator feedback', () => {
     await settle();
   }
 
+  async function chooseLabelMode(text: string) {
+    const button = Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
+      .find((candidate) => candidate.textContent?.trim() === text);
+    expect(button).toBeDefined();
+    await act(async () => button?.click());
+    await settle();
+  }
+
   it('uses the fabric speed default while preserving the generic printer default and hides the paper-size hint', () => {
     const printerCardsStart = settingsSource.indexOf('{PRINTER_TYPES.map((printerType) => {');
     const printerCardsEnd = settingsSource.indexOf('{/* Legacy Printer Config', printerCardsStart);
@@ -160,22 +185,23 @@ describe('fabric-label operator feedback', () => {
     );
   });
 
-  it('shows a localized operator alert when template loading fails without breaking EAN labels', async () => {
+  it('does not invoke the retired catalog-template loader and keeps EAN one explicit tab away', async () => {
     harness.listTemplateIds.mockRejectedValueOnce(new Error('template store unavailable'));
 
     await expect(renderLabelModule()).resolves.toBeUndefined();
 
-    const alert = container.querySelector('[role="alert"]');
-    expect(alert?.textContent).toContain('Không tải được danh sách mẫu mác vải');
-    expect(alert?.textContent).toContain('mở lại tab Label');
+    expect(harness.listTemplateIds).not.toHaveBeenCalled();
+    expect(harness.getTemplate).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('Fabric run remains visible');
+    expect(container.querySelector<HTMLElement>('[data-label-mode-panel="ean"]')?.hidden).toBe(true);
+
+    await chooseLabelMode('Tem mã sản phẩm / EAN');
+
     expect(container.textContent).toContain('First EAN product');
-    expect(harness.loggerError).toHaveBeenCalledWith(
-      '[LabelModule] Failed to load fabric tag templates:',
-      expect.any(Error),
-    );
+    expect(harness.loggerError).not.toHaveBeenCalled();
   });
 
-  it('keeps the EAN workflow graceful when the optional template bridge is absent', async () => {
+  it('keeps the EAN workflow available when optional fabric bridges are absent', async () => {
     Object.defineProperty(window, 'electronAPI', {
       configurable: true,
       writable: true,
@@ -188,25 +214,66 @@ describe('fabric-label operator feedback', () => {
     await expect(renderLabelModule()).resolves.toBeUndefined();
 
     expect(harness.listTemplateIds).not.toHaveBeenCalled();
-    expect(container.querySelector('[role="alert"]')).toBeNull();
+    await chooseLabelMode('Tem mã sản phẩm / EAN');
     expect(container.textContent).toContain('First EAN product');
-    expect(harness.loggerWarn).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain('5901234123457');
+    expect(harness.loggerWarn).not.toHaveBeenCalled();
   });
 
-  it('does not erase the fabric print status when another EAN product is selected', async () => {
+  it('keeps the mounted fabric form state while hiding and disabling it in EAN mode', async () => {
     await renderLabelModule();
 
-    const emitStatus = container.querySelector<HTMLButtonElement>('[data-testid="emit-fabric-status"]');
-    expect(emitStatus).not.toBeNull();
-    await act(async () => emitStatus?.click());
+    const fabricPanel = container.querySelector<HTMLElement>('[data-label-mode-panel="fabric"]');
+    const eanPanel = container.querySelector<HTMLElement>('[data-label-mode-panel="ean"]');
+    const fabricInput = container.querySelector<HTMLInputElement>('[data-testid="fabric-size-input"]');
+    const setValue = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value',
+    )?.set;
+    await act(async () => {
+      setValue?.call(fabricInput, 'S/M');
+      fabricInput?.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
     expect(container.textContent).toContain('Fabric run remains visible');
+    expect(fabricPanel?.hidden).toBe(false);
+    expect(eanPanel?.hidden).toBe(true);
+    await chooseLabelMode('Tem mã sản phẩm / EAN');
+
+    expect(fabricPanel?.hidden).toBe(true);
+    expect(eanPanel?.hidden).toBe(false);
+    expect(fabricInput?.disabled).toBe(true);
+    container.querySelector<HTMLButtonElement>('[data-testid="emit-fabric-status"]')?.click();
+    expect(harness.fabricAction).not.toHaveBeenCalled();
 
     const secondProduct = Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
       .find((button) => button.textContent?.includes('Second EAN product'));
     expect(secondProduct).not.toBeUndefined();
     await act(async () => secondProduct?.click());
 
-    expect(container.textContent).toContain('Fabric run remains visible');
+    expect(container.textContent).toContain('Second EAN product');
+
+    await chooseLabelMode('Mác vải từ file khách');
+    expect(fabricPanel?.hidden).toBe(false);
+    expect(eanPanel?.hidden).toBe(true);
+    expect(fabricInput?.disabled).toBe(false);
+    expect(fabricInput?.value).toBe('S/M');
+  });
+
+  it('does not allow a mode switch while a fabric print run is active', async () => {
+    await renderLabelModule();
+
+    const eanMode = Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => button.textContent?.trim() === 'Tem mã sản phẩm / EAN');
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="start-fabric-print"]')?.click();
+      // The state-driven disabled attribute has not rendered yet. The
+      // synchronous ref must still reject this same-frame mode click.
+      eanMode?.click();
+    });
+    expect(eanMode?.disabled).toBe(true);
+    expect(container.querySelector<HTMLElement>('[data-label-mode-panel="fabric"]')?.hidden).toBe(false);
+    expect(container.querySelector<HTMLElement>('[data-label-mode-panel="ean"]')?.hidden).toBe(true);
   });
 
   it('does not route Enter from a fabric control into the EAN print shortcut', async () => {

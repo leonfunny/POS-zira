@@ -415,6 +415,10 @@ class Database {
       // catalogue, so it means nothing to the next tenant and would print
       // their garments with the previous one's fibre composition.
       'fabric_tag_templates',
+      // Customer-owned artwork metadata. Binary assets live in a hashed,
+      // salon-scoped userData directory and remain isolated for archive restore;
+      // the live database must never expose the departing salon's rows.
+      'fabric_tag_artworks',
       // Product/catalog mirrors, including local-only imports from master drafts
       'product_admin_mutation_outbox',
       'local_variant_imports',

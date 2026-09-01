@@ -9,10 +9,14 @@ Tài liệu này để một phiên khác đọc rồi brainstorm/kiểm tra/lê
 
 ## 1. Mục tiêu
 
-Xưởng may in **mác vải** (care label: tên/logo, size, thành phần sợi, ký hiệu
-giặt ISO 3758, made in) lên dải vải liên tục 20 mm bằng máy **TSC MB241**, và in
-**tem EAN** trên giấy bằng máy **Honeywell PC42E-D**. Cả hai nằm trong **tab
-Label** của app POS-zira.
+Xưởng may in **mác vải do khách đặt** lên dải vải liên tục 20 mm bằng máy
+**TSC MB241**. Thiết kế có thể dùng bất kỳ cách ghi size nào (`M`, `S/M`,
+`44/46`, `L/XL`, ...), và thường được nhận từ khách/bên thiết kế dưới dạng
+`.btw`; app không tự tái tạo nội dung, ký hiệu hay bố cục của khách.
+
+**Tem EAN** trên giấy bằng máy **Honeywell PC42E-D** vẫn nằm trong tab Label,
+nhưng được tách thành lane thứ hai và để sau. Màu tạm thời không in trên mác
+vải.
 
 **Máy này chỉ để in và khai thông tin — không bán hàng.** Đây là ràng buộc chi
 phối mọi quyết định thiết kế bên dưới.
@@ -20,6 +24,39 @@ phối mọi quyết định thiết kế bên dưới.
 ---
 
 ## 2. Trạng thái: cái gì chạy được
+
+### Luồng chính mới: thư viện file khách (đã build, chưa in vật lý)
+
+Luồng theo catalog/template bên dưới vẫn được giữ làm công cụ kỹ thuật khẩn
+cấp, nhưng **không còn là workflow chính của nhân viên**. Workflow mới là:
+
+```text
+Nhập khách + mã đơn + size/biến thể + revision
+  → file picker của main process nhận .btw hoặc PNG
+  → lưu file bất biến trong vùng riêng của salon
+  → .btw = NEEDS_CONVERSION (chỉ lưu nguồn, tuyệt đối không in trực tiếp)
+  → gắn PNG production đã xuất đúng chuẩn = READY
+  → preview, chọn nhiều dòng và nhập số lượng
+  → chia lô tối đa 50 tem (ví dụ 120 = 50 + 50 + 20)
+  → main đọc lại file, kiểm hash/kích thước/salon
+  → TSPL BITMAP byte-exact → Win32 RAW spooler → TSC MB241
+```
+
+Hợp đồng production hiện tại:
+
+| Thuộc tính | Giá trị |
+|---|---|
+| Vật liệu | **20 mm**, 203 dpi, continuous media |
+| File để in | **PNG**, không dùng PDF và không tự co giãn |
+| Canvas đầu vào | rộng đúng **160 px**, cao **80–480 px** |
+| Lề an toàn | **9 px trắng mỗi bên**; app giữ đúng dải giữa 142 px |
+| Tọa độ in | 1 pixel nguồn = 1 dot đầu in; giữ nguyên chiều cao |
+| Số lượng | 1–999 mỗi dòng; UI gửi từng chunk tối đa 50 |
+
+PDF bị loại khỏi MVP vì thêm một tầng page size/DPI/driver có thể scale ngầm.
+PNG là artifact production đã raster ở đúng 203 dpi, nên main có thể kiểm tra
+chính xác trước khi phát byte 1-bit. `.btw` vẫn là nguồn thiết kế có giá trị và
+được lưu nguyên bản; app hiện **không decode hoặc convert `.btw`**.
 
 ### Đã in thật lên vải, có ảnh xác nhận
 
@@ -49,7 +86,7 @@ Chữ Ba Lan (`Ł`) và dấu tiếng Việt (`ặ`, `ẹ`) đều lên nét rõ
 | **Lệch mép** | **1.1 mm** — xem mục 5 |
 | Dao cắt | **KHÔNG CÓ**. Đã bắn lệnh `CUT`, máy không phản ứng. Header có sẵn `SET TEAR ON` nên vải đẩy ra thanh xé, xé tay |
 
-### Đã dựng trong code
+### Luồng template nội bộ đã dựng trước đó (nay là công cụ kỹ thuật dự phòng)
 
 | Thành phần | File |
 |---|---|
@@ -78,15 +115,17 @@ vật lý nào được gửi trong đợt này.
    (`PIECE`/`WEIGHT`), **không lưu được danh sách S/M/L**. Nó là lá cờ, không
    phải mô hình — vẫn phải có bảng chứa size ở đâu đó.
 
-3. **Chia đôi dữ liệu:** thành phần sợi / ký hiệu giặt / made in thuộc **mẫu
-   mác của mã hàng**. Màu hiện không in; nguồn size chưa chốt và tuyệt đối
-   không được suy ra từ các biến thể catalog hiện tại vì chúng là màu.
+3. **Không suy ra mác từ catalog.** Thành phần sợi, ký hiệu giặt, cách ghi size
+   và bố cục thuộc file khách của đúng đơn/revision. Màu hiện không in; các biến
+   thể màu trong catalog tuyệt đối không được coi là size.
 
-4. **Không tự động hoá trên BarTender UltraLite hiện tại.** Hai file `.btw`
-   thật vẫn là nguồn tham khảo thiết kế sau khi chủ xưởng xác nhận. Xem mục 5.
+4. **Không tự động hoá BarTender UltraLite hiện tại.** `.btw` được app nhận và
+   lưu làm nguồn, nhưng chỉ PNG production đã được xuất đúng chuẩn mới có thể
+   chuyển trạng thái sang `READY`. Xem mục 5.
 
-5. **Không đi qua PDF/driver Windows.** Đường in hiện tại gửi bitmap byte-exact
-   qua TSPL chính là để tránh driver render lại. Chữ nhỏ 11 dots rất mong manh.
+5. **Không đi qua PDF/driver Windows và không tự scale.** Đường in gửi bitmap
+   byte-exact qua TSPL để tránh driver render lại. File 25.1 mm không được app
+   âm thầm bóp xuống 20 mm.
 
 ---
 
@@ -107,7 +146,7 @@ không. Không thêm một toggle mới.
 trị legacy đủ lâu để đổi cấu hình đã lưu về `retail`, nếu không cả bản mới lẫn
 bản rollback 1.0.26 có thể fail validation lúc khởi động.
 
-### 4.2 🚨 Size KHÔNG TỒN TẠI trong catalog — điểm chặn lớn nhất
+### 4.2 Size không tồn tại trong catalog — không còn chặn workflow file khách
 
 Đây là phát hiện quan trọng nhất, và nó **lật một lập luận tôi đưa ra hôm qua**.
 
@@ -130,44 +169,37 @@ Tra khắp dữ liệu: size không có ở dạng biến thể, không có cộ
 tính. **Paul đúng khi nói "phải thêm size"** — tôi chỉ đúng ở chỗ `sell_by`
 không phải nơi đặt nó.
 
-Hệ quả: bản hardening **không đưa 7 dòng màu vào panel size nữa**. Panel trong
-tab Label chủ động hiện empty state cho đến khi có danh sách size đã duyệt;
-không có đường nào tự biến `beżowy`/`czarny` thành size.
-
-**Hướng đang ưu tiên nhưng chưa triển khai:** vì máy chỉ in, size có thể không
-cần mã vạch / tồn kho / giá.
-Biến size thành sản phẩm là thừa (6 màu × 5 size = 30 dòng catalog cho thứ
-không bao giờ bán). Một phương án là **lưu danh sách size ngay trên mẫu mác**
-dưới dạng mảng JSON, ví dụ `["S", "M", "L", "XL"]`. Chưa tạo migration/editor
-cho đến khi xem bảng A4 và mẫu mác thật; tuyệt đối không đoán từ các dòng màu
-trong catalog.
+Hệ quả vẫn giữ nguyên: không đưa 7 dòng màu vào panel size và không tạo 30 dòng
+catalog chỉ để in. Tuy nhiên đây không còn là điểm chặn: thư viện artwork lưu
+`variant` dưới dạng text tùy ý theo file khách (`M`, `S/M`, `44/46`, ...), độc
+lập hoàn toàn với tồn kho, giá, barcode và product variant.
 
 ### 4.3 Thông tin chủ xưởng đang chuẩn bị
 
-1. **Màu tạm thời không in lên mác.** Luồng đầu tiên chỉ có một trục size, không
-   dựng ma trận màu × size.
-2. Chủ xưởng sẽ gửi mẫu mác vải, mẫu tem EAN và một bảng A4 ghi rõ mã áo, nội
-   dung, size, số lượng và cách in để cùng review bố cục/luồng thao tác.
-3. Cần xác nhận hai file `.btw` mới tìm thấy ở mục 5 có phải thiết kế thật đã
-   duyệt không, và khổ vật liệu chính xác là 20 mm hay 25.1 mm.
-4. Cần chốt mác là thiết kế cố định hay đổi theo mã hàng/khách hàng.
-5. Nếu Honeywell/EAN nằm trong scope, cần chốt nguồn EAN và EAN đại diện cho
-   style, màu, size hay tổ hợp của chúng.
+1. **Màu tạm thời không in lên mác.** Không dựng ma trận màu × size.
+2. **Khổ vải đã chốt là 20 mm.** Bản in thử với inset 1.1 mm đã đẹp và nằm giữa
+   khung vải.
+3. **Thiết kế phụ thuộc khách/đơn**, không phải template sản phẩm do xưởng tự
+   dựng. File `.btw` có thể có rất nhiều cách ghi size và nội dung khác nhau.
+4. `Document2.btw` chỉ là nguồn thử workflow; nó khai 25.1 × 40 mm nên không
+   được coi là production 20 mm và không được in cho tới khi có PNG đúng chuẩn.
+5. Chủ xưởng sẽ gửi file/mẫu thật để review cách xuất production và in thử.
+6. EAN tạm hoãn cho tới khi lane mác vải hoàn tất.
 
 ### 4.4 Không sản phẩm nào có EAN
 
 Cả 7 biến thể đều `barcode = (none)`, nên nút in tem EAN đang khoá ("Thiếu
-EAN"). Với nhóm LOTUS, tab Label hiện chưa có dữ liệu để chạy batch size và
-cũng chưa in được EAN; Composer kỹ thuật trong Settings vẫn có thể in thủ công.
+EAN"). Điều này chỉ chặn lane EAN cũ; thư viện mác vải theo file khách không
+đọc barcode/catalog và vẫn chạy batch theo các row artwork READY. Composer kỹ
+thuật trong Settings vẫn có thể in thủ công.
 
-### 4.5 Chưa có editor lưu mẫu hoàn chỉnh
+### 4.5 Đã có thư viện file; Composer cũ chỉ còn là công cụ khẩn cấp
 
-`FabricTagComposer` trong Settings là bề mặt nhập/in thủ công và preview kỹ
-thuật; nó **không lưu** thành mẫu. Script `seed-fabric-tag.cjs` giờ chỉ đọc:
-đường `--seed` cũ ghi đè toàn bộ `pos.db` đã bị fail-closed vì có thể làm hỏng
-CSDL khi crash/mất điện. Chưa có đường tạo mẫu bền vững dành cho operator.
-Không mở rộng hai UI song song trước khi duyệt mẫu thật; đợt kế tiếp nên hợp
-nhất chúng thành một editor lưu mẫu duy nhất qua repository/IPC của app.
+Tab Label hiện có thư viện file bền vững theo salon: import, tìm/lọc theo khách,
+preview PNG, gắn file production, retire, chọn nhiều dòng và nhập số lượng.
+`FabricTagComposer` trong Settings vẫn tồn tại để chẩn đoán/in nội bộ khẩn cấp,
+nhưng không phải đường nhân viên dùng cho file khách. Script
+`seed-fabric-tag.cjs --seed` tiếp tục bị fail-closed.
 
 ### 4.6 Đồng bộ server chưa làm
 
@@ -178,13 +210,13 @@ cũng chưa có `PrinterType.FABRIC_TAG`, `PrinterProtocol.TSPL` và
 HTTP 400. Máy `tnh` hiện `serverPrinterId = null` và đi đường in local trực tiếp,
 nên thiếu hụt backend không chặn lane hiện tại.
 
-### 4.7 Rollback chưa an toàn qua việc đổi salon
+### 4.7 Scoping của artwork mới đã sửa; rollback của bảng template cũ vẫn mở
 
-Migration v67 tạo bảng local không có `salon_id`; app mới xoá bảng này khi đổi
-salon, nhưng binary 1.0.26 không biết nó. Chuỗi “tạo mẫu ở salon A → rollback
-binary cũ → đổi sang salon B → nâng lại” có thể đưa mẫu A sang B. Chưa phát hành
-bản này; trước go-live phải thêm ownership/scoping hoặc cấm đổi salon trong
-trạng thái rollback được hỗ trợ.
+Migration v68 `fabric_tag_artworks` có `salon_id`; mọi repo query đều scope theo
+salon, đường dẫn binary nằm trong thư mục có khóa salon đã hash, và đổi tenant
+xóa metadata live. Main còn kiểm tenant generation sau các bước `await` và
+đọc lại row ngay trước in. Migration v67 `fabric_tag_templates` cũ vẫn không có
+`salon_id`, nên rủi ro rollback của workflow template cũ bên dưới vẫn tồn tại.
 
 Một preflight rollback khác: schema 1.0.26 không nhận `LABEL.protocol=TSPL`.
 `FABRIC_TAG` là property lạ nên bản cũ bỏ qua được, nhưng nếu từng cấu hình TSC
@@ -209,8 +241,9 @@ hai file thật lại nằm ngay thư mục gốc của nó.
   hệt nhau**.
 - Header trong file cho biết: `Edition=UltraLite`, và
   **`Printer: Name=TSC MB241; Port=USB001`** — thiết kế nhắm đúng máy in mác
-  vải, `Author=X-Strike`, khổ `25.1 × 40 mm`, `DataEntryForms=1`. Tên file chưa
-  chứng minh đây là bản đã duyệt; khổ này cũng mâu thuẫn với cuộn 20 mm đã đo.
+  vải, `Author=X-Strike`, khổ `25.1 × 40 mm`, `DataEntryForms=1`. Khổ vải thật
+  nay đã chốt là 20 mm, vì vậy file này chỉ dùng thử bước import/lưu nguồn và
+  phải được xuất lại thành production 20 mm; app sẽ từ chối scale 25.1 → 20.
 - **Nội dung mác** (rút từ PNG nhúng trong file):
 
   ```
@@ -338,22 +371,44 @@ Full suite đạt 353/354 file, 3300 test xanh, 1 skip. Test duy nhất đỏ l�
 chạy riêng ngay sau đó xanh trong 1,188 giây. Đây là flaky theo tải đã được cô
 lập, không phải regression của feature mác.
 
+**Artwork-library MVP 2026-09-01 trên checkout tích hợp Linux:** 15 file / 267
+test tập trung xanh; typecheck main + renderer sạch; production build xanh.
+Các test mới bao phủ `.btw` archive-only, PNG full decode/hash/crop/no-scale,
+salon fence, file picker main-only, TSPL binary, hai preload, UI thiếu bridge,
+chunk `120 → 50/50/20`, điểm dừng Continue/Stop thật giữa các chunk và latch
+chống double-confirm. Audit cuối còn ghim revalidation ngay sát RAW, attach
+một lần theo revision, bounded handle read và default inset 1.1 mm. Full suite
+đạt 347 file /
+3258 test xanh, 14 test đỏ và 14 skip; các lỗi đỏ đã tái hiện khi chạy riêng và
+đều thuộc giới hạn môi trường Linux đã biết (đường dẫn Windows,
+`electron-store` ngoài Electron, E2E thiếu X display), không chạm file feature.
+Vẫn phải chạy lại full suite và package ở Windows trước khi bàn giao build.
+
 ---
 
 ## 8. Việc tồn đọng / thứ tự làm tiếp
 
-- **Chờ bộ đầu vào của chủ xưởng:** mẫu mác vải, mẫu tem EAN và tờ A4 ghi mã
-  áo/nội dung/size/số lượng/cách in. Dùng chúng để chốt khổ, hierarchy chữ,
-  khoảng cắt/xé, nguồn size và mapping EAN; tạm thời không in màu.
-- Sau khi duyệt dữ liệu: thêm danh sách size vào template, một editor lưu bền,
-  và một batch IPC/queue khoá toàn bộ run. Đồng thời làm vùng panel scroll được
-  khi có nhiều size; không tạo 30 catalog item chỉ để in.
-- Dropdown mẫu hiện dùng raw `template_id` và tự chọn mẫu đầu tiên. Chờ mẫu/A4
-  để đặt tên hiển thị và quyết định operator phải chọn rõ hay có thể auto-pick;
-  không tô son UUID trước khi biết quy trình thật.
-- Trước go-live: smoke đúng TSC MB241 với bản mẫu đã duyệt, scan QR/EAN, kiểm
-  quiet zone, độ đậm và mép 20 mm; sửa rollback/salon ownership. Không coi build
-  xanh là bằng chứng bản in vật lý.
+- **Build trước, chưa in:** chuyển commit đã review sang `tnh`, chạy focused +
+  full suite Windows, `npm run build`, rồi package vào thư mục preview mới.
+  Không cài, không mở app, không restart POS và không gửi RAW trong bước này.
+- `Document2.btw` có thể dùng để smoke bước import: kết quả đúng phải là
+  `NEEDS_CONVERSION`. Không dùng nó để smoke print vì nguồn khai rộng 25.1 mm.
+- Khi nhận file thật, yêu cầu bên thiết kế/BarTender xuất một PNG production
+  **160 px rộng ở 203 dpi**, cao 80–480 px, với 9 px trắng hai bên. Gắn PNG vào
+  đúng row, xem preview và đối chiếu khách + đơn + size + revision.
+- Trước lần in vật lý đầu: lấy xác nhận riêng, kiểm máy rảnh/queue sạch, chỉ in
+  1 bản, đo lại tâm và chiều dài; sau đó mới thử lô nhỏ. Không coi build xanh là
+  bằng chứng bản in vật lý.
+- Durable batch ledger/resume chưa nằm trong MVP. Sau mỗi chunk không phải cuối,
+  app dừng và yêu cầu nhân viên chọn **Tiếp tục** hoặc **Dừng**; sau crash/kẹt
+  giấy vẫn phải kiểm đếm tem thật trước khi in lại.
+- Workflow template/catalog cũ chỉ là kỹ thuật dự phòng; không thêm size JSON,
+  không mở rộng editor template và không đồng bộ server trước khi file-based
+  workflow được chứng minh bằng mẫu thật.
+- **EAN làm sau mác vải.** Khi quay lại cần chốt EAN đại diện cho style, size
+  hay tổ hợp nào và nguồn barcode; không trộn quyết định đó vào bản build này.
+- Lane remote là dự án riêng: thêm enum/DTO/backend API/job routing rồi mới bật
+  remote print. MVP hiện tại chỉ in local qua TSC đã cấu hình.
 - Lane remote là dự án riêng: thêm enum/DTO/backend API/job routing và trả đủ
   `paperHeight`, rồi mới dùng các cột sync đã dự phòng.
 - Các commit vẫn **chưa push GitHub**. Máy Windows không push được (GCM cần TTY,

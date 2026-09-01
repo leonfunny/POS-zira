@@ -126,6 +126,7 @@ import type {
   ScaleReadResult,
   ScaleAutoDetectResult,
 } from './types';
+import type { FabricTagArtworksBridge } from './fabric-tag-artwork-ipc';
 
 
 // ── POS DB row types (mirrors repos) ──
@@ -1049,6 +1050,8 @@ interface ElectronAPI {
       save: (template: FabricTagTemplate) => Promise<FabricTagTemplate | null>;
       remove: (templateId: string) => Promise<void>;
     };
+    /** Customer-supplied BTW sources and validated production PNGs. */
+    fabricTagArtworks?: FabricTagArtworksBridge;
     masterCatalog: {
       lookupByEan: (ean: string) => Promise<{ ok: boolean; draft: any | null; error?: string }>;
       lookupExternalByEan: (ean: string) => Promise<{ ok: boolean; product: any | null; error?: string }>;

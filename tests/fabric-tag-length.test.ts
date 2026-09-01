@@ -122,6 +122,35 @@ describe('fabric tag length follows the content', () => {
     expect(sent).toHaveLength(0);
   });
 
+  it('rechecks artwork ownership after async queue preflight and before RAW dispatch', async () => {
+    const driver = new TscDriver('TSC MB241', 20, 60, {
+      sensor: 'none',
+      originInsetMm: 1.1,
+    });
+    expect(await driver.connect()).toBe(true);
+    let current = true;
+    vi.mocked(getStuckPrintJobStatus).mockImplementationOnce(async () => {
+      // Simulate retirement/revision change while the Windows queue check is
+      // in flight, after production bytes were already decoded.
+      current = false;
+      return null;
+    });
+    const beforeDispatch = vi.fn(() => {
+      if (!current) throw new Error('Fabric artwork changed before dispatch');
+    });
+    const graphic = {
+      widthDots: 142,
+      heightDots: 160,
+      widthBytes: 18,
+      data: Buffer.alloc(18 * 160, 0xff),
+    };
+
+    await expect(driver.printFabricArtwork(graphic, 1, 20, beforeDispatch))
+      .rejects.toThrow(/artwork changed before dispatch/i);
+    expect(beforeDispatch).toHaveBeenCalledOnce();
+    expect(sent).toHaveLength(0);
+  });
+
   it('fails safely before RAW when an old stuck queue job survives removal', async () => {
     vi.mocked(getStuckPrintJobStatus)
       .mockResolvedValueOnce('Offline')

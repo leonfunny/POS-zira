@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  Barcode,
   Check,
   CheckCircle2,
   Clock,
+  FileImage,
   Minus,
   Plus,
   Printer,
@@ -22,9 +24,7 @@ import {
 import type { AgentConfig } from '../../../shared/types';
 import { useConfig } from '../../hooks/useConfig';
 import { useProducts } from '../../hooks/useProducts';
-import type { FabricTagTemplate } from '../../../shared/types';
-import FabricTagPrintPanel, { type FabricTagVariant } from './FabricTagPrintPanel';
-import { isFabricTagPrinterReady } from './fabric-tag-printer';
+import FabricArtworkPanel from './FabricArtworkPanel';
 import type { ProductListItem } from '../../hooks/useProducts';
 import type { Category } from '../../hooks/usePosDb';
 import { getTranslation, type Language } from '../../i18n/translations';
@@ -85,7 +85,6 @@ interface LabelCopy {
   noMatch: string;
   loading: string;
   loadError: string;
-  fabricTemplatesLoadError: string;
   labelPreview: string;
   productInfo: string;
   noSelection: string;
@@ -126,7 +125,8 @@ interface LabelCopy {
 
 const HIGH_COPY_CONFIRM_THRESHOLD = 10;
 const RECENT_PRINT_LIMIT = 5;
-const NO_FABRIC_TAG_SIZES: FabricTagVariant[] = [];
+
+type LabelMode = 'fabric' | 'ean';
 
 const COPY: Record<string, LabelCopy> = {
   en: {
@@ -146,7 +146,6 @@ const COPY: Record<string, LabelCopy> = {
     noMatch: 'No matching label products',
     loading: 'Loading products...',
     loadError: 'Could not load products',
-    fabricTemplatesLoadError: 'Could not load fabric-label templates. Reopen the Label tab; if the problem continues, contact support.',
     labelPreview: 'Label preview',
     productInfo: 'Product info',
     noSelection: 'No product selected',
@@ -201,7 +200,6 @@ const COPY: Record<string, LabelCopy> = {
     noMatch: 'Không tìm thấy sản phẩm tem',
     loading: 'Đang tải sản phẩm...',
     loadError: 'Không tải được sản phẩm',
-    fabricTemplatesLoadError: 'Không tải được danh sách mẫu mác vải. Hãy mở lại tab Label; nếu vẫn lỗi, liên hệ hỗ trợ.',
     labelPreview: 'Xem trước tem',
     productInfo: 'Thông tin sản phẩm',
     noSelection: 'Chưa chọn sản phẩm',
@@ -256,7 +254,6 @@ const COPY: Record<string, LabelCopy> = {
     noMatch: 'Brak pasujących produktów',
     loading: 'Ładowanie produktów...',
     loadError: 'Nie udało się załadować produktów',
-    fabricTemplatesLoadError: 'Nie udało się wczytać szablonów metek materiałowych. Otwórz ponownie kartę Label; jeśli problem nie ustąpi, skontaktuj się z pomocą.',
     labelPreview: 'Podgląd etykiety',
     productInfo: 'Informacje o produkcie',
     noSelection: 'Nie wybrano produktu',
@@ -399,49 +396,20 @@ export default function LabelModule({ language }: LabelModuleProps) {
   };
   const { allProducts, categories, loading, error, syncProducts, syncing } = useProducts(labelLanguage);
   const products = allProducts as LabelProduct[];
+  const [labelMode, setLabelMode] = useState<LabelMode>('fabric');
+  const [fabricArtworkPrinting, setFabricArtworkPrinting] = useState(false);
+  const fabricArtworkPrintingRef = useRef(false);
+  const handleFabricArtworkPrintingChange = useCallback((printing: boolean) => {
+    fabricArtworkPrintingRef.current = printing;
+    setFabricArtworkPrinting(printing);
+  }, []);
   const [query, setQuery] = useState('');
   const [settingsQuery, setSettingsQuery] = useState('');
   const [activeCategoryId, setActiveCategoryId] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedProductId, setSelectedProductId] = useState('');
-  const [selectedFabricTemplateId, setSelectedFabricTemplateId] = useState('');
-  const [fabricTemplateIds, setFabricTemplateIds] = useState<string[]>([]);
-  const [selectedFabricTemplate, setSelectedFabricTemplate] = useState<FabricTagTemplate | null>(null);
-  const [fabricTemplatesLoadFailed, setFabricTemplatesLoadFailed] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    // Optional: a renderer whose preload predates this binding must lose the
-    // fabric panel, not the whole window. Reaching straight through here
-    // white-screened the app the first time the two preloads disagreed.
-    const api = window.electronAPI?.pos?.fabricTagTemplates;
-    if (!api || typeof api.listIds !== 'function' || typeof api.get !== 'function') {
-      rlog.warn('[LabelModule] fabricTagTemplates bridge missing; fabric panel unavailable');
-      return;
-    }
-    api.listIds()
-      .then((rows: string[]) => {
-        if (cancelled) return;
-        const uniqueIds = Array.from(new Set(
-          (Array.isArray(rows) ? rows : [])
-            .map((row) => String(row || '').trim())
-            .filter(Boolean),
-        ));
-        setFabricTemplateIds(uniqueIds);
-        setFabricTemplatesLoadFailed(false);
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        // Loud on purpose: silently showing no fabric panel is exactly how the
-        // printer looked broken for an afternoon.
-        rlog.error('[LabelModule] Failed to load fabric tag templates:', err);
-        setFabricTemplatesLoadFailed(true);
-      });
-    return () => { cancelled = true; };
-  }, []);
   const [copies, setCopies] = useState(1);
   const [status, setStatus] = useState<LabelStatus>({ type: 'idle', message: '' });
-  const [fabricStatus, setFabricStatus] = useState<{ type: 'success' | 'error' | 'printing'; message: string } | null>(null);
   const [recentPrints, setRecentPrints] = useState<RecentPrint[]>([]);
   const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
   const [optimisticCategoryIds, setOptimisticCategoryIds] = useState<string[]>([]);
@@ -516,19 +484,6 @@ export default function LabelModule({ language }: LabelModuleProps) {
     });
   }, [configuredCategoryIds, pinnedProductIds, printableProducts, setupConfigured]);
 
-  const availableFabricTemplateIds = useMemo(() => {
-    const knownTemplateIds = new Set(fabricTemplateIds);
-    const available = new Set<string>();
-    // Fabric templates are data-gated independently from the EAN selection.
-    // Catalogue siblings currently represent colours, so expose each style
-    // key once instead of turning colour rows into separate print identities.
-    for (const product of printableProducts) {
-      const templateId = String(product.template_id || '').trim();
-      if (templateId && knownTemplateIds.has(templateId)) available.add(templateId);
-    }
-    return Array.from(available);
-  }, [fabricTemplateIds, printableProducts]);
-
   const filterCategories = useMemo(() => {
     const representedCategoryIds = new Set(
       labelProducts
@@ -565,46 +520,6 @@ export default function LabelModule({ language }: LabelModuleProps) {
     () => labelProducts.find((product) => product.id === selectedProductId) || null,
     [labelProducts, selectedProductId],
   );
-
-  useEffect(() => {
-    if (availableFabricTemplateIds.length === 0) {
-      if (selectedFabricTemplateId) setSelectedFabricTemplateId('');
-      return;
-    }
-    if (!availableFabricTemplateIds.includes(selectedFabricTemplateId)) {
-      setSelectedFabricTemplateId(availableFabricTemplateIds[0]);
-    }
-  }, [availableFabricTemplateIds, selectedFabricTemplateId]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const api = window.electronAPI?.pos?.fabricTagTemplates;
-    if (!selectedFabricTemplateId || !api || typeof api.get !== 'function') {
-      setSelectedFabricTemplate(null);
-      return;
-    }
-
-    setSelectedFabricTemplate(null);
-    api.get(selectedFabricTemplateId)
-      .then((template: FabricTagTemplate | null) => {
-        if (cancelled) return;
-        if (!template || template.templateId !== selectedFabricTemplateId) {
-          throw new Error(`Template ${selectedFabricTemplateId} was not found`);
-        }
-        setSelectedFabricTemplate(template);
-        setFabricTemplatesLoadFailed(false);
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        rlog.error('[LabelModule] Failed to load fabric tag templates:', err);
-        setSelectedFabricTemplate(null);
-        setFabricTemplatesLoadFailed(true);
-      });
-
-    return () => { cancelled = true; };
-  }, [selectedFabricTemplateId]);
-
-  const fabricTagPrinterReady = isFabricTagPrinterReady(config?.printers?.FABRIC_TAG);
 
   const selectedBarcode = resolveLabelCode(selectedProduct);
   const selectedNameResolution = selectedProduct
@@ -851,6 +766,9 @@ export default function LabelModule({ language }: LabelModuleProps) {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      // The fabric workflow owns its own explicit print action. Never let a
+      // background Enter key leak into the secondary EAN printer.
+      if (labelMode !== 'ean') return;
       const target = event.target as HTMLElement | null;
       const tagName = target?.tagName;
       const isTyping = tagName === 'INPUT'
@@ -899,11 +817,70 @@ export default function LabelModule({ language }: LabelModuleProps) {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [handlePrint, query, settingsOpen]);
+  }, [handlePrint, labelMode, query, settingsOpen]);
 
   return (
     <>
-    <div className="h-[calc(100vh-2rem)] min-h-0 overflow-hidden bg-slate-50 text-slate-900">
+    <div className="h-[calc(100vh-2rem)] min-h-0 overflow-hidden bg-slate-50 text-slate-900 flex flex-col">
+      <nav
+        className="mb-3 shrink-0 rounded-lg border border-slate-200 bg-white p-1.5 shadow-sm"
+        aria-label={language === 'vi' ? 'Chọn loại mác' : language === 'pl' ? 'Wybierz rodzaj etykiety' : 'Choose label type'}
+      >
+        <div className="grid max-w-xl grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setSettingsOpen(false);
+              setLabelMode('fabric');
+            }}
+            aria-pressed={labelMode === 'fabric'}
+            className={`min-h-11 rounded-md border px-3 text-sm font-extrabold transition-colors inline-flex items-center justify-center gap-2 ${
+              labelMode === 'fabric'
+                ? 'border-emerald-600 bg-emerald-50 text-emerald-800'
+                : 'border-transparent bg-white text-slate-600 hover:border-slate-200 hover:bg-slate-50'
+            }`}
+          >
+            <FileImage size={18} aria-hidden="true" />
+            {language === 'vi' ? 'Mác vải từ file khách' : language === 'pl' ? 'Metki z pliku klienta' : 'Fabric labels from customer files'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (!fabricArtworkPrintingRef.current) setLabelMode('ean');
+            }}
+            disabled={fabricArtworkPrinting}
+            aria-pressed={labelMode === 'ean'}
+            className={`min-h-11 rounded-md border px-3 text-sm font-extrabold transition-colors inline-flex items-center justify-center gap-2 ${
+              labelMode === 'ean'
+                ? 'border-emerald-600 bg-emerald-50 text-emerald-800'
+                : 'border-transparent bg-white text-slate-600 hover:border-slate-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50'
+            }`}
+          >
+            <Barcode size={18} aria-hidden="true" />
+            {language === 'vi' ? 'Tem mã sản phẩm / EAN' : language === 'pl' ? 'Etykieta produktu / EAN' : 'Product code / EAN label'}
+          </button>
+        </div>
+      </nav>
+
+      <div className="min-h-0 flex-1">
+        <div
+          data-label-mode-panel="fabric"
+          hidden={labelMode !== 'fabric'}
+          aria-hidden={labelMode !== 'fabric'}
+          className="h-full min-h-0"
+        >
+          <FabricArtworkPanel
+            language={language}
+            active={labelMode === 'fabric'}
+            onPrintingChange={handleFabricArtworkPrintingChange}
+          />
+        </div>
+        <div
+          data-label-mode-panel="ean"
+          hidden={labelMode !== 'ean'}
+          aria-hidden={labelMode !== 'ean'}
+          className="h-full min-h-0"
+        >
       <div className="grid h-full min-h-0 gap-3 lg:grid-cols-[minmax(360px,400px),minmax(0,1fr)]">
         <aside className="min-h-0 rounded-lg border border-slate-200 bg-white flex flex-col overflow-hidden">
           <div className="border-b border-slate-200 px-4 py-3">
@@ -1022,64 +999,6 @@ export default function LabelModule({ language }: LabelModuleProps) {
               {printButtonText}
             </button>
 
-            {fabricTemplatesLoadFailed && (
-              <div
-                role="alert"
-                className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-800 inline-flex items-start gap-2"
-              >
-                <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
-                <span>{copy.fabricTemplatesLoadError}</span>
-              </div>
-            )}
-
-            {availableFabricTemplateIds.length > 0 && (
-              <section className="space-y-2" aria-label={tOr('fabricTag.printRunTitle', 'Fabric care labels')}>
-                <label className="block space-y-1">
-                  <span className="text-xs font-extrabold uppercase tracking-wide text-slate-400">
-                    {tOr('fabricTag.title', 'Fabric tag')}
-                  </span>
-                  <select
-                    aria-label={tOr('fabricTag.title', 'Fabric tag')}
-                    value={selectedFabricTemplateId}
-                    onChange={(event) => {
-                      setSelectedFabricTemplateId(event.target.value);
-                      setFabricStatus(null);
-                    }}
-                    className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-extrabold text-slate-900 outline-none focus:ring-2 focus:ring-emerald-200"
-                  >
-                    {availableFabricTemplateIds.map((templateId) => (
-                      <option key={templateId} value={templateId}>{templateId}</option>
-                    ))}
-                  </select>
-                </label>
-                {selectedFabricTemplate && (
-                  <FabricTagPrintPanel
-                    template={selectedFabricTemplate}
-                    styleName={selectedFabricTemplate.templateId}
-                    // Catalogue siblings are colours for the current LOTUS data,
-                    // not sizes. Wait for approved size data instead of guessing.
-                    variants={NO_FABRIC_TAG_SIZES}
-                    ready={fabricTagPrinterReady}
-                    t={tOr}
-                    onStatus={setFabricStatus}
-                  />
-                )}
-                {fabricStatus && (
-                  <div
-                    role="status"
-                    className={`rounded-lg border px-3 py-2 text-xs font-bold ${
-                      fabricStatus.type === 'success'
-                        ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                        : fabricStatus.type === 'printing'
-                          ? 'border-sky-200 bg-sky-50 text-sky-800'
-                          : 'border-red-200 bg-red-50 text-red-800'
-                    }`}
-                  >
-                    {fabricStatus.message}
-                  </div>
-                )}
-              </section>
-            )}
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto border-t border-slate-200 p-3 space-y-3">
@@ -1506,6 +1425,8 @@ export default function LabelModule({ language }: LabelModuleProps) {
             )}
           </div>
         </section>
+      </div>
+        </div>
       </div>
     </div>
     {pendingHighCopyPrint && (

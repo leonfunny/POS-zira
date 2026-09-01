@@ -279,6 +279,19 @@ describe('HardwareModule print job runtime guards', () => {
     });
   });
 
+  it('safely repairs a legacy 20mm fabric driver that has no saved origin inset', async () => {
+    configureFabricTagPrinter();
+    delete mock.currentConfig.printers?.[PrinterType.FABRIC_TAG]?.labelOriginInsetMm;
+    const container = { set: vi.fn(), getOptional: vi.fn(() => null) };
+    const { HardwareModule } = await import('../src/main/modules/hardware.module');
+    const module = new HardwareModule(container as any);
+
+    await module.reinitializePrinter();
+
+    expect(mock.tscInstances).toHaveLength(1);
+    expect(mock.tscInstances[0].media.originInsetMm).toBe(1.1);
+  });
+
   it('rejects malformed direct and socket fabric-tag payloads before the driver runs', async () => {
     configureFabricTagPrinter();
     const socket = { sendJobStatus: vi.fn(), isConnected: vi.fn(() => false), sendDeviceStatus: vi.fn() };
@@ -862,6 +875,7 @@ describe('HardwareModule print job runtime guards', () => {
           mediaSensor: 'none',
           printSpeed: expectedSpeed,
           printDensity: expectedDensity,
+          labelOriginInsetMm: 1.1,
         }),
       }),
       recoveredWindowsPrinters: {},

@@ -16,7 +16,7 @@ import {
 import { matchBrand, type RecoveryResult } from '../detection/types';
 import { sendRawToPrinter } from '../windows-raw-print';
 import { TsplFormatter, type TsplMediaOptions } from './tspl-formatter';
-import { renderFabricTagBitmap } from './fabric-tag-renderer';
+import { renderFabricTagBitmap, type MonoBitmap } from './fabric-tag-renderer';
 import type { FabricTagData, LabelData, PrinterStatusInfo } from '../../../shared/types';
 
 export interface TscDriverOptions extends TsplMediaOptions {
@@ -214,7 +214,10 @@ export class TscDriver {
    * `fast` skips the queue housekeeping. Use it for bulk label runs, where
    * paying two PowerShell round-trips per label would dominate the job.
    */
-  private async printRaw(payload: Buffer, options: { fast?: boolean; docName?: string } = {}): Promise<void> {
+  private async printRaw(
+    payload: Buffer,
+    options: { fast?: boolean; docName?: string; beforeDispatch?: () => void } = {},
+  ): Promise<void> {
     // Rendering a fabric tag takes several frames. A concurrent config reload
     // may disconnect this driver during that window; never send the already
     // rendered bytes through a stale driver instance.
@@ -251,6 +254,10 @@ export class TscDriver {
     // so re-check at the last synchronous boundary before handing bytes to
     // the spooler.
     this.assertConnected();
+    // This hook must remain synchronous and directly adjacent to dispatch.
+    // Artwork ownership can change during the async presence/queue checks;
+    // yielding again after this fence would reopen that race.
+    options.beforeDispatch?.();
     await sendRawToPrinter(this.printerName, payload, {
       docName: options.docName || 'Zira TSPL Label',
       tempPrefix: 'zira_tspl',
@@ -327,6 +334,25 @@ export class TscDriver {
 
     await this.printRaw(this.formatter.formatFabricTag(data, graphic, labelHeightMm), { docName: 'Zira Fabric Tag' });
     logger.info('[TscDriver] Fabric tag printed successfully');
+  }
+
+  /** Print a previously validated customer PNG at one source pixel per dot. */
+  async printFabricArtwork(
+    graphic: MonoBitmap,
+    quantity: number,
+    physicalLengthMm: number,
+    beforeDispatch: () => void,
+  ): Promise<void> {
+    this.assertConnected();
+    logger.info(
+      `[TscDriver] Printing external fabric artwork `
+      + `(${graphic.widthDots}x${graphic.heightDots} dots, qty: ${quantity})...`,
+    );
+    await this.printRaw(
+      this.formatter.formatFabricArtwork(graphic, quantity, physicalLengthMm),
+      { docName: 'Zira Fabric Artwork', beforeDispatch },
+    );
+    logger.info('[TscDriver] External fabric artwork printed successfully');
   }
 
   async printTest(): Promise<void> {

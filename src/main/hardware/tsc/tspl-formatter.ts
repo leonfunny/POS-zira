@@ -16,9 +16,17 @@
  *    arrives pre-rasterised (see fabric-tag-renderer.ts) and goes out as one
  *    BITMAP block, because a fabric tag needs Vietnamese diacritics, a logo,
  *    and ISO 3758 care symbols that no internal font can render.
+ *
+ *  - `formatFabricArtwork()` — an operator-approved customer PNG, already
+ *    cropped to the printer's physically reachable 142-dot centre strip.
  */
 import QRCode from 'qrcode';
-import type { BarcodeType, FabricTagData, LabelData } from '../../../shared/types';
+import {
+  FABRIC_TAG_ARTWORK_MEDIA,
+  type BarcodeType,
+  type FabricTagData,
+  type LabelData,
+} from '../../../shared/types';
 import type { MonoBitmap } from './fabric-tag-renderer';
 
 /** TSPL barcode selector per symbology. QR has its own command. */
@@ -519,6 +527,55 @@ export class TsplFormatter {
     }
 
     b.cmd(`PRINT 1,${this.copies(data.quantity)}`);
+    return b.build();
+  }
+
+  /**
+   * Print customer-supplied fabric artwork without fitting or scaling it.
+   * The importer owns the fixed 160px canvas and nine-dot safety margins;
+   * this final boundary accepts only the resulting 142-dot centre bitmap.
+   */
+  formatFabricArtwork(
+    graphic: MonoBitmap,
+    quantity: number,
+    labelHeightMm: number,
+  ): Buffer {
+    if (
+      !Number.isSafeInteger(quantity)
+      || quantity < 1
+      || quantity > 999
+    ) {
+      throw new RangeError('Fabric artwork quantity must be an integer from 1 to 999');
+    }
+    if (
+      this.labelWidthMm !== 20
+      || this.dpi !== 203
+      || this.media.originInsetMm !== 1.1
+      || this.widthDots !== 160
+      || this.contentWidthDots !== 142
+    ) {
+      throw new RangeError(
+        'Fabric artwork requires 20mm media at 203dpi with a 1.1mm origin inset',
+      );
+    }
+    if (
+      graphic.widthDots !== this.contentWidthDots
+      || graphic.widthBytes !== Math.ceil(graphic.widthDots / 8)
+      || graphic.heightDots < FABRIC_TAG_ARTWORK_MEDIA.minHeightPx
+      || graphic.heightDots > FABRIC_TAG_ARTWORK_MEDIA.maxHeightPx
+      || graphic.data.byteLength !== graphic.widthBytes * graphic.heightDots
+    ) {
+      throw new RangeError('Fabric artwork bitmap dimensions or byte length are invalid');
+    }
+    if (this.mmToDots(labelHeightMm) !== graphic.heightDots) {
+      throw new RangeError(
+        `Fabric artwork length ${labelHeightMm}mm does not preserve its ${graphic.heightDots}px height`,
+      );
+    }
+
+    const b = this.header(new TsplBuilder(), labelHeightMm);
+    this.bitmap(b, 0, 0, graphic);
+    b.cmd(`PRINT 1,${quantity}`);
     return b.build();
   }
 

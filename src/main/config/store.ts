@@ -140,6 +140,7 @@ const fabricTagPrinterConfigSchema = {
     printSpeed: { type: 'number', default: 2 },
     printDensity: { type: 'number', default: 12 },
     mediaSensor: { type: 'string', enum: ['gap', 'bline', 'none'], default: 'none' },
+    labelOriginInsetMm: { type: 'number', default: 1.1 },
   },
 };
 

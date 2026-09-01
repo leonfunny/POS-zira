@@ -159,6 +159,7 @@ describe('TSPL is a first-class protocol end to end', () => {
     expect(schema).toContain("default: 'TSPL'");
     expect(schema).toContain("labelWidth: { type: 'number', default: 20 }");
     expect(schema).toContain("labelHeight: { type: 'number', default: 60 }");
+    expect(schema).toContain("labelOriginInsetMm: { type: 'number', default: 1.1 }");
     expect(source).toContain('FABRIC_TAG: fabricTagPrinterConfigSchema');
   });
 

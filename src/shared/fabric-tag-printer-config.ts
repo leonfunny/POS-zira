@@ -10,6 +10,9 @@ export const FABRIC_TAG_PRINTER_DEFAULTS: Partial<PrinterConfig> = {
   mediaSensor: 'none',
   printSpeed: 2,
   printDensity: 12,
+  // Measured on the factory MB241: dot zero lands about 1.1mm inside the
+  // 20mm ribbon. Centre the reachable 142-dot strip by reserving both sides.
+  labelOriginInsetMm: 1.1,
 };
 
 /**

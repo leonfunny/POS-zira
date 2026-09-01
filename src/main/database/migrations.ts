@@ -1980,4 +1980,44 @@ export const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_fabric_tag_synced ON fabric_tag_templates(synced);
     `,
   },
+  {
+    version: 68,
+    name: 'fabric_tag_artworks',
+    // Customer artwork is independent of the sellable product catalogue. BTW
+    // files are immutable source archives; only a separately validated PNG can
+    // populate the production_* columns and make a row READY for TSPL output.
+    // Binary files live under app userData rather than inside sql.js so listing
+    // a large artwork library never clones every file through the renderer.
+    up: `
+      CREATE TABLE IF NOT EXISTS fabric_tag_artworks (
+        id TEXT PRIMARY KEY,
+        salon_id TEXT NOT NULL,
+        customer_name TEXT NOT NULL,
+        order_code TEXT,
+        variant TEXT NOT NULL,
+        revision TEXT NOT NULL,
+        original_filename TEXT NOT NULL,
+        source_type TEXT NOT NULL CHECK (source_type IN ('BTW', 'PNG')),
+        status TEXT NOT NULL CHECK (status IN ('NEEDS_CONVERSION', 'READY', 'RETIRED')),
+        source_sha256 TEXT NOT NULL,
+        source_path TEXT NOT NULL,
+        production_filename TEXT,
+        production_sha256 TEXT,
+        production_path TEXT,
+        width_px INTEGER,
+        height_px INTEGER,
+        physical_width_mm REAL,
+        physical_length_mm REAL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        retired_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_fabric_tag_artworks_salon_status
+        ON fabric_tag_artworks(salon_id, status, updated_at);
+      CREATE INDEX IF NOT EXISTS idx_fabric_tag_artworks_salon_customer
+        ON fabric_tag_artworks(salon_id, customer_name, variant);
+      CREATE INDEX IF NOT EXISTS idx_fabric_tag_artworks_source_hash
+        ON fabric_tag_artworks(salon_id, source_sha256);
+    `,
+  },
 ];

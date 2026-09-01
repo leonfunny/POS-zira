@@ -289,18 +289,23 @@ export function parseFabricTagData(value: unknown): FabricTagData {
 export class FabricTagPrintGate {
   private inFlight = false;
 
+  /** Share one printer single-flight boundary with pre-rendered artwork. */
+  async runExclusive<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.inFlight) throw new FabricTagPrintBusyError();
+    this.inFlight = true;
+    try {
+      return await operation();
+    } finally {
+      this.inFlight = false;
+    }
+  }
+
   async run<T>(
     input: unknown,
     operation: (data: FabricTagData) => Promise<T>,
   ): Promise<T> {
     const data = parseFabricTagData(input);
-    if (this.inFlight) throw new FabricTagPrintBusyError();
-    this.inFlight = true;
-    try {
-      return await operation(data);
-    } finally {
-      this.inFlight = false;
-    }
+    return this.runExclusive(() => operation(data));
   }
 }
 

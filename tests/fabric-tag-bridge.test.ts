@@ -80,4 +80,61 @@ describe('the fabric tag bridge reaches every window that needs it', () => {
     await bridge.remove('style-1');
     expect(electron.invoke).toHaveBeenLastCalledWith('pos:fabric-tag-templates:remove', 'style-1');
   });
+
+  it.each([
+    ['main', 'the main window, which renders the Label tab'],
+    ['pos', 'the POS window'],
+  ] as const)('exposes the exact external-artwork bridge through the %s preload (%s)', async (preload) => {
+    const api = await loadPreload(preload);
+    const bridge = api.pos.fabricTagArtworks;
+    const importInput = {
+      customerName: 'Customer A',
+      orderCode: 'ORDER-7',
+      variant: '44/46',
+      revision: 'r1',
+    };
+    const printRequest = { assetId: 'asset-1', quantity: 17 };
+
+    expect(Object.keys(bridge)).toEqual([
+      'importSource',
+      'attachProduction',
+      'list',
+      'getPreview',
+      'retire',
+      'print',
+    ]);
+
+    await bridge.importSource(importInput);
+    expect(electron.invoke).toHaveBeenLastCalledWith(
+      'pos:fabric-tag-artworks:import-source',
+      importInput,
+    );
+
+    await bridge.attachProduction('asset-1');
+    expect(electron.invoke).toHaveBeenLastCalledWith(
+      'pos:fabric-tag-artworks:attach-production',
+      'asset-1',
+    );
+
+    await bridge.list();
+    expect(electron.invoke).toHaveBeenLastCalledWith('pos:fabric-tag-artworks:list');
+
+    await bridge.getPreview('asset-1');
+    expect(electron.invoke).toHaveBeenLastCalledWith(
+      'pos:fabric-tag-artworks:get-preview',
+      'asset-1',
+    );
+
+    await bridge.retire('asset-1');
+    expect(electron.invoke).toHaveBeenLastCalledWith(
+      'pos:fabric-tag-artworks:retire',
+      'asset-1',
+    );
+
+    await bridge.print(printRequest);
+    expect(electron.invoke).toHaveBeenLastCalledWith(
+      'pos:fabric-tag-artworks:print',
+      printRequest,
+    );
+  });
 });

@@ -21,6 +21,7 @@ import { ZebraDriver } from '../hardware/zebra/zebra-driver';
 import { TscDriver } from '../hardware/tsc/tsc-driver';
 import { FabricTagPrintGate, parseFabricTagData } from '../hardware/tsc/fabric-tag-input';
 import { applyStoredTsplMediaTuning } from '../hardware/tsc/tspl-config-merge';
+import { FABRIC_TAG_PRINTER_DEFAULTS } from '../../shared/fabric-tag-printer-config';
 import { UniversalDetectionService, UniversalDeviceRegistry } from '../hardware/detection';
 import { printLabelToDevice, printInfoLabelToDevice, cleanupOldLabels } from '../hardware/pdf/pdf-printer';
 import { ThermalDriver } from '../hardware/thermal/thermal-driver';
@@ -53,6 +54,7 @@ import {
   CheckinConfirmationData,
   InfoLabelData,
   FabricTagData,
+  FabricTagArtworkPrintRequest,
   isLabelPrinterType,
   ALLOWED_PROTOCOLS_BY_TYPE,
   TestPrintStep,
@@ -60,6 +62,10 @@ import {
   TestPrintResult,
 } from '../../shared/types';
 import { getConfig, getConfigValue } from '../config/store';
+import {
+  fabricTagArtworkService,
+  validateFabricTagArtworkPrintRequest,
+} from '../pos/fabric-tag-artwork-service';
 import { database } from '../database/database';
 import { fiscalDailyReportRunRepo } from '../database/repos/fiscal-daily-report-run-repo';
 import { localPrinterRepo, rowToPrinterConfig } from '../database/repos/local-printer-repo';
@@ -1600,6 +1606,7 @@ export class HardwareModule extends BaseModule {
       // any installation-specific values already saved.
       printerConfig.printSpeed ??= 2;
       printerConfig.printDensity ??= 12;
+      printerConfig.labelOriginInsetMm ??= FABRIC_TAG_PRINTER_DEFAULTS.labelOriginInsetMm;
     } else if (printerType === PrinterType.LABEL) {
       printerConfig.labelWidth = printerConfig.labelWidth || 50;
       printerConfig.labelHeight = printerConfig.labelHeight || 30;
@@ -1711,6 +1718,73 @@ export class HardwareModule extends BaseModule {
       );
       return { success: true };
     } catch (e: any) { return { success: false, error: e.message }; }
+  }
+
+  /**
+   * Print a salon-scoped, immutable customer artwork asset. The renderer may
+   * choose only the asset id and copy count; main re-reads, hashes, decodes,
+   * and validates the production PNG before any bytes reach the spooler.
+   */
+  async printFabricArtwork(data: unknown): Promise<{ success: boolean; error?: string }> {
+    let request: FabricTagArtworkPrintRequest;
+    try {
+      request = validateFabricTagArtworkPrintRequest(data);
+    } catch (error: any) {
+      return { success: false, error: error?.message || String(error) };
+    }
+
+    const config = getConfig();
+    const salonId = String(config.salonId || config.authUser?.salonId || '').trim();
+    try {
+      await this.fabricTagPrintGate.runExclusive(async () => {
+        const loaded = await fabricTagArtworkService.loadProductionForPrint(salonId, request);
+        await this.withPrinterLifecycleLock(async () => {
+          const currentConfig = getConfig();
+          const currentSalonId = String(
+            currentConfig.salonId || currentConfig.authUser?.salonId || '',
+          ).trim();
+          if (
+            currentSalonId !== loaded.salonId
+            || database.getTenantGeneration() !== loaded.tenantGeneration
+          ) {
+            throw new Error('Salon changed before fabric artwork reached the printer; retry');
+          }
+          const driver = this.printers[PrinterType.FABRIC_TAG] || null;
+          if (!driver) throw new Error('No fabric tag printer configured');
+          if (!(driver instanceof TscDriver)) {
+            throw new Error('Fabric artwork printing requires a TSPL printer (TSC)');
+          }
+          if (!driver.isConnected()) {
+            logger.warn('[HardwareModule] Fabric tag printer disconnected at artwork print time; attempting reconnect');
+            const reconnected = await this.connectPrinterWithTimeout(driver, 'Fabric tag');
+            if (!reconnected || !driver.isConnected()) {
+              throw new Error('Fabric tag printer not connected');
+            }
+          }
+          await driver.printFabricArtwork(
+            loaded.bitmap,
+            loaded.quantity,
+            loaded.physicalLengthMm,
+            () => {
+              const dispatchConfig = getConfig();
+              const dispatchSalonId = String(
+                dispatchConfig.salonId || dispatchConfig.authUser?.salonId || '',
+              ).trim();
+              if (
+                dispatchSalonId !== loaded.salonId
+                || database.getTenantGeneration() !== loaded.tenantGeneration
+              ) {
+                throw new Error('Salon changed before fabric artwork reached the printer; retry');
+              }
+              fabricTagArtworkService.assertProductionCurrentForDispatch(loaded);
+            },
+          );
+        });
+      });
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error?.message || String(error) };
+    }
   }
 
   /** Shared by the IPC path and the server print-job path. */
@@ -2798,9 +2872,10 @@ export class HardwareModule extends BaseModule {
         return null;
       }
       const isFabricTag = printerTypeKey === PrinterType.FABRIC_TAG;
+      const labelWidth = config.labelWidth || (isFabricTag ? 20 : 100);
       return new TscDriver(
         config.windowsPrinter,
-        config.labelWidth || (isFabricTag ? 20 : 100),
+        labelWidth,
         config.labelHeight || (isFabricTag ? 60 : 50),
         {
           gapMm: config.labelGapMm,
@@ -2811,7 +2886,12 @@ export class HardwareModule extends BaseModule {
           // Continuous ribbon by default -- see the note where FABRIC_TAG
           // defaults are seeded.
           sensor: config.mediaSensor ?? (isFabricTag ? 'none' : undefined),
-          originInsetMm: config.labelOriginInsetMm,
+          // Repair only the measured 20mm fabric setup. Other widths and
+          // generic TSPL label printers retain their explicit/no inset.
+          originInsetMm: config.labelOriginInsetMm
+            ?? (isFabricTag && labelWidth === FABRIC_TAG_PRINTER_DEFAULTS.labelWidth
+              ? FABRIC_TAG_PRINTER_DEFAULTS.labelOriginInsetMm
+              : undefined),
         },
       );
     }

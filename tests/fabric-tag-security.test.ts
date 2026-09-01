@@ -186,6 +186,32 @@ describe('fabric tag main-process trust boundary', () => {
     await expect(gate.run(validTag(), operation)).resolves.toBeUndefined();
     expect(operation).toHaveBeenCalledTimes(2);
   });
+
+  it('shares the same busy state between generated tags and pre-rendered artwork', async () => {
+    let releaseArtwork!: () => void;
+    const artworkBlocked = new Promise<void>((resolve) => { releaseArtwork = resolve; });
+    const gate = new FabricTagPrintGate();
+    const generatedOperation = vi.fn(async () => undefined);
+
+    const artworkRun = gate.runExclusive(async () => artworkBlocked);
+    await expect(gate.run(validTag(), generatedOperation)).rejects.toMatchObject({
+      name: 'FabricTagPrintBusyError',
+      failureClass: 'SAFE_BEFORE_PRINT',
+    });
+    expect(generatedOperation).not.toHaveBeenCalled();
+    releaseArtwork();
+    await artworkRun;
+
+    let releaseGenerated!: () => void;
+    const generatedBlocked = new Promise<void>((resolve) => { releaseGenerated = resolve; });
+    const generatedRun = gate.run(validTag(), async () => generatedBlocked);
+    await expect(gate.runExclusive(async () => undefined)).rejects.toMatchObject({
+      name: 'FabricTagPrintBusyError',
+      failureClass: 'SAFE_BEFORE_PRINT',
+    });
+    releaseGenerated();
+    await generatedRun;
+  });
 });
 
 describe('fabric tag defence in depth', () => {

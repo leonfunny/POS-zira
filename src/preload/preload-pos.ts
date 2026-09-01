@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { createFabricTagTemplatesBridge } from '../shared/fabric-tag-template-ipc';
+import { createFabricTagArtworksBridge } from '../shared/fabric-tag-artwork-ipc';
 
 console.log('[Preload-POS] Initializing...');
 
@@ -239,6 +240,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
       searchByCode: (query: string) => ipcRenderer.invoke('pos:draft-products:searchByCode', query),
   },
     fabricTagTemplates: createFabricTagTemplatesBridge((channel, ...args) =>
+      ipcRenderer.invoke(channel, ...args),
+    ),
+    fabricTagArtworks: createFabricTagArtworksBridge((channel, ...args) =>
       ipcRenderer.invoke(channel, ...args),
     ),
     masterCatalog: {
