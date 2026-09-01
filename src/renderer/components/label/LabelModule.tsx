@@ -400,6 +400,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
   const [activeCategoryId, setActiveCategoryId] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedProductId, setSelectedProductId] = useState('');
+  const [selectedFabricTemplateId, setSelectedFabricTemplateId] = useState('');
   const [fabricTemplates, setFabricTemplates] = useState<Map<string, FabricTagTemplate>>(new Map());
 
   useEffect(() => {
@@ -501,6 +502,19 @@ export default function LabelModule({ language }: LabelModuleProps) {
     });
   }, [configuredCategoryIds, pinnedProductIds, printableProducts, setupConfigured]);
 
+  const availableFabricTemplates = useMemo(() => {
+    const available = new Map<string, FabricTagTemplate>();
+    // Fabric templates are data-gated independently from the EAN selection.
+    // Catalogue siblings currently represent colours, so expose each style
+    // key once instead of turning colour rows into separate print identities.
+    for (const product of printableProducts) {
+      const templateId = String(product.template_id || '').trim();
+      const template = fabricTemplates.get(templateId);
+      if (template && !available.has(templateId)) available.set(templateId, template);
+    }
+    return Array.from(available.values());
+  }, [fabricTemplates, printableProducts]);
+
   const filterCategories = useMemo(() => {
     const representedCategoryIds = new Set(
       labelProducts
@@ -538,12 +552,20 @@ export default function LabelModule({ language }: LabelModuleProps) {
     [labelProducts, selectedProductId],
   );
 
-  const selectedFabricTemplate = useMemo(() => {
-    if (!selectedProduct) return null;
-    const templateId = selectedProduct.template_id;
-    if (!templateId) return null;
-    return fabricTemplates.get(templateId) || null;
-  }, [selectedProduct, fabricTemplates]);
+  useEffect(() => {
+    if (availableFabricTemplates.length === 0) {
+      if (selectedFabricTemplateId) setSelectedFabricTemplateId('');
+      return;
+    }
+    if (!availableFabricTemplates.some((template) => template.templateId === selectedFabricTemplateId)) {
+      setSelectedFabricTemplateId(availableFabricTemplates[0].templateId);
+    }
+  }, [availableFabricTemplates, selectedFabricTemplateId]);
+
+  const selectedFabricTemplate = useMemo(
+    () => availableFabricTemplates.find((template) => template.templateId === selectedFabricTemplateId) || null,
+    [availableFabricTemplates, selectedFabricTemplateId],
+  );
 
   const fabricTagPrinterReady = isFabricTagPrinterReady(config?.printers?.FABRIC_TAG);
 
@@ -962,9 +984,27 @@ export default function LabelModule({ language }: LabelModuleProps) {
 
             {selectedFabricTemplate && (
               <section className="space-y-2" aria-label={tOr('fabricTag.printRunTitle', 'Fabric care labels')}>
+                <label className="block space-y-1">
+                  <span className="text-xs font-extrabold uppercase tracking-wide text-slate-400">
+                    {tOr('fabricTag.title', 'Fabric tag')}
+                  </span>
+                  <select
+                    aria-label={tOr('fabricTag.title', 'Fabric tag')}
+                    value={selectedFabricTemplate.templateId}
+                    onChange={(event) => {
+                      setSelectedFabricTemplateId(event.target.value);
+                      setFabricStatus(null);
+                    }}
+                    className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-extrabold text-slate-900 outline-none focus:ring-2 focus:ring-emerald-200"
+                  >
+                    {availableFabricTemplates.map((template) => (
+                      <option key={template.templateId} value={template.templateId}>{template.templateId}</option>
+                    ))}
+                  </select>
+                </label>
                 <FabricTagPrintPanel
                   template={selectedFabricTemplate}
-                  styleName={selectedName || selectedProduct?.name || ''}
+                  styleName={selectedFabricTemplate.templateId}
                   // Catalogue siblings are colours for the current LOTUS data,
                   // not sizes. Wait for approved size data instead of guessing.
                   variants={NO_FABRIC_TAG_SIZES}

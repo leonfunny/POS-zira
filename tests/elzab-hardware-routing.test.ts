@@ -229,6 +229,32 @@ describe('ELZAB fiscal protocol routing', () => {
     expect(rows[0]).toMatchObject({ paperWidth: 100, paperHeight: 150, isOnline: true });
   });
 
+  it('maps a server FABRIC_TAG TSPL row to its Windows printer target', async () => {
+    const { printerMappingForTests } = await import('../src/main/network/api-client');
+
+    const fabricTag = printerMappingForTests.mapServerPrinter({
+      id: 'tsc-fabric-1',
+      printerType: 'FABRIC_TAG',
+      protocol: 'TSC',
+      windowsPrinterName: 'TSC MB241',
+      paperWidth: 20,
+      paperHeight: 60,
+      isEnabled: true,
+    });
+
+    expect(fabricTag).toEqual({
+      type: PrinterType.FABRIC_TAG,
+      config: expect.objectContaining({
+        enabled: true,
+        protocol: 'TSPL',
+        windowsPrinter: 'TSC MB241',
+        paperWidth: 20,
+        labelWidth: 20,
+        labelHeight: 60,
+      }),
+    });
+  });
+
   it('preserves a local printer target when server mapping has no physical target', async () => {
     const { printerMappingForTests } = await import('../src/main/network/api-client');
 

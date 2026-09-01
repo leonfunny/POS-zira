@@ -205,7 +205,7 @@ function mapServerPrinter(item: ServerPrinter): { type: PrinterType; config: Pri
   } else if (protocol === 'THERMAL') {
     if (looksLikeComPort(address)) config.port = address.toUpperCase();
     else if (target) config.windowsPrinter = target;
-  } else if (protocol === 'ZEBRA' || protocol === 'WINDOWS') {
+  } else if (protocol === 'ZEBRA' || protocol === 'WINDOWS' || protocol === 'TSPL') {
     if (target) config.windowsPrinter = target;
   }
 

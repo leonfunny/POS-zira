@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const electron = vi.hoisted(() => {
@@ -22,8 +21,6 @@ vi.mock('electron', () => ({
     removeListener: electron.removeListener,
   },
 }));
-
-const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
 async function loadPreload(preload: 'main' | 'pos'): Promise<any> {
   if (preload === 'main') {
@@ -82,12 +79,5 @@ describe('the fabric tag bridge reaches every window that needs it', () => {
 
     await bridge.remove('style-1');
     expect(electron.invoke).toHaveBeenLastCalledWith('pos:fabric-tag-templates:remove', 'style-1');
-  });
-
-  it('degrades to no fabric panel when the bridge is missing', () => {
-    // Belt and braces for a preload that predates the binding: the module must
-    // check before reaching through, or an old bundle takes the window down.
-    const label = read('src/renderer/components/label/LabelModule.tsx');
-    expect(label).toMatch(/window\.electronAPI\?\.pos\?\.fabricTagTemplates/);
   });
 });

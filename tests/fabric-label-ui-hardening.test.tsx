@@ -154,9 +154,9 @@ describe('Fabric Label UI hardening', () => {
     )).toBe(false);
   });
 
-  it('loads care templates without a POS trade gate and never turns LOTUS colours into size rows', async () => {
+  it('loads care templates without POS or EAN setup and never turns LOTUS colours into size rows', async () => {
     labelHarness.config = {
-      labelModuleProductIds: ['lotus-beige'],
+      labelModuleProductIds: [],
       labelModuleCategoryIds: [],
       printers: {
         FABRIC_TAG: { enabled: false, protocol: 'TSPL', windowsPrinter: '' },
@@ -187,12 +187,46 @@ describe('Fabric Label UI hardening', () => {
     await render(<LabelModule language="vi" />);
 
     expect(labelHarness.listTemplates).toHaveBeenCalledTimes(1);
-    expect(container.textContent).toContain('Thiếu EAN');
+    expect(container.textContent).toContain('Chọn danh mục hoặc ghim sản phẩm');
     expect(container.textContent).toContain('Mác hướng dẫn sử dụng vải');
+    expect(container.textContent).toContain('LOTUS');
+    expect(container.textContent).not.toContain('LOTUS beżowy');
     expect(container.textContent).toContain('Chưa cấu hình size cho mẫu mác vải này.');
     expect(container.textContent).toContain('Hãy cấu hình máy in mác vải trong Cài đặt trước.');
     expect(container.textContent).not.toContain('LOTUS czarny');
     expect(container.querySelectorAll('input[placeholder="Size"]')).toHaveLength(0);
+  });
+
+  it('keeps the EAN label workflow alive when the optional fabric bridge is missing', async () => {
+    labelHarness.config = {
+      labelModuleProductIds: ['ean-product'],
+      labelModuleCategoryIds: [],
+      printers: {},
+    };
+    labelHarness.products = [{
+      id: 'ean-product',
+      name: 'EAN product',
+      barcode: '5901234123457',
+      template_id: null,
+      is_active: 1,
+      retail_price: 1299,
+    }];
+    Object.defineProperty(window, 'electronAPI', {
+      configurable: true,
+      writable: true,
+      value: {
+        printFabricTag,
+        printLabel: vi.fn(),
+        pos: {},
+      },
+    });
+
+    await expect(render(<LabelModule language="vi" />)).resolves.toBeUndefined();
+
+    expect(labelHarness.listTemplates).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('EAN product');
+    expect(container.textContent).toContain('5901234123457');
+    expect(container.textContent).not.toContain('Mác hướng dẫn sử dụng vải');
   });
 
   it('requires confirmation before a large batch reaches the printer', async () => {
