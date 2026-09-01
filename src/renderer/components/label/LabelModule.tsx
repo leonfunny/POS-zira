@@ -409,7 +409,15 @@ export default function LabelModule({ language, posMode }: LabelModuleProps) {
   useEffect(() => {
     if (!isGarmentMode) { setFabricTemplates(new Map()); return; }
     let cancelled = false;
-    window.electronAPI.pos.fabricTagTemplates.list()
+    // Optional: a renderer whose preload predates this binding must lose the
+    // fabric panel, not the whole window. Reaching straight through here
+    // white-screened the app the first time the two preloads disagreed.
+    const api = window.electronAPI?.pos?.fabricTagTemplates;
+    if (!api) {
+      rlog.warn('[LabelModule] fabricTagTemplates bridge missing; fabric panel unavailable');
+      return;
+    }
+    api.list()
       .then((rows: FabricTagTemplate[]) => {
         if (cancelled) return;
         setFabricTemplates(new Map(rows.map((row) => [row.templateId, row])));
