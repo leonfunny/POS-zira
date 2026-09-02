@@ -222,6 +222,9 @@ describe('fabric-label operator feedback', () => {
 
   it('keeps the mounted fabric form state while hiding and disabling it in EAN mode', async () => {
     await renderLabelModule();
+    // The Label tab now opens on the print-order sheet, which is the daily job;
+    // this test is about the fabric panel, so select it explicitly.
+    await chooseLabelMode('Mác vải từ file khách');
 
     const fabricPanel = container.querySelector<HTMLElement>('[data-label-mode-panel="fabric"]');
     const eanPanel = container.querySelector<HTMLElement>('[data-label-mode-panel="ean"]');
@@ -262,6 +265,9 @@ describe('fabric-label operator feedback', () => {
 
   it('does not allow a mode switch while a fabric print run is active', async () => {
     await renderLabelModule();
+    // The Label tab now opens on the print-order sheet, which is the daily job;
+    // this test is about the fabric panel, so select it explicitly.
+    await chooseLabelMode('Mác vải từ file khách');
 
     const eanMode = Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
       .find((button) => button.textContent?.trim() === 'Tem mã sản phẩm / EAN');
@@ -290,6 +296,9 @@ describe('fabric-label operator feedback', () => {
 
   it('leaves the slash key untouched while an operator is typing in a fabric input', async () => {
     await renderLabelModule();
+    // The Label tab now opens on the print-order sheet, which is the daily job;
+    // this test is about the fabric panel, so select it explicitly.
+    await chooseLabelMode('Mác vải từ file khách');
 
     const fabricInput = container.querySelector<HTMLInputElement>('[data-testid="fabric-size-input"]');
     expect(fabricInput).not.toBeNull();

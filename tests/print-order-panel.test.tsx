@@ -1,0 +1,278 @@
+// @vitest-environment happy-dom
+import React, { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import PrintOrderPanel from '../src/renderer/components/label/PrintOrderPanel';
+
+function memoryStorage(): Storage {
+  const map = new Map<string, string>();
+  return {
+    get length() {
+      return map.size;
+    },
+    clear: () => map.clear(),
+    getItem: (key: string) => map.get(key) ?? null,
+    key: (index: number) => [...map.keys()][index] ?? null,
+    removeItem: (key: string) => void map.delete(key),
+    setItem: (key: string, value: string) => void map.set(key, value),
+  } as Storage;
+}
+
+async function settle(rounds = 4) {
+  for (let index = 0; index < rounds; index += 1) {
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+}
+
+async function changeInput(input: HTMLInputElement, value: string) {
+  const setValue = Object.getOwnPropertyDescriptor(
+    window.HTMLInputElement.prototype,
+    'value',
+  )?.set;
+  await act(async () => {
+    setValue?.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
+function buttonWithText(container: HTMLElement, text: string): HTMLButtonElement {
+  const button = Array.from(container.querySelectorAll('button')).find(
+    (candidate) => candidate.textContent?.trim() === text,
+  );
+  if (!button) throw new Error(`Button not rendered: ${text}`);
+  return button;
+}
+
+function input(container: HTMLElement, selector: string): HTMLInputElement {
+  const found = container.querySelector<HTMLInputElement>(selector);
+  if (!found) throw new Error(`Input not rendered: ${selector}`);
+  return found;
+}
+
+describe('PrintOrderPanel', () => {
+  let container: HTMLDivElement;
+  let root: Root | null = null;
+  let printSticker: ReturnType<typeof vi.fn>;
+  let printFabricTag: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.stubGlobal('localStorage', memoryStorage());
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    printSticker = vi.fn(async () => ({ success: true }));
+    printFabricTag = vi.fn(async () => ({ success: true }));
+    Object.defineProperty(window, 'electronAPI', {
+      configurable: true,
+      writable: true,
+      value: { printPackagingSticker: printSticker, printFabricTag },
+    });
+  });
+
+  afterEach(async () => {
+    if (root) {
+      const current = root;
+      await act(async () => current.unmount());
+      root = null;
+    }
+    container.remove();
+    vi.unstubAllGlobals();
+  });
+
+  async function render() {
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<PrintOrderPanel language="en" active onPrintingChange={() => {}} />);
+    });
+    await settle();
+  }
+
+  /** Header, one size column, one colour row, one quantity. */
+  async function fillMinimalOrder(quantity = 40) {
+    await changeInput(input(container, 'input[placeholder="MoonCollection"]'), 'MoonCollection');
+    await changeInput(input(container, 'input[placeholder="KURTKA"]'), 'KURTKA');
+    await changeInput(input(container, 'input[placeholder="114"]'), '114');
+    await act(async () => buttonWithText(container, '+ S').click());
+    await act(async () => buttonWithText(container, 'Add colour').click());
+    await changeInput(input(container, 'input[placeholder="CZEKOLADA"]'), 'CZEKOLADA');
+    await changeInput(input(container, 'input[placeholder="SP006290"]'), 'SP006290');
+    await changeInput(input(container, 'input[aria-label="CZEKOLADA S"]'), String(quantity));
+  }
+
+  function text(selector: string): string {
+    return container.querySelector(selector)?.textContent?.trim() ?? '';
+  }
+
+  it('adds a size column from a suggestion and from free text', async () => {
+    await render();
+    await act(async () => buttonWithText(container, '+ 2XL').click());
+
+    const adder = input(container, 'input[aria-label="Add size"]');
+    await changeInput(adder, '44/46');
+    await act(async () => {
+      adder.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+
+    const headers = Array.from(container.querySelectorAll('th')).map((th) => th.textContent);
+    expect(headers.some((h) => h?.includes('2XL'))).toBe(true);
+    expect(headers.some((h) => h?.includes('44/46'))).toBe(true);
+  });
+
+  it('totals the grid as quantities are typed', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    expect(text('[data-testid="grand-total"]')).toBe('40');
+  });
+
+  it('builds the composition line from material chips and percentages', async () => {
+    await render();
+    await act(async () => buttonWithText(container, 'POLIESTER').click());
+    await changeInput(input(container, 'input[aria-label="POLIESTER %"]'), '70');
+    await act(async () => buttonWithText(container, 'AKRYL').click());
+    await changeInput(input(container, 'input[aria-label="AKRYL %"]'), '30');
+
+    expect(text('[data-testid="composition-preview"]')).toBe('70% POLIESTER 30% AKRYL');
+  });
+
+  it('warns when the percentages do not add up, without blocking the print', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => buttonWithText(container, 'LEN').click());
+    await changeInput(input(container, 'input[aria-label="LEN %"]'), '70');
+
+    expect(container.textContent).toContain('add up to 70%');
+    expect(buttonWithText(container, 'Print').disabled).toBe(false);
+  });
+
+  it('blocks printing while the order has nothing in it', async () => {
+    await render();
+    expect(buttonWithText(container, 'Print').disabled).toBe(true);
+    expect(text('[data-testid="order-problems"]')).toContain('No quantities entered');
+  });
+
+  it('refuses to add the same size column twice', async () => {
+    await render();
+    await act(async () => buttonWithText(container, '+ M').click());
+    await act(async () => buttonWithText(container, '+ M').click());
+
+    const headers = Array.from(container.querySelectorAll('thead th')).filter((th) =>
+      th.textContent?.includes('M'),
+    );
+    expect(headers).toHaveLength(1);
+  });
+
+  it('warns on a colour with no sticker code but still allows the run', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    await changeInput(input(container, 'input[placeholder="SP006290"]'), '');
+
+    expect(container.textContent).toContain('fabric tags only');
+    expect(buttonWithText(container, 'Print').disabled).toBe(false);
+  });
+
+  it('sends the sticker first, then waits before the fabric tag', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => buttonWithText(container, 'Print').click());
+    await settle();
+
+    expect(printSticker).toHaveBeenCalledTimes(1);
+    expect(printSticker.mock.calls[0][0]).toMatchObject({
+      customerName: 'MoonCollection',
+      styleName: 'KURTKA',
+      styleCode: '114',
+      colorName: 'CZEKOLADA',
+      code: 'SP006290',
+      quantity: 40,
+    });
+    expect(printFabricTag).not.toHaveBeenCalled();
+
+    await act(async () => buttonWithText(container, 'Continue').click());
+    await settle();
+
+    expect(printFabricTag).toHaveBeenCalledTimes(1);
+    expect(printFabricTag.mock.calls[0][0]).toMatchObject({ size: 'S', quantity: 40 });
+    expect(text('[data-testid="print-result"]')).toContain('Printed 80 labels');
+  });
+
+  it('reports the printer error and does not go on to the fabric lane', async () => {
+    printSticker.mockResolvedValue({ success: false, error: 'Label printer not connected' });
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => buttonWithText(container, 'Print').click());
+    await settle();
+
+    expect(text('[data-testid="print-result"]')).toBe('Label printer not connected');
+    expect(printFabricTag).not.toHaveBeenCalled();
+  });
+
+  it('stops at a pause when the operator chooses Stop', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => buttonWithText(container, 'Print').click());
+    await settle();
+
+    await act(async () => buttonWithText(container, 'Stop').click());
+    await settle();
+
+    expect(text('[data-testid="print-result"]')).toContain('Stopped after');
+    expect(printFabricTag).not.toHaveBeenCalled();
+  });
+
+  it('keeps the order after a restart, so the sheet is not retyped', async () => {
+    await render();
+    await fillMinimalOrder(40);
+
+    const first = root!;
+    await act(async () => first.unmount());
+    root = null;
+    await render();
+
+    expect(input(container, 'input[placeholder="MoonCollection"]').value).toBe('MoonCollection');
+    expect(text('[data-testid="grand-total"]')).toBe('40');
+  });
+
+  it('saves an order and reopens it', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => buttonWithText(container, 'Save order').click());
+
+    expect(container.textContent).toContain('MoonCollection · KURTKA 114');
+
+    await act(async () => buttonWithText(container, 'New order').click());
+    expect(text('[data-testid="grand-total"]')).toBe('0');
+
+    await act(async () => buttonWithText(container, 'Open').click());
+    expect(text('[data-testid="grand-total"]')).toBe('40');
+  });
+
+  it('refuses to print when the bridge is missing instead of throwing', async () => {
+    Object.defineProperty(window, 'electronAPI', {
+      configurable: true,
+      writable: true,
+      value: { printFabricTag },
+    });
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => buttonWithText(container, 'Print').click());
+    await settle();
+
+    expect(text('[data-testid="print-result"]')).toContain('bridge unavailable');
+    expect(printFabricTag).not.toHaveBeenCalled();
+  });
+
+  it('sends no sticker run when that box is unticked', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => {
+      const boxes = Array.from(container.querySelectorAll<HTMLInputElement>('input[type=checkbox]'));
+      boxes[1].click();
+    });
+    await act(async () => buttonWithText(container, 'Print').click());
+    await settle();
+
+    expect(printSticker).not.toHaveBeenCalled();
+    expect(printFabricTag).toHaveBeenCalledTimes(1);
+  });
+});

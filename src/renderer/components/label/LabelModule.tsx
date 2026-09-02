@@ -13,6 +13,7 @@ import {
   RotateCw,
   Search,
   Settings,
+  Table2,
   Tag,
   X,
 } from 'lucide-react';
@@ -25,6 +26,7 @@ import type { AgentConfig } from '../../../shared/types';
 import { useConfig } from '../../hooks/useConfig';
 import { useProducts } from '../../hooks/useProducts';
 import FabricArtworkPanel from './FabricArtworkPanel';
+import PrintOrderPanel from './PrintOrderPanel';
 import type { ProductListItem } from '../../hooks/useProducts';
 import type { Category } from '../../hooks/usePosDb';
 import { getTranslation, type Language } from '../../i18n/translations';
@@ -126,7 +128,7 @@ interface LabelCopy {
 const HIGH_COPY_CONFIRM_THRESHOLD = 10;
 const RECENT_PRINT_LIMIT = 5;
 
-type LabelMode = 'fabric' | 'ean';
+type LabelMode = 'order' | 'fabric' | 'ean';
 
 const COPY: Record<string, LabelCopy> = {
   en: {
@@ -396,12 +398,22 @@ export default function LabelModule({ language }: LabelModuleProps) {
   };
   const { allProducts, categories, loading, error, syncProducts, syncing } = useProducts(labelLanguage);
   const products = allProducts as LabelProduct[];
-  const [labelMode, setLabelMode] = useState<LabelMode>('fabric');
+  // The order sheet is what staff reach for daily; the other two lanes are for
+  // customer artwork files and for catalog EAN labels.
+  const [labelMode, setLabelMode] = useState<LabelMode>('order');
   const [fabricArtworkPrinting, setFabricArtworkPrinting] = useState(false);
   const fabricArtworkPrintingRef = useRef(false);
   const handleFabricArtworkPrintingChange = useCallback((printing: boolean) => {
     fabricArtworkPrintingRef.current = printing;
     setFabricArtworkPrinting(printing);
+  }, []);
+  // A print run keeps the operator on its own tab: switching away would unmount
+  // the loop that is waiting for Continue between fabric batches.
+  const [orderPrinting, setOrderPrinting] = useState(false);
+  const orderPrintingRef = useRef(false);
+  const handleOrderPrintingChange = useCallback((printing: boolean) => {
+    orderPrintingRef.current = printing;
+    setOrderPrinting(printing);
   }, []);
   const [query, setQuery] = useState('');
   const [settingsQuery, setSettingsQuery] = useState('');
@@ -826,13 +838,33 @@ export default function LabelModule({ language }: LabelModuleProps) {
         className="mb-3 shrink-0 rounded-lg border border-slate-200 bg-white p-1.5 shadow-sm"
         aria-label={language === 'vi' ? 'Chọn loại mác' : language === 'pl' ? 'Wybierz rodzaj etykiety' : 'Choose label type'}
       >
-        <div className="grid max-w-xl grid-cols-2 gap-2">
+        <div className="grid max-w-3xl grid-cols-3 gap-2">
           <button
             type="button"
             onClick={() => {
+              if (orderPrintingRef.current) return;
+              setSettingsOpen(false);
+              setLabelMode('order');
+            }}
+            disabled={fabricArtworkPrinting}
+            aria-pressed={labelMode === 'order'}
+            className={`min-h-11 rounded-md border px-3 text-sm font-extrabold transition-colors inline-flex items-center justify-center gap-2 ${
+              labelMode === 'order'
+                ? 'border-emerald-600 bg-emerald-50 text-emerald-800'
+                : 'border-transparent bg-white text-slate-600 hover:border-slate-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50'
+            }`}
+          >
+            <Table2 size={18} aria-hidden="true" />
+            {language === 'vi' ? 'Đơn in' : language === 'pl' ? 'Zlecenie druku' : 'Print order'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (orderPrintingRef.current) return;
               setSettingsOpen(false);
               setLabelMode('fabric');
             }}
+            disabled={orderPrinting}
             aria-pressed={labelMode === 'fabric'}
             className={`min-h-11 rounded-md border px-3 text-sm font-extrabold transition-colors inline-flex items-center justify-center gap-2 ${
               labelMode === 'fabric'
@@ -846,9 +878,9 @@ export default function LabelModule({ language }: LabelModuleProps) {
           <button
             type="button"
             onClick={() => {
-              if (!fabricArtworkPrintingRef.current) setLabelMode('ean');
+              if (!fabricArtworkPrintingRef.current && !orderPrintingRef.current) setLabelMode('ean');
             }}
-            disabled={fabricArtworkPrinting}
+            disabled={fabricArtworkPrinting || orderPrinting}
             aria-pressed={labelMode === 'ean'}
             className={`min-h-11 rounded-md border px-3 text-sm font-extrabold transition-colors inline-flex items-center justify-center gap-2 ${
               labelMode === 'ean'
@@ -863,6 +895,18 @@ export default function LabelModule({ language }: LabelModuleProps) {
       </nav>
 
       <div className="min-h-0 flex-1">
+        <div
+          data-label-mode-panel="order"
+          hidden={labelMode !== 'order'}
+          aria-hidden={labelMode !== 'order'}
+          className="h-full min-h-0"
+        >
+          <PrintOrderPanel
+            language={language}
+            active={labelMode === 'order'}
+            onPrintingChange={handleOrderPrintingChange}
+          />
+        </div>
         <div
           data-label-mode-panel="fabric"
           hidden={labelMode !== 'fabric'}
