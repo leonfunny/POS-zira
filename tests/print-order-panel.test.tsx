@@ -486,6 +486,70 @@ describe('PrintOrderPanel', () => {
     expect(scrollTo).toHaveBeenCalledWith({ top: 0 });
   });
 
+  it('prints one of each when the operator asks for a sample', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => container.querySelector<HTMLButtonElement>(
+      '[data-testid="print-sample"]')!.click());
+    await settle();
+
+    expect(printSticker).toHaveBeenCalledTimes(1);
+    expect(printSticker.mock.calls[0][0]).toMatchObject({ quantity: 1 });
+    expect(printFabricTag).toHaveBeenCalledTimes(1);
+    expect(printFabricTag.mock.calls[0][0]).toMatchObject({ quantity: 1, size: 'S' });
+  });
+
+  it('lets a sample print before any quantity is typed', async () => {
+    await render();
+    await act(async () => buttonWithText(container, '+ S').click());
+    await act(async () => buttonWithText(container, 'Add colour').click());
+    await changeInput(input(container, 'input[placeholder="CZEKOLADA"]'), 'CZEKOLADA');
+    await changeInput(input(container, 'input[placeholder="SP006290"]'), 'SP006290');
+
+    // The real Print button is blocked with nothing in the grid; the sample is not.
+    expect(buttonWithText(container, 'Print').disabled).toBe(true);
+    const sample = container.querySelector<HTMLButtonElement>('[data-testid="print-sample"]')!;
+    expect(sample.disabled).toBe(false);
+
+    await act(async () => sample.click());
+    await settle();
+    expect(printFabricTag).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a sample the printer would reject anyway', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    // A code with a character Code128 cannot carry blocks both buttons.
+    await changeInput(input(container, 'input[placeholder="SP006290"]'), 'SP-Ł290');
+
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="print-sample"]')!.disabled)
+      .toBe(true);
+  });
+
+  it('refuses a sample while the real order is still going out', async () => {
+    let releaseSticker: (value: { success: boolean }) => void = () => {};
+    printSticker.mockImplementation(
+      () => new Promise((resolve) => { releaseSticker = resolve; }),
+    );
+
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => buttonWithText(container, 'Print').click());
+    await settle();
+
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="print-sample"]')!.disabled)
+      .toBe(true);
+
+    await act(async () => { releaseSticker({ success: true }); });
+    await settle();
+  });
+
+  it('has nothing to sample on an empty sheet', async () => {
+    await render();
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="print-sample"]')!.disabled)
+      .toBe(true);
+  });
+
   it('refuses to print when the bridge is missing instead of throwing', async () => {
     Object.defineProperty(window, 'electronAPI', {
       configurable: true,

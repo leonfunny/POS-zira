@@ -10,7 +10,9 @@ import {
   OrderProblem,
   SIZE_SUGGESTIONS,
   STYLE_SUGGESTIONS,
+  PrintStep,
   buildPrintPlan,
+  buildSamplePlan,
   compositionText,
   createEmptyOrder,
   addCareTextLine,
@@ -85,6 +87,8 @@ interface Copy {
   printSticker: string;
   print: string;
   printing: string;
+  samplePrint: string;
+  samplePrintHint: string;
   save: string;
   saved: string;
   savedOrders: string;
@@ -137,6 +141,8 @@ const COPY: Record<string, Copy> = {
     printSticker: 'Tem dán bao bì',
     print: 'In',
     printing: 'Đang in…',
+    samplePrint: 'In thử 1 cái',
+    samplePrintHint: 'In đúng một mác vải và một tem dán để soi trước khi chạy cả đơn.',
     save: 'Lưu đơn',
     saved: 'Đã lưu',
     savedOrders: 'Đơn đã lưu',
@@ -194,6 +200,8 @@ const COPY: Record<string, Copy> = {
     printSticker: 'Naklejki na opakowanie',
     print: 'Drukuj',
     printing: 'Drukowanie…',
+    samplePrint: 'Wydruk próbny',
+    samplePrintHint: 'Jedna metka i jedna naklejka do sprawdzenia przed całym zleceniem.',
     save: 'Zapisz',
     saved: 'Zapisano',
     savedOrders: 'Zapisane zlecenia',
@@ -251,6 +259,8 @@ const COPY: Record<string, Copy> = {
     printSticker: 'Packaging stickers',
     print: 'Print',
     printing: 'Printing…',
+    samplePrint: 'Print one',
+    samplePrintHint: 'One tag and one sticker to look at before the whole order runs.',
     save: 'Save order',
     saved: 'Saved',
     savedOrders: 'Saved orders',
@@ -452,8 +462,9 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
 
   const removeRow = (rowId: string) => patch({ rows: order.rows.filter((r) => r.id !== rowId) });
 
-  const handlePrint = async () => {
-    if (printInFlight.current || problems.length > 0 || plan.length === 0) return;
+  /** Both buttons run the same loop; only the plan they hand it differs. */
+  const runPlan = async (steps: PrintStep[]) => {
+    if (printInFlight.current || steps.length === 0) return;
     const api = (window as any).electronAPI;
     if (!api?.printPackagingSticker || !api?.printFabricTag) {
       setResult({ type: 'error', message: 'Print bridge unavailable' });
@@ -468,7 +479,7 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
 
     try {
       const outcome = await runPrintPlan(
-        plan,
+        steps,
         {
           customerName: order.customerName,
           styleName: order.styleName,
@@ -490,7 +501,7 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
           outcome.type === 'success'
             ? copy.finished(outcome.printedCopies)
             : outcome.type === 'stopped'
-              ? copy.stopped(outcome.completedSteps, plan.length)
+              ? copy.stopped(outcome.completedSteps, steps.length)
               : outcome.message || 'Print failed',
       });
     } finally {
@@ -498,6 +509,30 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
       onPrintingChange?.(false);
     }
   };
+
+  const handlePrint = () => {
+    if (problems.length > 0) return;
+    return runPlan(plan);
+  };
+
+  /**
+   * One label of each kind before the ribbon is committed. A misspelling or the
+   * wrong wash symbol is only visible on the printed tag, and by then the whole
+   * order is out.
+   *
+   * A quantity is not needed to look at a tag, so an empty order does not block
+   * it — but a code the printer would refuse does, since that sample cannot
+   * print either.
+   */
+  const samplePlan = useMemo(() => buildSamplePlan(order), [order]);
+  const blockingForSample = problems.filter((problem) => problem !== 'EMPTY_ORDER');
+  const canPrintSample =
+    progress?.type !== 'printing' && blockingForSample.length === 0 && samplePlan.length > 0;
+
+  // No second guard in here: the button carries `disabled={!canPrintSample}`, and
+  // `runPlan` refuses an empty plan or a run already in flight. A mutation run
+  // showed a repeated check was unreachable — dead code that reads like safety.
+  const handleSamplePrint = () => runPlan(samplePlan);
 
   /**
    * A style name is learned when the order is filed or sent to the printer, not
@@ -1003,6 +1038,16 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
         >
           <Play size={18} aria-hidden="true" />
           {isPrinting ? copy.printing : copy.print}
+        </button>
+        <button
+          type="button"
+          data-testid="print-sample"
+          onClick={handleSamplePrint}
+          disabled={!canPrintSample}
+          title={copy.samplePrintHint}
+          className="inline-flex min-h-11 items-center gap-2 rounded-md border border-emerald-300 px-4 text-sm font-bold text-emerald-800 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {copy.samplePrint}
         </button>
         <button
           type="button"

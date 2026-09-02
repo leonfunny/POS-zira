@@ -4,6 +4,7 @@ import {
   LABEL_PRINT_ORDER_LIMITS,
   LabelPrintOrder,
   buildPrintPlan,
+  buildSamplePlan,
   compositionText,
   createEmptyOrder,
   orderTotals,
@@ -369,5 +370,57 @@ describe('everything typed into a print order is printed in capitals', () => {
       printStickers: false,
     };
     expect(upperCaseOrder(before)).toEqual(before);
+  });
+});
+
+describe('one of each, to look at before the ribbon is committed', () => {
+  it('sends exactly one label of each kind', () => {
+    const sample = buildSamplePlan(sampleOrder());
+    expect(sample.map((s) => s.kind)).toEqual(['sticker', 'fabric']);
+    expect(sample.every((s) => s.quantity === 1)).toBe(true);
+  });
+
+  it('carries the wording the real run would print', () => {
+    const fabric = buildSamplePlan(sampleOrder()).find((s) => s.kind === 'fabric');
+    const real = buildPrintPlan(sampleOrder()).find((s) => s.kind === 'fabric');
+    expect(fabric).toMatchObject({
+      sizeText: (real as any).sizeText,
+      composition: (real as any).composition,
+      careText: (real as any).careText,
+      careSymbols: (real as any).careSymbols,
+    });
+  });
+
+  it('works before any quantity is typed — a tag reads the same either way', () => {
+    const order = sampleOrder();
+    order.rows = order.rows.map((row) => ({ ...row, quantities: {} }));
+    expect(buildPrintPlan(order)).toHaveLength(0);
+    expect(buildSamplePlan(order)).toHaveLength(2);
+  });
+
+  it('respects what the operator ticked to print', () => {
+    expect(buildSamplePlan({ ...sampleOrder(), printStickers: false }).map((s) => s.kind))
+      .toEqual(['fabric']);
+    expect(buildSamplePlan({ ...sampleOrder(), printFabricTags: false }).map((s) => s.kind))
+      .toEqual(['sticker']);
+  });
+
+  it('takes the sticker from the first colour that has a code', () => {
+    const order = sampleOrder();
+    order.rows[0].code = '   ';
+    const sticker = buildSamplePlan(order).find((s) => s.kind === 'sticker');
+    expect(sticker).toMatchObject({ colorName: order.rows[1].colorName });
+  });
+
+  it('has nothing to show for an order with no colours or no sizes', () => {
+    expect(buildSamplePlan({ ...createEmptyOrder() })).toHaveLength(0);
+    expect(buildSamplePlan({ ...sampleOrder(), sizes: [] })).toHaveLength(0);
+  });
+
+  it('marks its ids apart so a sample is never mistaken for a sent batch', () => {
+    const sampleIds = buildSamplePlan(sampleOrder()).map((s) => s.id);
+    const realIds = buildPrintPlan(sampleOrder()).map((s) => s.id);
+    expect(sampleIds.every((id) => id.startsWith('sample:'))).toBe(true);
+    expect(sampleIds.some((id) => realIds.includes(id))).toBe(false);
   });
 });

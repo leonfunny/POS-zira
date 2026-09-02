@@ -372,6 +372,38 @@ export function buildPrintPlan(order: LabelPrintOrder): PrintStep[] {
   return steps;
 }
 
+/**
+ * One of each, to look at before committing a ribbon to the whole order.
+ *
+ * Written apart from `buildPrintPlan` rather than as a flag on it: a sample and
+ * a real run mean different things, and a flag on the one function that decides
+ * how many labels come out is exactly the place a mistake ships 680 of them.
+ * The ids carry their own prefix so a sample can never be mistaken for a batch
+ * of the real order that has already been sent.
+ */
+export function buildSamplePlan(order: LabelPrintOrder): PrintStep[] {
+  // Built from an order with one of everything rather than from the quantities
+  // typed so far: what a label says does not depend on how many are wanted, and
+  // the operator wants to look at a tag before filling the grid in. It also
+  // means a first colour with no sticker code still yields a sticker sample,
+  // from the first colour that has one.
+  const oneOfEach: LabelPrintOrder = {
+    ...order,
+    rows: order.rows.map((row) => ({
+      ...row,
+      quantities: Object.fromEntries(order.sizes.map((size) => [size.id, 1])),
+    })),
+  };
+
+  const full = buildPrintPlan(oneOfEach);
+  const sample: PrintStep[] = [];
+  for (const kind of ['sticker', 'fabric'] as const) {
+    const first = full.find((step) => step.kind === kind);
+    if (first) sample.push({ ...first, id: `sample:${first.id}`, quantity: 1 });
+  }
+  return sample;
+}
+
 /** Stickers are only split to stay inside the driver's copy count. */
 const STICKER_CHUNK = LABEL_PRINT_ORDER_LIMITS.maxRunQuantity;
 const FABRIC_CHUNK = LABEL_PRINT_ORDER_LIMITS.chunkSize;
