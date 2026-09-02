@@ -436,3 +436,19 @@ in hay RAW tới máy in.
   `0461A8B3116487214B26BE0EFF4A641F7BC4EA1E3A00CB94121A08FBFE65E03D`.
 - `tests/hardware-posnet-config.test.ts` **flaky dưới tải song song** trên CPU
   này (AMD A8). Chạy riêng thì xanh. Không liên quan tới thay đổi nào ở đây.
+
+## Đợt 02/09 — tab "Đơn in" và lần in Honeywell đầu tiên
+
+- Máy in `Honeywell PC42E-D 203dpi` trên `tnh` đang trỏ **cổng USB002 không còn
+  tồn tại**; thiết bị thật nằm ở `USB003` (`Get-PrinterPort` ghi
+  `USB003 → Honeywell PC42E-D-203`). Hậu quả: job spool xong, `PRINT_TEST_OK`,
+  hàng đợi vẫn còn 1 job và **không có tem nào ra**. Đã sửa bằng
+  `Set-Printer -Name "Honeywell PC42E-D 203dpi" -PortName "USB003"`. Nếu sau này
+  im lặng không in, kiểm cổng trước khi nghi code — Electron trả về thành công
+  ngay khi spooler nhận, không đợi máy in.
+- Đường in tem đóng gói đi qua **driver Windows** (`printPackagingStickerToDevice`
+  → `printHtmlToDevice`), không phải ZPL. Driver cài là
+  `Honeywell PC42E-T (203 dpi) - DP` (Direct Protocol) — nó tự dựng lệnh từ
+  trang GDI, nên không cần app sinh DP. Đã chứng minh 02/09: một tem 50×30
+  `New Fashion / KURTKA 114 / CZEKOLADA · M / SP006290` in ra thật, hàng đợi về 0.
+- Trên `tnh`, `npm run build` xanh; 137 test của 10 file mới/đụng tới đều xanh.
