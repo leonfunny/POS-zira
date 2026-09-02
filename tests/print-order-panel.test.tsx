@@ -132,6 +132,70 @@ describe('PrintOrderPanel', () => {
     expect(headers.some((h) => h?.includes('44/46'))).toBe(true);
   });
 
+  it('remembers a size somebody typed and offers it as a button next time', async () => {
+    await render();
+    const adder = input(container, 'input[aria-label="Add size"]');
+    await changeInput(adder, '3xl');
+    await act(async () => {
+      adder.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+
+    // It became a column now, and a button for next time.
+    expect(container.querySelector('[data-learned-size="3XL"]')).not.toBeNull();
+
+    // Still there on the next order, and on the next start of the app.
+    await act(async () => buttonWithText(container, 'New order').click());
+    expect(container.querySelector('[data-learned-size="3XL"]')).not.toBeNull();
+
+    const first = root!;
+    await act(async () => first.unmount());
+    root = null;
+    await render();
+    expect(container.querySelector('[data-learned-size="3XL"]')).not.toBeNull();
+  });
+
+  it('adds a column from a remembered button without teaching it twice', async () => {
+    await render();
+    const adder = input(container, 'input[aria-label="Add size"]');
+    await changeInput(adder, '3XL');
+    await act(async () => {
+      adder.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    await act(async () => container.querySelector<HTMLButtonElement>(
+      '[data-learned-size="3XL"] [data-size-suggestion="3XL"]')!.click());
+
+    expect(container.querySelectorAll('[data-learned-size="3XL"]')).toHaveLength(1);
+  });
+
+  it('does not learn a size that is already a button', async () => {
+    await render();
+    const adder = input(container, 'input[aria-label="Add size"]');
+    await changeInput(adder, 'xl');
+    await act(async () => {
+      adder.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+
+    expect(container.querySelector('[data-learned-size]')).toBeNull();
+  });
+
+  it('forgets a size typed by mistake', async () => {
+    await render();
+    const adder = input(container, 'input[aria-label="Add size"]');
+    await changeInput(adder, '3xxl');
+    await act(async () => {
+      adder.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    expect(container.querySelector('[data-learned-size="3XXL"]')).not.toBeNull();
+
+    await act(async () => container.querySelector<HTMLButtonElement>(
+      '[aria-label="Forget size 3XXL"]')!.click());
+
+    expect(container.querySelector('[data-learned-size="3XXL"]')).toBeNull();
+    // Forgetting the button does not pull the column out of the order.
+    expect(Array.from(container.querySelectorAll('th')).some((th) => th.textContent?.includes('3XXL')))
+      .toBe(true);
+  });
+
   it('totals the grid as quantities are typed', async () => {
     await render();
     await fillMinimalOrder(40);

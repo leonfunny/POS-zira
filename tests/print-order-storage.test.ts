@@ -10,8 +10,12 @@ import {
   saveOrder,
   loadDraftId,
   saveDraftId,
+  LEARNED_SIZE_LIMIT,
+  forgetSize,
+  loadLearnedSizes,
+  rememberSize,
 } from '../src/renderer/components/label/print-order-storage';
-import { createEmptyOrder } from '../src/shared/label-print-order';
+import { MAX_SIZE_LABEL_CHARS, SIZE_SUGGESTIONS, createEmptyOrder } from '../src/shared/label-print-order';
 
 function memoryStorage(): Storage {
   const map = new Map<string, string>();
@@ -199,5 +203,75 @@ describe('the draft remembers which saved order it is', () => {
     vi.stubGlobal('localStorage', undefined);
     expect(() => saveDraftId('order-7')).not.toThrow();
     expect(loadDraftId()).toBeNull();
+  });
+});
+
+describe('the machine remembers a size somebody typed', () => {
+  it('knows nothing beyond the built-in buttons to begin with', () => {
+    expect(loadLearnedSizes()).toEqual([]);
+  });
+
+  it('remembers a size that is not already a button', () => {
+    expect(rememberSize('3XL')).toEqual(['3XL']);
+    expect(loadLearnedSizes()).toEqual(['3XL']);
+  });
+
+  it('keeps them in the order they were taught, so the row does not shuffle', () => {
+    rememberSize('3XL');
+    rememberSize('48/50');
+    expect(loadLearnedSizes()).toEqual(['3XL', '48/50']);
+  });
+
+  it('stores it the way it will print — trimmed and in capitals', () => {
+    expect(rememberSize('  3xl ')).toEqual(['3XL']);
+    expect(rememberSize('3XL')).toEqual(['3XL']);
+  });
+
+  it('does not duplicate a button that already exists', () => {
+    for (const built of SIZE_SUGGESTIONS) rememberSize(built);
+    expect(loadLearnedSizes()).toEqual([]);
+    expect(rememberSize('s/m')).toEqual([]);
+  });
+
+  it('ignores an empty size, and cuts one longer than the tag allows', () => {
+    expect(rememberSize('   ')).toEqual([]);
+    const long = 'X'.repeat(MAX_SIZE_LABEL_CHARS + 5);
+    expect(rememberSize(long)).toEqual([long.slice(0, MAX_SIZE_LABEL_CHARS)]);
+  });
+
+  it('drops the oldest once the row is full, rather than growing forever', () => {
+    for (let i = 0; i < LEARNED_SIZE_LIMIT + 3; i += 1) rememberSize(`Z${i}`);
+    const sizes = loadLearnedSizes();
+    expect(sizes).toHaveLength(LEARNED_SIZE_LIMIT);
+    expect(sizes).not.toContain('Z0');
+    expect(sizes[sizes.length - 1]).toBe(`Z${LEARNED_SIZE_LIMIT + 2}`);
+  });
+
+  it('forgets one on request — how a typo gets off the row', () => {
+    rememberSize('3XL');
+    rememberSize('3XXL');
+    expect(forgetSize('3XXL')).toEqual(['3XL']);
+    expect(loadLearnedSizes()).toEqual(['3XL']);
+  });
+
+  it('survives a new order: it belongs to the machine, not the sheet', () => {
+    rememberSize('3XL');
+    clearDraft();
+    expect(loadLearnedSizes()).toEqual(['3XL']);
+  });
+
+  it('reads a hand-edited or corrupt store without taking the panel down', () => {
+    localStorage.setItem('zira.labelPrintOrder.learnedSizes', '{not json');
+    expect(loadLearnedSizes()).toEqual([]);
+    localStorage.setItem('zira.labelPrintOrder.learnedSizes', '"3XL"');
+    expect(loadLearnedSizes()).toEqual([]);
+    localStorage.setItem('zira.labelPrintOrder.learnedSizes', '["3XL", 42, "", "3XL", "S"]');
+    expect(loadLearnedSizes()).toEqual(['3XL']);
+  });
+
+  it('keeps working when storage is unavailable', () => {
+    vi.stubGlobal('localStorage', undefined);
+    expect(() => rememberSize('3XL')).not.toThrow();
+    expect(loadLearnedSizes()).toEqual([]);
   });
 });

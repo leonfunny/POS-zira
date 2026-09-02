@@ -4,7 +4,12 @@
  * smallest thing that survives an app restart, and it can be lifted into a
  * table once the shape has settled against real sheets.
  */
-import { LabelPrintOrder, createEmptyOrder } from '../../../shared/label-print-order';
+import {
+  LabelPrintOrder,
+  MAX_SIZE_LABEL_CHARS,
+  SIZE_SUGGESTIONS,
+  createEmptyOrder,
+} from '../../../shared/label-print-order';
 
 const DRAFT_KEY = 'zira.labelPrintOrder.draft';
 const SAVED_KEY = 'zira.labelPrintOrder.saved';
@@ -95,6 +100,56 @@ export function saveDraftId(id: string): void {
 export function loadDraftId(): string | null {
   const stored = read<unknown>(DRAFT_ID_KEY, null);
   return typeof stored === 'string' && stored ? stored : null;
+}
+
+/**
+ * Size columns this machine has been taught. A shop that works in "3XL" or
+ * "48/50" types it once and gets a button for it afterwards; the built-in list
+ * is the same everywhere, this is what one shop adds to it.
+ *
+ * Kept out of the order and out of clearDraft on purpose: it belongs to the
+ * machine, not to the sheet being typed, so starting a new order does not make
+ * the shop teach it again.
+ */
+const SIZES_KEY = 'zira.labelPrintOrder.learnedSizes';
+export const LEARNED_SIZE_LIMIT = 24;
+
+export function loadLearnedSizes(): string[] {
+  const stored = read<unknown>(SIZES_KEY, []);
+  if (!Array.isArray(stored)) return [];
+  const seen = new Set<string>();
+  const sizes: string[] = [];
+  for (const entry of stored) {
+    if (typeof entry !== 'string') continue;
+    const label = entry.trim().toUpperCase().slice(0, MAX_SIZE_LABEL_CHARS);
+    // A hand-edited or older store can hold a built-in or a duplicate; both
+    // would print a second identical button.
+    if (!label || seen.has(label) || (SIZE_SUGGESTIONS as readonly string[]).includes(label)) {
+      continue;
+    }
+    seen.add(label);
+    sizes.push(label);
+  }
+  return sizes.slice(0, LEARNED_SIZE_LIMIT);
+}
+
+/** Teach the machine a size. Returns the list as it now stands. */
+export function rememberSize(label: string): string[] {
+  const size = label.trim().toUpperCase().slice(0, MAX_SIZE_LABEL_CHARS);
+  const current = loadLearnedSizes();
+  if (!size || current.includes(size)) return current;
+  if ((SIZE_SUGGESTIONS as readonly string[]).includes(size)) return current;
+  // Oldest out when full: a typo taught once should not hold a slot forever.
+  const next = [...current, size].slice(-LEARNED_SIZE_LIMIT);
+  write(SIZES_KEY, next);
+  return next;
+}
+
+/** Forget one learned size — the way a typo gets off the row. */
+export function forgetSize(label: string): string[] {
+  const next = loadLearnedSizes().filter((size) => size !== label);
+  write(SIZES_KEY, next);
+  return next;
 }
 
 export function listSavedOrders(): SavedPrintOrder[] {

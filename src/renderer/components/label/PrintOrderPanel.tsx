@@ -8,6 +8,7 @@ import {
   LabelPrintOrder,
   MAX_SIZE_LABEL_CHARS,
   OrderProblem,
+  SIZE_SUGGESTIONS,
   buildPrintPlan,
   compositionText,
   createEmptyOrder,
@@ -36,16 +37,16 @@ import {
   clearDraft,
   deleteSavedOrder,
   describeOrder,
+  forgetSize,
   listSavedOrders,
+  loadLearnedSizes,
   loadDraft,
   loadDraftId,
   saveDraft,
+  rememberSize,
   saveDraftId,
   saveOrder,
 } from './print-order-storage';
-
-/** Sizes staff reach for most; the field stays free text for anything else. */
-const SIZE_SUGGESTIONS = ['S', 'M', 'L', 'XL', '2XL', 'S/M', 'L/XL', '44/46'];
 
 interface Copy {
   title: string;
@@ -66,6 +67,7 @@ interface Copy {
   careLineNumber: (index: number) => string;
   sizes: string;
   addSize: string;
+  forgetSize: string;
   color: string;
   code: string;
   codeHint: string;
@@ -115,6 +117,7 @@ const COPY: Record<string, Copy> = {
     careLineNumber: (index) => `Dòng ${index}`,
     sizes: 'Size',
     addSize: 'Thêm size',
+    forgetSize: 'Bỏ nhớ size',
     color: 'Màu',
     code: 'Mã tem',
     codeHint: 'Để trống thì màu này không in tem dán',
@@ -169,6 +172,7 @@ const COPY: Record<string, Copy> = {
     careLineNumber: (index) => `Wiersz ${index}`,
     sizes: 'Rozmiary',
     addSize: 'Dodaj rozmiar',
+    forgetSize: 'Zapomnij rozmiar',
     color: 'Kolor',
     code: 'Kod etykiety',
     codeHint: 'Puste = bez naklejki dla tego koloru',
@@ -223,6 +227,7 @@ const COPY: Record<string, Copy> = {
     careLineNumber: (index) => `Line ${index}`,
     sizes: 'Sizes',
     addSize: 'Add size',
+    forgetSize: 'Forget size',
     color: 'Colour',
     code: 'Sticker code',
     codeHint: 'Blank means no packaging sticker for this colour',
@@ -296,6 +301,8 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
   const [savedNotice, setSavedNotice] = useState(false);
   /** The line being typed, before it is added. Not part of the order yet. */
   const [careLineDraft, setCareLineDraft] = useState('');
+  /** Size columns this machine has been taught, on top of the built-in ones. */
+  const [learnedSizes, setLearnedSizes] = useState<string[]>(() => loadLearnedSizes());
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const printInFlight = useRef(false);
@@ -409,6 +416,16 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
         ? current
         : { ...current, sizes: [...current.sizes, { id: nextId('size'), label: trimmed }] },
     );
+  };
+
+  /**
+   * A size typed by hand becomes a button for next time. Remembered even when
+   * the column is a duplicate and the add is a no-op: the operator has still
+   * told the machine this is a size they work in.
+   */
+  const addTypedSize = (label: string) => {
+    setLearnedSizes(rememberSize(label));
+    addSize(label);
   };
 
   const removeSize = (sizeId: string) =>
@@ -731,13 +748,41 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
             <button
               key={label}
               type="button"
+              data-size-suggestion={label}
               onClick={() => addSize(label)}
               className="min-h-8 rounded border border-slate-200 px-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
             >
               + {label}
             </button>
           ))}
-          <SizeAdder onAdd={addSize} placeholder={copy.addSize} />
+          {/* Taught by this shop. Marked apart from the built-ins and removable,
+              because a size typed with a typo would otherwise sit on the row
+              for good. */}
+          {learnedSizes.map((label) => (
+            <span
+              key={label}
+              data-learned-size={label}
+              className="inline-flex items-center rounded border border-emerald-200 bg-emerald-50"
+            >
+              <button
+                type="button"
+                data-size-suggestion={label}
+                onClick={() => addSize(label)}
+                className="min-h-8 px-2 text-xs font-bold text-emerald-800 hover:bg-emerald-100"
+              >
+                + {label}
+              </button>
+              <button
+                type="button"
+                aria-label={`${copy.forgetSize} ${label}`}
+                onClick={() => setLearnedSizes(forgetSize(label))}
+                className="min-h-8 px-1 text-emerald-500 hover:text-red-600"
+              >
+                <X size={12} aria-hidden="true" />
+              </button>
+            </span>
+          ))}
+          <SizeAdder onAdd={addTypedSize} placeholder={copy.addSize} />
         </div>
 
         <div className="overflow-x-auto">

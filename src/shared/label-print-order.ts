@@ -394,3 +394,11 @@ function pushChunks(
 
 /** The fabric renderer caps the size text; keep the grid inside it. */
 export const MAX_SIZE_LABEL_CHARS = FABRIC_TAG_LIMITS.size;
+
+/**
+ * The size columns staff reach for on most sheets, offered as one-tap buttons.
+ * Anything else is typed once and then remembered on the machine, so a shop
+ * that works in "3XL" or "48/50" stops retyping it — see the renderer's
+ * learned-size store.
+ */
+export const SIZE_SUGGESTIONS = ['S', 'M', 'L', 'XL', '2XL', 'S/M', 'L/XL', '44/46'] as const;
