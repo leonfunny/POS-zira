@@ -202,6 +202,7 @@ export type OrderProblem =
   | 'DUPLICATE_SIZE'
   | 'EMPTY_SIZE'
   | 'BAD_CODE'
+  | 'PERCENT_NOT_100'
   | 'ORDER_TOO_LARGE';
 
 export interface PrintStepBase {
@@ -248,6 +249,53 @@ export function compositionText(materials: OrderMaterial[]): string {
     .filter((m) => m.name.trim() && Number.isFinite(m.percent) && m.percent > 0)
     .map((m) => `${m.percent}% ${m.name.trim()}`)
     .join(' ');
+}
+
+export function materialPercentSum(materials: OrderMaterial[]): number {
+  return materials.reduce(
+    (sum, m) => sum + (Number.isFinite(m.percent) ? Number(m.percent) : 0),
+    0,
+  );
+}
+
+/** What the one-press fix would do, or null when one press cannot reach 100. */
+export interface PercentFix {
+  name: string;
+  percent: number;
+  materials: OrderMaterial[];
+}
+
+/**
+ * Put the missing percent somewhere sensible in one press.
+ *
+ * Short of 100 it goes to the last material still at 0 -- the one just tapped
+ * and not yet typed -- and otherwise onto the last material. Over 100 it comes
+ * off the last material that has anything to give. If one edit cannot land
+ * exactly on 100 the panel offers nothing rather than guessing across several
+ * materials: the operator is reading the customer's sheet and knows the split.
+ */
+export function percentFix(materials: OrderMaterial[]): PercentFix | null {
+  const named = materials.filter((m) => m.name.trim());
+  if (named.length === 0) return null;
+
+  const gap = 100 - materialPercentSum(materials);
+  if (gap === 0) return null;
+
+  const zeros = named.filter((m) => !(Number(m.percent) > 0));
+  const target =
+    gap > 0
+      ? zeros[zeros.length - 1] ?? named[named.length - 1]
+      : [...named].reverse().find((m) => Number(m.percent) > 0);
+  if (!target) return null;
+
+  const percent = (Number(target.percent) || 0) + gap;
+  if (percent < 0 || percent > 100) return null;
+
+  return {
+    name: target.name,
+    percent,
+    materials: materials.map((m) => (m === target ? { ...m, percent } : m)),
+  };
 }
 
 export interface OrderTotals {
@@ -306,6 +354,14 @@ export function validateOrder(order: LabelPrintOrder): OrderProblem[] {
     } catch {
       problems.add('BAD_CODE');
     }
+  }
+
+  // A tag with no composition at all is legal and customers do order it, so an
+  // order with nothing ticked prints. Once a material is ticked the tag makes a
+  // claim about the garment, and "70% POLIESTER" with the other 30% missing is
+  // wrong both to the customer and under the EU textile labelling rules.
+  if (order.materials.some((m) => m.name.trim()) && materialPercentSum(order.materials) !== 100) {
+    problems.add('PERCENT_NOT_100');
   }
 
   const totals = orderTotals(order);

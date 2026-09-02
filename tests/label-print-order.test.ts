@@ -8,6 +8,8 @@ import {
   compositionText,
   createEmptyOrder,
   orderTotals,
+  percentFix,
+  materialPercentSum,
   validateOrder,
   CARE_TEXT_MAX_CHARS,
   CARE_TEXT_PRESETS,
@@ -422,5 +424,103 @@ describe('one of each, to look at before the ribbon is committed', () => {
     const realIds = buildPrintPlan(sampleOrder()).map((s) => s.id);
     expect(sampleIds.every((id) => id.startsWith('sample:'))).toBe(true);
     expect(sampleIds.some((id) => realIds.includes(id))).toBe(false);
+  });
+});
+
+describe('the composition has to add up before anything prints', () => {
+  it('passes at 100, and at a three-way split', () => {
+    expect(validateOrder(sampleOrder())).not.toContain('PERCENT_NOT_100');
+    expect(
+      validateOrder({
+        ...sampleOrder(),
+        materials: [
+          { name: 'BAWEŁNA', percent: 33 },
+          { name: 'LEN', percent: 33 },
+          { name: 'WISKOZA', percent: 34 },
+        ],
+      }),
+    ).not.toContain('PERCENT_NOT_100');
+  });
+
+  it('blocks at 70, which used to be only a warning', () => {
+    const order = { ...sampleOrder(), materials: [{ name: 'LEN', percent: 70 }] };
+    expect(validateOrder(order)).toContain('PERCENT_NOT_100');
+  });
+
+  it('blocks a material ticked but never typed', () => {
+    const order = { ...sampleOrder(), materials: [{ name: 'LEN', percent: 0 }] };
+    expect(validateOrder(order)).toContain('PERCENT_NOT_100');
+  });
+
+  it('blocks over 100 as well as under', () => {
+    const order = {
+      ...sampleOrder(),
+      materials: [{ name: 'LEN', percent: 80 }, { name: 'AKRYL', percent: 40 }],
+    };
+    expect(validateOrder(order)).toContain('PERCENT_NOT_100');
+  });
+
+  it('lets an order with no composition through — that tag is legal', () => {
+    expect(validateOrder({ ...sampleOrder(), materials: [] })).not.toContain('PERCENT_NOT_100');
+  });
+
+  it('adds up what is there, ignoring junk in the percent field', () => {
+    expect(materialPercentSum([
+      { name: 'LEN', percent: 70 },
+      { name: 'AKRYL', percent: Number.NaN },
+    ])).toBe(70);
+  });
+});
+
+describe('the one press that lands the composition on 100', () => {
+  it('fills the material just ticked, not the one already typed', () => {
+    const fix = percentFix([{ name: 'LEN', percent: 70 }, { name: 'AKRYL', percent: 0 }]);
+    expect(fix).toMatchObject({ name: 'AKRYL', percent: 30 });
+    expect(fix!.materials).toEqual([
+      { name: 'LEN', percent: 70 },
+      { name: 'AKRYL', percent: 30 },
+    ]);
+  });
+
+  it('fills the empty one wherever it sits, not just the last row', () => {
+    // BAWEŁNA was ticked first and left at 0; the press belongs to it.
+    expect(percentFix([{ name: 'BAWEŁNA', percent: 0 }, { name: 'AKRYL', percent: 70 }]))
+      .toMatchObject({ name: 'BAWEŁNA', percent: 30 });
+  });
+
+  it('tops up the only material there is', () => {
+    expect(percentFix([{ name: 'LEN', percent: 70 }])).toMatchObject({ name: 'LEN', percent: 100 });
+  });
+
+  it('takes the surplus off the last material that has any', () => {
+    expect(percentFix([{ name: 'LEN', percent: 80 }, { name: 'AKRYL', percent: 40 }]))
+      .toMatchObject({ name: 'AKRYL', percent: 20 });
+  });
+
+  it('skips an empty material when taking a surplus back off', () => {
+    expect(percentFix([
+      { name: 'LEN', percent: 80 },
+      { name: 'AKRYL', percent: 40 },
+      { name: 'ELASTAN', percent: 0 },
+    ])).toMatchObject({ name: 'AKRYL', percent: 20 });
+  });
+
+  it('offers nothing when one press would push a material below zero', () => {
+    expect(percentFix([
+      { name: 'LEN', percent: 90 },
+      { name: 'AKRYL', percent: 30 },
+      { name: 'ELASTAN', percent: 10 },
+    ])).toBeNull();
+  });
+
+  it('offers nothing at exactly 100, and nothing with no materials', () => {
+    expect(percentFix([{ name: 'LEN', percent: 100 }])).toBeNull();
+    expect(percentFix([])).toBeNull();
+  });
+
+  it('leaves the order it was handed alone', () => {
+    const materials = [{ name: 'LEN', percent: 70 }, { name: 'AKRYL', percent: 0 }];
+    percentFix(materials);
+    expect(materials[1].percent).toBe(0);
   });
 });

@@ -277,13 +277,77 @@ describe('PrintOrderPanel', () => {
     expect(text('[data-testid="composition-preview"]')).toBe('70% POLIESTER 30% AKRYL');
   });
 
-  it('warns when the percentages do not add up, without blocking the print', async () => {
+  it('blocks the print until the composition adds up to 100', async () => {
     await render();
     await fillMinimalOrder(40);
     await act(async () => buttonWithText(container, 'LEN').click());
     await changeInput(input(container, 'input[aria-label="LEN %"]'), '70');
 
     expect(container.textContent).toContain('add up to 70%');
+    expect(buttonWithText(container, 'Print').disabled).toBe(true);
+    expect(text('[data-testid="order-problems"]')).toContain('add up to 100%');
+    // A sample of a tag that would print a wrong composition is no use either.
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="print-sample"]')!.disabled)
+      .toBe(true);
+  });
+
+  it('lands the composition on 100 in one press', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => buttonWithText(container, 'LEN').click());
+    await changeInput(input(container, 'input[aria-label="LEN %"]'), '70');
+    await act(async () => buttonWithText(container, 'AKRYL').click());
+
+    // The material just tapped is still at 0, so the press fills that one.
+    const fix = container.querySelector<HTMLButtonElement>('[data-testid="fix-percent"]')!;
+    expect(fix.textContent).toContain('Set AKRYL to 30%');
+
+    await act(async () => fix.click());
+    expect(text('[data-testid="composition-preview"]')).toBe('70% LEN 30% AKRYL');
+    expect(buttonWithText(container, 'Print').disabled).toBe(false);
+    expect(container.querySelector('[data-testid="fix-percent"]')).toBeNull();
+  });
+
+  it('takes the surplus back off when the total went over 100', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => buttonWithText(container, 'LEN').click());
+    await changeInput(input(container, 'input[aria-label="LEN %"]'), '80');
+    await act(async () => buttonWithText(container, 'AKRYL').click());
+    await changeInput(input(container, 'input[aria-label="AKRYL %"]'), '40');
+
+    expect(container.textContent).toContain('add up to 120%');
+    expect(buttonWithText(container, 'Print').disabled).toBe(true);
+
+    const fix = container.querySelector<HTMLButtonElement>('[data-testid="fix-percent"]')!;
+    expect(fix.textContent).toContain('Set AKRYL to 20%');
+    await act(async () => fix.click());
+    expect(text('[data-testid="composition-preview"]')).toBe('80% LEN 20% AKRYL');
+    expect(buttonWithText(container, 'Print').disabled).toBe(false);
+  });
+
+  it('offers no one-press fix when one press cannot reach 100', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => buttonWithText(container, 'LEN').click());
+    await changeInput(input(container, 'input[aria-label="LEN %"]'), '90');
+    await act(async () => buttonWithText(container, 'AKRYL').click());
+    await changeInput(input(container, 'input[aria-label="AKRYL %"]'), '30');
+    await act(async () => buttonWithText(container, 'ELASTAN').click());
+    await changeInput(input(container, 'input[aria-label="ELASTAN %"]'), '10');
+
+    // 130%: taking 30 off the last material would put it below zero, and
+    // guessing a split across three materials is not the panel's business.
+    expect(container.textContent).toContain('add up to 130%');
+    expect(container.querySelector('[data-testid="fix-percent"]')).toBeNull();
+    expect(buttonWithText(container, 'Print').disabled).toBe(true);
+  });
+
+  it('prints an order with no composition at all', async () => {
+    // A tag with only a size and wash symbols is legal, and customers order it.
+    await render();
+    await fillMinimalOrder(40);
+    expect(container.querySelector('[data-testid="fix-percent"]')).toBeNull();
     expect(buttonWithText(container, 'Print').disabled).toBe(false);
   });
 

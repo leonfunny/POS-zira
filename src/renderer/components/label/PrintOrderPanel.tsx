@@ -22,6 +22,7 @@ import {
   careTextPresetFits,
   removeCareTextLine,
   orderTotals,
+  percentFix,
   toggleCareTextPreset,
   upperCaseOrder,
   validateOrder,
@@ -103,6 +104,7 @@ interface Copy {
   noResume: string;
   missingCode: string;
   percentSum: (sum: number) => string;
+  percentFix: (name: string, percent: number) => string;
   progress: (done: number, total: number, copies: number, all: number) => string;
   finished: (copies: number) => string;
   stopped: (done: number, total: number) => string;
@@ -160,6 +162,7 @@ const COPY: Record<string, Copy> = {
     noResume: 'Máy kẹt hay tắt app giữa chừng thì phải đếm tem thật trước khi in lại.',
     missingCode: 'Thiếu mã tem — màu này chỉ in mác vải',
     percentSum: (sum) => `Tổng phần trăm đang là ${sum}%`,
+    percentFix: (name, percent) => `Đặt ${name} = ${percent}%`,
     progress: (done, total, copies, all) => `Đã in ${done}/${total} lô · ${copies}/${all} tem`,
     finished: (copies) => `Đã in xong ${copies} tem`,
     stopped: (done, total) => `Đã dừng sau ${done}/${total} lô`,
@@ -169,6 +172,7 @@ const COPY: Record<string, Copy> = {
       DUPLICATE_SIZE: 'Có hai cột size trùng tên',
       EMPTY_SIZE: 'Có cột size chưa đặt tên',
       BAD_CODE: 'Mã tem có ký tự máy in không đọc được',
+      PERCENT_NOT_100: 'Tổng phần trăm chất liệu phải bằng 100%',
       ORDER_TOO_LARGE: 'Số lượng quá lớn — kiểm tra lại',
     },
   },
@@ -222,6 +226,7 @@ const COPY: Record<string, Copy> = {
     noResume: 'Po zacięciu lub zamknięciu aplikacji policz metki, zanim wydrukujesz ponownie.',
     missingCode: 'Brak kodu — ten kolor dostanie tylko metki',
     percentSum: (sum) => `Suma procentów: ${sum}%`,
+    percentFix: (name, percent) => `Ustaw ${name} = ${percent}%`,
     progress: (done, total, copies, all) => `${done}/${total} partii · ${copies}/${all} sztuk`,
     finished: (copies) => `Wydrukowano ${copies} szt.`,
     stopped: (done, total) => `Zatrzymano po ${done}/${total} partii`,
@@ -231,6 +236,7 @@ const COPY: Record<string, Copy> = {
       DUPLICATE_SIZE: 'Dwie kolumny mają ten sam rozmiar',
       EMPTY_SIZE: 'Kolumna rozmiaru bez nazwy',
       BAD_CODE: 'Kod zawiera znaki, których drukarka nie odczyta',
+      PERCENT_NOT_100: 'Skład musi sumować się do 100%',
       ORDER_TOO_LARGE: 'Zbyt duża ilość — sprawdź',
     },
   },
@@ -284,6 +290,7 @@ const COPY: Record<string, Copy> = {
     noResume: 'After a jam or an app restart, count the printed labels before reprinting.',
     missingCode: 'No sticker code — this colour gets fabric tags only',
     percentSum: (sum) => `Percentages add up to ${sum}%`,
+    percentFix: (name, percent) => `Set ${name} to ${percent}%`,
     progress: (done, total, copies, all) => `${done}/${total} batches · ${copies}/${all} labels`,
     finished: (copies) => `Printed ${copies} labels`,
     stopped: (done, total) => `Stopped after ${done}/${total} batches`,
@@ -293,6 +300,7 @@ const COPY: Record<string, Copy> = {
       DUPLICATE_SIZE: 'Two size columns share a name',
       EMPTY_SIZE: 'A size column has no name',
       BAD_CODE: 'A sticker code has characters the printer cannot encode',
+      PERCENT_NOT_100: 'The composition must add up to 100%',
       ORDER_TOO_LARGE: 'Quantity is implausibly large — check the sheet',
     },
   },
@@ -371,6 +379,8 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
   const plan = useMemo(() => buildPrintPlan(order), [order]);
   const composition = compositionText(order.materials);
   const percentSum = order.materials.reduce((sum, m) => sum + (Number(m.percent) || 0), 0);
+  // One press that lands the composition on exactly 100, when one press can.
+  const gapFix = percentFix(order.materials);
 
   const patch = useCallback((changes: Partial<LabelPrintOrder>) => {
     setOrder((current) => ({ ...current, ...changes }));
@@ -721,8 +731,20 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
             {composition}
           </p>
         )}
-        {percentSum > 0 && percentSum !== 100 && (
-          <p className="mt-1 text-xs font-bold text-amber-700">{copy.percentSum(percentSum)}</p>
+        {percentSum !== 100 && order.materials.length > 0 && (
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <p className="text-xs font-bold text-amber-700">{copy.percentSum(percentSum)}</p>
+            {gapFix && (
+              <button
+                type="button"
+                data-testid="fix-percent"
+                onClick={() => patch({ materials: gapFix.materials })}
+                className="min-h-8 rounded-md border border-amber-400 px-2 text-xs font-bold text-amber-800 hover:bg-amber-50"
+              >
+                {copy.percentFix(gapFix.name, gapFix.percent)}
+              </button>
+            )}
+          </div>
         )}
       </section>
 
