@@ -12,7 +12,26 @@ khỏi danh sách, ghi lại để phiên sau không đào lại:
   dải vải bị dính vào nhau nên kéo lệch. In liên tục vài lần nữa không tái hiện.
 
 Mỗi việc dưới đây: làm gì, đụng file nào, quyết định thiết kế cần chốt, và test
-sẽ viết. Chưa việc nào được code.
+sẽ viết.
+
+**Trạng thái 02/09 — cả 5 việc đã làm xong**, theo đúng thứ tự dưới đây:
+
+| # | Việc | Commit |
+|---|---|---|
+| 1 | In thử 1 cái | `f0bbef3` |
+| 2 | Nhân bản đơn | `1d70eb0` |
+| 3 | Bắt tổng % = 100 | `ae6c615` |
+| 4 | In tiếp sau khi kẹt | `34e8baf` |
+| 5 | Dán bảng từ Excel | `b31bc62` |
+
+Ba quyết định Paul chốt trước khi làm: in tiếp **không** tự in lại (người đếm tem
+rồi chọn) · tổng ≠ 100 **chặn in**, không có đường vòng · Excel đọc bằng cách
+**dán**, không đọc `.xlsx`. Máy `tnh` đã nhận tới `b31bc62`: 233/233 test của tab
+Label xanh, `npm run build` exit 0.
+
+Ba chỗ code bị **xoá** sau khi mutation test cho thấy chúng không đổi gì: guard lặp
+trong `handleSamplePrint`, guard lặp trong `acceptPaste`, và danh sách tiêu đề cột
+màu (`KOLOR`/`MÀU`/…) — luật so chiều rộng header đã lo đúng ca đó rồi.
 
 ---
 
