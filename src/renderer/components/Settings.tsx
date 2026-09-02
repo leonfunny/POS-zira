@@ -3640,6 +3640,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                       {isFabricTag && (
                         <FabricTagComposer
                           t={t}
+                          language={language}
                           labelWidthMm={printerConfig.labelWidth || 20}
                           labelHeightMm={printerConfig.labelHeight || 60}
                           ready={isFabricTagPrinterReady(printerConfig)}

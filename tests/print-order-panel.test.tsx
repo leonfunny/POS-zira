@@ -3,6 +3,7 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import PrintOrderPanel from '../src/renderer/components/label/PrintOrderPanel';
+import { CARE_SYMBOLS } from '../src/shared/types';
 
 function memoryStorage(): Storage {
   const map = new Map<string, string>();
@@ -264,41 +265,65 @@ describe('PrintOrderPanel', () => {
 
   it('shows the printed symbol art, not the enum name', async () => {
     await render();
-    const washButton = container.querySelector<HTMLButtonElement>('button[aria-label="WASH_30"]');
+    const washButton = container.querySelector<HTMLButtonElement>('button[data-symbol="WASH_30"]');
     expect(washButton).not.toBeNull();
     expect(washButton?.querySelector('svg')).not.toBeNull();
     // The art carries "30" inside the washtub; what it must not show is the
-    // machine name an operator cannot read.
+    // machine name an operator cannot read. The name a screen reader and the
+    // hover tooltip get is the instruction itself, in the operator's language.
     expect(washButton?.textContent).not.toContain('WASH');
     expect(container.textContent).not.toContain('DRYCLEAN_P');
+    expect(washButton?.getAttribute('aria-label')).toBe('Wash at 30°C');
+    expect(washButton?.getAttribute('title')).toBe('Wash at 30°C');
   });
 
   it('treats the wash family as a radio group — a tag cannot say both', async () => {
     await render();
-    const wash30 = container.querySelector<HTMLButtonElement>('button[aria-label="WASH_30"]')!;
-    const washNo = container.querySelector<HTMLButtonElement>('button[aria-label="WASH_NO"]')!;
+    const wash30 = container.querySelector<HTMLButtonElement>('button[data-symbol="WASH_30"]')!;
+    const washNo = container.querySelector<HTMLButtonElement>('button[data-symbol="WASH_NO"]')!;
 
     await act(async () => wash30.click());
     expect(wash30.getAttribute('aria-pressed')).toBe('true');
 
     await act(async () => washNo.click());
-    expect(container.querySelector('button[aria-label="WASH_30"]')?.getAttribute('aria-pressed')).toBe('false');
-    expect(container.querySelector('button[aria-label="WASH_NO"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(container.querySelector('button[data-symbol="WASH_30"]')?.getAttribute('aria-pressed')).toBe('false');
+    expect(container.querySelector('button[data-symbol="WASH_NO"]')?.getAttribute('aria-pressed')).toBe('true');
   });
 
   it('keeps symbols from different families together', async () => {
     await render();
-    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="WASH_30"]')!.click());
-    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="IRON_LOW"]')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('button[data-symbol="WASH_30"]')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('button[data-symbol="IRON_LOW"]')!.click());
 
-    expect(container.querySelector('button[aria-label="WASH_30"]')?.getAttribute('aria-pressed')).toBe('true');
-    expect(container.querySelector('button[aria-label="IRON_LOW"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(container.querySelector('button[data-symbol="WASH_30"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(container.querySelector('button[data-symbol="IRON_LOW"]')?.getAttribute('aria-pressed')).toBe('true');
     expect(container.querySelectorAll('[data-testid="care-preview"] svg')).toHaveLength(2);
+  });
+
+  it('offers the whole ISO set, sorted into named families', async () => {
+    await render();
+    const buttons = container.querySelectorAll('button[data-symbol]');
+    expect(buttons).toHaveLength(CARE_SYMBOLS.length);
+    // Named families, because 44 unlabelled pictograms in one block is not
+    // something a non-technical operator can work through.
+    for (const heading of ['Washing', 'Bleaching', 'Tumble drying', 'Natural drying',
+      'Ironing', 'Dry cleaning', 'Wet cleaning']) {
+      expect(container.textContent).toContain(heading);
+    }
+  });
+
+  it('lets one tag say "no tumble dryer" and "dry flat" at the same time', async () => {
+    await render();
+    await act(async () => container.querySelector<HTMLButtonElement>('button[data-symbol="TUMBLE_NO"]')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('button[data-symbol="DRY_FLAT"]')!.click());
+
+    expect(container.querySelector('button[data-symbol="TUMBLE_NO"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(container.querySelector('button[data-symbol="DRY_FLAT"]')?.getAttribute('aria-pressed')).toBe('true');
   });
 
   it('deselects a symbol when it is clicked again', async () => {
     await render();
-    const wash30 = () => container.querySelector<HTMLButtonElement>('button[aria-label="WASH_30"]')!;
+    const wash30 = () => container.querySelector<HTMLButtonElement>('button[data-symbol="WASH_30"]')!;
     await act(async () => wash30().click());
     await act(async () => wash30().click());
     expect(wash30().getAttribute('aria-pressed')).toBe('false');
@@ -307,8 +332,8 @@ describe('PrintOrderPanel', () => {
   it('sends the chosen symbols to the fabric lane', async () => {
     await render();
     await fillMinimalOrder(40);
-    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="WASH_30"]')!.click());
-    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="IRON_LOW"]')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('button[data-symbol="WASH_30"]')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('button[data-symbol="IRON_LOW"]')!.click());
     await act(async () => {
       const boxes = Array.from(container.querySelectorAll<HTMLInputElement>('input[type=checkbox]'));
       boxes[1].click(); // fabric tags only, so no tear pause before the first run

@@ -313,34 +313,98 @@ export interface InfoLabelData {
 }
 
 /**
- * ISO 3758 textile care symbols, in the five families that appear on a garment
- * tag (wash · bleach · tumble dry · iron · professional care). The renderer
- * draws each one as vector art, so they survive being rasterised at 203 dpi
- * without depending on a symbol font being installed on the machine.
+ * Care symbol families, in the order ISO 3758 puts them on a garment tag:
+ * washing, bleaching, drying, ironing, professional care. Drying splits in two
+ * because a tag routinely carries one instruction from each — "do not tumble
+ * dry" next to "dry flat" is the normal marking on knitwear — and professional
+ * care splits into dry cleaning (solvent) and wet cleaning (water), which are
+ * likewise independent statements.
+ *
+ * `symbols` doubles as the exclusivity rule: at most one from a family, which
+ * is what the standard means by a family. Order inside a family is ISO's own
+ * (hottest/most permissive first, "do not" last), and the order symbols are
+ * listed here is the order they print in.
  */
-export const CARE_SYMBOLS = [
-  'WASH_30', 'WASH_40', 'WASH_60', 'WASH_HAND', 'WASH_NO',
-  'BLEACH_OK', 'BLEACH_NO',
-  // DRY_ANY is the bare square: "dry" with no method specified. It is what
-  // most off-the-shelf garment tags carry, so it leads the drying group.
-  'DRY_ANY', 'TUMBLE_LOW', 'TUMBLE_NORMAL', 'TUMBLE_NO', 'DRY_LINE', 'DRY_FLAT',
-  'IRON_LOW', 'IRON_MEDIUM', 'IRON_HIGH', 'IRON_NO',
-  // DRYCLEAN_ANY is the bare circle: professional care, any solvent.
-  'DRYCLEAN_ANY', 'DRYCLEAN_P', 'DRYCLEAN_F', 'DRYCLEAN_NO',
+export const CARE_SYMBOL_FAMILIES = [
+  {
+    key: 'wash',
+    // Table 1: six wash temperatures, each available as a normal process and,
+    // where the standard allows it, a mild (one bar) or very mild (two bars)
+    // one. The bars tell the launderer to reduce agitation and spin, not to
+    // change the temperature.
+    symbols: [
+      'WASH_95', 'WASH_95_MILD',
+      'WASH_70',
+      'WASH_60', 'WASH_60_MILD',
+      'WASH_50', 'WASH_50_MILD',
+      'WASH_40', 'WASH_40_MILD', 'WASH_40_VERY_MILD',
+      'WASH_30', 'WASH_30_MILD', 'WASH_30_VERY_MILD',
+      'WASH_HAND', 'WASH_NO',
+    ],
+  },
+  {
+    key: 'bleach',
+    // BLEACH_OK is the bare triangle: any bleach. The striped triangle is the
+    // oxygen-only restriction that replaced the old crossed-out "CL".
+    symbols: ['BLEACH_OK', 'BLEACH_OXYGEN', 'BLEACH_NO'],
+  },
+  {
+    key: 'tumble',
+    // DRY_ANY is the bare square: "may be dried", with no method named. It is
+    // what most off-the-shelf tags carry, so it leads the family.
+    symbols: ['DRY_ANY', 'TUMBLE_NORMAL', 'TUMBLE_LOW', 'TUMBLE_NO'],
+  },
+  {
+    key: 'natural',
+    // Vertical lines mean hung, horizontal mean laid flat; a second line means
+    // dried dripping wet, unspun. The shade variants add the diagonal stroke in
+    // the top-left corner.
+    symbols: [
+      'DRY_LINE', 'DRY_DRIP', 'DRY_FLAT', 'DRY_FLAT_DRIP',
+      'DRY_LINE_SHADE', 'DRY_DRIP_SHADE', 'DRY_FLAT_SHADE', 'DRY_FLAT_DRIP_SHADE',
+    ],
+  },
+  {
+    key: 'iron',
+    // Dots are the soleplate ceiling: three 200 °C, two 150 °C, one 110 °C.
+    symbols: ['IRON_HIGH', 'IRON_MEDIUM', 'IRON_LOW', 'IRON_NO'],
+  },
+  {
+    key: 'dryclean',
+    // DRYCLEAN_ANY is the bare circle: professional care, solvent unspecified.
+    // P is tetrachloroethylene, F is hydrocarbon; a bar means a mild process.
+    symbols: [
+      'DRYCLEAN_ANY',
+      'DRYCLEAN_P', 'DRYCLEAN_P_MILD',
+      'DRYCLEAN_F', 'DRYCLEAN_F_MILD',
+      'DRYCLEAN_NO',
+    ],
+  },
+  {
+    key: 'wetclean',
+    symbols: ['WETCLEAN_W', 'WETCLEAN_W_MILD', 'WETCLEAN_W_VERY_MILD', 'WETCLEAN_NO'],
+  },
 ] as const;
-export type CareSymbol = typeof CARE_SYMBOLS[number];
 
 /**
- * Mutually exclusive choices within one ISO 3758 instruction family. Line
- * and flat drying remain independent until the workshop approves that policy.
+ * ISO 3758:2012 textile care symbols. The renderer draws each one as vector
+ * art, so they survive being rasterised at 203 dpi without depending on a
+ * symbol font being installed on the machine.
  */
-export const FABRIC_TAG_EXCLUSIVE_CARE_SYMBOL_GROUPS: readonly (readonly CareSymbol[])[] = [
-  ['WASH_30', 'WASH_40', 'WASH_60', 'WASH_HAND', 'WASH_NO'],
-  ['BLEACH_OK', 'BLEACH_NO'],
-  ['TUMBLE_LOW', 'TUMBLE_NORMAL', 'TUMBLE_NO'],
-  ['IRON_LOW', 'IRON_MEDIUM', 'IRON_HIGH', 'IRON_NO'],
-  ['DRYCLEAN_ANY', 'DRYCLEAN_P', 'DRYCLEAN_F', 'DRYCLEAN_NO'],
-];
+export const CARE_SYMBOLS = CARE_SYMBOL_FAMILIES
+  .flatMap((family) => family.symbols) as readonly CareSymbol[];
+
+export type CareSymbolFamilyKey = typeof CARE_SYMBOL_FAMILIES[number]['key'];
+export type CareSymbol = typeof CARE_SYMBOL_FAMILIES[number]['symbols'][number];
+
+/**
+ * Mutually exclusive choices within one ISO 3758 instruction family — the
+ * families above, nothing more. Line and flat drying used to sit outside this
+ * rule while the policy was open; the fabric workshop settled it on 02/09/2026,
+ * and the standard agrees: a garment is hung or it is laid flat, not both.
+ */
+export const FABRIC_TAG_EXCLUSIVE_CARE_SYMBOL_GROUPS: readonly (readonly CareSymbol[])[] =
+  CARE_SYMBOL_FAMILIES.map((family) => family.symbols);
 
 /** Physical runs above this count require an explicit operator confirmation. */
 export const FABRIC_TAG_CONFIRM_THRESHOLD = 100;

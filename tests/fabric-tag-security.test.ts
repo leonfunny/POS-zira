@@ -152,9 +152,14 @@ describe('fabric tag main-process trust boundary', () => {
     expect(() => parseFabricTagLogoDataUrl(headerOnlyPng)).toThrow(/image data is missing/i);
   });
 
-  it('keeps line and flat drying independent until that workshop policy is approved', () => {
-    expect(parseFabricTagData(validTag({ careSymbols: ['DRY_LINE', 'DRY_FLAT'] })).careSymbols)
-      .toEqual(['DRY_LINE', 'DRY_FLAT']);
+  it('rejects two natural-drying methods on one tag', () => {
+    // Settled with the fabric workshop on 02/09/2026 and matching ISO 3758: a
+    // garment is hung or it is laid flat. Tumble drying stays a separate
+    // family, so "do not tumble dry" alongside "dry flat" is still valid.
+    expect(() => parseFabricTagData(validTag({ careSymbols: ['DRY_LINE', 'DRY_FLAT'] })))
+      .toThrow(/careSymbols/);
+    expect(parseFabricTagData(validTag({ careSymbols: ['TUMBLE_NO', 'DRY_FLAT'] })).careSymbols)
+      .toEqual(['TUMBLE_NO', 'DRY_FLAT']);
   });
 
   it('stops invalid input before invoking the renderer/spool operation', async () => {

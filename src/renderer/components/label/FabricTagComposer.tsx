@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CARE_SYMBOLS,
   FABRIC_TAG_CONFIRM_THRESHOLD,
+  CARE_SYMBOL_FAMILIES,
   FABRIC_TAG_EXCLUSIVE_CARE_SYMBOL_GROUPS,
   FABRIC_TAG_LIMITS,
   FABRIC_TAG_RASTER_MIME_TYPES,
@@ -9,7 +10,7 @@ import {
   type FabricTagData,
   type FabricTagRasterMime,
 } from '../../../shared/types';
-import { careSymbolSvg } from '../../../shared/care-symbols';
+import { careSymbolLabel, careSymbolSvg } from '../../../shared/care-symbols';
 import { readRasterImageDimensions } from '../../../shared/fabric-tag-image';
 import { parseProductMoneyInputToGrosze } from '../../../shared/product-money';
 import rlog from '../../utils/logger';
@@ -26,15 +27,6 @@ import ConfirmActionDialog from '../pos/ConfirmActionDialog';
  * is selected here is literally what comes out of the machine.
  */
 
-/** Grouped the way a garment tag reads top to bottom. */
-const SYMBOL_GROUPS: { key: string; symbols: CareSymbol[] }[] = [
-  { key: 'wash', symbols: ['WASH_30', 'WASH_40', 'WASH_60', 'WASH_HAND', 'WASH_NO'] },
-  { key: 'bleach', symbols: ['BLEACH_OK', 'BLEACH_NO'] },
-  { key: 'dry', symbols: ['DRY_ANY', 'TUMBLE_LOW', 'TUMBLE_NORMAL', 'TUMBLE_NO', 'DRY_LINE', 'DRY_FLAT'] },
-  { key: 'iron', symbols: ['IRON_LOW', 'IRON_MEDIUM', 'IRON_HIGH', 'IRON_NO'] },
-  { key: 'professional', symbols: ['DRYCLEAN_ANY', 'DRYCLEAN_P', 'DRYCLEAN_F', 'DRYCLEAN_NO'] },
-];
-
 interface FabricTagComposerProps {
   t: (key: string) => string;
   /** Tag media size in mm, used only to scale the on-screen preview. */
@@ -42,6 +34,8 @@ interface FabricTagComposerProps {
   labelHeightMm: number;
   /** False while the FABRIC_TAG slot is disabled or has no printer selected. */
   ready: boolean;
+  /** Picks the language the care-symbol descriptions are shown in. */
+  language?: string;
 }
 
 type Status = { type: 'idle' | 'working' | 'ok' | 'error'; message: string };
@@ -49,7 +43,13 @@ type Status = { type: 'idle' | 'working' | 'ok' | 'error'; message: string };
 const inputClass = 'w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-brand-300 focus:border-brand-400 outline-none';
 const labelClass = 'block text-xs font-medium text-slate-600 mb-1';
 
-export default function FabricTagComposer({ t, labelWidthMm, labelHeightMm, ready }: FabricTagComposerProps) {
+export default function FabricTagComposer({
+  t,
+  labelWidthMm,
+  labelHeightMm,
+  ready,
+  language = 'en',
+}: FabricTagComposerProps) {
   const [brandName, setBrandName] = useState('');
   const [logoDataUrl, setLogoDataUrl] = useState<string | null>(null);
   const [size, setSize] = useState('');
@@ -332,7 +332,7 @@ export default function FabricTagComposer({ t, labelWidthMm, labelHeightMm, read
       <div>
         <label className={labelClass}>{t('fabricTag.care')}</label>
         <div className="space-y-1">
-          {SYMBOL_GROUPS.map((group) => (
+          {CARE_SYMBOL_FAMILIES.map((group) => (
             <div key={group.key} className="flex flex-wrap gap-1">
               {group.symbols.map((symbol) => {
                 const selected = careSymbols.includes(symbol);
@@ -340,7 +340,9 @@ export default function FabricTagComposer({ t, labelWidthMm, labelHeightMm, read
                   <button
                     key={symbol}
                     type="button"
-                    title={symbol}
+                    title={careSymbolLabel(symbol, language)}
+                    aria-label={careSymbolLabel(symbol, language)}
+                    data-symbol={symbol}
                     onClick={() => toggleSymbol(symbol)}
                     aria-pressed={selected}
                     className={`w-9 h-9 flex items-center justify-center rounded border transition-colors cursor-pointer ${

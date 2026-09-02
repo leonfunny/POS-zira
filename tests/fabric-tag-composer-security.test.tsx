@@ -108,10 +108,10 @@ afterEach(async () => {
 
 describe('FabricTagComposer safety policy', () => {
   it('behaves like radio buttons inside exclusive care families', async () => {
-    const wash30 = container.querySelector<HTMLButtonElement>('button[title="WASH_30"]')!;
-    const wash40 = container.querySelector<HTMLButtonElement>('button[title="WASH_40"]')!;
-    const dryLine = container.querySelector<HTMLButtonElement>('button[title="DRY_LINE"]')!;
-    const dryFlat = container.querySelector<HTMLButtonElement>('button[title="DRY_FLAT"]')!;
+    const wash30 = container.querySelector<HTMLButtonElement>('button[data-symbol="WASH_30"]')!;
+    const wash40 = container.querySelector<HTMLButtonElement>('button[data-symbol="WASH_40"]')!;
+    const dryLine = container.querySelector<HTMLButtonElement>('button[data-symbol="DRY_LINE"]')!;
+    const dryFlat = container.querySelector<HTMLButtonElement>('button[data-symbol="DRY_FLAT"]')!;
 
     await act(async () => wash30.click());
     expect(wash30.getAttribute('aria-pressed')).toBe('true');
@@ -119,12 +119,10 @@ describe('FabricTagComposer safety policy', () => {
     expect(wash30.getAttribute('aria-pressed')).toBe('false');
     expect(wash40.getAttribute('aria-pressed')).toBe('true');
 
-    // Workshop policy for these two drying methods remains intentionally open.
-    await act(async () => {
-      dryLine.click();
-      dryFlat.click();
-    });
-    expect(dryLine.getAttribute('aria-pressed')).toBe('true');
+    // Natural drying is a family too: hung or flat, not both.
+    await act(async () => dryLine.click());
+    await act(async () => dryFlat.click());
+    expect(dryLine.getAttribute('aria-pressed')).toBe('false');
     expect(dryFlat.getAttribute('aria-pressed')).toBe('true');
   });
 

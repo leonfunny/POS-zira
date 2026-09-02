@@ -13,10 +13,12 @@ import {
 } from '../../../shared/label-print-order';
 import {
   CARE_SYMBOLS,
+  CARE_SYMBOL_FAMILIES,
   CareSymbol,
+  CareSymbolFamilyKey,
   FABRIC_TAG_EXCLUSIVE_CARE_SYMBOL_GROUPS,
 } from '../../../shared/types';
-import { careSymbolSvg } from '../../../shared/care-symbols';
+import { careSymbolLabel, careSymbolSvg } from '../../../shared/care-symbols';
 import { PrintProgress, runPrintPlan } from './print-order-runner';
 import {
   SavedPrintOrder,
@@ -28,19 +30,6 @@ import {
   saveDraft,
   saveOrder,
 } from './print-order-storage';
-
-/**
- * Symbols grouped the way they are read on a tag. Same grouping the composer
- * uses; kept as its own list because the picker's rows are a reading order, not
- * the exclusivity rule (drying has two independent families in one row).
- */
-const SYMBOL_GROUPS: { key: string; symbols: CareSymbol[] }[] = [
-  { key: 'wash', symbols: ['WASH_30', 'WASH_40', 'WASH_60', 'WASH_HAND', 'WASH_NO'] },
-  { key: 'bleach', symbols: ['BLEACH_OK', 'BLEACH_NO'] },
-  { key: 'dry', symbols: ['DRY_ANY', 'TUMBLE_LOW', 'TUMBLE_NORMAL', 'TUMBLE_NO', 'DRY_LINE', 'DRY_FLAT'] },
-  { key: 'iron', symbols: ['IRON_LOW', 'IRON_MEDIUM', 'IRON_HIGH', 'IRON_NO'] },
-  { key: 'professional', symbols: ['DRYCLEAN_ANY', 'DRYCLEAN_P', 'DRYCLEAN_F', 'DRYCLEAN_NO'] },
-];
 
 /** Sizes staff reach for most; the field stays free text for anything else. */
 const SIZE_SUGGESTIONS = ['S', 'M', 'L', 'XL', '2XL', 'S/M', 'L/XL', '44/46'];
@@ -54,6 +43,7 @@ interface Copy {
   materials: string;
   materialsHint: string;
   care: string;
+  careGroup: Record<CareSymbolFamilyKey, string>;
   careText: string;
   careTextHint: string;
   sizes: string;
@@ -100,6 +90,7 @@ const COPY: Record<string, Copy> = {
     materials: 'Chất liệu',
     materialsHint: 'Bấm chọn rồi gõ số phần trăm',
     care: 'Ký hiệu giặt',
+    careGroup: { wash: 'Giặt', bleach: 'Tẩy', tumble: 'Sấy máy', natural: 'Phơi', iron: 'Là', dryclean: 'Giặt khô', wetclean: 'Giặt ướt' },
     careText: 'Dòng ghi thêm',
     careTextHint: 'Ví dụ: NATURALNY LEN',
     sizes: 'Size',
@@ -151,6 +142,7 @@ const COPY: Record<string, Copy> = {
     materials: 'Skład',
     materialsHint: 'Kliknij materiał i wpisz procent',
     care: 'Symbole prania',
+    careGroup: { wash: 'Pranie', bleach: 'Wybielanie', tumble: 'Suszarka', natural: 'Suszenie', iron: 'Prasowanie', dryclean: 'Czyszczenie', wetclean: 'Pranie wodne' },
     careText: 'Dodatkowy wiersz',
     careTextHint: 'Np. NATURALNY LEN',
     sizes: 'Rozmiary',
@@ -202,6 +194,7 @@ const COPY: Record<string, Copy> = {
     materials: 'Composition',
     materialsHint: 'Tap a material and type the percentage',
     care: 'Care symbols',
+    careGroup: { wash: 'Washing', bleach: 'Bleaching', tumble: 'Tumble drying', natural: 'Natural drying', iron: 'Ironing', dryclean: 'Dry cleaning', wetclean: 'Wet cleaning' },
     careText: 'Extra line',
     careTextHint: 'e.g. NATURALNY LEN',
     sizes: 'Sizes',
@@ -538,27 +531,36 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
 
       <section className="mb-4 rounded-md border border-slate-200 p-3">
         <h3 className="mb-2 text-sm font-bold text-slate-700">{copy.care}</h3>
-        <div className="space-y-1">
-          {SYMBOL_GROUPS.map((group) => (
-            <div key={group.key} className="flex flex-wrap gap-1.5">
-              {group.symbols.map((symbol) => (
-                <button
-                  key={symbol}
-                  type="button"
-                  title={symbol}
-                  aria-label={symbol}
-                  onClick={() => toggleCareSymbol(symbol)}
-                  aria-pressed={order.careSymbols.includes(symbol)}
-                  className={`flex h-11 w-11 items-center justify-center rounded border ${
-                    order.careSymbols.includes(symbol)
-                      ? 'border-emerald-600 bg-emerald-50 text-emerald-800'
-                      : 'border-slate-200 bg-white text-slate-400 hover:border-slate-300 hover:text-slate-600'
-                  }`}
-                  // The picker draws the same vector art the tag prints, so what
-                  // staff choose is literally what comes out of the machine.
-                  dangerouslySetInnerHTML={{ __html: careSymbolSvg(symbol, 26) }}
-                />
-              ))}
+        <div className="space-y-2">
+          {CARE_SYMBOL_FAMILIES.map((group) => (
+            <div key={group.key}>
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                {copy.careGroup[group.key]}
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {group.symbols.map((symbol) => (
+                  <button
+                    key={symbol}
+                    type="button"
+                    // Hover text and the accessible name say what the symbol
+                    // means; `data-symbol` keeps a stable hook for tests and for
+                    // anyone reading the DOM.
+                    title={careSymbolLabel(symbol, language)}
+                    aria-label={careSymbolLabel(symbol, language)}
+                    data-symbol={symbol}
+                    onClick={() => toggleCareSymbol(symbol)}
+                    aria-pressed={order.careSymbols.includes(symbol)}
+                    className={`flex h-11 w-11 items-center justify-center rounded border ${
+                      order.careSymbols.includes(symbol)
+                        ? 'border-emerald-600 bg-emerald-50 text-emerald-800'
+                        : 'border-slate-200 bg-white text-slate-400 hover:border-slate-300 hover:text-slate-600'
+                    }`}
+                    // The picker draws the same vector art the tag prints, so what
+                    // staff choose is literally what comes out of the machine.
+                    dangerouslySetInnerHTML={{ __html: careSymbolSvg(symbol, 26) }}
+                  />
+                ))}
+              </div>
             </div>
           ))}
         </div>
