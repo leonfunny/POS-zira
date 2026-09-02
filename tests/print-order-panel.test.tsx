@@ -248,6 +248,76 @@ describe('PrintOrderPanel', () => {
     expect(text('[data-testid="grand-total"]')).toBe('40');
   });
 
+  it('saves an edit back into the order it was opened from', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => buttonWithText(container, 'Save order').click());
+
+    await changeInput(input(container, 'input[aria-label="CZEKOLADA S"]'), '55');
+    await act(async () => buttonWithText(container, 'Save order').click());
+
+    expect(container.querySelectorAll('[data-saved-order]')).toHaveLength(1);
+    await act(async () => buttonWithText(container, 'New order').click());
+    await act(async () => buttonWithText(container, 'Open').click());
+    expect(text('[data-testid="grand-total"]')).toBe('55');
+  });
+
+  it('stops claiming "Saved" as soon as the sheet is edited again', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => buttonWithText(container, 'Save order').click());
+    expect(() => buttonWithText(container, 'Saved')).not.toThrow();
+
+    await changeInput(input(container, 'input[aria-label="CZEKOLADA S"]'), '55');
+    expect(() => buttonWithText(container, 'Save order')).not.toThrow();
+  });
+
+  it('still saves back into the same order after the app is restarted', async () => {
+    // The bug staff hit: an order edited the next morning was filed as a twin
+    // with an identical name, because the panel forgot which order it held.
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => buttonWithText(container, 'Save order').click());
+
+    const first = root!;
+    await act(async () => first.unmount());
+    root = null;
+    await render();
+
+    await changeInput(input(container, 'input[aria-label="CZEKOLADA S"]'), '55');
+    await act(async () => buttonWithText(container, 'Save order').click());
+
+    expect(container.querySelectorAll('[data-saved-order]')).toHaveLength(1);
+  });
+
+  it('marks which saved order is the one on screen', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => buttonWithText(container, 'Save order').click());
+    expect(container.querySelector('[data-saved-order][data-open="true"]')).not.toBeNull();
+
+    await act(async () => buttonWithText(container, 'New order').click());
+    expect(container.querySelector('[data-saved-order][data-open="true"]')).toBeNull();
+  });
+
+  it('scrolls back to the top when a sheet is swapped underneath the reader', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => buttonWithText(container, 'Save order').click());
+
+    // The Open and New buttons sit at the bottom of a long scrolling panel.
+    const panel = container.querySelector<HTMLDivElement>('[data-testid="print-order-panel"]')!;
+    const scrollTo = vi.fn();
+    panel.scrollTo = scrollTo as unknown as HTMLDivElement['scrollTo'];
+
+    await act(async () => buttonWithText(container, 'New order').click());
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0 });
+
+    scrollTo.mockClear();
+    await act(async () => buttonWithText(container, 'Open').click());
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0 });
+  });
+
   it('refuses to print when the bridge is missing instead of throwing', async () => {
     Object.defineProperty(window, 'electronAPI', {
       configurable: true,

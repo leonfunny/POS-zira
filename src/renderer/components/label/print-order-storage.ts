@@ -8,6 +8,12 @@ import { LabelPrintOrder, createEmptyOrder } from '../../../shared/label-print-o
 
 const DRAFT_KEY = 'zira.labelPrintOrder.draft';
 const SAVED_KEY = 'zira.labelPrintOrder.saved';
+/**
+ * Which saved order the draft on screen belongs to. Without it, reopening the
+ * app forgets the link and Save files a second copy under the same name, which
+ * is what staff hit after editing an order the next morning.
+ */
+const DRAFT_ID_KEY = 'zira.labelPrintOrder.draftId';
 export const SAVED_ORDER_LIMIT = 50;
 
 export interface SavedPrintOrder {
@@ -75,9 +81,20 @@ export function clearDraft(): void {
   if (!s) return;
   try {
     s.removeItem(DRAFT_KEY);
+    s.removeItem(DRAFT_ID_KEY);
   } catch {
     /* ignore */
   }
+}
+
+/** Remembers which saved order the draft is, so Save overwrites it. */
+export function saveDraftId(id: string): void {
+  write(DRAFT_ID_KEY, id);
+}
+
+export function loadDraftId(): string | null {
+  const stored = read<unknown>(DRAFT_ID_KEY, null);
+  return typeof stored === 'string' && stored ? stored : null;
 }
 
 export function listSavedOrders(): SavedPrintOrder[] {

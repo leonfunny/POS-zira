@@ -6,6 +6,7 @@ import {
   resolveEnterSubmission,
   trackScanChain,
 } from './scan-wedge';
+import { TOUCH_KEYBOARD_ENABLED } from '../../hooks/useKeyboardManager';
 
 export interface SearchBarHandle {
   focus: () => void;
@@ -120,19 +121,24 @@ const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function SearchBar
 
   return (
     <div className="flex items-center gap-2">
-      <button
-        type="button"
-        onMouseDown={(e) => e.preventDefault()}
-        onClick={handleKeyboardToggle}
-        aria-label="Toggle on-screen keyboard"
-        title="Toggle on-screen keyboard"
-        className="shrink-0 h-12 w-12 flex items-center justify-center rounded-md bg-white border border-slate-300 text-slate-600 hover:border-brand-400 hover:text-brand-700 hover:bg-brand-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 shadow-sm cursor-pointer touch-manipulation"
-      >
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-          <rect x="3" y="6" width="18" height="12" rx="2" strokeWidth={1.8} />
-          <path strokeLinecap="round" strokeWidth={1.8} d="M7 10h.01M11 10h.01M15 10h.01M7 14h.01M11 14h.01M15 14h.01M8 17h8" />
-        </svg>
-      </button>
+      {/* Hidden when the on-screen keyboard is off: the toggle would summon a
+          panel that cannot appear, and a button that does nothing is worse
+          than no button. */}
+      {TOUCH_KEYBOARD_ENABLED && (
+        <button
+          type="button"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={handleKeyboardToggle}
+          aria-label="Toggle on-screen keyboard"
+          title="Toggle on-screen keyboard"
+          className="shrink-0 h-12 w-12 flex items-center justify-center rounded-md bg-white border border-slate-300 text-slate-600 hover:border-brand-400 hover:text-brand-700 hover:bg-brand-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 shadow-sm cursor-pointer touch-manipulation"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="3" y="6" width="18" height="12" rx="2" strokeWidth={1.8} />
+            <path strokeLinecap="round" strokeWidth={1.8} d="M7 10h.01M11 10h.01M15 10h.01M7 14h.01M11 14h.01M15 14h.01M8 17h8" />
+          </svg>
+        </button>
+      )}
       <div className="relative flex-1">
         <label htmlFor={searchId} className="sr-only">{placeholder || 'Search products'}</label>
         <svg

@@ -119,23 +119,110 @@ function esc(value: string): string {
 }
 
 /** Build the standalone HTML document handed to the Windows print path. */
+const MM_PER_PT = 25.4 / 72;
+/** Arial's average advance across mixed-case Latin text is close to 0.55 em. */
+const AVG_CHAR_EM = 0.55;
+/** Below this the thermal head stops resolving the strokes at 203 dpi. */
+const MIN_TEXT_PT = 5;
+const LINE_HEIGHT = 1.2;
+
+function linesNeeded(text: string, pt: number, usableMm: number): number {
+  if (!text) return 0;
+  return Math.max(1, Math.ceil((text.length * pt * MM_PER_PT * AVG_CHAR_EM) / usableMm));
+}
+
+/**
+ * The fixed parts of the label: padding, the barcode block, and the base type
+ * sizes. Shared with the HTML builder so the space the text is measured against
+ * is the space it is actually given.
+ */
+function stickerGeometry(sticker: PackagingSticker) {
+  const { widthMm: w, heightMm: h } = sticker;
+  const padX = clamp(w * 0.05, 1, 3);
+  const padY = clamp(h * 0.06, 0.8, 2.5);
+  const barcodeHeightMm = clamp(h * 0.34, 6, 14);
+  return {
+    padX,
+    padY,
+    barcodeHeightMm,
+    usableMm: w - padX * 2,
+    // What the barcode, the padding and the two inter-row margins leave.
+    budgetMm: h - padY * 2 - barcodeHeightMm - padY * 0.6 - padY * 0.5,
+    base: {
+      customerPt: clamp(h * 0.115, 6.5, 11),
+      codePt: clamp(h * 0.105, 6, 10),
+      stylePt: clamp(h * 0.12, 6.5, 11.5),
+      colorPt: clamp(h * 0.115, 6.5, 11),
+    },
+  };
+}
+
+export interface PackagingStickerTextLayout {
+  customerPt: number;
+  codePt: number;
+  stylePt: number;
+  colorPt: number;
+  /** What the wrapped text is expected to occupy, in millimetres. */
+  textMm: number;
+  /** What is left for text after the barcode and the padding take their share. */
+  budgetMm: number;
+}
+
+/**
+ * Decides the type sizes for one sticker.
+ *
+ * The label is a fixed 50x30 with `overflow:hidden`, so text that needs more
+ * room than that is not wrapped onto a second sticker — it is silently cut off,
+ * and nobody notices until a carton reaches the customer with half a style name
+ * on it. Long lines are therefore wrapped and the type stepped down until the
+ * estimate fits, rather than left to overflow.
+ */
+export function layoutPackagingStickerText(
+  sticker: PackagingSticker,
+): PackagingStickerTextLayout {
+  const { base, usableMm, budgetMm } = stickerGeometry(sticker);
+  const styleLine = [sticker.styleName, sticker.styleCode].filter(Boolean).join(' - ');
+  const colorLine = [sticker.colorName, sticker.sizeText].filter(Boolean).join(' \u00b7 ');
+  const rows: Array<[string, number]> = [
+    [sticker.customerName, base.customerPt],
+    [sticker.code, base.codePt],
+    [styleLine, base.stylePt],
+    [colorLine, base.colorPt],
+  ];
+
+  const heightAt = (scale: number) => rows.reduce((sum, [text, pt]) => {
+    const size = Math.max(MIN_TEXT_PT, pt * scale);
+    return sum + linesNeeded(text, size, usableMm) * size * MM_PER_PT * LINE_HEIGHT;
+  }, 0);
+
+  let scale = 1;
+  // 5% at a time: fine enough that nothing shrinks further than it must, and
+  // bounded so a pathological input cannot loop.
+  while (scale > 0.5 && heightAt(scale) > budgetMm) scale -= 0.05;
+
+  const at = (pt: number) => Math.max(MIN_TEXT_PT, Number((pt * scale).toFixed(2)));
+  return {
+    customerPt: at(base.customerPt),
+    codePt: at(base.codePt),
+    stylePt: at(base.stylePt),
+    colorPt: at(base.colorPt),
+    textMm: heightAt(scale),
+    budgetMm,
+  };
+}
+
 export function buildPackagingStickerHtml(sticker: PackagingSticker): string {
   const { widthMm: w, heightMm: h } = sticker;
 
   // Everything scales off the label height so 50x30 and larger stock both work.
-  const customerPt = clamp(h * 0.115, 6.5, 11);
-  const codePt = clamp(h * 0.105, 6, 10);
-  const stylePt = clamp(h * 0.12, 6.5, 11.5);
-  const colorPt = clamp(h * 0.115, 6.5, 11);
-  const padX = clamp(w * 0.05, 1, 3);
-  const padY = clamp(h * 0.06, 0.8, 2.5);
+  const { padX, padY, barcodeHeightMm } = stickerGeometry(sticker);
+  const { customerPt, codePt, stylePt, colorPt } = layoutPackagingStickerText(sticker);
 
   // A narrow module of ~0.25mm prints crisply at 203 dpi (2 dots).
   const barcodeWidthMm = w - padX * 2;
   const symbol = encodeCode128(sticker.code);
   const totalModules = symbol.modules.length + 20; // + quiet zones
   const moduleWidth = barcodeWidthMm / totalModules;
-  const barcodeHeightMm = clamp(h * 0.34, 6, 14);
   const svg = code128Svg(symbol, {
     moduleWidth,
     height: barcodeHeightMm,
@@ -161,6 +248,9 @@ export function buildPackagingStickerHtml(sticker: PackagingSticker): string {
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
 @page { size: ${w}mm ${h}mm; margin: 0; }
 * { margin:0; padding:0; box-sizing:border-box; }
+/* A long style code has no spaces to break at; without this it runs off the
+   edge of the label and the tail is lost to overflow:hidden. */
+.customer, .code, .style, .color { overflow-wrap:anywhere; word-break:break-word; max-width:100%; }
 body {
   width:${w}mm;
   height:${h}mm;

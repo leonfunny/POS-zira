@@ -31,7 +31,9 @@ import {
   describeOrder,
   listSavedOrders,
   loadDraft,
+  loadDraftId,
   saveDraft,
+  saveDraftId,
   saveOrder,
 } from './print-order-storage';
 
@@ -260,18 +262,31 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
 
   const [order, setOrder] = useState<LabelPrintOrder>(() => loadDraft());
   const [savedOrders, setSavedOrders] = useState<SavedPrintOrder[]>(() => listSavedOrders());
-  const [orderId, setOrderId] = useState<string>(() => nextId('order'));
+  // Which saved order is on screen. Restored from storage so that editing an
+  // order the next morning updates it instead of filing a twin beside it.
+  const [orderId, setOrderId] = useState<string>(() => loadDraftId() ?? nextId('order'));
   const [progress, setProgress] = useState<PrintProgress | null>(null);
   const [result, setResult] = useState<{ type: string; message: string } | null>(null);
   const [savedNotice, setSavedNotice] = useState(false);
 
+  const scrollRef = useRef<HTMLDivElement | null>(null);
   const printInFlight = useRef(false);
   const stopRequested = useRef(false);
   const decisionResolver = useRef<((decision: 'continue' | 'stop') => void) | null>(null);
 
   useEffect(() => {
     saveDraft(order);
+    // Any change to the sheet un-says "Saved". Hung off the order itself rather
+    // than off each handler: typing in the grid, picking a symbol or adding a
+    // size all went through setOrder directly, so the button kept claiming the
+    // edit was filed when it was not. Saving does not touch `order`, so this
+    // does not fight the notice it just set.
+    setSavedNotice(false);
   }, [order]);
+
+  useEffect(() => {
+    saveDraftId(orderId);
+  }, [orderId]);
 
   useEffect(
     () => () => {
@@ -292,7 +307,6 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
   const patch = useCallback((changes: Partial<LabelPrintOrder>) => {
     setOrder((current) => ({ ...current, ...changes }));
     setResult(null);
-    setSavedNotice(false);
   }, []);
 
   const setCell = (rowId: string, sizeId: string, value: string) => {
@@ -431,11 +445,17 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
     setSavedNotice(true);
   };
 
+  // Switching sheets from the saved list at the bottom leaves the reader
+  // looking at the list, not at the order that just replaced everything above.
+  const scrollToTop = () => scrollRef.current?.scrollTo({ top: 0 });
+
   const handleOpen = (saved: SavedPrintOrder) => {
     setOrder(saved.order);
     setOrderId(saved.id);
     setProgress(null);
     setResult(null);
+    setSavedNotice(false);
+    scrollToTop();
   };
 
   const handleNew = () => {
@@ -444,6 +464,8 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
     setOrderId(nextId('order'));
     setProgress(null);
     setResult(null);
+    setSavedNotice(false);
+    scrollToTop();
   };
 
   const isPrinting = progress?.type === 'printing';
@@ -452,6 +474,7 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
 
   return (
     <div
+      ref={scrollRef}
       className="h-full min-h-0 overflow-y-auto rounded-lg border border-slate-200 bg-white p-4"
       data-testid="print-order-panel"
       aria-hidden={!active}
@@ -864,7 +887,14 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
         ) : (
           <ul className="space-y-1">
             {savedOrders.map((saved) => (
-              <li key={saved.id} className="flex items-center gap-2 text-sm">
+              <li
+                key={saved.id}
+                data-saved-order={saved.id}
+                data-open={saved.id === orderId ? 'true' : undefined}
+                className={`flex items-center gap-2 rounded px-1 text-sm ${
+                  saved.id === orderId ? 'bg-emerald-50 font-bold text-emerald-900' : ''
+                }`}
+              >
                 <span className="flex-1 truncate">{describeOrder(saved.order)}</span>
                 <button
                   type="button"

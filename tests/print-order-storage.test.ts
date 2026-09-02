@@ -8,6 +8,8 @@ import {
   loadDraft,
   saveDraft,
   saveOrder,
+  loadDraftId,
+  saveDraftId,
 } from '../src/renderer/components/label/print-order-storage';
 import { createEmptyOrder } from '../src/shared/label-print-order';
 
@@ -165,5 +167,37 @@ describe('describeOrder', () => {
 
   it('never returns an empty name', () => {
     expect(describeOrder(createEmptyOrder())).toBeTruthy();
+  });
+});
+
+describe('the draft remembers which saved order it is', () => {
+  it('starts with no order attached', () => {
+    expect(loadDraftId()).toBeNull();
+  });
+
+  it('round-trips the id, so Save after a restart overwrites the same order', () => {
+    saveDraftId('order-7');
+    expect(loadDraftId()).toBe('order-7');
+  });
+
+  it('lets go of the order when the sheet is cleared for a new one', () => {
+    saveDraftId('order-7');
+    clearDraft();
+    expect(loadDraftId()).toBeNull();
+  });
+
+  it('treats a corrupt or empty stored id as no order', () => {
+    localStorage.setItem('zira.labelPrintOrder.draftId', '""');
+    expect(loadDraftId()).toBeNull();
+    localStorage.setItem('zira.labelPrintOrder.draftId', '{not json');
+    expect(loadDraftId()).toBeNull();
+    localStorage.setItem('zira.labelPrintOrder.draftId', '42');
+    expect(loadDraftId()).toBeNull();
+  });
+
+  it('keeps working when storage is unavailable', () => {
+    vi.stubGlobal('localStorage', undefined);
+    expect(() => saveDraftId('order-7')).not.toThrow();
+    expect(loadDraftId()).toBeNull();
   });
 });

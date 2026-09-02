@@ -2,6 +2,19 @@ import { useState, useEffect, useRef } from 'react';
 import type { KeyboardMode } from '../components/shared/TouchKeyboard';
 import { nextNumberAppend, nextNumberBackspace } from './keyboard-value';
 
+/**
+ * Whether the on-screen keyboard may appear at all.
+ *
+ * Off for the garment factory: that machine is a laptop driven from its own
+ * keyboard, with no touchscreen, so the panel only ever covered the bottom of
+ * the sheet being typed. Everything else the manager does — selecting a field's
+ * value on focus so typing replaces it, scrolling the focused field into view —
+ * stays on, because that is what makes tabbing through the order grid work.
+ *
+ * Flip this back to true for a touchscreen till.
+ */
+export const TOUCH_KEYBOARD_ENABLED = false;
+
 interface KeyboardManager {
   visible: boolean;
   mode: KeyboardMode;
@@ -190,5 +203,5 @@ export function useKeyboardManager(): KeyboardManager {
     activeElRef.current = null;
   };
 
-  return { visible, mode, onKey, onBackspace, onDone };
+  return { visible: visible && TOUCH_KEYBOARD_ENABLED, mode, onKey, onBackspace, onDone };
 }
