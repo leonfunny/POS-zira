@@ -195,9 +195,6 @@ export function parseFabricTagData(value: unknown): FabricTagData {
     FABRIC_TAG_LIMITS.brandName,
   ) ?? '';
   const logo = parseFabricTagLogoDataUrl(value.logoDataUrl);
-  if (!brandName && !logo) {
-    invalid('payload', 'a brandName or raster logoDataUrl');
-  }
 
   const size = parseFabricTagText(value.size, 'size', FABRIC_TAG_LIMITS.size) ?? undefined;
   const composition = parseFabricTagText(
@@ -205,6 +202,14 @@ export function parseFabricTagData(value: unknown): FabricTagData {
     'composition',
     FABRIC_TAG_LIMITS.composition,
   ) ?? undefined;
+
+  // A tag needs *something* to print, but not necessarily a brand: the garment
+  // factory prints its customers' care labels, which carry only the size, the
+  // fibre composition and the wash symbols. Requiring a brand here would have
+  // forced operators to invent one.
+  if (!brandName && !logo && !size && !composition) {
+    invalid('payload', 'a brandName, raster logoDataUrl, size or composition');
+  }
   const careSymbols = parseFabricTagCareSymbols(value.careSymbols);
   const careText = parseFabricTagText(
     value.careText,
