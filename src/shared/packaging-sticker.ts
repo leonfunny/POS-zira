@@ -30,7 +30,6 @@ export interface PackagingStickerInput {
   styleName?: string;
   styleCode?: string;
   colorName?: string;
-  sizeText?: string;
   code: string;
   widthMm: number;
   heightMm: number;
@@ -41,7 +40,6 @@ export interface PackagingSticker {
   styleName: string;
   styleCode: string;
   colorName: string;
-  sizeText?: string;
   code: string;
   widthMm: number;
   heightMm: number;
@@ -96,14 +94,11 @@ export function parsePackagingSticker(input: PackagingStickerInput): PackagingSt
   // Fail here rather than at the printer: encodeCode128 rejects non-ASCII.
   encodeCode128(code);
 
-  const sizeText = text(input.sizeText, 'sizeText');
-
   return {
     customerName: text(input.customerName, 'customerName'),
     styleName: text(input.styleName, 'styleName'),
     styleCode: text(input.styleCode, 'styleCode'),
     colorName: text(input.colorName, 'colorName'),
-    sizeText: sizeText || undefined,
     code,
     widthMm: sideMm(input.widthMm, 'widthMm'),
     heightMm: sideMm(input.heightMm, 'heightMm'),
@@ -182,7 +177,7 @@ export function layoutPackagingStickerText(
 ): PackagingStickerTextLayout {
   const { base, usableMm, budgetMm } = stickerGeometry(sticker);
   const styleLine = [sticker.styleName, sticker.styleCode].filter(Boolean).join(' - ');
-  const colorLine = [sticker.colorName, sticker.sizeText].filter(Boolean).join(' \u00b7 ');
+  const colorLine = sticker.colorName;
   const rows: Array<[string, number]> = [
     [sticker.customerName, base.customerPt],
     [sticker.code, base.codePt],
@@ -230,8 +225,10 @@ export function buildPackagingStickerHtml(sticker: PackagingSticker): string {
   });
 
   const styleLine = [sticker.styleName, sticker.styleCode].filter(Boolean).join(' - ');
-  // sizeText is absent unless the operator ticked "print size on the sticker".
-  const colorLine = [sticker.colorName, sticker.sizeText].filter(Boolean).join(' · ');
+  // Colour and code only. The size used to be optional here, but one sticker
+  // per colour is what goes on a bag of mixed sizes, and printing a size on it
+  // made the sticker wrong for the bag it was stuck to.
+  const colorLine = sticker.colorName;
 
   const rows = [
     sticker.customerName

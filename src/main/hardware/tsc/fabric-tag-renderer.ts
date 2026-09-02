@@ -146,13 +146,31 @@ export function buildFabricTagHtml(
 ): string {
   const pad = Math.round(widthDots * 0.06);
   const brandSize = Math.round(widthDots * 0.13);
-  const sizeSize = Math.round(widthDots * 0.16);
-  // Composition and price. Raised from 0.075 on 02/09/2026: on a 20 mm ribbon
-  // that was 12 dots, and the fibre percentages -- the line the shop is asked
-  // about most -- came off the machine visibly fainter than everything around
-  // them. Checked at 12, 15, 17 and 18 dots against the real Windows fonts;
-  // 17 is where it reads cleanly without crowding the size letter above it.
+  // Composition and price, computed before the size because the size is sized
+  // against it. See the note below for how the 0.105 was chosen.
   const bodySize = Math.round(widthDots * 0.105);
+  // The size is what somebody picking a garment off a rail looks for, and on
+  // the tags this shop was given to copy it dwarfs everything else -- roughly
+  // two and a half times the composition, not the 1.5x it used to be here.
+  // A long label ("44/46", "L/XL") would run off a 20mm ribbon at that size, so
+  // it shrinks to whatever fits on one line: 0.62em per character is bold Segoe
+  // UI's widest uppercase, measured off the rendered tag rather than guessed.
+  const sizeLabel = data.size ?? '';
+  const sizeFit = sizeLabel.length > 0
+    ? Math.floor((widthDots - pad * 2) / (sizeLabel.length * 0.62))
+    : Number.MAX_SAFE_INTEGER;
+  const sizeSize = Math.max(
+    // Never smaller than the composition; below that the tag reads as if the
+    // size were an afterthought.
+    bodySize + 2,
+    Math.min(Math.round(widthDots * 0.26), sizeFit),
+  );
+  // The 0.105 above was raised from 0.075 on 02/09/2026: on a 20 mm ribbon that
+  // was 12 dots, and the fibre percentages -- the line the shop is asked about
+  // most -- came off the machine visibly fainter than everything around them.
+  // Checked at 12, 15, 17 and 18 dots against the real Windows fonts; 17 is
+  // where it reads cleanly without crowding the size above it.
+  //
   // Below roughly 11 dots the strokes of a lowercase letter fall between the
   // dot grid and threshold away, which is how "NATURALNY LEN" printed as
   // "ATURALNY LE" on the first fabric run. Keep the small line above that

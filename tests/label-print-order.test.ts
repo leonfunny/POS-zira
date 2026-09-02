@@ -47,7 +47,6 @@ function sampleOrder(): LabelPrintOrder {
     ],
     printFabricTags: true,
     printStickers: true,
-    stickerIncludesSize: false,
   };
 }
 
@@ -172,13 +171,13 @@ describe('buildPrintPlan', () => {
     expect(stickers[0].sizeText).toBeUndefined();
   });
 
-  it('splits stickers per size when the operator ticks "print size"', () => {
-    const order = { ...sampleOrder(), stickerIncludesSize: true };
-    const stickers = buildPrintPlan(order).filter((s) => s.kind === 'sticker');
-    expect(stickers).toHaveLength(3); // r1/S, r1/M, r2/S — r2/M is zero
-    expect(stickers[0]).toMatchObject({ sizeText: 'S', quantity: 40 });
-    expect(stickers[1]).toMatchObject({ sizeText: 'M', quantity: 60 });
-    expect(stickers[2]).toMatchObject({ colorName: 'BORDO', sizeText: 'S', quantity: 20 });
+  it('never splits stickers by size — one sticker covers the whole colour', () => {
+    // The sticker goes on the bag and the bag holds mixed sizes, so a size on
+    // it would be wrong for most of what is inside.
+    const stickers = buildPrintPlan(sampleOrder()).filter((s) => s.kind === 'sticker');
+    expect(stickers).toHaveLength(2); // one per colour, not per colour+size
+    expect(stickers.every((s) => !('sizeText' in s))).toBe(true);
+    expect(stickers[0]).toMatchObject({ quantity: 100 }); // 40 S + 60 M
   });
 
   it('skips a colour with no code instead of blocking the whole order', () => {
@@ -368,7 +367,6 @@ describe('everything typed into a print order is printed in capitals', () => {
       rows: [{ id: 'r1', colorName: 'CZEKOLADA', code: '', quantities: { s1: 4 } }],
       sizes: [{ id: 's1', label: 'S' }],
       printStickers: false,
-      stickerIncludesSize: true,
     };
     expect(upperCaseOrder(before)).toEqual(before);
   });

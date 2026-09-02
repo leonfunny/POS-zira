@@ -194,8 +194,6 @@ export interface LabelPrintOrder {
   rows: OrderRow[];
   printFabricTags: boolean;
   printStickers: boolean;
-  /** Adds "· M" to the sticker's colour line. */
-  stickerIncludesSize: boolean;
 }
 
 export type OrderProblem =
@@ -217,7 +215,6 @@ export interface StickerStep extends PrintStepBase {
   kind: 'sticker';
   colorName: string;
   code: string;
-  sizeText?: string;
 }
 
 export interface FabricStep extends PrintStepBase {
@@ -242,7 +239,6 @@ export function createEmptyOrder(): LabelPrintOrder {
     rows: [],
     printFabricTags: true,
     printStickers: true,
-    stickerIncludesSize: false,
   };
 }
 
@@ -341,29 +337,18 @@ export function buildPrintPlan(order: LabelPrintOrder): PrintStep[] {
       const code = row.code.trim();
       if (!code) continue; // No code yet: skip this colour, warn in the UI.
 
-      if (order.stickerIncludesSize) {
-        for (const size of order.sizes) {
-          pushChunks(steps, cellQuantity(row, size.id), STICKER_CHUNK, (quantity, index) => ({
-            kind: 'sticker',
-            id: `sticker:${row.id}:${size.id}:${index}`,
-            rowId: row.id,
-            colorName: row.colorName.trim(),
-            code,
-            sizeText: size.label.trim(),
-            quantity,
-          }));
-        }
-      } else {
-        const total = order.sizes.reduce((sum, size) => sum + cellQuantity(row, size.id), 0);
-        pushChunks(steps, total, STICKER_CHUNK, (quantity, index) => ({
-          kind: 'sticker',
-          id: `sticker:${row.id}:${index}`,
-          rowId: row.id,
-          colorName: row.colorName.trim(),
-          code,
-          quantity,
-        }));
-      }
+      // One sticker per colour, covering every size in that row. The sticker
+      // goes on the bag, and a bag holds mixed sizes — a size printed on it
+      // would be wrong for most of what is inside.
+      const total = order.sizes.reduce((sum, size) => sum + cellQuantity(row, size.id), 0);
+      pushChunks(steps, total, STICKER_CHUNK, (quantity, index) => ({
+        kind: 'sticker',
+        id: `sticker:${row.id}:${index}`,
+        rowId: row.id,
+        colorName: row.colorName.trim(),
+        code,
+        quantity,
+      }));
     }
   }
 

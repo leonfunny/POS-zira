@@ -75,7 +75,6 @@ interface Copy {
   whatToPrint: string;
   printFabric: string;
   printSticker: string;
-  includeSize: string;
   print: string;
   printing: string;
   save: string;
@@ -125,7 +124,6 @@ const COPY: Record<string, Copy> = {
     whatToPrint: 'In gì',
     printFabric: 'Mác vải',
     printSticker: 'Tem dán bao bì',
-    includeSize: 'Tem dán ghi cả size',
     print: 'In',
     printing: 'Đang in…',
     save: 'Lưu đơn',
@@ -180,7 +178,6 @@ const COPY: Record<string, Copy> = {
     whatToPrint: 'Co drukować',
     printFabric: 'Metki',
     printSticker: 'Naklejki na opakowanie',
-    includeSize: 'Rozmiar na naklejce',
     print: 'Drukuj',
     printing: 'Drukowanie…',
     save: 'Zapisz',
@@ -235,7 +232,6 @@ const COPY: Record<string, Copy> = {
     whatToPrint: 'What to print',
     printFabric: 'Fabric tags',
     printSticker: 'Packaging stickers',
-    includeSize: 'Put the size on the sticker',
     print: 'Print',
     printing: 'Printing…',
     save: 'Save order',
@@ -876,12 +872,6 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
             label={copy.printSticker}
             checked={order.printStickers}
             onChange={(v) => patch({ printStickers: v })}
-          />
-          <Check
-            label={copy.includeSize}
-            checked={order.stickerIncludesSize}
-            onChange={(v) => patch({ stickerIncludesSize: v })}
-            disabled={!order.printStickers}
           />
         </div>
       </section>

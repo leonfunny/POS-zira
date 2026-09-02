@@ -60,10 +60,10 @@ describe('runPrintPlan', () => {
     });
   });
 
-  it('passes the size through when the step carries one', async () => {
+  it('sends no size on a sticker — one sticker covers a bag of mixed sizes', async () => {
     const api = makeApi();
-    await runPrintPlan([stickerStep({ sizeText: 'M' } as any)], HEADER, api, makeHooks());
-    expect(api.printSticker.mock.calls[0][0]).toMatchObject({ sizeText: 'M' });
+    await runPrintPlan([stickerStep()], HEADER, api, makeHooks());
+    expect(api.printSticker.mock.calls[0][0]).not.toHaveProperty('sizeText');
   });
 
   it('sends the fabric payload without colour or customer — the tag carries neither', async () => {

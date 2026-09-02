@@ -1585,8 +1585,6 @@ export interface PackagingStickerPrintRequest {
   styleName?: string;
   styleCode?: string;
   colorName?: string;
-  /** Present only when the operator ticked "print size on the sticker". */
-  sizeText?: string;
   code: string;
   quantity?: number;
 }

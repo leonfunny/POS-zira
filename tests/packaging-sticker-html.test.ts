@@ -67,9 +67,9 @@ describe('parsePackagingSticker', () => {
     ).toThrow(/widthMm/);
   });
 
-  it('keeps the size text only when one is supplied', () => {
-    expect(parsePackagingSticker({ ...SAMPLE, sizeText: 'M' }).sizeText).toBe('M');
-    expect(parsePackagingSticker({ ...SAMPLE, sizeText: '   ' }).sizeText).toBeUndefined();
+  it('carries no size at all — a size was wrong for a bag of mixed sizes', () => {
+    expect(parsePackagingSticker({ ...SAMPLE, sizeText: 'M' } as never))
+      .not.toHaveProperty('sizeText');
   });
 });
 
@@ -104,11 +104,13 @@ describe('buildPackagingStickerHtml', () => {
     expect(noCode).not.toContain('KURTKA - ');
   });
 
-  it('appends the size to the colour line only when size printing is on', () => {
+  it('prints the colour alone, never a size beside it', () => {
     const withSize = buildPackagingStickerHtml(
-      parsePackagingSticker({ ...SAMPLE, sizeText: 'M' }),
+      parsePackagingSticker({ ...SAMPLE, sizeText: 'M' } as never),
     );
-    expect(withSize).toContain('CAPPUCCINO · M');
+    expect(withSize).toContain('CAPPUCCINO');
+    expect(withSize).not.toContain('CAPPUCCINO · M');
+    expect(withSize).not.toContain('>M<');
     expect(html).not.toContain('·');
   });
 
