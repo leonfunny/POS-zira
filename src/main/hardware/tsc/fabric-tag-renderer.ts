@@ -187,7 +187,15 @@ export function buildFabricTagHtml(
   const symbols = data.careSymbols?.length
     ? `<div class="symbols">${data.careSymbols.map((s) => careSymbolSvg(s, symbolPx)).join('')}</div>`
     : '';
-  const careText = data.careText ? `<div class="care-text">${esc(data.careText)}</div>` : '';
+  // One row per line. The shop picks a sentence, then types a note of its own;
+  // joined onto one paragraph the note ran on from the end of the sentence and
+  // read as part of it.
+  const careText = (data.careText ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => `<div class="care-text">${esc(line)}</div>`)
+    .join('');
   const price = typeof data.priceGrosze === 'number' && data.priceGrosze > 0
     ? `<div class="price">${esc(formatPrice(data.priceGrosze, data.currency || 'zł'))}</div>`
     : '';

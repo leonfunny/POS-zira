@@ -40,14 +40,58 @@ export const CARE_TEXT_PRESETS = [
   'MADE IN POLAND',
 ] as const;
 
-/** How two chosen lines are joined on the one line the tag prints. */
-export const CARE_TEXT_SEPARATOR = ' · ';
+/**
+ * Each chosen sentence gets its own printed row. It used to be one line joined
+ * with " · ", which meant a note typed by hand ran on from the end of the last
+ * preset and read as part of it.
+ */
+export const CARE_TEXT_SEPARATOR = '\n';
 
-/** The fabric lane's own ceiling; a longer line is refused at print time. */
+/** The fabric lane's own ceiling, counted across every line. */
 export const CARE_TEXT_MAX_CHARS = FABRIC_TAG_LIMITS.careText;
 
-function careTextParts(current: string): string[] {
-  return current.split(CARE_TEXT_SEPARATOR).map((part) => part.trim()).filter(Boolean);
+/** And how many rows those characters may occupy. */
+export const CARE_TEXT_MAX_LINES = FABRIC_TAG_LIMITS.careTextLines;
+
+/** Orders saved before the split still hold one " · " line; read them as lines. */
+const LEGACY_SEPARATOR = / · /;
+
+export function careTextParts(current: string): string[] {
+  return current
+    .split(CARE_TEXT_SEPARATOR)
+    .flatMap((line) => line.split(LEGACY_SEPARATOR))
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+/** The lines as the tag will print them, normalised. */
+export function careTextLines(current: string): string[] {
+  return careTextParts(current);
+}
+
+export function joinCareTextLines(lines: string[]): string {
+  return lines.map((line) => line.trim()).filter(Boolean).join(CARE_TEXT_SEPARATOR);
+}
+
+/** False when the wording would not fit — too many rows, or too long overall. */
+export function careTextLinesFit(lines: string[]): boolean {
+  const kept = lines.map((line) => line.trim()).filter(Boolean);
+  return kept.length <= CARE_TEXT_MAX_LINES
+    && kept.join(CARE_TEXT_SEPARATOR).length <= CARE_TEXT_MAX_CHARS;
+}
+
+/** Adds a hand-typed line; refuses one that would not fit, and duplicates. */
+export function addCareTextLine(current: string, line: string): string {
+  const trimmed = line.trim();
+  if (!trimmed) return current;
+  const parts = careTextParts(current);
+  if (parts.includes(trimmed)) return current;
+  const next = [...parts, trimmed];
+  return careTextLinesFit(next) ? joinCareTextLines(next) : current;
+}
+
+export function removeCareTextLine(current: string, index: number): string {
+  return joinCareTextLines(careTextParts(current).filter((_, at) => at !== index));
 }
 
 /** True when `preset` is one of the lines currently in `careText`. */
@@ -55,28 +99,53 @@ export function careTextHasPreset(current: string, preset: string): boolean {
   return careTextParts(current).includes(preset);
 }
 
-/** False when adding `preset` would push the line past what the tag accepts. */
+/** False when adding `preset` would push the wording past what the tag accepts. */
 export function careTextPresetFits(current: string, preset: string): boolean {
   if (careTextHasPreset(current, preset)) return true;
-  // Measured directly, not by asking the toggle: the toggle refuses an
-  // over-long line by returning the old one, which would always look like it
-  // fitted and leave the chip enabled on a line it cannot join.
-  const joined = [...careTextParts(current), preset].join(CARE_TEXT_SEPARATOR);
-  return joined.length <= CARE_TEXT_MAX_CHARS;
+  // Measured directly, not by asking the toggle: the toggle refuses wording
+  // that will not fit by returning the old value, which would always look like
+  // it fitted and leave the chip enabled on a tag it cannot go on.
+  return careTextLinesFit([...careTextParts(current), preset]);
 }
 
 /**
- * Adds the preset if it is absent, removes it if it is already there — the same
- * on/off a care-symbol button has, so one idea covers both pickers. Anything
- * typed by hand is left alone, and a line that would overflow the tag is
- * refused here as well as disabled in the picker, so the two cannot disagree.
+ * Adds the preset as its own line if it is absent, takes that line away if it
+ * is already there — the same on/off a care-symbol button has, so one idea
+ * covers both pickers. Anything typed by hand is left alone, and wording that
+ * would overflow the tag is refused here as well as disabled in the picker, so
+ * the two cannot disagree.
  */
 export function toggleCareTextPreset(current: string, preset: string): string {
   const parts = careTextParts(current);
   const without = parts.filter((part) => part !== preset);
-  if (without.length !== parts.length) return without.join(CARE_TEXT_SEPARATOR);
-  const added = [...parts, preset].join(CARE_TEXT_SEPARATOR);
-  return added.length > CARE_TEXT_MAX_CHARS ? current : added;
+  if (without.length !== parts.length) return joinCareTextLines(without);
+  const added = [...parts, preset];
+  return careTextLinesFit(added) ? joinCareTextLines(added) : current;
+}
+
+/**
+ * Everything on these tags is printed in capitals — customer, style, colour,
+ * size, the extra wording — so the order holds capitals too. Done in one place
+ * over the whole order rather than field by field, so a field added later
+ * cannot quietly opt out, and so an order typed before this rule reads the same
+ * as one typed after it. Polish diacritics survive: ć→Ć, ł→Ł, ę→Ę.
+ */
+export function upperCaseOrder(order: LabelPrintOrder): LabelPrintOrder {
+  const up = (value: string) => value.toUpperCase();
+  return {
+    ...order,
+    customerName: up(order.customerName),
+    styleName: up(order.styleName),
+    styleCode: up(order.styleCode),
+    careText: up(order.careText),
+    materials: order.materials.map((material) => ({ ...material, name: up(material.name) })),
+    sizes: order.sizes.map((size) => ({ ...size, label: up(size.label) })),
+    rows: order.rows.map((row) => ({
+      ...row,
+      colorName: up(row.colorName),
+      code: up(row.code),
+    })),
+  };
 }
 
 export const LABEL_PRINT_ORDER_LIMITS = {

@@ -63,6 +63,40 @@ export function parseFabricTagText(
   return text;
 }
 
+/**
+ * The one field allowed to span several lines: each sentence the shop picks or
+ * types is printed on its own row, so a hand-typed note no longer runs on from
+ * the end of a preset. Newline is the only control character let through, and
+ * only as a separator — the lines themselves go through the same check as every
+ * other field, and the length limit counts the whole block, because that is what
+ * has to fit on the ribbon.
+ */
+export function parseFabricTagCareText(
+  value: unknown,
+  context = 'fabric tag',
+): string | undefined {
+  if (value == null) return undefined;
+  if (typeof value !== 'string') invalid('careText', 'a string or null', context);
+  const lines = value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return undefined;
+  if (lines.length > FABRIC_TAG_LIMITS.careTextLines) {
+    invalid('careText', `at most ${FABRIC_TAG_LIMITS.careTextLines} lines`, context);
+  }
+  for (const line of lines) {
+    if (CONTROL_CHARACTERS.test(line)) {
+      invalid('careText', 'text without control characters', context);
+    }
+  }
+  const joined = lines.join('\n');
+  if (joined.length > FABRIC_TAG_LIMITS.careText) {
+    invalid('careText', `at most ${FABRIC_TAG_LIMITS.careText} characters`, context);
+  }
+  return joined;
+}
+
 /** Validate, bound, whitelist, and deduplicate care-symbol input. */
 export function parseFabricTagCareSymbols(
   value: unknown,
@@ -211,11 +245,7 @@ export function parseFabricTagData(value: unknown): FabricTagData {
     invalid('payload', 'a brandName, raster logoDataUrl, size or composition');
   }
   const careSymbols = parseFabricTagCareSymbols(value.careSymbols);
-  const careText = parseFabricTagText(
-    value.careText,
-    'careText',
-    FABRIC_TAG_LIMITS.careText,
-  ) ?? undefined;
+  const careText = parseFabricTagCareText(value.careText);
   const barcode = parseFabricTagText(
     value.barcode,
     'barcode',

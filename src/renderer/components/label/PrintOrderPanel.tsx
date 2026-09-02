@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Play, Plus, Save, Trash2, X } from 'lucide-react';
 import {
+  CARE_TEXT_MAX_CHARS,
+  CARE_TEXT_MAX_LINES,
   CARE_TEXT_PRESETS,
   FABRIC_MATERIALS,
   LabelPrintOrder,
@@ -9,10 +11,15 @@ import {
   buildPrintPlan,
   compositionText,
   createEmptyOrder,
+  addCareTextLine,
   careTextHasPreset,
+  careTextLines,
+  careTextLinesFit,
   careTextPresetFits,
+  removeCareTextLine,
   orderTotals,
   toggleCareTextPreset,
+  upperCaseOrder,
   validateOrder,
 } from '../../../shared/label-print-order';
 import {
@@ -52,6 +59,11 @@ interface Copy {
   careGroup: Record<CareSymbolFamilyKey, string>;
   careText: string;
   careTextHint: string;
+  careLineAdd: string;
+  careLineEmpty: string;
+  careLineRemove: string;
+  careLineFull: string;
+  careLineNumber: (index: number) => string;
   sizes: string;
   addSize: string;
   color: string;
@@ -95,8 +107,13 @@ const COPY: Record<string, Copy> = {
     materialsHint: 'Bấm chọn rồi gõ số phần trăm',
     care: 'Ký hiệu giặt',
     careGroup: { wash: 'Giặt', bleach: 'Tẩy', tumble: 'Sấy máy', natural: 'Phơi', iron: 'Là', dryclean: 'Giặt khô', wetclean: 'Giặt ướt' },
-    careText: 'Dòng ghi thêm',
-    careTextHint: 'Ví dụ: NATURALNY LEN',
+    careText: 'Các dòng ghi thêm',
+    careTextHint: 'Gõ một dòng rồi Enter',
+    careLineAdd: 'Thêm dòng',
+    careLineEmpty: 'Chưa có dòng nào',
+    careLineRemove: 'Bỏ dòng',
+    careLineFull: 'Hết chỗ — bỏ bớt một dòng trước đã.',
+    careLineNumber: (index) => `Dòng ${index}`,
     sizes: 'Size',
     addSize: 'Thêm size',
     color: 'Màu',
@@ -145,8 +162,13 @@ const COPY: Record<string, Copy> = {
     materialsHint: 'Kliknij materiał i wpisz procent',
     care: 'Symbole prania',
     careGroup: { wash: 'Pranie', bleach: 'Wybielanie', tumble: 'Suszarka', natural: 'Suszenie', iron: 'Prasowanie', dryclean: 'Czyszczenie', wetclean: 'Pranie wodne' },
-    careText: 'Dodatkowy wiersz',
-    careTextHint: 'Np. NATURALNY LEN',
+    careText: 'Dodatkowe wiersze',
+    careTextHint: 'Wpisz wiersz i naciśnij Enter',
+    careLineAdd: 'Dodaj wiersz',
+    careLineEmpty: 'Brak dodatkowych wierszy',
+    careLineRemove: 'Usuń wiersz',
+    careLineFull: 'Brak miejsca — najpierw usuń wiersz.',
+    careLineNumber: (index) => `Wiersz ${index}`,
     sizes: 'Rozmiary',
     addSize: 'Dodaj rozmiar',
     color: 'Kolor',
@@ -195,8 +217,13 @@ const COPY: Record<string, Copy> = {
     materialsHint: 'Tap a material and type the percentage',
     care: 'Care symbols',
     careGroup: { wash: 'Washing', bleach: 'Bleaching', tumble: 'Tumble drying', natural: 'Natural drying', iron: 'Ironing', dryclean: 'Dry cleaning', wetclean: 'Wet cleaning' },
-    careText: 'Extra line',
-    careTextHint: 'e.g. NATURALNY LEN',
+    careText: 'Extra lines',
+    careTextHint: 'Type a line and press Enter',
+    careLineAdd: 'Add line',
+    careLineEmpty: 'No extra lines yet',
+    careLineRemove: 'Remove line',
+    careLineFull: 'No room left — remove a line first.',
+    careLineNumber: (index) => `Line ${index}`,
     sizes: 'Sizes',
     addSize: 'Add size',
     color: 'Colour',
@@ -252,7 +279,18 @@ function nextId(prefix: string): string {
 export default function PrintOrderPanel({ language, active, onPrintingChange }: Props) {
   const copy = COPY[language] || COPY.vi;
 
-  const [order, setOrder] = useState<LabelPrintOrder>(() => loadDraft());
+  // Loading a draft goes through the same gate as typing, so an order saved
+  // before this rule opens in capitals like every other one.
+  const [order, setStoredOrder] = useState<LabelPrintOrder>(() => upperCaseOrder(loadDraft()));
+  // One gate for every write, so no field — including one added later — can
+  // slip through in lower case.
+  const setOrder = useCallback(
+    (next: LabelPrintOrder | ((current: LabelPrintOrder) => LabelPrintOrder)) =>
+      setStoredOrder((current) =>
+        upperCaseOrder(typeof next === 'function' ? next(current) : next),
+      ),
+    [],
+  );
   const [savedOrders, setSavedOrders] = useState<SavedPrintOrder[]>(() => listSavedOrders());
   // Which saved order is on screen. Restored from storage so that editing an
   // order the next morning updates it instead of filing a twin beside it.
@@ -260,6 +298,8 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
   const [progress, setProgress] = useState<PrintProgress | null>(null);
   const [result, setResult] = useState<{ type: string; message: string } | null>(null);
   const [savedNotice, setSavedNotice] = useState(false);
+  /** The line being typed, before it is added. Not part of the order yet. */
+  const [careLineDraft, setCareLineDraft] = useState('');
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const printInFlight = useRef(false);
@@ -297,7 +337,20 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
   const patch = useCallback((changes: Partial<LabelPrintOrder>) => {
     setOrder((current) => ({ ...current, ...changes }));
     setResult(null);
-  }, []);
+  }, [setOrder]);
+
+  const lines = careTextLines(order.careText);
+  const trimmedDraft = careLineDraft.trim();
+  /** Rows still free, once the tag's overall length is taken into account. */
+  const lineRoomLeft = careTextLinesFit([...lines, 'X']) ? CARE_TEXT_MAX_LINES - lines.length : 0;
+  const canAddCareLine =
+    !!trimmedDraft && !lines.includes(trimmedDraft) && careTextLinesFit([...lines, trimmedDraft]);
+
+  const commitCareLine = () => {
+    if (!canAddCareLine) return;
+    patch({ careText: addCareTextLine(order.careText, trimmedDraft) });
+    setCareLineDraft('');
+  };
 
   const setCell = (rowId: string, sizeId: string, value: string) => {
     const quantity = value === '' ? 0 : Math.max(0, Math.floor(Number(value) || 0));
@@ -580,13 +633,73 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
         )}
         <div className="mt-3">
           <Field label={copy.careText}>
-            <input
-              className={INPUT}
-              value={order.careText}
-              onChange={(e) => patch({ careText: e.target.value })}
-              placeholder={copy.careTextHint}
-            />
+            <div className="flex gap-1.5">
+              <input
+                className={INPUT}
+                value={careLineDraft}
+                aria-label={copy.careText}
+                onChange={(e) => setCareLineDraft(e.target.value.toUpperCase())}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    commitCareLine();
+                  }
+                }}
+                placeholder={copy.careTextHint}
+                maxLength={CARE_TEXT_MAX_CHARS}
+              />
+              <button
+                type="button"
+                data-testid="add-care-line"
+                onClick={commitCareLine}
+                disabled={!canAddCareLine}
+                className="inline-flex min-h-9 shrink-0 items-center gap-1 rounded-md border border-slate-300 px-3 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Plus size={14} aria-hidden="true" />
+                {copy.careLineAdd}
+              </button>
+            </div>
           </Field>
+
+          {/* Every line the tag will print, one row each, in printing order —
+              so a sentence picked from a chip and a note typed by hand are
+              visibly two lines here as well as on the ribbon. */}
+          {lines.length > 0 ? (
+            <ol className="mt-1.5 space-y-1" data-testid="care-lines">
+              {lines.map((line, index) => (
+                <li
+                  key={`${index}-${line}`}
+                  data-care-line={index}
+                  className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-2 py-1"
+                >
+                  <span className="shrink-0 text-[11px] font-bold uppercase text-slate-400">
+                    {copy.careLineNumber(index + 1)}
+                  </span>
+                  <span className="min-w-0 flex-1 break-words text-xs font-bold text-slate-800">
+                    {line}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`${copy.careLineRemove} ${index + 1}`}
+                    onClick={() => patch({ careText: removeCareTextLine(order.careText, index) })}
+                    className="shrink-0 rounded p-1 text-slate-400 hover:bg-white hover:text-red-600"
+                  >
+                    <X size={14} aria-hidden="true" />
+                  </button>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="mt-1.5 text-xs text-slate-400" data-testid="care-lines-empty">
+              {copy.careLineEmpty}
+            </p>
+          )}
+
+          {lineRoomLeft === 0 && (
+            <p className="mt-1 text-xs font-bold text-amber-700" data-testid="care-lines-full">
+              {copy.careLineFull}
+            </p>
+          )}
           <div className="mt-1.5 flex flex-wrap gap-1.5">
             {CARE_TEXT_PRESETS.map((preset) => {
               const chosen = careTextHasPreset(order.careText, preset);

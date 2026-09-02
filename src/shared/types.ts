@@ -441,7 +441,18 @@ export const FABRIC_TAG_LIMITS = {
   brandName: 40,
   size: 10,
   composition: 120,
-  careText: 80,
+  /**
+   * The extra wording under the symbols, counted across every line. Raised from
+   * 80 on 02/09/2026 when the field became multi-line: two Polish care
+   * sentences plus a note the shop types by hand no longer fit on one line, and
+   * the renderer grows the tag to fit rather than cutting text off.
+   */
+  careText: 120,
+  /**
+   * Lines that wording may occupy. A tag with more than this is a sheet being
+   * typed into the wrong field.
+   */
+  careTextLines: 4,
   fabric: 120,
   barcode: 48,
   currency: 8,

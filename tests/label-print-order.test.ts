@@ -10,9 +10,14 @@ import {
   validateOrder,
   CARE_TEXT_MAX_CHARS,
   CARE_TEXT_PRESETS,
+  addCareTextLine,
   careTextHasPreset,
+  careTextLines,
+  careTextLinesFit,
   careTextPresetFits,
+  removeCareTextLine,
   toggleCareTextPreset,
+  upperCaseOrder,
 } from '../src/shared/label-print-order';
 
 /**
@@ -246,31 +251,65 @@ describe('the extra line offers the lines this shop keeps writing', () => {
     expect(toggleCareTextPreset('', 'NATURALNY LEN')).toBe('NATURALNY LEN');
   });
 
-  it('adds a second one on the same line', () => {
+  it('puts a second one on its own line, not on the end of the first', () => {
+    // Joined onto one line, a hand-typed note ran on from the last preset and
+    // printed as part of that sentence.
     expect(toggleCareTextPreset('NATURALNY LEN', 'MADE IN POLAND'))
-      .toBe('NATURALNY LEN · MADE IN POLAND');
+      .toBe('NATURALNY LEN\nMADE IN POLAND');
   });
 
   it('removes a preset that is already chosen, from either end', () => {
-    expect(toggleCareTextPreset('NATURALNY LEN · MADE IN POLAND', 'NATURALNY LEN'))
+    expect(toggleCareTextPreset('NATURALNY LEN\nMADE IN POLAND', 'NATURALNY LEN'))
       .toBe('MADE IN POLAND');
-    expect(toggleCareTextPreset('NATURALNY LEN · MADE IN POLAND', 'MADE IN POLAND'))
+    expect(toggleCareTextPreset('NATURALNY LEN\nMADE IN POLAND', 'MADE IN POLAND'))
       .toBe('NATURALNY LEN');
   });
 
-  it('leaves text typed by hand alone', () => {
+  it('leaves text typed by hand alone, on its own line', () => {
     expect(toggleCareTextPreset('SZYTE W KRAKOWIE', 'NATURALNY LEN'))
-      .toBe('SZYTE W KRAKOWIE · NATURALNY LEN');
+      .toBe('SZYTE W KRAKOWIE\nNATURALNY LEN');
   });
 
-  it('refuses a line the printer would reject, rather than losing the run', () => {
-    // The fabric lane caps this field; three long presets exceed it, and an
-    // over-length line is thrown out at the print boundary, mid-order.
+  it('reads an order saved before the split as separate lines', () => {
+    expect(careTextLines('NATURALNY LEN · MADE IN POLAND'))
+      .toEqual(['NATURALNY LEN', 'MADE IN POLAND']);
+    expect(careTextHasPreset('NATURALNY LEN · MADE IN POLAND', 'MADE IN POLAND')).toBe(true);
+  });
+
+  it('refuses wording the printer would reject, rather than losing the run', () => {
+    // The fabric lane caps this field; an over-length block is thrown out at
+    // the print boundary, mid-order.
     const long = CARE_TEXT_PRESETS.filter((p) => p.length > 20);
     const packed = long.reduce<string>((acc, p) => toggleCareTextPreset(acc, p), '');
     expect(packed.length).toBeLessThanOrEqual(CARE_TEXT_MAX_CHARS);
-    expect(careTextPresetFits(packed, 'ZALECANY PŁYN DO PŁUKANIA DLA MIĘKKOŚCI')).toBe(false);
-    expect(toggleCareTextPreset(packed, 'ZALECANY PŁYN DO PŁUKANIA DLA MIĘKKOŚCI')).toBe(packed);
+    expect(careTextPresetFits(packed, 'NATURALNY LEN')).toBe(false);
+    expect(toggleCareTextPreset(packed, 'NATURALNY LEN')).toBe(packed);
+  });
+
+  it('counts the cap across every line, not per line', () => {
+    // The ribbon has one height budget; four short lines and one long one cost
+    // the tag the same.
+    const long = 'X'.repeat(CARE_TEXT_MAX_CHARS - 2);
+    expect(careTextLinesFit([long])).toBe(true);
+    expect(careTextLinesFit([long, 'YY'])).toBe(false);
+    expect(addCareTextLine(long, 'YY')).toBe(long);
+  });
+
+  it('refuses a fifth line even when the characters would fit', () => {
+    const four = ['A', 'B', 'C', 'D'].join('\n');
+    expect(careTextLinesFit(['A', 'B', 'C', 'D'])).toBe(true);
+    expect(careTextLinesFit(['A', 'B', 'C', 'D', 'E'])).toBe(false);
+    expect(addCareTextLine(four, 'E')).toBe(four);
+  });
+
+  it('adds and removes a hand-typed line by position', () => {
+    const one = addCareTextLine('', 'SZYTE W KRAKOWIE');
+    const two = addCareTextLine(one, 'NATURALNY LEN');
+    expect(careTextLines(two)).toEqual(['SZYTE W KRAKOWIE', 'NATURALNY LEN']);
+    // The same line twice would print twice; it is refused.
+    expect(addCareTextLine(two, 'NATURALNY LEN')).toBe(two);
+    expect(addCareTextLine(two, '   ')).toBe(two);
+    expect(careTextLines(removeCareTextLine(two, 0))).toEqual(['NATURALNY LEN']);
   });
 
   it('always lets a chosen preset be switched off, however full the line is', () => {
@@ -282,10 +321,55 @@ describe('the extra line offers the lines this shop keeps writing', () => {
     }
   });
 
-  it('reports which presets are on the line', () => {
-    expect(careTextHasPreset('NATURALNY LEN · MADE IN POLAND', 'MADE IN POLAND')).toBe(true);
+  it('reports which presets are on the tag', () => {
+    expect(careTextHasPreset('NATURALNY LEN\nMADE IN POLAND', 'MADE IN POLAND')).toBe(true);
     expect(careTextHasPreset('NATURALNY LEN', 'MADE IN POLAND')).toBe(false);
     // A preset that is only part of a longer hand-typed line is not "chosen".
     expect(careTextHasPreset('MADE IN POLAND BY US', 'MADE IN POLAND')).toBe(false);
+  });
+});
+
+describe('everything typed into a print order is printed in capitals', () => {
+  it('lifts every text field, including ones typed in mixed case', () => {
+    const order = upperCaseOrder({
+      ...createEmptyOrder(),
+      customerName: 'MoonCollection',
+      styleName: 'Kurtka',
+      styleCode: 'sp006290',
+      careText: 'szyte w krakowie\nnaturalny len',
+      materials: [{ name: 'poliester', percent: 70 }],
+      sizes: [{ id: 's1', label: 'xl' }],
+      rows: [{ id: 'r1', colorName: 'czekolada', code: 'sp006290', quantities: { s1: 4 } }],
+    });
+
+    expect(order.customerName).toBe('MOONCOLLECTION');
+    expect(order.styleName).toBe('KURTKA');
+    expect(order.styleCode).toBe('SP006290');
+    expect(order.careText).toBe('SZYTE W KRAKOWIE\nNATURALNY LEN');
+    expect(order.materials[0].name).toBe('POLIESTER');
+    expect(order.sizes[0].label).toBe('XL');
+    expect(order.rows[0]).toMatchObject({ colorName: 'CZEKOLADA', code: 'SP006290' });
+  });
+
+  it('lifts Polish letters the shop actually types', () => {
+    const order = upperCaseOrder({
+      ...createEmptyOrder(),
+      careText: 'prać z podobnymi kolorami\nzalecany płyn do płukania dla miękkości',
+    });
+    expect(order.careText).toBe(
+      'PRAĆ Z PODOBNYMI KOLORAMI\nZALECANY PŁYN DO PŁUKANIA DLA MIĘKKOŚCI',
+    );
+  });
+
+  it('changes nothing else about the order', () => {
+    const before = {
+      ...createEmptyOrder(),
+      customerName: 'MOON',
+      rows: [{ id: 'r1', colorName: 'CZEKOLADA', code: '', quantities: { s1: 4 } }],
+      sizes: [{ id: 's1', label: 'S' }],
+      printStickers: false,
+      stickerIncludesSize: true,
+    };
+    expect(upperCaseOrder(before)).toEqual(before);
   });
 });

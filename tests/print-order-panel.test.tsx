@@ -105,6 +105,18 @@ describe('PrintOrderPanel', () => {
     return container.querySelector(selector)?.textContent?.trim() ?? '';
   }
 
+  const chip = (preset: string) =>
+    container.querySelector<HTMLButtonElement>(`button[data-care-text-preset="${preset}"]`)!;
+
+  const careLineInput = () =>
+    container.querySelector<HTMLInputElement>('input[aria-label="Extra lines"]')!;
+
+  /** The extra lines as the tag will print them, read off the screen. */
+  const careLines = () =>
+    Array.from(container.querySelectorAll('[data-care-line]')).map(
+      (li) => li.querySelector('span:nth-of-type(2)')?.textContent?.trim() ?? '',
+    );
+
   it('adds a size column from a suggestion and from free text', async () => {
     await render();
     await act(async () => buttonWithText(container, '+ 2XL').click());
@@ -180,7 +192,7 @@ describe('PrintOrderPanel', () => {
 
     expect(printSticker).toHaveBeenCalledTimes(1);
     expect(printSticker.mock.calls[0][0]).toMatchObject({
-      customerName: 'MoonCollection',
+      customerName: 'MOONCOLLECTION',
       styleName: 'KURTKA',
       styleCode: '114',
       colorName: 'CZEKOLADA',
@@ -257,7 +269,7 @@ describe('PrintOrderPanel', () => {
     root = null;
     await render();
 
-    expect(input(container, 'input[placeholder="MoonCollection"]').value).toBe('MoonCollection');
+    expect(input(container, 'input[placeholder="MoonCollection"]').value).toBe('MOONCOLLECTION');
     expect(text('[data-testid="grand-total"]')).toBe('40');
   });
 
@@ -266,7 +278,7 @@ describe('PrintOrderPanel', () => {
     await fillMinimalOrder(40);
     await act(async () => buttonWithText(container, 'Save order').click());
 
-    expect(container.textContent).toContain('MoonCollection · KURTKA 114');
+    expect(container.textContent).toContain('MOONCOLLECTION · KURTKA 114');
 
     await act(async () => buttonWithText(container, 'New order').click());
     expect(text('[data-testid="grand-total"]')).toBe('0');
@@ -418,36 +430,59 @@ describe('PrintOrderPanel', () => {
     expect(container.querySelector('button[data-symbol="DRY_FLAT"]')?.getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('fills the extra line from one-tap chips, and takes them off again', async () => {
+  it('gives every chip its own numbered line, and takes them off again', async () => {
     await render();
-    const chip = (text: string) =>
-      container.querySelector<HTMLButtonElement>(`button[data-care-text-preset="${text}"]`)!;
-    const field = () =>
-      container.querySelector<HTMLInputElement>('input[placeholder="e.g. NATURALNY LEN"]')!;
 
     await act(async () => chip('NATURALNY LEN').click());
-    expect(field().value).toBe('NATURALNY LEN');
+    expect(careLines()).toEqual(['NATURALNY LEN']);
     await act(async () => chip('MADE IN POLAND').click());
-    expect(field().value).toBe('NATURALNY LEN · MADE IN POLAND');
+    // Two lines on screen, in the order they will print — not one joined line.
+    expect(careLines()).toEqual(['NATURALNY LEN', 'MADE IN POLAND']);
+    expect(container.textContent).toContain('Line 2');
     expect(chip('MADE IN POLAND').getAttribute('aria-pressed')).toBe('true');
 
     await act(async () => chip('NATURALNY LEN').click());
-    expect(field().value).toBe('MADE IN POLAND');
+    expect(careLines()).toEqual(['MADE IN POLAND']);
     expect(chip('NATURALNY LEN').getAttribute('aria-pressed')).toBe('false');
   });
 
-  it('greys out a chip that will not fit on the line', async () => {
+  it('adds what the operator types as a line of its own', async () => {
     await render();
-    const chip = (text: string) =>
-      container.querySelector<HTMLButtonElement>(`button[data-care-text-preset="${text}"]`)!;
+    await act(async () => chip('NATURALNY LEN').click());
+
+    await changeInput(careLineInput(), 'szyte w krakowie');
+    // Typed in lower case, shown back in capitals.
+    expect(careLineInput().value).toBe('SZYTE W KRAKOWIE');
+    await act(async () => container.querySelector<HTMLButtonElement>(
+      '[data-testid="add-care-line"]')!.click());
+
+    expect(careLines()).toEqual(['NATURALNY LEN', 'SZYTE W KRAKOWIE']);
+    // The box empties, ready for the next line.
+    expect(careLineInput().value).toBe('');
+  });
+
+  it('takes one line away without touching the others', async () => {
+    await render();
+    await act(async () => chip('NATURALNY LEN').click());
+    await act(async () => chip('MADE IN POLAND').click());
+
+    await act(async () => container.querySelector<HTMLButtonElement>(
+      '[data-care-line="0"] button')!.click());
+
+    expect(careLines()).toEqual(['MADE IN POLAND']);
+  });
+
+  it('greys out a chip that will not fit on the tag', async () => {
+    await render();
     for (const preset of ['PRAĆ Z PODOBNYMI KOLORAMI', 'PRAĆ NA LEWEJ STRONIE',
-      'PRAĆ PRZED PIERWSZYM UŻYCIEM']) {
+      'PRAĆ PRZED PIERWSZYM UŻYCIEM', 'ZALECANY PŁYN DO PŁUKANIA DLA MIĘKKOŚCI']) {
       await act(async () => chip(preset).click());
     }
-    // The printer refuses an over-long extra line, so the chip has to stop
-    // before the run does.
-    expect(chip('ZALECANY PŁYN DO PŁUKANIA DLA MIĘKKOŚCI').disabled).toBe(true);
+    // The printer refuses over-long wording, so the chip has to stop before
+    // the run does.
+    expect(chip('NATURALNY LEN').disabled).toBe(true);
     expect(chip('PRAĆ NA LEWEJ STRONIE').disabled).toBe(false);
+    expect(text('[data-testid="care-lines-full"]')).toContain('No room left');
   });
 
   it('sends the chosen extra line to the fabric lane', async () => {
@@ -463,6 +498,50 @@ describe('PrintOrderPanel', () => {
     await settle();
 
     expect(printFabricTag.mock.calls[0][0]).toMatchObject({ careText: 'NATURALNY LEN' });
+  });
+
+  it('sends the extra lines to the fabric lane as separate lines', async () => {
+    await render();
+    await fillMinimalOrder(10);
+    await act(async () => chip('NATURALNY LEN').click());
+    await changeInput(careLineInput(), 'szyte w krakowie');
+    await act(async () => container.querySelector<HTMLButtonElement>(
+      '[data-testid="add-care-line"]')!.click());
+    await act(async () => {
+      const boxes = Array.from(container.querySelectorAll<HTMLInputElement>('input[type=checkbox]'));
+      boxes[1].click();
+    });
+    await act(async () => buttonWithText(container, 'Print').click());
+    await settle();
+
+    expect(printFabricTag.mock.calls[0][0]).toMatchObject({
+      careText: 'NATURALNY LEN\nSZYTE W KRAKOWIE',
+    });
+  });
+
+  it('types every field in capitals, whatever the operator presses', async () => {
+    await render();
+    await changeInput(input(container, 'input[placeholder="MoonCollection"]'), 'moon collection');
+    await act(async () => buttonWithText(container, '+ S').click());
+    await act(async () => buttonWithText(container, 'Add colour').click());
+    await changeInput(input(container, 'input[placeholder="CZEKOLADA"]'), 'czekolada');
+    await changeInput(input(container, 'input[placeholder="SP006290"]'), 'sp006290');
+
+    expect(input(container, 'input[placeholder="MoonCollection"]').value).toBe('MOON COLLECTION');
+    expect(input(container, 'input[placeholder="CZEKOLADA"]').value).toBe('CZEKOLADA');
+    expect(input(container, 'input[placeholder="SP006290"]').value).toBe('SP006290');
+  });
+
+  it('capitalises a free-text size column as it is added', async () => {
+    await render();
+    const adder = input(container, 'input[aria-label="Add size"]');
+    await changeInput(adder, 'xs/s');
+    await act(async () => {
+      adder.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+
+    expect(Array.from(container.querySelectorAll('th')).some((th) => th.textContent?.includes('XS/S')))
+      .toBe(true);
   });
 
   it('deselects a symbol when it is clicked again', async () => {
