@@ -83,9 +83,12 @@ export const LABEL_PRINT_ORDER_LIMITS = {
   /** Matches the fabric lane, which is the stricter of the two printers. */
   maxRunQuantity: 999,
   /**
-   * Fabric tags only. The TSC has no cutter, so the strip is torn by hand
-   * between bundles; the app pauses at every chunk boundary to allow that.
-   * Stickers are die-cut on a roll and run unattended, so they are not chunked.
+   * Fabric tags only, and no longer a pause — the whole order runs straight
+   * through. The batches are what makes Stop mean anything: a run is only
+   * abandoned between batches, because each one is already at the printer by
+   * the time the call returns. 50 tags is a few seconds of ribbon, which is how
+   * long Stop takes to bite. Stickers are die-cut on a roll and are only split
+   * to stay inside the driver's copy count.
    */
   chunkSize: 50,
   /** A whole-order ceiling; past this the sheet was almost certainly mistyped. */

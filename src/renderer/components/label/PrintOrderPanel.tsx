@@ -73,14 +73,12 @@ interface Copy {
   open: string;
   remove: string;
   newOrder: string;
-  continueNext: string;
-  stopNow: string;
   stopAfter: string;
+  stopHint: string;
   noResume: string;
   missingCode: string;
   percentSum: (sum: number) => string;
   progress: (done: number, total: number, copies: number, all: number) => string;
-  waiting: (done: number, total: number) => string;
   finished: (copies: number) => string;
   stopped: (done: number, total: number) => string;
   problem: Record<OrderProblem, string>;
@@ -120,14 +118,12 @@ const COPY: Record<string, Copy> = {
     open: 'Mở',
     remove: 'Xoá',
     newOrder: 'Đơn mới',
-    continueNext: 'Tiếp tục',
-    stopNow: 'Dừng',
-    stopAfter: 'Dừng sau lô này',
+    stopAfter: 'Dừng in',
+    stopHint: 'Bấm Dừng thì lô đang gửi vẫn in nốt rồi mới ngừng.',
     noResume: 'Máy kẹt hay tắt app giữa chừng thì phải đếm tem thật trước khi in lại.',
     missingCode: 'Thiếu mã tem — màu này chỉ in mác vải',
     percentSum: (sum) => `Tổng phần trăm đang là ${sum}%`,
     progress: (done, total, copies, all) => `Đã in ${done}/${total} lô · ${copies}/${all} tem`,
-    waiting: (done, total) => `Xong lô ${done}/${total} — xé rồi bấm Tiếp tục`,
     finished: (copies) => `Đã in xong ${copies} tem`,
     stopped: (done, total) => `Đã dừng sau ${done}/${total} lô`,
     problem: {
@@ -172,14 +168,12 @@ const COPY: Record<string, Copy> = {
     open: 'Otwórz',
     remove: 'Usuń',
     newOrder: 'Nowe zlecenie',
-    continueNext: 'Kontynuuj',
-    stopNow: 'Zatrzymaj',
-    stopAfter: 'Zatrzymaj po tej partii',
+    stopAfter: 'Zatrzymaj druk',
+    stopHint: 'Po naciśnięciu Zatrzymaj bieżąca partia dokończy się i dopiero potem druk stanie.',
     noResume: 'Po zacięciu lub zamknięciu aplikacji policz metki, zanim wydrukujesz ponownie.',
     missingCode: 'Brak kodu — ten kolor dostanie tylko metki',
     percentSum: (sum) => `Suma procentów: ${sum}%`,
     progress: (done, total, copies, all) => `${done}/${total} partii · ${copies}/${all} sztuk`,
-    waiting: (done, total) => `Partia ${done}/${total} gotowa — oderwij i kontynuuj`,
     finished: (copies) => `Wydrukowano ${copies} szt.`,
     stopped: (done, total) => `Zatrzymano po ${done}/${total} partii`,
     problem: {
@@ -224,14 +218,12 @@ const COPY: Record<string, Copy> = {
     open: 'Open',
     remove: 'Delete',
     newOrder: 'New order',
-    continueNext: 'Continue',
-    stopNow: 'Stop',
-    stopAfter: 'Stop after this batch',
+    stopAfter: 'Stop printing',
+    stopHint: 'Stop takes effect after the batch already sent finishes.',
     noResume: 'After a jam or an app restart, count the printed labels before reprinting.',
     missingCode: 'No sticker code — this colour gets fabric tags only',
     percentSum: (sum) => `Percentages add up to ${sum}%`,
     progress: (done, total, copies, all) => `${done}/${total} batches · ${copies}/${all} labels`,
-    waiting: (done, total) => `Batch ${done}/${total} done — tear it off and continue`,
     finished: (copies) => `Printed ${copies} labels`,
     stopped: (done, total) => `Stopped after ${done}/${total} batches`,
     problem: {
@@ -272,7 +264,6 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const printInFlight = useRef(false);
   const stopRequested = useRef(false);
-  const decisionResolver = useRef<((decision: 'continue' | 'stop') => void) | null>(null);
 
   useEffect(() => {
     saveDraft(order);
@@ -290,10 +281,9 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
 
   useEffect(
     () => () => {
-      // Unmounting mid-run must not leave the loop parked on a promise forever.
+      // Unmounting mid-run must not leave the loop feeding a printer nobody is
+      // watching; it ends at the next step boundary.
       stopRequested.current = true;
-      decisionResolver.current?.('stop');
-      decisionResolver.current = null;
     },
     [],
   );
@@ -382,13 +372,6 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
 
   const removeRow = (rowId: string) => patch({ rows: order.rows.filter((r) => r.id !== rowId) });
 
-  const resolveDecision = (decision: 'continue' | 'stop') => {
-    const resolver = decisionResolver.current;
-    // Clear before resolving so two clicks in one frame cannot release twice.
-    decisionResolver.current = null;
-    resolver?.(decision);
-  };
-
   const handlePrint = async () => {
     if (printInFlight.current || problems.length > 0 || plan.length === 0) return;
     const api = (window as any).electronAPI;
@@ -416,10 +399,6 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
         },
         {
           onProgress: setProgress,
-          awaitDecision: () =>
-            new Promise<'continue' | 'stop'>((resolve) => {
-              decisionResolver.current = resolve;
-            }),
           shouldStop: () => stopRequested.current,
         },
       );
@@ -435,7 +414,6 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
       });
     } finally {
       printInFlight.current = false;
-      decisionResolver.current = null;
       onPrintingChange?.(false);
     }
   };
@@ -469,8 +447,7 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
   };
 
   const isPrinting = progress?.type === 'printing';
-  const isWaiting = progress?.type === 'waiting';
-  const canPrint = problems.length === 0 && plan.length > 0 && !isPrinting && !isWaiting;
+  const canPrint = problems.length === 0 && plan.length > 0 && !isPrinting;
 
   return (
     <div
@@ -833,39 +810,34 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
         >
           {copy.newOrder}
         </button>
-        {(isPrinting || isWaiting) && (
+        {isPrinting && (
           <button
             type="button"
+            data-testid="stop-print"
             onClick={() => {
               stopRequested.current = true;
-              if (isWaiting) resolveDecision('stop');
             }}
             className="inline-flex min-h-11 items-center rounded-md border border-red-300 px-4 text-sm font-bold text-red-700 hover:bg-red-50"
           >
-            {isWaiting ? copy.stopNow : copy.stopAfter}
-          </button>
-        )}
-        {isWaiting && (
-          <button
-            type="button"
-            onClick={() => resolveDecision('continue')}
-            className="inline-flex min-h-11 items-center rounded-md bg-slate-900 px-4 text-sm font-extrabold text-white"
-          >
-            {copy.continueNext}
+            {copy.stopAfter}
           </button>
         )}
       </div>
 
       {progress && (
         <p className="mt-2 text-sm font-bold text-slate-700" data-testid="print-progress">
-          {progress.type === 'waiting'
-            ? copy.waiting(progress.completedSteps, progress.totalSteps)
-            : copy.progress(
-                progress.completedSteps,
-                progress.totalSteps,
-                progress.printedCopies,
-                progress.totalCopies,
-              )}
+          {copy.progress(
+            progress.completedSteps,
+            progress.totalSteps,
+            progress.printedCopies,
+            progress.totalCopies,
+          )}
+        </p>
+      )}
+
+      {isPrinting && (
+        <p className="text-xs text-slate-500" data-testid="stop-hint">
+          {copy.stopHint}
         </p>
       )}
 

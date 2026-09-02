@@ -2,8 +2,12 @@
  * Executes a print plan against the two printer lanes.
  *
  * Kept out of the React component so the sequencing rules — which payload goes
- * to which lane, where the operator is asked to tear the strip, what happens on
- * a stop or a failure — can be tested without rendering anything.
+ * to which lane, what happens on a stop or a failure — can be tested without
+ * rendering anything.
+ *
+ * The whole order goes out in one continuous run, stickers then fabric, with no
+ * prompt in between: the operator starts it and walks away. The only control
+ * during a run is Stop, checked between steps.
  */
 import { PrintStep } from '../../../shared/label-print-order';
 
@@ -34,7 +38,7 @@ export interface PrintOrderApi {
 }
 
 export interface PrintProgress {
-  type: 'printing' | 'waiting' | 'success' | 'stopped' | 'error';
+  type: 'printing' | 'success' | 'stopped' | 'error';
   completedSteps: number;
   totalSteps: number;
   printedCopies: number;
@@ -45,9 +49,12 @@ export interface PrintProgress {
 
 export interface PrintOrderHooks {
   onProgress(progress: PrintProgress): void;
-  /** Resolves when the operator picks Continue or Stop at a tear pause. */
-  awaitDecision(): Promise<'continue' | 'stop'>;
-  /** Checked before each step; lets Stop take effect without a pause. */
+  /**
+   * Checked before every step. The run never asks the operator anything, so
+   * this is the only way it ends early — pressing Stop takes effect at the next
+   * step boundary, which is why the plan is cut into batches rather than sent
+   * as one job the printer would finish regardless.
+   */
   shouldStop(): boolean;
 }
 
@@ -103,21 +110,9 @@ export async function runPrintPlan(
     };
   };
 
-  for (let index = 0; index < steps.length; index++) {
-    const step = steps[index];
+  for (const step of steps) {
 
     if (hooks.shouldStop()) return finish('stopped');
-
-    // The fabric printer has no cutter: the operator tears between bundles, so
-    // every fabric run but the first of an uninterrupted sequence waits for a
-    // decision. Stickers are die-cut and never wait.
-    const previous = index > 0 ? steps[index - 1] : undefined;
-    const needsTearPause = step.kind === 'fabric' && previous !== undefined;
-    if (needsTearPause) {
-      report('waiting', step);
-      const decision = await hooks.awaitDecision();
-      if (decision === 'stop' || hooks.shouldStop()) return finish('stopped');
-    }
 
     report('printing', step);
 

@@ -172,7 +172,7 @@ describe('PrintOrderPanel', () => {
     expect(buttonWithText(container, 'Print').disabled).toBe(false);
   });
 
-  it('sends the sticker first, then waits before the fabric tag', async () => {
+  it('prints the stickers and the fabric tags in one run, asking nothing', async () => {
     await render();
     await fillMinimalOrder(40);
     await act(async () => buttonWithText(container, 'Print').click());
@@ -187,14 +187,13 @@ describe('PrintOrderPanel', () => {
       code: 'SP006290',
       quantity: 40,
     });
-    expect(printFabricTag).not.toHaveBeenCalled();
-
-    await act(async () => buttonWithText(container, 'Continue').click());
-    await settle();
-
+    // No Continue button, and the fabric lane ran without one being pressed.
     expect(printFabricTag).toHaveBeenCalledTimes(1);
     expect(printFabricTag.mock.calls[0][0]).toMatchObject({ size: 'S', quantity: 40 });
     expect(text('[data-testid="print-result"]')).toContain('Printed 80 labels');
+    expect(
+      Array.from(container.querySelectorAll('button')).map((b) => b.textContent?.trim()),
+    ).not.toContain('Continue');
   });
 
   it('reports the printer error and does not go on to the fabric lane', async () => {
@@ -208,17 +207,45 @@ describe('PrintOrderPanel', () => {
     expect(printFabricTag).not.toHaveBeenCalled();
   });
 
-  it('stops at a pause when the operator chooses Stop', async () => {
+  it('stops the run when the operator presses Stop mid-print', async () => {
+    // Hold the sticker lane open so Stop is pressed while a batch is in flight,
+    // which is the only moment the button is on screen.
+    let releaseSticker: (value: { success: boolean }) => void = () => {};
+    printSticker.mockImplementation(
+      () => new Promise((resolve) => { releaseSticker = resolve; }),
+    );
+
     await render();
     await fillMinimalOrder(40);
     await act(async () => buttonWithText(container, 'Print').click());
     await settle();
 
-    await act(async () => buttonWithText(container, 'Stop').click());
+    const stop = container.querySelector<HTMLButtonElement>('[data-testid="stop-print"]');
+    expect(stop).not.toBeNull();
+    await act(async () => stop!.click());
+    await act(async () => { releaseSticker({ success: true }); });
     await settle();
 
     expect(text('[data-testid="print-result"]')).toContain('Stopped after');
     expect(printFabricTag).not.toHaveBeenCalled();
+  });
+
+  it('says out loud that Stop only bites after the batch already sent', async () => {
+    let releaseSticker: (value: { success: boolean }) => void = () => {};
+    printSticker.mockImplementation(
+      () => new Promise((resolve) => { releaseSticker = resolve; }),
+    );
+
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => buttonWithText(container, 'Print').click());
+    await settle();
+
+    expect(text('[data-testid="stop-hint"]')).toContain('after the batch already sent');
+
+    await act(async () => { releaseSticker({ success: true }); });
+    await settle();
+    expect(container.querySelector('[data-testid="stop-hint"]')).toBeNull();
   });
 
   it('keeps the order after a restart, so the sheet is not retyped', async () => {

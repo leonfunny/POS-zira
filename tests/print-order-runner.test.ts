@@ -37,10 +37,9 @@ function makeApi() {
   };
 }
 
-function makeHooks(decision: 'continue' | 'stop' = 'continue') {
+function makeHooks() {
   return {
     onProgress: vi.fn(),
-    awaitDecision: vi.fn(async () => decision),
     shouldStop: vi.fn(() => false),
   };
 }
@@ -96,48 +95,39 @@ describe('runPrintPlan', () => {
     expect(result.completedIds).toEqual(['sticker:r1:0', 'fabric:r1:s:0']);
   });
 
-  it('never pauses between stickers — that printer runs unattended', async () => {
+  it('runs every fabric batch straight through, asking nothing in between', async () => {
+    // The operator starts the order and walks away; batches exist only so Stop
+    // has somewhere to take effect.
     const api = makeApi();
     const hooks = makeHooks();
-    await runPrintPlan(
-      [stickerStep(), stickerStep({ id: 'sticker:r2:0', rowId: 'r2' } as any)],
+    const result = await runPrintPlan(
+      [
+        fabricStep(),
+        fabricStep({ id: 'fabric:r1:s:1' } as any),
+        fabricStep({ id: 'fabric:r1:s:2' } as any),
+      ],
       HEADER,
       api,
       hooks,
     );
-    expect(hooks.awaitDecision).not.toHaveBeenCalled();
+    expect(api.printFabricTag).toHaveBeenCalledTimes(3);
+    expect(result).toMatchObject({ type: 'success', printedCopies: 150 });
+    expect(hooks.onProgress.mock.calls.map(([p]) => p.type)).not.toContain('waiting');
   });
 
-  it('pauses between fabric chunks so the strip can be torn', async () => {
+  it('crosses from the sticker printer to the fabric one without stopping', async () => {
     const api = makeApi();
     const hooks = makeHooks();
-    await runPrintPlan(
-      [fabricStep(), fabricStep({ id: 'fabric:r1:s:1' } as any)],
-      HEADER,
-      api,
-      hooks,
-    );
-    expect(hooks.awaitDecision).toHaveBeenCalledTimes(1);
+    const result = await runPrintPlan([stickerStep(), fabricStep()], HEADER, api, hooks);
+    expect(api.printSticker).toHaveBeenCalledTimes(1);
+    expect(api.printFabricTag).toHaveBeenCalledTimes(1);
+    expect(result.type).toBe('success');
   });
 
-  it('does not pause after the last fabric chunk', async () => {
+  it('stops between fabric batches when Stop is pressed mid-run', async () => {
     const api = makeApi();
     const hooks = makeHooks();
-    await runPrintPlan([fabricStep()], HEADER, api, hooks);
-    expect(hooks.awaitDecision).not.toHaveBeenCalled();
-  });
-
-  it('pauses before the first fabric chunk when stickers ran first', async () => {
-    // The operator has to walk to the other machine and load the strip.
-    const api = makeApi();
-    const hooks = makeHooks();
-    await runPrintPlan([stickerStep(), fabricStep()], HEADER, api, hooks);
-    expect(hooks.awaitDecision).toHaveBeenCalledTimes(1);
-  });
-
-  it('stops when the operator chooses Stop at a pause', async () => {
-    const api = makeApi();
-    const hooks = makeHooks('stop');
+    hooks.shouldStop = vi.fn(() => api.printFabricTag.mock.calls.length > 0);
     const result = await runPrintPlan(
       [fabricStep(), fabricStep({ id: 'fabric:r1:s:1' } as any)],
       HEADER,
