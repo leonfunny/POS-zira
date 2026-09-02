@@ -262,6 +262,65 @@ describe('PrintOrderPanel', () => {
     expect(printFabricTag).not.toHaveBeenCalled();
   });
 
+  it('shows the printed symbol art, not the enum name', async () => {
+    await render();
+    const washButton = container.querySelector<HTMLButtonElement>('button[aria-label="WASH_30"]');
+    expect(washButton).not.toBeNull();
+    expect(washButton?.querySelector('svg')).not.toBeNull();
+    // The art carries "30" inside the washtub; what it must not show is the
+    // machine name an operator cannot read.
+    expect(washButton?.textContent).not.toContain('WASH');
+    expect(container.textContent).not.toContain('DRYCLEAN_P');
+  });
+
+  it('treats the wash family as a radio group — a tag cannot say both', async () => {
+    await render();
+    const wash30 = container.querySelector<HTMLButtonElement>('button[aria-label="WASH_30"]')!;
+    const washNo = container.querySelector<HTMLButtonElement>('button[aria-label="WASH_NO"]')!;
+
+    await act(async () => wash30.click());
+    expect(wash30.getAttribute('aria-pressed')).toBe('true');
+
+    await act(async () => washNo.click());
+    expect(container.querySelector('button[aria-label="WASH_30"]')?.getAttribute('aria-pressed')).toBe('false');
+    expect(container.querySelector('button[aria-label="WASH_NO"]')?.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('keeps symbols from different families together', async () => {
+    await render();
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="WASH_30"]')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="IRON_LOW"]')!.click());
+
+    expect(container.querySelector('button[aria-label="WASH_30"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(container.querySelector('button[aria-label="IRON_LOW"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(container.querySelectorAll('[data-testid="care-preview"] svg')).toHaveLength(2);
+  });
+
+  it('deselects a symbol when it is clicked again', async () => {
+    await render();
+    const wash30 = () => container.querySelector<HTMLButtonElement>('button[aria-label="WASH_30"]')!;
+    await act(async () => wash30().click());
+    await act(async () => wash30().click());
+    expect(wash30().getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('sends the chosen symbols to the fabric lane', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="WASH_30"]')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="IRON_LOW"]')!.click());
+    await act(async () => {
+      const boxes = Array.from(container.querySelectorAll<HTMLInputElement>('input[type=checkbox]'));
+      boxes[1].click(); // fabric tags only, so no tear pause before the first run
+    });
+    await act(async () => buttonWithText(container, 'Print').click());
+    await settle();
+
+    expect(printFabricTag.mock.calls[0][0]).toMatchObject({
+      careSymbols: ['WASH_30', 'IRON_LOW'],
+    });
+  });
+
   it('sends no sticker run when that box is unticked', async () => {
     await render();
     await fillMinimalOrder(40);

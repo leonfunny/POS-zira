@@ -11,7 +11,12 @@ import {
   orderTotals,
   validateOrder,
 } from '../../../shared/label-print-order';
-import { CARE_SYMBOLS, CareSymbol } from '../../../shared/types';
+import {
+  CARE_SYMBOLS,
+  CareSymbol,
+  FABRIC_TAG_EXCLUSIVE_CARE_SYMBOL_GROUPS,
+} from '../../../shared/types';
+import { careSymbolSvg } from '../../../shared/care-symbols';
 import { PrintProgress, runPrintPlan } from './print-order-runner';
 import {
   SavedPrintOrder,
@@ -23,6 +28,19 @@ import {
   saveDraft,
   saveOrder,
 } from './print-order-storage';
+
+/**
+ * Symbols grouped the way they are read on a tag. Same grouping the composer
+ * uses; kept as its own list because the picker's rows are a reading order, not
+ * the exclusivity rule (drying has two independent families in one row).
+ */
+const SYMBOL_GROUPS: { key: string; symbols: CareSymbol[] }[] = [
+  { key: 'wash', symbols: ['WASH_30', 'WASH_40', 'WASH_60', 'WASH_HAND', 'WASH_NO'] },
+  { key: 'bleach', symbols: ['BLEACH_OK', 'BLEACH_NO'] },
+  { key: 'dry', symbols: ['DRY_ANY', 'TUMBLE_LOW', 'TUMBLE_NORMAL', 'TUMBLE_NO', 'DRY_LINE', 'DRY_FLAT'] },
+  { key: 'iron', symbols: ['IRON_LOW', 'IRON_MEDIUM', 'IRON_HIGH', 'IRON_NO'] },
+  { key: 'professional', symbols: ['DRYCLEAN_ANY', 'DRYCLEAN_P', 'DRYCLEAN_F', 'DRYCLEAN_NO'] },
+];
 
 /** Sizes staff reach for most; the field stays free text for anything else. */
 const SIZE_SUGGESTIONS = ['S', 'M', 'L', 'XL', '2XL', 'S/M', 'L/XL', '44/46'];
@@ -311,12 +329,26 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
   };
 
   const toggleCareSymbol = (symbol: CareSymbol) => {
-    setOrder((current) => ({
-      ...current,
-      careSymbols: current.careSymbols.includes(symbol)
-        ? current.careSymbols.filter((s) => s !== symbol)
-        : [...current.careSymbols, symbol],
-    }));
+    setOrder((current) => {
+      if (current.careSymbols.includes(symbol)) {
+        return { ...current, careSymbols: current.careSymbols.filter((s) => s !== symbol) };
+      }
+      // Wash, bleach, tumble, iron and dry-clean each behave like a radio group:
+      // a tag saying both "wash at 30" and "do not wash" is nonsense, and main
+      // would refuse it at print time anyway.
+      const exclusive = FABRIC_TAG_EXCLUSIVE_CARE_SYMBOL_GROUPS.find((group) =>
+        group.includes(symbol),
+      );
+      const compatible = exclusive
+        ? current.careSymbols.filter((selected) => !exclusive.includes(selected))
+        : current.careSymbols;
+      return {
+        ...current,
+        careSymbols: [...compatible, symbol].sort(
+          (a, b) => CARE_SYMBOLS.indexOf(a) - CARE_SYMBOLS.indexOf(b),
+        ),
+      };
+    });
   };
 
   const addSize = (label: string) => {
@@ -506,23 +538,40 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
 
       <section className="mb-4 rounded-md border border-slate-200 p-3">
         <h3 className="mb-2 text-sm font-bold text-slate-700">{copy.care}</h3>
-        <div className="flex flex-wrap gap-1.5">
-          {CARE_SYMBOLS.map((symbol) => (
-            <button
-              key={symbol}
-              type="button"
-              onClick={() => toggleCareSymbol(symbol)}
-              aria-pressed={order.careSymbols.includes(symbol)}
-              className={`min-h-8 rounded border px-2 text-[11px] font-bold ${
-                order.careSymbols.includes(symbol)
-                  ? 'border-emerald-600 bg-emerald-50 text-emerald-800'
-                  : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
-              }`}
-            >
-              {symbol}
-            </button>
+        <div className="space-y-1">
+          {SYMBOL_GROUPS.map((group) => (
+            <div key={group.key} className="flex flex-wrap gap-1.5">
+              {group.symbols.map((symbol) => (
+                <button
+                  key={symbol}
+                  type="button"
+                  title={symbol}
+                  aria-label={symbol}
+                  onClick={() => toggleCareSymbol(symbol)}
+                  aria-pressed={order.careSymbols.includes(symbol)}
+                  className={`flex h-11 w-11 items-center justify-center rounded border ${
+                    order.careSymbols.includes(symbol)
+                      ? 'border-emerald-600 bg-emerald-50 text-emerald-800'
+                      : 'border-slate-200 bg-white text-slate-400 hover:border-slate-300 hover:text-slate-600'
+                  }`}
+                  // The picker draws the same vector art the tag prints, so what
+                  // staff choose is literally what comes out of the machine.
+                  dangerouslySetInnerHTML={{ __html: careSymbolSvg(symbol, 26) }}
+                />
+              ))}
+            </div>
           ))}
         </div>
+        {order.careSymbols.length > 0 && (
+          <div
+            className="mt-2 flex flex-wrap items-center gap-1 text-slate-700"
+            data-testid="care-preview"
+            aria-label="care preview"
+            dangerouslySetInnerHTML={{
+              __html: order.careSymbols.map((s) => careSymbolSvg(s, 20)).join(''),
+            }}
+          />
+        )}
         <div className="mt-3">
           <Field label={copy.careText}>
             <input
