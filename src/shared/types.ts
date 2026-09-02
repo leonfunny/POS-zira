@@ -1491,6 +1491,23 @@ export interface TelegramLoginTokenStatus {
 }
 
 // IPC channels
+/**
+ * Packaging sticker request sent from the renderer.
+ *
+ * Geometry is not part of it: main reads the label size from the LABEL printer
+ * slot so the renderer cannot ask for a page the media cannot hold.
+ */
+export interface PackagingStickerPrintRequest {
+  customerName?: string;
+  styleName?: string;
+  styleCode?: string;
+  colorName?: string;
+  /** Present only when the operator ticked "print size on the sticker". */
+  sizeText?: string;
+  code: string;
+  quantity?: number;
+}
+
 export const IPC_CHANNELS = {
   // Config
   GET_CONFIG: 'get-config',
@@ -1515,6 +1532,7 @@ export const IPC_CHANNELS = {
   TEST_PRINT: 'test-print',
   PRINT_LABEL: 'print-label',
   PRINT_FABRIC_TAG: 'print-fabric-tag',
+  PRINT_PACKAGING_STICKER: 'print-packaging-sticker',
   TEST_PRINTER_BY_TYPE: 'test-printer-by-type',
   TEST_PRINTER_BY_CONFIG: 'test-printer-by-config',
   PRINT_FISCAL_DAILY_REPORT_NOW: 'print-fiscal-daily-report-now',

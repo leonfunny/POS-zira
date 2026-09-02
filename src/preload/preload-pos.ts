@@ -367,6 +367,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveConfig: (config: any) => ipcRenderer.invoke('set-config', config),
   printLabel: (barcode: string, text?: string, options?: { priceText?: string; sku?: string; text2?: string; text3?: string; quantity?: number; copies?: number }) =>
     ipcRenderer.invoke('print-label', barcode, text, options),
+  // Bound in BOTH preloads on purpose: a channel exposed in only one window
+  // reads as `undefined` in the other and takes the whole renderer down.
+  printPackagingSticker: (data: import('../shared/types').PackagingStickerPrintRequest) =>
+    ipcRenderer.invoke('print-packaging-sticker', data),
 
   // === Connection status ===
   getStatus: () => ipcRenderer.invoke('get-status'),

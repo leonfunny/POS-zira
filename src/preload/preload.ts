@@ -187,6 +187,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke(IPC_CHANNELS.PRINT_LABEL, barcode, text, options),
   printFabricTag: (data: import('../shared/types').FabricTagData) =>
     ipcRenderer.invoke(IPC_CHANNELS.PRINT_FABRIC_TAG, data),
+  printPackagingSticker: (data: import('../shared/types').PackagingStickerPrintRequest) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PRINT_PACKAGING_STICKER, data),
   testPrinterByType: (printerType: string) => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINTER_BY_TYPE, printerType),
   testPrinterByConfig: (config: any, printerType?: string) => ipcRenderer.invoke(IPC_CHANNELS.TEST_PRINTER_BY_CONFIG, config, printerType),
   printFiscalDailyReportNow: () => ipcRenderer.invoke(IPC_CHANNELS.PRINT_FISCAL_DAILY_REPORT_NOW),

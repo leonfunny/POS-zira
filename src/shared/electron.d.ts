@@ -336,6 +336,9 @@ interface ElectronAPI {
     options?: import('./types').LabelPrintOptions,
   ) => Promise<{ success: boolean; error?: string }>;
   printFabricTag: (data: import('./types').FabricTagData) => Promise<{ success: boolean; error?: string }>;
+  printPackagingSticker: (
+    data: import('./types').PackagingStickerPrintRequest,
+  ) => Promise<{ success: boolean; error?: string }>;
   testPrinterByType: (printerType: string) => Promise<{ success: boolean; error?: string }>;
   testPrinterByConfig: (config: import('./types').PrinterConfig, printerType?: string) => Promise<import('./types').TestPrintResult>;
   printFiscalDailyReportNow: () => Promise<import('./types').FiscalDailyReportPrintResponse>;

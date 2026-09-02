@@ -318,20 +318,50 @@ export async function printInfoLabelToDevice(opts: PrintInfoLabelOptions): Promi
   return htmlPath;
 }
 
+/**
+ * Print a packaging sticker (mác dán bao bì) for the garment factory.
+ *
+ * The Honeywell PC42E-D is installed with its Direct Protocol driver, so the
+ * app must hand Windows a rendered page rather than the ZPL the label lane
+ * emits. Copies are left to the driver: one job, `copies` pages.
+ */
+export async function printPackagingStickerToDevice(opts: {
+  html: string;
+  printerName: string;
+  widthMm: number;
+  heightMm: number;
+  copies: number;
+  silent?: boolean;
+}): Promise<void> {
+  const { html, printerName, widthMm, heightMm, copies, silent = true } = opts;
+  logger.info(
+    `[PdfPrinter] Printing ${copies}x ${widthMm}x${heightMm}mm packaging sticker -> "${printerName}"`,
+  );
+  await printHtmlToDevice({
+    html,
+    printerName,
+    labelWidthMm: widthMm,
+    labelHeightMm: heightMm,
+    silent,
+    copies,
+  });
+}
+
 async function printHtmlToDevice(opts: {
   html: string;
   printerName: string;
   labelWidthMm: number;
   labelHeightMm: number;
   silent: boolean;
+  copies?: number;
 }): Promise<void> {
-  const { html, printerName, labelWidthMm, labelHeightMm, silent } = opts;
+  const { html, printerName, labelWidthMm, labelHeightMm, silent, copies } = opts;
   const win = new BrowserWindow({ show: false, width: Math.round(labelWidthMm * 4), height: Math.round(labelHeightMm * 4), webPreferences: { offscreen: true } });
   try {
     await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
     await new Promise(r => setTimeout(r, 500));
     await new Promise<void>((resolve, reject) => {
-      win.webContents.print({ silent, deviceName: printerName, printBackground: true, margins: { marginType: 'none' }, pageSize: { width: labelWidthMm * 1000, height: labelHeightMm * 1000 } },
+      win.webContents.print({ silent, deviceName: printerName, printBackground: true, margins: { marginType: 'none' }, pageSize: { width: labelWidthMm * 1000, height: labelHeightMm * 1000 }, ...(copies && copies > 1 ? { copies } : {}) },
         (success, reason) => { if (success) { logger.info(`[PdfPrinter] Label printed to "${printerName}"`); resolve(); } else { reject(new Error(`Print failed: ${reason}`)); } });
     });
   } finally { win.destroy(); }

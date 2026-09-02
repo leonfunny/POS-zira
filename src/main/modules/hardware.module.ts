@@ -23,7 +23,13 @@ import { FabricTagPrintGate, parseFabricTagData } from '../hardware/tsc/fabric-t
 import { applyStoredTsplMediaTuning } from '../hardware/tsc/tspl-config-merge';
 import { FABRIC_TAG_PRINTER_DEFAULTS } from '../../shared/fabric-tag-printer-config';
 import { UniversalDetectionService, UniversalDeviceRegistry } from '../hardware/detection';
-import { printLabelToDevice, printInfoLabelToDevice, cleanupOldLabels } from '../hardware/pdf/pdf-printer';
+import { printLabelToDevice, printInfoLabelToDevice, cleanupOldLabels, printPackagingStickerToDevice } from '../hardware/pdf/pdf-printer';
+import {
+  PackagingStickerJob,
+  PackagingStickerPrintGate,
+  PackagingStickerRequest,
+  resolvePackagingStickerJob,
+} from '../hardware/pdf/packaging-sticker-job';
 import { ThermalDriver } from '../hardware/thermal/thermal-driver';
 import { HidScanner } from '../hardware/scanner/hid-scanner';
 import { chooseScannerTargetWindow } from '../hardware/scanner/scanner-target';
@@ -197,6 +203,7 @@ export class HardwareModule extends BaseModule {
   private printerLifecycleTail: Promise<void> = Promise.resolve();
   /** Serialises the expensive offscreen render + RAW spool sequence. */
   private readonly fabricTagPrintGate = new FabricTagPrintGate();
+  private readonly packagingStickerGate = new PackagingStickerPrintGate();
   // Event bus reference for emitting status changes
   private bus: EventBus | null = null;
   private handleAgentConnected = () => {
@@ -430,6 +437,10 @@ export class HardwareModule extends BaseModule {
 
     ipcMain.handle(IPC_CHANNELS.PRINT_FABRIC_TAG, async (_event, data: unknown) => {
       return this.printFabricTag(data);
+    });
+
+    ipcMain.handle(IPC_CHANNELS.PRINT_PACKAGING_STICKER, async (_event, data: unknown) => {
+      return this.printPackagingSticker(data);
     });
 
     ipcMain.handle(IPC_CHANNELS.TEST_PRINTER_BY_TYPE, async (_, printerType: string) => {
@@ -1718,6 +1729,41 @@ export class HardwareModule extends BaseModule {
       );
       return { success: true };
     } catch (e: any) { return { success: false, error: e.message }; }
+  }
+
+  /**
+   * Print a packaging sticker (mác dán bao bì) on the LABEL printer.
+   *
+   * Unlike printLabel(), this renders the page itself and hands it to the
+   * Windows driver. The factory's Honeywell PC42E-D is installed with its
+   * Direct Protocol driver, which does not read the ZPL the label lane emits;
+   * the customer's own stickers are produced the same way.
+   */
+  async printPackagingSticker(data: unknown): Promise<{ success: boolean; error?: string }> {
+    let job: PackagingStickerJob;
+    try {
+      // Validate renderer IPC before touching hardware.
+      job = resolvePackagingStickerJob(
+        (data || {}) as PackagingStickerRequest,
+        getConfig().printers,
+      );
+    } catch (error: any) {
+      return { success: false, error: error?.message || String(error) };
+    }
+    try {
+      await this.packagingStickerGate.runExclusive(() =>
+        printPackagingStickerToDevice({
+          html: job.html,
+          printerName: job.printerName,
+          widthMm: job.widthMm,
+          heightMm: job.heightMm,
+          copies: job.copies,
+        }),
+      );
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e?.message || String(e) };
+    }
   }
 
   /**
