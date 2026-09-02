@@ -468,6 +468,83 @@ describe('PrintOrderPanel', () => {
     expect(container.querySelector('[data-saved-order][data-open="true"]')).toBeNull();
   });
 
+  it('duplicates a filed order into a second one, leaving the first alone', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => buttonWithText(container, 'Save order').click());
+
+    await act(async () => container.querySelector<HTMLButtonElement>(
+      '[data-testid="duplicate-order"]')!.click());
+    await changeInput(input(container, 'input[aria-label="CZEKOLADA S"]'), '55');
+    await act(async () => buttonWithText(container, 'Save order').click());
+
+    expect(container.querySelectorAll('[data-saved-order]')).toHaveLength(2);
+
+    // The first row is still the order as it was filed, not the edited copy.
+    const opens = Array.from(container.querySelectorAll('button'))
+      .filter((b) => b.textContent?.trim() === 'Open');
+    await act(async () => opens[opens.length - 1].click());
+    expect(text('[data-testid="grand-total"]')).toBe('40');
+  });
+
+  it('files nothing until Save, so a duplicate never lands as a twin', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => buttonWithText(container, 'Save order').click());
+
+    await act(async () => container.querySelector<HTMLButtonElement>(
+      '[data-testid="duplicate-order"]')!.click());
+
+    expect(container.querySelectorAll('[data-saved-order]')).toHaveLength(1);
+    // Nothing on screen belongs to a filed order any more, and the Save button
+    // stops claiming the sheet is already stored.
+    expect(container.querySelector('[data-saved-order][data-open="true"]')).toBeNull();
+    expect(() => buttonWithText(container, 'Save order')).not.toThrow();
+  });
+
+  it('carries the sheet across untouched', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => buttonWithText(container, 'Save order').click());
+
+    await act(async () => container.querySelector<HTMLButtonElement>(
+      '[data-testid="duplicate-order"]')!.click());
+
+    expect(text('[data-testid="grand-total"]')).toBe('40');
+    expect(input(container, 'input[placeholder="CZEKOLADA"]').value).toBe('CZEKOLADA');
+  });
+
+  it('offers no duplicate for a sheet that was never filed', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    expect(container.querySelector('[data-testid="duplicate-order"]')).toBeNull();
+
+    await act(async () => buttonWithText(container, 'Save order').click());
+    expect(container.querySelector('[data-testid="duplicate-order"]')).not.toBeNull();
+
+    await act(async () => buttonWithText(container, 'New order').click());
+    expect(container.querySelector('[data-testid="duplicate-order"]')).toBeNull();
+  });
+
+  it('refuses to duplicate out from under a run that is going out', async () => {
+    let releaseSticker: (value: { success: boolean }) => void = () => {};
+    printSticker.mockImplementation(
+      () => new Promise((resolve) => { releaseSticker = resolve; }),
+    );
+
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => buttonWithText(container, 'Save order').click());
+    await act(async () => buttonWithText(container, 'Print').click());
+    await settle();
+
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="duplicate-order"]')!.disabled)
+      .toBe(true);
+
+    await act(async () => { releaseSticker({ success: true }); });
+    await settle();
+  });
+
   it('scrolls back to the top when a sheet is swapped underneath the reader', async () => {
     await render();
     await fillMinimalOrder(40);

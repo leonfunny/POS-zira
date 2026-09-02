@@ -96,6 +96,8 @@ interface Copy {
   open: string;
   remove: string;
   newOrder: string;
+  duplicate: string;
+  duplicateHint: string;
   stopAfter: string;
   stopHint: string;
   noResume: string;
@@ -150,6 +152,9 @@ const COPY: Record<string, Copy> = {
     open: 'Mở',
     remove: 'Xoá',
     newOrder: 'Đơn mới',
+    duplicate: 'Nhân bản',
+    duplicateHint:
+      'Tạo một đơn mới với đúng nội dung này. Chưa ghi gì cho tới khi bấm Lưu đơn.',
     stopAfter: 'Dừng in',
     stopHint: 'Bấm Dừng thì lô đang gửi vẫn in nốt rồi mới ngừng.',
     noResume: 'Máy kẹt hay tắt app giữa chừng thì phải đếm tem thật trước khi in lại.',
@@ -209,6 +214,9 @@ const COPY: Record<string, Copy> = {
     open: 'Otwórz',
     remove: 'Usuń',
     newOrder: 'Nowe zlecenie',
+    duplicate: 'Duplikuj',
+    duplicateHint:
+      'Nowe zlecenie z tą samą treścią. Nic nie zapisuje, dopóki nie klikniesz Zapisz zlecenie.',
     stopAfter: 'Zatrzymaj druk',
     stopHint: 'Po naciśnięciu Zatrzymaj bieżąca partia dokończy się i dopiero potem druk stanie.',
     noResume: 'Po zacięciu lub zamknięciu aplikacji policz metki, zanim wydrukujesz ponownie.',
@@ -268,6 +276,9 @@ const COPY: Record<string, Copy> = {
     open: 'Open',
     remove: 'Delete',
     newOrder: 'New order',
+    duplicate: 'Duplicate',
+    duplicateHint:
+      'A new order with the same contents. Nothing is filed until you press Save order.',
     stopAfter: 'Stop printing',
     stopHint: 'Stop takes effect after the batch already sent finishes.',
     noResume: 'After a jam or an app restart, count the printed labels before reprinting.',
@@ -547,6 +558,21 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
     setSavedNotice(true);
   };
 
+  /**
+   * Filing an order now writes back into the one that is open, so next week's
+   * order that differs only in colour would eat last week's if it were opened
+   * and edited. Duplicate mints a new id and leaves the sheet exactly as it is.
+   *
+   * Nothing is filed on the spot on purpose: two rows with the same name is the
+   * twin the write-back change just got rid of, and the operator is about to
+   * change the colours anyway. So the Save button goes back to reading "Save
+   * order", and the saved list stops marking any row as the one on screen.
+   */
+  const handleDuplicate = () => {
+    setOrderId(nextId('order'));
+    setSavedNotice(false);
+  };
+
   // Switching sheets from the saved list at the bottom leaves the reader
   // looking at the list, not at the order that just replaced everything above.
   const scrollToTop = () => scrollRef.current?.scrollTo({ top: 0 });
@@ -572,6 +598,11 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
 
   const isPrinting = progress?.type === 'printing';
   const canPrint = problems.length === 0 && plan.length > 0 && !isPrinting;
+
+  // Only offered for a sheet that came from the list: duplicating something
+  // that was never filed writes nothing either way, so the button would sit
+  // there doing nothing visible.
+  const openOrderIsFiled = savedOrders.some((saved) => saved.id === orderId);
 
   return (
     <div
@@ -1057,6 +1088,18 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
           <Save size={18} aria-hidden="true" />
           {savedNotice ? copy.saved : copy.save}
         </button>
+        {openOrderIsFiled && (
+          <button
+            type="button"
+            data-testid="duplicate-order"
+            onClick={handleDuplicate}
+            disabled={isPrinting}
+            title={copy.duplicateHint}
+            className="inline-flex min-h-11 items-center rounded-md border border-slate-300 px-4 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {copy.duplicate}
+          </button>
+        )}
         <button
           type="button"
           onClick={handleNew}
