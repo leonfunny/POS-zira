@@ -5,9 +5,11 @@
  * table once the shape has settled against real sheets.
  */
 import {
+  LABEL_PRINT_ORDER_LIMITS,
   LabelPrintOrder,
   MAX_SIZE_LABEL_CHARS,
   SIZE_SUGGESTIONS,
+  STYLE_SUGGESTIONS,
   createEmptyOrder,
 } from '../../../shared/label-print-order';
 
@@ -103,54 +105,90 @@ export function loadDraftId(): string | null {
 }
 
 /**
- * Size columns this machine has been taught. A shop that works in "3XL" or
- * "48/50" types it once and gets a button for it afterwards; the built-in list
- * is the same everywhere, this is what one shop adds to it.
+ * A short list this machine has been taught, on top of a built-in one: size
+ * columns, style names. A shop that works in "3XL" or "KOMPLET DRESOWY" types
+ * it once and gets it offered afterwards.
  *
  * Kept out of the order and out of clearDraft on purpose: it belongs to the
  * machine, not to the sheet being typed, so starting a new order does not make
  * the shop teach it again.
  */
-const SIZES_KEY = 'zira.labelPrintOrder.learnedSizes';
-export const LEARNED_SIZE_LIMIT = 24;
+export const LEARNED_LIMIT = 24;
 
-export function loadLearnedSizes(): string[] {
-  const stored = read<unknown>(SIZES_KEY, []);
-  if (!Array.isArray(stored)) return [];
-  const seen = new Set<string>();
-  const sizes: string[] = [];
-  for (const entry of stored) {
-    if (typeof entry !== 'string') continue;
-    const label = entry.trim().toUpperCase().slice(0, MAX_SIZE_LABEL_CHARS);
-    // A hand-edited or older store can hold a built-in or a duplicate; both
-    // would print a second identical button.
-    if (!label || seen.has(label) || (SIZE_SUGGESTIONS as readonly string[]).includes(label)) {
-      continue;
+interface LearnedList {
+  load(): string[];
+  /** Teach one. Returns the list as it now stands. */
+  remember(value: string): string[];
+  /** Forget one — how a typo gets off the list. */
+  forget(value: string): string[];
+}
+
+function learnedList(
+  key: string,
+  builtIn: readonly string[],
+  maxChars: number,
+): LearnedList {
+  const clean = (value: string) => value.trim().toUpperCase().slice(0, maxChars);
+
+  const load = (): string[] => {
+    const stored = read<unknown>(key, []);
+    if (!Array.isArray(stored)) return [];
+    const seen = new Set<string>();
+    const values: string[] = [];
+    for (const entry of stored) {
+      if (typeof entry !== 'string') continue;
+      const value = clean(entry);
+      // A hand-edited or older store can hold a built-in or a duplicate; both
+      // would show up twice in the same list.
+      if (!value || seen.has(value) || builtIn.includes(value)) continue;
+      seen.add(value);
+      values.push(value);
     }
-    seen.add(label);
-    sizes.push(label);
-  }
-  return sizes.slice(0, LEARNED_SIZE_LIMIT);
+    return values.slice(0, LEARNED_LIMIT);
+  };
+
+  return {
+    load,
+    remember(value: string): string[] {
+      const next = clean(value);
+      const current = load();
+      if (!next || current.includes(next) || builtIn.includes(next)) return current;
+      // Oldest out when full: a typo taught once should not hold a slot forever.
+      const grown = [...current, next].slice(-LEARNED_LIMIT);
+      write(key, grown);
+      return grown;
+    },
+    forget(value: string): string[] {
+      const next = load().filter((entry) => entry !== value);
+      write(key, next);
+      return next;
+    },
+  };
 }
 
-/** Teach the machine a size. Returns the list as it now stands. */
-export function rememberSize(label: string): string[] {
-  const size = label.trim().toUpperCase().slice(0, MAX_SIZE_LABEL_CHARS);
-  const current = loadLearnedSizes();
-  if (!size || current.includes(size)) return current;
-  if ((SIZE_SUGGESTIONS as readonly string[]).includes(size)) return current;
-  // Oldest out when full: a typo taught once should not hold a slot forever.
-  const next = [...current, size].slice(-LEARNED_SIZE_LIMIT);
-  write(SIZES_KEY, next);
-  return next;
-}
+const sizes = learnedList(
+  'zira.labelPrintOrder.learnedSizes',
+  SIZE_SUGGESTIONS,
+  MAX_SIZE_LABEL_CHARS,
+);
+export const loadLearnedSizes = sizes.load;
+export const rememberSize = sizes.remember;
+export const forgetSize = sizes.forget;
 
-/** Forget one learned size — the way a typo gets off the row. */
-export function forgetSize(label: string): string[] {
-  const next = loadLearnedSizes().filter((size) => size !== label);
-  write(SIZES_KEY, next);
-  return next;
-}
+/**
+ * Style names. Learned when an order is saved or printed rather than while it
+ * is typed: a free-text field has no moment where the operator says "done", and
+ * learning on every keystroke would fill the list with "K", "KU", "KUR".
+ */
+const styles = learnedList(
+  'zira.labelPrintOrder.learnedStyles',
+  STYLE_SUGGESTIONS,
+  LABEL_PRINT_ORDER_LIMITS.textChars,
+);
+export const loadLearnedStyles = styles.load;
+export const rememberStyle = styles.remember;
+export const forgetStyle = styles.forget;
+
 
 export function listSavedOrders(): SavedPrintOrder[] {
   const stored = read<SavedPrintOrder[]>(SAVED_KEY, []);

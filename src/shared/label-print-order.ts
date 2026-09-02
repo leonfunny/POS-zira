@@ -402,3 +402,14 @@ export const MAX_SIZE_LABEL_CHARS = FABRIC_TAG_LIMITS.size;
  * learned-size store.
  */
 export const SIZE_SUGGESTIONS = ['S', 'M', 'L', 'XL', '2XL', 'S/M', 'L/XL', '44/46'] as const;
+
+/**
+ * Style names offered in the dropdown. Seeded with the ones this shop named;
+ * anything else is typed once and remembered on the machine when the order is
+ * saved or printed, the same way a size column is.
+ */
+export const STYLE_SUGGESTIONS = [
+  'KURTKA',
+  'BAWEŁNIANE',
+  'KOMPLET DRESOWY',
+] as const;

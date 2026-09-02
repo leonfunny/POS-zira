@@ -10,12 +10,20 @@ import {
   saveOrder,
   loadDraftId,
   saveDraftId,
-  LEARNED_SIZE_LIMIT,
+  LEARNED_LIMIT,
   forgetSize,
+  forgetStyle,
   loadLearnedSizes,
+  loadLearnedStyles,
   rememberSize,
+  rememberStyle,
 } from '../src/renderer/components/label/print-order-storage';
-import { MAX_SIZE_LABEL_CHARS, SIZE_SUGGESTIONS, createEmptyOrder } from '../src/shared/label-print-order';
+import {
+  MAX_SIZE_LABEL_CHARS,
+  SIZE_SUGGESTIONS,
+  STYLE_SUGGESTIONS,
+  createEmptyOrder,
+} from '../src/shared/label-print-order';
 
 function memoryStorage(): Storage {
   const map = new Map<string, string>();
@@ -240,11 +248,11 @@ describe('the machine remembers a size somebody typed', () => {
   });
 
   it('drops the oldest once the row is full, rather than growing forever', () => {
-    for (let i = 0; i < LEARNED_SIZE_LIMIT + 3; i += 1) rememberSize(`Z${i}`);
+    for (let i = 0; i < LEARNED_LIMIT + 3; i += 1) rememberSize(`Z${i}`);
     const sizes = loadLearnedSizes();
-    expect(sizes).toHaveLength(LEARNED_SIZE_LIMIT);
+    expect(sizes).toHaveLength(LEARNED_LIMIT);
     expect(sizes).not.toContain('Z0');
-    expect(sizes[sizes.length - 1]).toBe(`Z${LEARNED_SIZE_LIMIT + 2}`);
+    expect(sizes[sizes.length - 1]).toBe(`Z${LEARNED_LIMIT + 2}`);
   });
 
   it('forgets one on request — how a typo gets off the row', () => {
@@ -273,5 +281,40 @@ describe('the machine remembers a size somebody typed', () => {
     vi.stubGlobal('localStorage', undefined);
     expect(() => rememberSize('3XL')).not.toThrow();
     expect(loadLearnedSizes()).toEqual([]);
+  });
+});
+
+describe('the machine remembers a style name too', () => {
+  it('starts with only the names it shipped with', () => {
+    expect(loadLearnedStyles()).toEqual([]);
+  });
+
+  it('remembers one that is not already in the dropdown', () => {
+    expect(rememberStyle('bluza z kapturem')).toEqual(['BLUZA Z KAPTUREM']);
+    expect(loadLearnedStyles()).toEqual(['BLUZA Z KAPTUREM']);
+  });
+
+  it('does not learn a name the dropdown already offers', () => {
+    for (const built of STYLE_SUGGESTIONS) rememberStyle(built);
+    expect(loadLearnedStyles()).toEqual([]);
+    expect(rememberStyle('kurtka')).toEqual([]);
+  });
+
+  it('forgets one, which is how a typo gets out of the dropdown', () => {
+    rememberStyle('KURTAK');
+    expect(forgetStyle('KURTAK')).toEqual([]);
+  });
+
+  it('keeps its own list, separate from the sizes', () => {
+    rememberSize('3XL');
+    rememberStyle('BLUZA');
+    expect(loadLearnedSizes()).toEqual(['3XL']);
+    expect(loadLearnedStyles()).toEqual(['BLUZA']);
+  });
+
+  it('survives a new order, like the sizes do', () => {
+    rememberStyle('BLUZA');
+    clearDraft();
+    expect(loadLearnedStyles()).toEqual(['BLUZA']);
   });
 });

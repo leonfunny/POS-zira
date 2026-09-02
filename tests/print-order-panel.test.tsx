@@ -196,6 +196,71 @@ describe('PrintOrderPanel', () => {
       .toBe(true);
   });
 
+  it('fills the style name from the dropdown', async () => {
+    await render();
+    const picker = container.querySelector<HTMLSelectElement>('[data-testid="style-picker"]')!;
+    expect(Array.from(picker.options).map((o) => o.value))
+      .toEqual(['', 'KURTKA', 'BAWEŁNIANE', 'KOMPLET DRESOWY']);
+
+    await act(async () => {
+      picker.value = 'KOMPLET DRESOWY';
+      picker.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    expect(input(container, 'input[placeholder="KURTKA"]').value).toBe('KOMPLET DRESOWY');
+    // The picker springs back so it always reads as "pick one", never as state.
+    expect(picker.value).toBe('');
+  });
+
+  it('remembers a style name typed by hand once the order is filed', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    await changeInput(input(container, 'input[placeholder="KURTKA"]'), 'bluza z kapturem');
+
+    const styles = () => Array.from(
+      container.querySelectorAll<HTMLSelectElement>('[data-testid="style-picker"]')[0].options,
+    ).map((o) => o.value);
+    // Not while it is being typed — that would fill the list with "B", "BL".
+    expect(styles()).not.toContain('BLUZA Z KAPTUREM');
+
+    await act(async () => buttonWithText(container, 'Save order').click());
+    expect(styles()).toContain('BLUZA Z KAPTUREM');
+  });
+
+  it('remembers a style name when the order goes to the printer', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    await changeInput(input(container, 'input[placeholder="KURTKA"]'), 'bluza');
+    await act(async () => buttonWithText(container, 'Print').click());
+    await settle();
+
+    const picker = container.querySelector<HTMLSelectElement>('[data-testid="style-picker"]')!;
+    expect(Array.from(picker.options).map((o) => o.value)).toContain('BLUZA');
+  });
+
+  it('offers a way to forget a style name typed by mistake', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    await changeInput(input(container, 'input[placeholder="KURTKA"]'), 'kurtak');
+    await act(async () => buttonWithText(container, 'Save order').click());
+
+    const forget = () => container.querySelector<HTMLButtonElement>('[data-testid="forget-style"]');
+    expect(forget()).not.toBeNull();
+    await act(async () => forget()!.click());
+
+    expect(forget()).toBeNull();
+    const picker = container.querySelector<HTMLSelectElement>('[data-testid="style-picker"]')!;
+    expect(Array.from(picker.options).map((o) => o.value)).not.toContain('KURTAK');
+    // The name stays in the order — the operator was tidying the list, not the sheet.
+    expect(input(container, 'input[placeholder="KURTKA"]').value).toBe('KURTAK');
+  });
+
+  it('shows no forget button for a name that shipped with the app', async () => {
+    await render();
+    await changeInput(input(container, 'input[placeholder="KURTKA"]'), 'KURTKA');
+    expect(container.querySelector('[data-testid="forget-style"]')).toBeNull();
+  });
+
   it('totals the grid as quantities are typed', async () => {
     await render();
     await fillMinimalOrder(40);

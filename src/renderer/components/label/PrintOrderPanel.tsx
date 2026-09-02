@@ -9,6 +9,7 @@ import {
   MAX_SIZE_LABEL_CHARS,
   OrderProblem,
   SIZE_SUGGESTIONS,
+  STYLE_SUGGESTIONS,
   buildPrintPlan,
   compositionText,
   createEmptyOrder,
@@ -38,12 +39,15 @@ import {
   deleteSavedOrder,
   describeOrder,
   forgetSize,
+  forgetStyle,
   listSavedOrders,
   loadLearnedSizes,
+  loadLearnedStyles,
   loadDraft,
   loadDraftId,
   saveDraft,
   rememberSize,
+  rememberStyle,
   saveDraftId,
   saveOrder,
 } from './print-order-storage';
@@ -68,6 +72,8 @@ interface Copy {
   sizes: string;
   addSize: string;
   forgetSize: string;
+  forgetStyle: string;
+  learnedStyles: string;
   color: string;
   code: string;
   codeHint: string;
@@ -118,6 +124,8 @@ const COPY: Record<string, Copy> = {
     sizes: 'Size',
     addSize: 'Thêm size',
     forgetSize: 'Bỏ nhớ size',
+    forgetStyle: 'Bỏ nhớ tên hàng',
+    learnedStyles: 'Đã nhớ',
     color: 'Màu',
     code: 'Mã tem',
     codeHint: 'Để trống thì màu này không in tem dán',
@@ -173,6 +181,8 @@ const COPY: Record<string, Copy> = {
     sizes: 'Rozmiary',
     addSize: 'Dodaj rozmiar',
     forgetSize: 'Zapomnij rozmiar',
+    forgetStyle: 'Zapomnij nazwę',
+    learnedStyles: 'Zapamiętane',
     color: 'Kolor',
     code: 'Kod etykiety',
     codeHint: 'Puste = bez naklejki dla tego koloru',
@@ -228,6 +238,8 @@ const COPY: Record<string, Copy> = {
     sizes: 'Sizes',
     addSize: 'Add size',
     forgetSize: 'Forget size',
+    forgetStyle: 'Forget',
+    learnedStyles: 'Remembered',
     color: 'Colour',
     code: 'Sticker code',
     codeHint: 'Blank means no packaging sticker for this colour',
@@ -303,6 +315,8 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
   const [careLineDraft, setCareLineDraft] = useState('');
   /** Size columns this machine has been taught, on top of the built-in ones. */
   const [learnedSizes, setLearnedSizes] = useState<string[]>(() => loadLearnedSizes());
+  /** Style names this machine has been taught, on top of the built-in ones. */
+  const [learnedStyles, setLearnedStyles] = useState<string[]>(() => loadLearnedStyles());
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const printInFlight = useRef(false);
@@ -448,6 +462,7 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
 
     printInFlight.current = true;
     stopRequested.current = false;
+    learnStyle();
     onPrintingChange?.(true);
     setResult(null);
 
@@ -484,8 +499,16 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
     }
   };
 
+  /**
+   * A style name is learned when the order is filed or sent to the printer, not
+   * while it is typed: a free-text field has no "done" moment, and learning on
+   * every keystroke would fill the dropdown with "K", "KU", "KUR".
+   */
+  const learnStyle = () => setLearnedStyles(rememberStyle(order.styleName));
+
   const handleSave = () => {
     setSavedOrders(saveOrder(orderId, order));
+    learnStyle();
     setSavedNotice(true);
   };
 
@@ -537,12 +560,50 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
           />
         </Field>
         <Field label={copy.styleName}>
-          <input
-            className={INPUT}
-            value={order.styleName}
-            onChange={(e) => patch({ styleName: e.target.value })}
-            placeholder="KURTKA"
-          />
+          <div className="flex gap-1.5">
+            <input
+              className={INPUT}
+              value={order.styleName}
+              onChange={(e) => patch({ styleName: e.target.value })}
+              placeholder="KURTKA"
+            />
+            {/* Pick instead of type. The field stays free text — the shop makes
+                things that are not on any list yet, and those are learned when
+                the order is saved or printed. */}
+            <select
+              className="h-9 shrink-0 rounded-md border border-slate-300 bg-white px-1 text-sm font-bold text-slate-600"
+              data-testid="style-picker"
+              aria-label={copy.styleName}
+              value=""
+              onChange={(e) => {
+                if (e.target.value) patch({ styleName: e.target.value });
+              }}
+            >
+              <option value="">▾</option>
+              {STYLE_SUGGESTIONS.map((style) => (
+                <option key={style} value={style}>{style}</option>
+              ))}
+              {learnedStyles.length > 0 && (
+                <optgroup label={copy.learnedStyles}>
+                  {learnedStyles.map((style) => (
+                    <option key={style} value={style}>{style}</option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
+          </div>
+          {/* Only for a name this machine was taught, so a typo saved once has
+              a way off the list. */}
+          {learnedStyles.includes(order.styleName.trim()) && (
+            <button
+              type="button"
+              data-testid="forget-style"
+              onClick={() => setLearnedStyles(forgetStyle(order.styleName.trim()))}
+              className="mt-1 text-[11px] font-bold text-slate-400 hover:text-red-600"
+            >
+              {copy.forgetStyle} {order.styleName.trim()}
+            </button>
+          )}
         </Field>
         <Field label={copy.styleCode}>
           <input
