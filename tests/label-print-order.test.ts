@@ -8,6 +8,11 @@ import {
   createEmptyOrder,
   orderTotals,
   validateOrder,
+  CARE_TEXT_MAX_CHARS,
+  CARE_TEXT_PRESETS,
+  careTextHasPreset,
+  careTextPresetFits,
+  toggleCareTextPreset,
 } from '../src/shared/label-print-order';
 
 /**
@@ -233,5 +238,54 @@ describe('buildPrintPlan', () => {
     const ids = buildPrintPlan(sampleOrder()).map((s) => s.id);
     expect(new Set(ids).size).toBe(ids.length);
     expect(buildPrintPlan(sampleOrder()).map((s) => s.id)).toEqual(ids);
+  });
+});
+
+describe('the extra line offers the lines this shop keeps writing', () => {
+  it('adds a preset to an empty field', () => {
+    expect(toggleCareTextPreset('', 'NATURALNY LEN')).toBe('NATURALNY LEN');
+  });
+
+  it('adds a second one on the same line', () => {
+    expect(toggleCareTextPreset('NATURALNY LEN', 'MADE IN POLAND'))
+      .toBe('NATURALNY LEN · MADE IN POLAND');
+  });
+
+  it('removes a preset that is already chosen, from either end', () => {
+    expect(toggleCareTextPreset('NATURALNY LEN · MADE IN POLAND', 'NATURALNY LEN'))
+      .toBe('MADE IN POLAND');
+    expect(toggleCareTextPreset('NATURALNY LEN · MADE IN POLAND', 'MADE IN POLAND'))
+      .toBe('NATURALNY LEN');
+  });
+
+  it('leaves text typed by hand alone', () => {
+    expect(toggleCareTextPreset('SZYTE W KRAKOWIE', 'NATURALNY LEN'))
+      .toBe('SZYTE W KRAKOWIE · NATURALNY LEN');
+  });
+
+  it('refuses a line the printer would reject, rather than losing the run', () => {
+    // The fabric lane caps this field; three long presets exceed it, and an
+    // over-length line is thrown out at the print boundary, mid-order.
+    const long = CARE_TEXT_PRESETS.filter((p) => p.length > 20);
+    const packed = long.reduce<string>((acc, p) => toggleCareTextPreset(acc, p), '');
+    expect(packed.length).toBeLessThanOrEqual(CARE_TEXT_MAX_CHARS);
+    expect(careTextPresetFits(packed, 'ZALECANY PŁYN DO PŁUKANIA DLA MIĘKKOŚCI')).toBe(false);
+    expect(toggleCareTextPreset(packed, 'ZALECANY PŁYN DO PŁUKANIA DLA MIĘKKOŚCI')).toBe(packed);
+  });
+
+  it('always lets a chosen preset be switched off, however full the line is', () => {
+    const packed = CARE_TEXT_PRESETS.reduce<string>((acc, p) => toggleCareTextPreset(acc, p), '');
+    for (const preset of CARE_TEXT_PRESETS) {
+      if (careTextHasPreset(packed, preset)) {
+        expect(careTextPresetFits(packed, preset), preset).toBe(true);
+      }
+    }
+  });
+
+  it('reports which presets are on the line', () => {
+    expect(careTextHasPreset('NATURALNY LEN · MADE IN POLAND', 'MADE IN POLAND')).toBe(true);
+    expect(careTextHasPreset('NATURALNY LEN', 'MADE IN POLAND')).toBe(false);
+    // A preset that is only part of a longer hand-typed line is not "chosen".
+    expect(careTextHasPreset('MADE IN POLAND BY US', 'MADE IN POLAND')).toBe(false);
   });
 });

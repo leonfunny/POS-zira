@@ -321,6 +321,53 @@ describe('PrintOrderPanel', () => {
     expect(container.querySelector('button[data-symbol="DRY_FLAT"]')?.getAttribute('aria-pressed')).toBe('true');
   });
 
+  it('fills the extra line from one-tap chips, and takes them off again', async () => {
+    await render();
+    const chip = (text: string) =>
+      container.querySelector<HTMLButtonElement>(`button[data-care-text-preset="${text}"]`)!;
+    const field = () =>
+      container.querySelector<HTMLInputElement>('input[placeholder="e.g. NATURALNY LEN"]')!;
+
+    await act(async () => chip('NATURALNY LEN').click());
+    expect(field().value).toBe('NATURALNY LEN');
+    await act(async () => chip('MADE IN POLAND').click());
+    expect(field().value).toBe('NATURALNY LEN · MADE IN POLAND');
+    expect(chip('MADE IN POLAND').getAttribute('aria-pressed')).toBe('true');
+
+    await act(async () => chip('NATURALNY LEN').click());
+    expect(field().value).toBe('MADE IN POLAND');
+    expect(chip('NATURALNY LEN').getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('greys out a chip that will not fit on the line', async () => {
+    await render();
+    const chip = (text: string) =>
+      container.querySelector<HTMLButtonElement>(`button[data-care-text-preset="${text}"]`)!;
+    for (const preset of ['PRAĆ Z PODOBNYMI KOLORAMI', 'PRAĆ NA LEWEJ STRONIE',
+      'PRAĆ PRZED PIERWSZYM UŻYCIEM']) {
+      await act(async () => chip(preset).click());
+    }
+    // The printer refuses an over-long extra line, so the chip has to stop
+    // before the run does.
+    expect(chip('ZALECANY PŁYN DO PŁUKANIA DLA MIĘKKOŚCI').disabled).toBe(true);
+    expect(chip('PRAĆ NA LEWEJ STRONIE').disabled).toBe(false);
+  });
+
+  it('sends the chosen extra line to the fabric lane', async () => {
+    await render();
+    await fillMinimalOrder(10);
+    await act(async () => container.querySelector<HTMLButtonElement>(
+      'button[data-care-text-preset="NATURALNY LEN"]')!.click());
+    await act(async () => {
+      const boxes = Array.from(container.querySelectorAll<HTMLInputElement>('input[type=checkbox]'));
+      boxes[1].click();
+    });
+    await act(async () => buttonWithText(container, 'Print').click());
+    await settle();
+
+    expect(printFabricTag.mock.calls[0][0]).toMatchObject({ careText: 'NATURALNY LEN' });
+  });
+
   it('deselects a symbol when it is clicked again', async () => {
     await render();
     const wash30 = () => container.querySelector<HTMLButtonElement>('button[data-symbol="WASH_30"]')!;

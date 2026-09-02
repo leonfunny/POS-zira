@@ -26,6 +26,59 @@ export const FABRIC_MATERIALS = [
   'NYLON',
 ] as const;
 
+/**
+ * Lines that keep turning up on the sheets this shop works from, offered as
+ * one-tap chips so nobody types Polish diacritics into a field that ends up
+ * burnt onto a garment. The field stays free text for anything else.
+ */
+export const CARE_TEXT_PRESETS = [
+  'PRAĆ Z PODOBNYMI KOLORAMI',
+  'PRAĆ NA LEWEJ STRONIE',
+  'PRAĆ PRZED PIERWSZYM UŻYCIEM',
+  'ZALECANY PŁYN DO PŁUKANIA DLA MIĘKKOŚCI',
+  'NATURALNY LEN',
+  'MADE IN POLAND',
+] as const;
+
+/** How two chosen lines are joined on the one line the tag prints. */
+export const CARE_TEXT_SEPARATOR = ' · ';
+
+/** The fabric lane's own ceiling; a longer line is refused at print time. */
+export const CARE_TEXT_MAX_CHARS = FABRIC_TAG_LIMITS.careText;
+
+function careTextParts(current: string): string[] {
+  return current.split(CARE_TEXT_SEPARATOR).map((part) => part.trim()).filter(Boolean);
+}
+
+/** True when `preset` is one of the lines currently in `careText`. */
+export function careTextHasPreset(current: string, preset: string): boolean {
+  return careTextParts(current).includes(preset);
+}
+
+/** False when adding `preset` would push the line past what the tag accepts. */
+export function careTextPresetFits(current: string, preset: string): boolean {
+  if (careTextHasPreset(current, preset)) return true;
+  // Measured directly, not by asking the toggle: the toggle refuses an
+  // over-long line by returning the old one, which would always look like it
+  // fitted and leave the chip enabled on a line it cannot join.
+  const joined = [...careTextParts(current), preset].join(CARE_TEXT_SEPARATOR);
+  return joined.length <= CARE_TEXT_MAX_CHARS;
+}
+
+/**
+ * Adds the preset if it is absent, removes it if it is already there — the same
+ * on/off a care-symbol button has, so one idea covers both pickers. Anything
+ * typed by hand is left alone, and a line that would overflow the tag is
+ * refused here as well as disabled in the picker, so the two cannot disagree.
+ */
+export function toggleCareTextPreset(current: string, preset: string): string {
+  const parts = careTextParts(current);
+  const without = parts.filter((part) => part !== preset);
+  if (without.length !== parts.length) return without.join(CARE_TEXT_SEPARATOR);
+  const added = [...parts, preset].join(CARE_TEXT_SEPARATOR);
+  return added.length > CARE_TEXT_MAX_CHARS ? current : added;
+}
+
 export const LABEL_PRINT_ORDER_LIMITS = {
   /** Matches the fabric lane, which is the stricter of the two printers. */
   maxRunQuantity: 999,

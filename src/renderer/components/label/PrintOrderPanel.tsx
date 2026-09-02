@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Play, Plus, Save, Trash2, X } from 'lucide-react';
 import {
+  CARE_TEXT_PRESETS,
   FABRIC_MATERIALS,
   LabelPrintOrder,
   MAX_SIZE_LABEL_CHARS,
@@ -8,7 +9,10 @@ import {
   buildPrintPlan,
   compositionText,
   createEmptyOrder,
+  careTextHasPreset,
+  careTextPresetFits,
   orderTotals,
+  toggleCareTextPreset,
   validateOrder,
 } from '../../../shared/label-print-order';
 import {
@@ -583,6 +587,31 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
               placeholder={copy.careTextHint}
             />
           </Field>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {CARE_TEXT_PRESETS.map((preset) => {
+              const chosen = careTextHasPreset(order.careText, preset);
+              const fits = careTextPresetFits(order.careText, preset);
+              return (
+                <button
+                  key={preset}
+                  type="button"
+                  disabled={!fits}
+                  data-care-text-preset={preset}
+                  aria-pressed={chosen}
+                  onClick={() => patch({ careText: toggleCareTextPreset(order.careText, preset) })}
+                  className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
+                    chosen
+                      ? 'border-emerald-600 bg-emerald-50 text-emerald-800'
+                      : fits
+                        ? 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                        : 'cursor-not-allowed border-slate-100 bg-slate-50 text-slate-300'
+                  }`}
+                >
+                  {preset}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </section>
 

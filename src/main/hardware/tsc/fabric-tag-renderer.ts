@@ -147,7 +147,12 @@ export function buildFabricTagHtml(
   const pad = Math.round(widthDots * 0.06);
   const brandSize = Math.round(widthDots * 0.13);
   const sizeSize = Math.round(widthDots * 0.16);
-  const bodySize = Math.round(widthDots * 0.075);
+  // Composition and price. Raised from 0.075 on 02/09/2026: on a 20 mm ribbon
+  // that was 12 dots, and the fibre percentages -- the line the shop is asked
+  // about most -- came off the machine visibly fainter than everything around
+  // them. Checked at 12, 15, 17 and 18 dots against the real Windows fonts;
+  // 17 is where it reads cleanly without crowding the size letter above it.
+  const bodySize = Math.round(widthDots * 0.105);
   // Below roughly 11 dots the strokes of a lowercase letter fall between the
   // dot grid and threshold away, which is how "NATURALNY LEN" printed as
   // "ATURALNY LE" on the first fabric run. Keep the small line above that
