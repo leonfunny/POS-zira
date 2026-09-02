@@ -928,6 +928,106 @@ describe('PrintOrderPanel', () => {
     });
   });
 
+  describe('the customer sheet pasted instead of retyped', () => {
+    const SHEET = '\tS\tM\nCZEKOLADA\t40\t60\nBORDO\t20\t0';
+
+    async function paste(text: string) {
+      await act(async () => container.querySelector<HTMLButtonElement>(
+        '[data-testid="paste-open"]')!.click());
+      const box = container.querySelector<HTMLTextAreaElement>('[data-testid="paste-input"]')!;
+      const setValue = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        'value',
+      )?.set;
+      await act(async () => {
+        setValue?.call(box, text);
+        box.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    }
+
+    it('shows what it read before anything is replaced', async () => {
+      await render();
+      await fillMinimalOrder(40);
+      await paste(SHEET);
+
+      expect(text('[data-testid="paste-preview"]')).toContain(
+        'Read 2 colours × 2 sizes, 120 labels in total.',
+      );
+      expect(text('[data-testid="paste-preview"]')).toContain(
+        'Replaces the 1 colours × 1 sizes on screen.',
+      );
+      // Nothing has moved on the sheet yet.
+      expect(text('[data-testid="grand-total"]')).toBe('40');
+    });
+
+    it('replaces the grid when the operator says so', async () => {
+      await render();
+      await fillMinimalOrder(40);
+      await paste(SHEET);
+      await act(async () => container.querySelector<HTMLButtonElement>(
+        '[data-testid="paste-accept"]')!.click());
+
+      expect(text('[data-testid="grand-total"]')).toBe('120');
+      expect(container.querySelector('[data-testid="paste-box"]')).toBeNull();
+      expect(input(container, 'input[placeholder="CZEKOLADA"]').value).toBe('CZEKOLADA');
+      // The old single column is gone, not added to.
+      expect(container.querySelectorAll('input[type=number][aria-label]')).toHaveLength(4);
+    });
+
+    it('leaves the sheet alone when the paste is dropped', async () => {
+      await render();
+      await fillMinimalOrder(40);
+      await paste(SHEET);
+      await act(async () => container.querySelector<HTMLButtonElement>(
+        '[data-testid="paste-cancel"]')!.click());
+
+      expect(text('[data-testid="grand-total"]')).toBe('40');
+      expect(container.querySelector('[data-testid="paste-box"]')).toBeNull();
+    });
+
+    it('says what is wrong instead of wiping the grid with an empty one', async () => {
+      await render();
+      await fillMinimalOrder(40);
+      await paste('prosze wydrukowac\nmetki na jutro');
+
+      expect(text('[data-testid="paste-problem"]')).toContain('not a table');
+      expect(container.querySelector<HTMLButtonElement>('[data-testid="paste-accept"]')!.disabled)
+        .toBe(true);
+      expect(text('[data-testid="grand-total"]')).toBe('40');
+    });
+
+    it('takes the sticker code from the sheet when it carries one', async () => {
+      await render();
+      await paste('KOLOR\tKOD\tS\nczekolada\tsp006290\t40');
+      await act(async () => container.querySelector<HTMLButtonElement>(
+        '[data-testid="paste-accept"]')!.click());
+
+      expect(input(container, 'input[placeholder="SP006290"]').value).toBe('SP006290');
+    });
+
+    it('does not carry an interrupted run over to the pasted sheet', async () => {
+      let releaseSticker: (value: { success: boolean }) => void = () => {};
+      printSticker.mockImplementation(
+        () => new Promise((resolve) => { releaseSticker = resolve; }),
+      );
+      await render();
+      await fillMinimalOrder(40);
+      await act(async () => buttonWithText(container, 'Print').click());
+      await settle();
+      await act(async () => container.querySelector<HTMLButtonElement>(
+        '[data-testid="stop-print"]')!.click());
+      await act(async () => { releaseSticker({ success: true }); });
+      await settle();
+      expect(container.querySelector('[data-testid="resume-block"]')).not.toBeNull();
+
+      await paste(SHEET);
+      await act(async () => container.querySelector<HTMLButtonElement>(
+        '[data-testid="paste-accept"]')!.click());
+
+      expect(container.querySelector('[data-testid="resume-block"]')).toBeNull();
+    });
+  });
+
   it('scrolls back to the top when a sheet is swapped underneath the reader', async () => {
     await render();
     await fillMinimalOrder(40);

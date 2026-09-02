@@ -27,6 +27,7 @@ import {
   upperCaseOrder,
   validateOrder,
 } from '../../../shared/label-print-order';
+import { PasteProblem, parsePastedGrid } from '../../../shared/order-paste';
 import {
   CARE_SYMBOLS,
   CARE_SYMBOL_FAMILIES,
@@ -101,6 +102,13 @@ interface Copy {
   open: string;
   remove: string;
   newOrder: string;
+  pasteOpen: string;
+  pasteHint: string;
+  pasteRead: (colors: number, sizes: number, copies: number) => string;
+  pasteReplace: (colors: number, sizes: number) => string;
+  pasteAccept: string;
+  pasteCancel: string;
+  pasteProblem: Record<PasteProblem, string>;
   duplicate: string;
   duplicateHint: string;
   stopAfter: string;
@@ -163,6 +171,18 @@ const COPY: Record<string, Copy> = {
     open: 'Mở',
     remove: 'Xoá',
     newOrder: 'Đơn mới',
+    pasteOpen: 'Dán từ Excel',
+    pasteHint: 'Bôi đen vùng bảng trong Excel, Ctrl+C, rồi dán vào ô dưới.',
+    pasteRead: (colors, sizes, copies) =>
+      `Đọc được ${colors} màu × ${sizes} size, tổng ${copies} tem.`,
+    pasteReplace: (colors, sizes) => `Sẽ thay ${colors} màu × ${sizes} size đang có.`,
+    pasteAccept: 'Nhận bảng này',
+    pasteCancel: 'Bỏ',
+    pasteProblem: {
+      NOT_A_GRID: 'Chỗ dán không phải bảng — dòng đầu là size, mỗi dòng sau là một màu.',
+      NO_SIZES: 'Dòng đầu không có cột size nào.',
+      NO_ROWS: 'Không có dòng màu nào.',
+    },
     duplicate: 'Nhân bản',
     duplicateHint:
       'Tạo một đơn mới với đúng nội dung này. Chưa ghi gì cho tới khi bấm Lưu đơn.',
@@ -233,6 +253,18 @@ const COPY: Record<string, Copy> = {
     open: 'Otwórz',
     remove: 'Usuń',
     newOrder: 'Nowe zlecenie',
+    pasteOpen: 'Wklej z Excela',
+    pasteHint: 'Zaznacz zakres w Excelu, Ctrl+C, wklej poniżej.',
+    pasteRead: (colors, sizes, copies) =>
+      `Odczytano ${colors} kolorów × ${sizes} rozmiarów, razem ${copies} szt.`,
+    pasteReplace: (colors, sizes) => `Zastąpi ${colors} kolorów × ${sizes} rozmiarów.`,
+    pasteAccept: 'Wstaw tabelę',
+    pasteCancel: 'Anuluj',
+    pasteProblem: {
+      NOT_A_GRID: 'To nie jest tabela — pierwszy wiersz to rozmiary, dalej po jednym kolorze.',
+      NO_SIZES: 'W pierwszym wierszu nie ma rozmiarów.',
+      NO_ROWS: 'Nie ma wierszy z kolorami.',
+    },
     duplicate: 'Duplikuj',
     duplicateHint:
       'Nowe zlecenie z tą samą treścią. Nic nie zapisuje, dopóki nie klikniesz Zapisz zlecenie.',
@@ -303,6 +335,18 @@ const COPY: Record<string, Copy> = {
     open: 'Open',
     remove: 'Delete',
     newOrder: 'New order',
+    pasteOpen: 'Paste from Excel',
+    pasteHint: 'Select the block in Excel, Ctrl+C, then paste it below.',
+    pasteRead: (colors, sizes, copies) =>
+      `Read ${colors} colours × ${sizes} sizes, ${copies} labels in total.`,
+    pasteReplace: (colors, sizes) => `Replaces the ${colors} colours × ${sizes} sizes on screen.`,
+    pasteAccept: 'Use this table',
+    pasteCancel: 'Cancel',
+    pasteProblem: {
+      NOT_A_GRID: 'That is not a table — first row the sizes, then one row per colour.',
+      NO_SIZES: 'The first row carries no sizes.',
+      NO_ROWS: 'There are no colour rows.',
+    },
     duplicate: 'Duplicate',
     duplicateHint:
       'A new order with the same contents. Nothing is filed until you press Save order.',
@@ -518,6 +562,28 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
     });
 
   const removeRow = (rowId: string) => patch({ rows: order.rows.filter((r) => r.id !== rowId) });
+
+  /**
+   * The customer's sheet, pasted rather than retyped. Held apart from the order
+   * until the operator has seen what was read: eight colours by six sizes is 48
+   * cells, and replacing the grid with a misread one silently would be worse
+   * than typing them.
+   */
+  const [pasteText, setPasteText] = useState<string | null>(null);
+  const pasted = useMemo(
+    () => (pasteText && pasteText.trim() ? parsePastedGrid(pasteText, nextId) : null),
+    [pasteText],
+  );
+
+  const acceptPaste = () => {
+    // The button carries the "did it read?" test; this one is only here so the
+    // types know there is a grid to take.
+    if (!pasted) return;
+    // Fresh ids all round, so nothing is inherited from the sheet being
+    // replaced — including an interrupted run's batches.
+    patch({ sizes: pasted.sizes, rows: pasted.rows });
+    setPasteText(null);
+  };
 
   /**
    * Every button runs this same loop; they differ in the plan they hand it and
@@ -1034,7 +1100,60 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
             </span>
           ))}
           <SizeAdder onAdd={addTypedSize} placeholder={copy.addSize} />
+          <button
+            type="button"
+            data-testid="paste-open"
+            onClick={() => setPasteText(pasteText === null ? '' : null)}
+            className="min-h-8 rounded border border-slate-300 px-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+          >
+            {copy.pasteOpen}
+          </button>
         </div>
+
+        {pasteText !== null && (
+          <div className="mb-3 rounded-md border border-slate-300 bg-slate-50 p-3" data-testid="paste-box">
+            <p className="mb-2 text-xs text-slate-600">{copy.pasteHint}</p>
+            <textarea
+              data-testid="paste-input"
+              aria-label={copy.pasteOpen}
+              value={pasteText}
+              onChange={(e) => setPasteText(e.target.value)}
+              rows={5}
+              className="w-full rounded-md border border-slate-300 p-2 font-mono text-xs"
+            />
+            {pasted && pasted.problems.length > 0 && (
+              <p className="mt-2 text-sm font-bold text-red-700" data-testid="paste-problem">
+                {pasted.problems.map((problem) => copy.pasteProblem[problem]).join(' ')}
+              </p>
+            )}
+            {pasted && pasted.problems.length === 0 && (
+              <p className="mt-2 text-sm font-bold text-slate-800" data-testid="paste-preview">
+                {copy.pasteRead(pasted.rows.length, pasted.sizes.length, pasted.totalCopies)}{' '}
+                {(order.rows.length > 0 || order.sizes.length > 0) &&
+                  copy.pasteReplace(order.rows.length, order.sizes.length)}
+              </p>
+            )}
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                data-testid="paste-accept"
+                onClick={acceptPaste}
+                disabled={!pasted || pasted.problems.length > 0}
+                className="min-h-10 rounded-md bg-slate-800 px-3 text-sm font-extrabold text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {copy.pasteAccept}
+              </button>
+              <button
+                type="button"
+                data-testid="paste-cancel"
+                onClick={() => setPasteText(null)}
+                className="min-h-10 rounded-md border border-slate-300 px-3 text-sm font-bold text-slate-600"
+              >
+                {copy.pasteCancel}
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="overflow-x-auto">
           <table className="w-full min-w-[600px] border-collapse text-sm">
