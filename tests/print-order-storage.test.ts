@@ -17,6 +17,9 @@ import {
   loadLearnedStyles,
   rememberSize,
   rememberStyle,
+  saveProgress,
+  loadProgress,
+  clearProgress,
 } from '../src/renderer/components/label/print-order-storage';
 import {
   MAX_SIZE_LABEL_CHARS,
@@ -316,5 +319,76 @@ describe('the machine remembers a style name too', () => {
     rememberStyle('BLUZA');
     clearDraft();
     expect(loadLearnedStyles()).toEqual(['BLUZA']);
+  });
+});
+
+describe('how far the interrupted run got', () => {
+  it('remembers nothing until a batch has actually gone out', () => {
+    saveProgress('order-1', []);
+    expect(loadProgress('order-1')).toBeNull();
+    // Not merely unreadable: nothing is written at all, so a record from an
+    // earlier run is not quietly replaced by an empty one.
+    expect(localStorage.getItem('zira.labelPrintOrder.progress')).toBeNull();
+  });
+
+  it('does not wipe a real record with an empty run', () => {
+    saveProgress('order-1', ['sticker:r1']);
+    saveProgress('order-1', []);
+    expect(loadProgress('order-1')!.completedIds).toEqual(['sticker:r1']);
+  });
+
+  it('round-trips the batches sent', () => {
+    saveProgress('order-1', ['sticker:r1', 'fabric:r1:s']);
+    expect(loadProgress('order-1')).toMatchObject({
+      orderId: 'order-1',
+      completedIds: ['sticker:r1', 'fabric:r1:s'],
+    });
+  });
+
+  it('says nothing about a different order', () => {
+    saveProgress('order-1', ['sticker:r1']);
+    expect(loadProgress('order-2')).toBeNull();
+  });
+
+  it('keeps only the last run — one operator, one pair of printers', () => {
+    saveProgress('order-1', ['sticker:r1']);
+    saveProgress('order-2', ['fabric:r9:s']);
+    expect(loadProgress('order-1')).toBeNull();
+    expect(loadProgress('order-2')).not.toBeNull();
+  });
+
+  it('is thrown away once the operator has decided', () => {
+    saveProgress('order-1', ['sticker:r1']);
+    clearProgress();
+    expect(loadProgress('order-1')).toBeNull();
+  });
+
+  it('stamps the time, so a stale record can be told apart later', () => {
+    saveProgress('order-1', ['sticker:r1']);
+    expect(loadProgress('order-1')!.at).toBeGreaterThan(0);
+  });
+
+  it('reads a hand-edited record as no record at all', () => {
+    localStorage.setItem('zira.labelPrintOrder.progress', '{oops');
+    expect(loadProgress('order-1')).toBeNull();
+    localStorage.setItem(
+      'zira.labelPrintOrder.progress',
+      JSON.stringify({ orderId: 'order-1', completedIds: 'sticker:r1' }),
+    );
+    expect(loadProgress('order-1')).toBeNull();
+  });
+
+  it('drops junk out of the id list rather than handing it on', () => {
+    localStorage.setItem(
+      'zira.labelPrintOrder.progress',
+      JSON.stringify({ orderId: 'order-1', completedIds: ['sticker:r1', 7, null], at: 1 }),
+    );
+    expect(loadProgress('order-1')!.completedIds).toEqual(['sticker:r1']);
+  });
+
+  it('survives the app being closed, which is the case it exists for', () => {
+    saveProgress('order-1', ['sticker:r1']);
+    // Same storage, new module state: nothing is held in memory.
+    expect(loadProgress('order-1')!.completedIds).toEqual(['sticker:r1']);
   });
 });

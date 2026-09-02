@@ -21,6 +21,12 @@ const SAVED_KEY = 'zira.labelPrintOrder.saved';
  * is what staff hit after editing an order the next morning.
  */
 const DRAFT_ID_KEY = 'zira.labelPrintOrder.draftId';
+/**
+ * How far the last run got. One record, not one per order: the machine has one
+ * operator and one pair of printers, so only the run that was interrupted is
+ * worth remembering.
+ */
+const PROGRESS_KEY = 'zira.labelPrintOrder.progress';
 export const SAVED_ORDER_LIMIT = 50;
 
 export interface SavedPrintOrder {
@@ -89,6 +95,44 @@ export function clearDraft(): void {
   try {
     s.removeItem(DRAFT_KEY);
     s.removeItem(DRAFT_ID_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+export interface PrintProgressRecord {
+  orderId: string;
+  /**
+   * Steps handed to the printer. Not "printed": the printer takes a batch and
+   * can jam on it afterwards, which is why the panel makes the operator count
+   * the labels rather than carrying on by itself.
+   */
+  completedIds: string[];
+  /** Epoch ms, so a stale record can be shown with its age if that ever helps. */
+  at: number;
+}
+
+/** Written after every batch — a jam that ends in the app being closed never
+ *  reaches the end of the run. */
+export function saveProgress(orderId: string, completedIds: string[]): void {
+  if (!orderId || completedIds.length === 0) return;
+  write(PROGRESS_KEY, { orderId, completedIds, at: Date.now() });
+}
+
+/** Only for the order asked about: another order's run says nothing here. */
+export function loadProgress(orderId: string): PrintProgressRecord | null {
+  const raw = read<Partial<PrintProgressRecord> | null>(PROGRESS_KEY, null);
+  if (!raw || raw.orderId !== orderId || !Array.isArray(raw.completedIds)) return null;
+  const completedIds = raw.completedIds.filter((id): id is string => typeof id === 'string');
+  if (completedIds.length === 0) return null;
+  return { orderId, completedIds, at: typeof raw.at === 'number' ? raw.at : 0 };
+}
+
+export function clearProgress(): void {
+  const s = store();
+  if (!s) return;
+  try {
+    s.removeItem(PROGRESS_KEY);
   } catch {
     /* ignore */
   }

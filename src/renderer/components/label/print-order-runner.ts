@@ -44,6 +44,13 @@ export interface PrintProgress {
   totalCopies: number;
   /** The step about to run, or the one that failed. */
   step?: PrintStep;
+  /**
+   * The steps sent so far in this run, in order. Reported on every event so the
+   * panel can write progress down after each batch: a jam that ends with the
+   * app being closed never reaches the end of the run, and the end of the run
+   * is the only other place it could be saved.
+   */
+  completedIds: string[];
 }
 
 export interface PrintOrderHooks {
@@ -93,6 +100,7 @@ export async function runPrintPlan(
       printedCopies,
       totalCopies,
       step,
+      completedIds: [...completedIds],
     });
 
   const finish = (

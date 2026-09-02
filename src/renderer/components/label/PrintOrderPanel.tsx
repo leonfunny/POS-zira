@@ -37,8 +37,10 @@ import {
 import { careSymbolLabel, careSymbolSvg } from '../../../shared/care-symbols';
 import { PrintProgress, runPrintPlan } from './print-order-runner';
 import {
+  PrintProgressRecord,
   SavedPrintOrder,
   clearDraft,
+  clearProgress,
   deleteSavedOrder,
   describeOrder,
   forgetSize,
@@ -48,11 +50,13 @@ import {
   loadLearnedStyles,
   loadDraft,
   loadDraftId,
+  loadProgress,
   saveDraft,
   rememberSize,
   rememberStyle,
   saveDraftId,
   saveOrder,
+  saveProgress,
 } from './print-order-storage';
 
 interface Copy {
@@ -102,6 +106,11 @@ interface Copy {
   stopAfter: string;
   stopHint: string;
   noResume: string;
+  resumeSent: (steps: number, totalSteps: number, copies: number, totalCopies: number) => string;
+  resumeCount: string;
+  resumeContinue: (batch: number) => string;
+  resumeRestart: string;
+  resumeForget: string;
   missingCode: string;
   percentSum: (sum: number) => string;
   percentFix: (name: string, percent: number) => string;
@@ -160,6 +169,12 @@ const COPY: Record<string, Copy> = {
     stopAfter: 'Dừng in',
     stopHint: 'Bấm Dừng thì lô đang gửi vẫn in nốt rồi mới ngừng.',
     noResume: 'Máy kẹt hay tắt app giữa chừng thì phải đếm tem thật trước khi in lại.',
+    resumeSent: (steps, totalSteps, copies, totalCopies) =>
+      `Lần trước đã gửi ${steps}/${totalSteps} lô (${copies}/${totalCopies} tem).`,
+    resumeCount: 'Đếm tem thật rồi chọn:',
+    resumeContinue: (batch) => `In tiếp từ lô ${batch}`,
+    resumeRestart: 'In lại từ đầu',
+    resumeForget: 'Bỏ tiến độ',
     missingCode: 'Thiếu mã tem — màu này chỉ in mác vải',
     percentSum: (sum) => `Tổng phần trăm đang là ${sum}%`,
     percentFix: (name, percent) => `Đặt ${name} = ${percent}%`,
@@ -224,6 +239,12 @@ const COPY: Record<string, Copy> = {
     stopAfter: 'Zatrzymaj druk',
     stopHint: 'Po naciśnięciu Zatrzymaj bieżąca partia dokończy się i dopiero potem druk stanie.',
     noResume: 'Po zacięciu lub zamknięciu aplikacji policz metki, zanim wydrukujesz ponownie.',
+    resumeSent: (steps, totalSteps, copies, totalCopies) =>
+      `Poprzednio wysłano ${steps}/${totalSteps} partii (${copies}/${totalCopies} szt.).`,
+    resumeCount: 'Policz metki i wybierz:',
+    resumeContinue: (batch) => `Wznów od partii ${batch}`,
+    resumeRestart: 'Drukuj od nowa',
+    resumeForget: 'Odrzuć postęp',
     missingCode: 'Brak kodu — ten kolor dostanie tylko metki',
     percentSum: (sum) => `Suma procentów: ${sum}%`,
     percentFix: (name, percent) => `Ustaw ${name} = ${percent}%`,
@@ -288,6 +309,12 @@ const COPY: Record<string, Copy> = {
     stopAfter: 'Stop printing',
     stopHint: 'Stop takes effect after the batch already sent finishes.',
     noResume: 'After a jam or an app restart, count the printed labels before reprinting.',
+    resumeSent: (steps, totalSteps, copies, totalCopies) =>
+      `Last time ${steps}/${totalSteps} batches went out (${copies}/${totalCopies} labels).`,
+    resumeCount: 'Count the labels, then choose:',
+    resumeContinue: (batch) => `Carry on from batch ${batch}`,
+    resumeRestart: 'Print from the start',
+    resumeForget: 'Forget the progress',
     missingCode: 'No sticker code — this colour gets fabric tags only',
     percentSum: (sum) => `Percentages add up to ${sum}%`,
     percentFix: (name, percent) => `Set ${name} to ${percent}%`,
@@ -340,6 +367,15 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
   const [progress, setProgress] = useState<PrintProgress | null>(null);
   const [result, setResult] = useState<{ type: string; message: string } | null>(null);
   const [savedNotice, setSavedNotice] = useState(false);
+  /**
+   * How far the last run of this order got, when it did not finish. Read once on
+   * open and only ever changed by the operator pressing one of the three
+   * buttons: the panel must never carry on by itself, because "sent to the
+   * printer" is not "came out on the ribbon".
+   */
+  const [resume, setResume] = useState<PrintProgressRecord | null>(() =>
+    loadProgress(loadDraftId() ?? ''),
+  );
   /** The line being typed, before it is added. Not part of the order yet. */
   const [careLineDraft, setCareLineDraft] = useState('');
   /** Size columns this machine has been taught, on top of the built-in ones. */
@@ -483,8 +519,16 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
 
   const removeRow = (rowId: string) => patch({ rows: order.rows.filter((r) => r.id !== rowId) });
 
-  /** Both buttons run the same loop; only the plan they hand it differs. */
-  const runPlan = async (steps: PrintStep[]) => {
+  /**
+   * Every button runs this same loop; they differ in the plan they hand it and
+   * in whether the run is worth writing down. A sample is not: it is one label
+   * to look at, and recording it would tell the operator a real order had been
+   * started.
+   */
+  const runPlan = async (
+    steps: PrintStep[],
+    options: { resumeFrom?: string[]; track?: boolean } = {},
+  ) => {
     if (printInFlight.current || steps.length === 0) return;
     const api = (window as any).electronAPI;
     if (!api?.printPackagingSticker || !api?.printFabricTag) {
@@ -492,11 +536,15 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
       return;
     }
 
+    const track = options.track !== false;
+    const already = options.resumeFrom ?? [];
+
     printInFlight.current = true;
     stopRequested.current = false;
     learnStyle();
     onPrintingChange?.(true);
     setResult(null);
+    if (track) setResume(null);
 
     try {
       const outcome = await runPrintPlan(
@@ -511,10 +559,25 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
           printFabricTag: (request) => api.printFabricTag(request),
         },
         {
-          onProgress: setProgress,
+          onProgress: (update) => {
+            setProgress(update);
+            // After every batch, not at the end of the run: a jam the operator
+            // walks away from never reaches the end of the run.
+            if (track) saveProgress(orderId, [...already, ...update.completedIds]);
+          },
           shouldStop: () => stopRequested.current,
         },
+        { completedIds: already },
       );
+
+      if (track) {
+        if (outcome.type === 'success') {
+          clearProgress();
+          setResume(null);
+        } else {
+          setResume(loadProgress(orderId));
+        }
+      }
 
       setResult({
         type: outcome.type,
@@ -553,7 +616,7 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
   // No second guard in here: the button carries `disabled={!canPrintSample}`, and
   // `runPlan` refuses an empty plan or a run already in flight. A mutation run
   // showed a repeated check was unreachable — dead code that reads like safety.
-  const handleSamplePrint = () => runPlan(samplePlan);
+  const handleSamplePrint = () => runPlan(samplePlan, { track: false });
 
   /**
    * A style name is learned when the order is filed or sent to the printer, not
@@ -581,6 +644,10 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
   const handleDuplicate = () => {
     setOrderId(nextId('order'));
     setSavedNotice(false);
+    // The interrupted run belongs to the order it was started from; the copy has
+    // printed nothing. The record stays put, so reopening the original still
+    // offers it.
+    setResume(null);
   };
 
   // Switching sheets from the saved list at the bottom leaves the reader
@@ -593,17 +660,52 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
     setProgress(null);
     setResult(null);
     setSavedNotice(false);
+    setResume(loadProgress(saved.id));
     scrollToTop();
   };
 
   const handleNew = () => {
     clearDraft();
+    clearProgress();
+    setResume(null);
     setOrder(createEmptyOrder());
     setOrderId(nextId('order'));
     setProgress(null);
     setResult(null);
     setSavedNotice(false);
     scrollToTop();
+  };
+
+  /**
+   * What the interrupted run got through, counted against the plan as it stands
+   * now. Ids are stable per (colour, size) cell, so a sheet edited since the jam
+   * simply matches fewer of them — which is the honest answer, not a stale one.
+   */
+  const resumeStats = useMemo(() => {
+    if (!resume) return null;
+    const sent = new Set(resume.completedIds);
+    const done = plan.filter((step) => sent.has(step.id));
+    if (done.length === 0) return null;
+    return {
+      sentSteps: done.length,
+      totalSteps: plan.length,
+      sentCopies: done.reduce((sum, step) => sum + step.quantity, 0),
+      totalCopies: plan.reduce((sum, step) => sum + step.quantity, 0),
+      remaining: plan.length - done.length,
+    };
+  }, [resume, plan]);
+
+  const handleResumeContinue = () => runPlan(plan, { resumeFrom: resume?.completedIds ?? [] });
+
+  const handleResumeRestart = () => {
+    clearProgress();
+    setResume(null);
+    return runPlan(plan);
+  };
+
+  const handleResumeForget = () => {
+    clearProgress();
+    setResume(null);
   };
 
   const isPrinting = progress?.type === 'printing';
@@ -1081,6 +1183,51 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
       )}
 
       <p className="mb-2 text-xs text-slate-500">{copy.noResume}</p>
+
+      {resumeStats && !isPrinting && (
+        <div
+          className="mb-2 rounded-md border border-amber-300 bg-amber-50 p-3"
+          data-testid="resume-block"
+        >
+          <p className="text-sm font-bold text-amber-900" data-testid="resume-sent">
+            {copy.resumeSent(
+              resumeStats.sentSteps,
+              resumeStats.totalSteps,
+              resumeStats.sentCopies,
+              resumeStats.totalCopies,
+            )}
+          </p>
+          <p className="mb-2 text-xs text-amber-800">{copy.resumeCount}</p>
+          <div className="flex flex-wrap gap-2">
+            {resumeStats.remaining > 0 && (
+              <button
+                type="button"
+                data-testid="resume-continue"
+                onClick={handleResumeContinue}
+                className="min-h-10 rounded-md bg-amber-600 px-3 text-sm font-extrabold text-white"
+              >
+                {copy.resumeContinue(resumeStats.sentSteps + 1)}
+              </button>
+            )}
+            <button
+              type="button"
+              data-testid="resume-restart"
+              onClick={handleResumeRestart}
+              className="min-h-10 rounded-md border border-amber-400 px-3 text-sm font-bold text-amber-900"
+            >
+              {copy.resumeRestart}
+            </button>
+            <button
+              type="button"
+              data-testid="resume-forget"
+              onClick={handleResumeForget}
+              className="min-h-10 rounded-md border border-slate-300 px-3 text-sm font-bold text-slate-600"
+            >
+              {copy.resumeForget}
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
         <button

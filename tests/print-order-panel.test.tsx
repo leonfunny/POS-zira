@@ -609,6 +609,325 @@ describe('PrintOrderPanel', () => {
     await settle();
   });
 
+  describe('after a jam, the operator decides — the panel never carries on by itself', () => {
+    /** Prints the sticker lane, then stops before the fabric lane. */
+    async function stopAfterTheStickers() {
+      let releaseSticker: (value: { success: boolean }) => void = () => {};
+      printSticker.mockImplementation(
+        () => new Promise((resolve) => { releaseSticker = resolve; }),
+      );
+
+      await render();
+      await fillMinimalOrder(40);
+      await act(async () => buttonWithText(container, 'Print').click());
+      await settle();
+      await act(async () => container.querySelector<HTMLButtonElement>(
+        '[data-testid="stop-print"]')!.click());
+      await act(async () => { releaseSticker({ success: true }); });
+      await settle();
+
+      printSticker.mockReset();
+      printSticker.mockResolvedValue({ success: true });
+    }
+
+    it('says how much went out, in batches and in labels', async () => {
+      await stopAfterTheStickers();
+
+      expect(text('[data-testid="resume-sent"]')).toBe(
+        'Last time 1/2 batches went out (40/80 labels).',
+      );
+      expect(container.textContent).toContain('Count the labels, then choose');
+    });
+
+    it('carries on from the batch after the last one sent', async () => {
+      await stopAfterTheStickers();
+
+      await act(async () => container.querySelector<HTMLButtonElement>(
+        '[data-testid="resume-continue"]')!.click());
+      await settle();
+
+      // The stickers already went out; only the fabric lane runs again.
+      expect(printSticker).not.toHaveBeenCalled();
+      expect(printFabricTag).toHaveBeenCalledTimes(1);
+      expect(container.querySelector('[data-testid="resume-block"]')).toBeNull();
+    });
+
+    it('prints the lot again when the operator counted and found nothing', async () => {
+      await stopAfterTheStickers();
+
+      await act(async () => container.querySelector<HTMLButtonElement>(
+        '[data-testid="resume-restart"]')!.click());
+      await settle();
+
+      expect(printSticker).toHaveBeenCalledTimes(1);
+      expect(printFabricTag).toHaveBeenCalledTimes(1);
+      expect(container.querySelector('[data-testid="resume-block"]')).toBeNull();
+    });
+
+    it('throws the progress away without printing anything', async () => {
+      await stopAfterTheStickers();
+
+      await act(async () => container.querySelector<HTMLButtonElement>(
+        '[data-testid="resume-forget"]')!.click());
+      await settle();
+
+      expect(container.querySelector('[data-testid="resume-block"]')).toBeNull();
+      expect(printSticker).not.toHaveBeenCalled();
+      expect(printFabricTag).not.toHaveBeenCalled();
+
+      // Gone for good, not just hidden until the next restart.
+      const first = root!;
+      await act(async () => first.unmount());
+      root = null;
+      await render();
+      expect(container.querySelector('[data-testid="resume-block"]')).toBeNull();
+    });
+
+    it('is still there after the app is closed and reopened', async () => {
+      await stopAfterTheStickers();
+
+      const first = root!;
+      await act(async () => first.unmount());
+      root = null;
+      await render();
+
+      expect(text('[data-testid="resume-sent"]')).toContain('1/2 batches');
+    });
+
+    it('does not offer to resume a run that finished', async () => {
+      await render();
+      await fillMinimalOrder(40);
+      await act(async () => buttonWithText(container, 'Print').click());
+      await settle();
+
+      expect(text('[data-testid="print-result"]')).toContain('Printed');
+      expect(container.querySelector('[data-testid="resume-block"]')).toBeNull();
+
+      const first = root!;
+      await act(async () => first.unmount());
+      root = null;
+      await render();
+      expect(container.querySelector('[data-testid="resume-block"]')).toBeNull();
+    });
+
+    it('goes away with the sheet when a new order is started', async () => {
+      await stopAfterTheStickers();
+      await act(async () => buttonWithText(container, 'New order').click());
+
+      expect(container.querySelector('[data-testid="resume-block"]')).toBeNull();
+    });
+
+    it('belongs to one order, not to whatever is on screen', async () => {
+      await stopAfterTheStickers();
+      await act(async () => buttonWithText(container, 'Save order').click());
+      await act(async () => buttonWithText(container, 'New order').click());
+      await fillMinimalOrder(10);
+
+      expect(container.querySelector('[data-testid="resume-block"]')).toBeNull();
+    });
+
+    it('keeps the earlier batches when a resumed run stops again', async () => {
+      await stopAfterTheStickers();
+      printFabricTag.mockResolvedValue({ success: false, error: 'Out of ribbon' });
+
+      await act(async () => container.querySelector<HTMLButtonElement>(
+        '[data-testid="resume-continue"]')!.click());
+      await settle();
+
+      // The stickers are still counted as sent; the record is not rewritten to
+      // hold only what this second attempt managed.
+      expect(text('[data-testid="resume-sent"]')).toContain('1/2 batches');
+    });
+
+    it('is thrown away when the sheet is put aside for a new one', async () => {
+      await stopAfterTheStickers();
+      await act(async () => buttonWithText(container, 'Save order').click());
+      await act(async () => buttonWithText(container, 'New order').click());
+      await act(async () => buttonWithText(container, 'Open').click());
+
+      expect(container.querySelector('[data-testid="resume-block"]')).toBeNull();
+    });
+
+    it('does not follow a duplicate, which has printed nothing', async () => {
+      await stopAfterTheStickers();
+      await act(async () => buttonWithText(container, 'Save order').click());
+      await act(async () => container.querySelector<HTMLButtonElement>(
+        '[data-testid="duplicate-order"]')!.click());
+
+      expect(container.querySelector('[data-testid="resume-block"]')).toBeNull();
+    });
+
+    it('says nothing when the sheet no longer holds what was sent', async () => {
+      await stopAfterTheStickers();
+      await act(async () => container.querySelector<HTMLButtonElement>(
+        'button[aria-label="Delete CZEKOLADA"]')!.click());
+
+      expect(container.querySelector('[data-testid="resume-block"]')).toBeNull();
+    });
+
+    it('offers no "carry on" when nothing is left to send', async () => {
+      await stopAfterTheStickers();
+      // Untick the fabric tags and the plan is the sticker batch alone, which
+      // already went out: there is nothing to carry on to.
+      await act(async () => {
+        const boxes = Array.from(
+          container.querySelectorAll<HTMLInputElement>('input[type=checkbox]'),
+        );
+        boxes[0].click();
+      });
+
+      expect(container.querySelector('[data-testid="resume-block"]')).not.toBeNull();
+      expect(container.querySelector('[data-testid="resume-continue"]')).toBeNull();
+      expect(container.querySelector('[data-testid="resume-restart"]')).not.toBeNull();
+    });
+
+    it('is written after each batch, not only when the run ends', async () => {
+      // The case this exists for: the operator walks away from a jam and closes
+      // the app. The run never reaches its end, so the end cannot be the only
+      // place progress is written.
+      printFabricTag.mockImplementation(() => new Promise(() => {}));
+
+      await render();
+      await fillMinimalOrder(40);
+      await act(async () => buttonWithText(container, 'Print').click());
+      await settle();
+
+      const first = root!;
+      await act(async () => first.unmount());
+      root = null;
+      await render();
+
+      expect(text('[data-testid="resume-sent"]')).toContain('1/2 batches');
+    });
+
+    it('adds to the record when a resumed run stops part way as well', async () => {
+      await render();
+      await fillMinimalOrder(40);
+      await act(async () => buttonWithText(container, '+ M').click());
+      // 40 + 5 copies is one sticker batch, so the plan is three batches:
+      // the stickers, then one fabric batch per size.
+      await changeInput(input(container, 'input[aria-label="CZEKOLADA M"]'), '5');
+
+      // First run: stop with the stickers out and both fabric batches to go.
+      let releaseSticker: (value: { success: boolean }) => void = () => {};
+      printSticker.mockImplementation(
+        () => new Promise((resolve) => { releaseSticker = resolve; }),
+      );
+      await act(async () => buttonWithText(container, 'Print').click());
+      await settle();
+      await act(async () => container.querySelector<HTMLButtonElement>(
+        '[data-testid="stop-print"]')!.click());
+      await act(async () => { releaseSticker({ success: true }); });
+      await settle();
+      expect(text('[data-testid="resume-sent"]')).toContain('1/3 batches');
+
+      // Second run: one fabric batch goes out, then Stop again.
+      let releaseFabric: (value: { success: boolean }) => void = () => {};
+      printFabricTag.mockImplementation(
+        () => new Promise((resolve) => { releaseFabric = resolve; }),
+      );
+      await act(async () => container.querySelector<HTMLButtonElement>(
+        '[data-testid="resume-continue"]')!.click());
+      await settle();
+      await act(async () => container.querySelector<HTMLButtonElement>(
+        '[data-testid="stop-print"]')!.click());
+      await act(async () => { releaseFabric({ success: true }); });
+      await settle();
+
+      // Both runs count: the stickers plus the one fabric batch.
+      expect(text('[data-testid="resume-sent"]')).toContain('2/3 batches');
+    });
+
+    it('counts against the sheet, not the length of the record', async () => {
+      await render();
+      await fillMinimalOrder(40);
+      await act(async () => buttonWithText(container, '+ M').click());
+      // 40 + 5 copies is one sticker batch, so the plan is three batches:
+      // the stickers, then one fabric batch per size.
+      await changeInput(input(container, 'input[aria-label="CZEKOLADA M"]'), '5');
+
+      let releaseFabric: (value: { success: boolean }) => void = () => {};
+      printFabricTag.mockImplementation(
+        () => new Promise((resolve) => { releaseFabric = resolve; }),
+      );
+      await act(async () => buttonWithText(container, 'Print').click());
+      await settle();
+      await act(async () => container.querySelector<HTMLButtonElement>(
+        '[data-testid="stop-print"]')!.click());
+      await act(async () => { releaseFabric({ success: true }); });
+      await settle();
+      expect(text('[data-testid="resume-sent"]')).toContain('2/3 batches');
+
+      // Drop the size whose batch went out. Two batches were sent, but only one
+      // of them is still on the sheet, and that is what the operator is holding.
+      await act(async () => container.querySelector<HTMLButtonElement>(
+        'button[aria-label="Delete S"]')!.click());
+      expect(text('[data-testid="resume-sent"]')).toContain('1/2 batches');
+    });
+
+    it('belongs to the order, not to whichever sheet holds those batches', async () => {
+      // A duplicate carries the same colour and size ids, so this is the one
+      // case where another sheet could match the record cell for cell.
+      await stopAfterTheStickers();
+      await act(async () => buttonWithText(container, 'Save order').click());
+      await act(async () => container.querySelector<HTMLButtonElement>(
+        '[data-testid="duplicate-order"]')!.click());
+      await act(async () => buttonWithText(container, 'Save order').click());
+
+      const opens = () => Array.from(container.querySelectorAll('button'))
+        .filter((b) => b.textContent?.trim() === 'Open');
+
+      // The order that was actually printing gets its offer back.
+      await act(async () => opens()[opens().length - 1].click());
+      expect(text('[data-testid="resume-sent"]')).toContain('1/2 batches');
+
+      // The copy has printed nothing, even though every batch id matches.
+      await act(async () => opens()[0].click());
+      expect(container.querySelector('[data-testid="resume-block"]')).toBeNull();
+    });
+
+    it('is out of the way while a sample is being printed', async () => {
+      await stopAfterTheStickers();
+      printSticker.mockImplementation(() => new Promise(() => {}));
+
+      await act(async () => container.querySelector<HTMLButtonElement>(
+        '[data-testid="print-sample"]')!.click());
+      await settle();
+
+      expect(container.querySelector('[data-testid="resume-block"]')).toBeNull();
+    });
+
+    it('survives a sample print in between', async () => {
+      await stopAfterTheStickers();
+      await act(async () => container.querySelector<HTMLButtonElement>(
+        '[data-testid="print-sample"]')!.click());
+      await settle();
+
+      const first = root!;
+      await act(async () => first.unmount());
+      root = null;
+      await render();
+
+      expect(text('[data-testid="resume-sent"]')).toContain('1/2 batches');
+    });
+
+    it('is not written by a sample print', async () => {
+      await render();
+      await fillMinimalOrder(40);
+      await act(async () => container.querySelector<HTMLButtonElement>(
+        '[data-testid="print-sample"]')!.click());
+      await settle();
+
+      expect(container.querySelector('[data-testid="resume-block"]')).toBeNull();
+
+      const first = root!;
+      await act(async () => first.unmount());
+      root = null;
+      await render();
+      expect(container.querySelector('[data-testid="resume-block"]')).toBeNull();
+    });
+  });
+
   it('scrolls back to the top when a sheet is swapped underneath the reader', async () => {
     await render();
     await fillMinimalOrder(40);

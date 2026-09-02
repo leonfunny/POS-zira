@@ -206,3 +206,56 @@ describe('runPrintPlan', () => {
     expect(api.printSticker).not.toHaveBeenCalled();
   });
 });
+
+describe('every progress event carries what has gone out so far', () => {
+  it('grows the list batch by batch, so the panel can write it down', async () => {
+    const api = makeApi();
+    const hooks = makeHooks();
+    await runPrintPlan(
+      [stickerStep({ id: 'a' }), fabricStep({ id: 'b' })],
+      HEADER,
+      api,
+      hooks,
+    );
+
+    const seen = hooks.onProgress.mock.calls.map((call: any[]) => call[0].completedIds);
+    expect(seen[0]).toEqual([]);
+    expect(seen[seen.length - 1]).toEqual(['a', 'b']);
+    // A batch that failed or was stopped is never in the list before it ran.
+    expect(seen).toContainEqual(['a']);
+  });
+
+  it('hands out a copy, not the list it keeps counting on', async () => {
+    const api = makeApi();
+    const seen: string[][] = [];
+    await runPrintPlan([stickerStep({ id: 'a' }), fabricStep({ id: 'b' })], HEADER, api, {
+      onProgress: (progress) => seen.push(progress.completedIds),
+      shouldStop: () => false,
+    });
+
+    expect(seen[0]).toEqual([]);
+  });
+
+  it('reports what went out before a stop, which is what gets resumed', async () => {
+    const api = makeApi();
+    let calls = 0;
+    const hooks = {
+      onProgress: vi.fn(),
+      shouldStop: () => {
+        calls += 1;
+        return calls > 1;
+      },
+    };
+    const outcome = await runPrintPlan(
+      [stickerStep({ id: 'a' }), fabricStep({ id: 'b' })],
+      HEADER,
+      api,
+      hooks,
+    );
+
+    expect(outcome.type).toBe('stopped');
+    expect(outcome.completedIds).toEqual(['a']);
+    const last = hooks.onProgress.mock.calls.at(-1)![0];
+    expect(last.completedIds).toEqual(['a']);
+  });
+});
