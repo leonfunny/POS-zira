@@ -1,5 +1,6 @@
 /**
- * ISO 3758 textile care symbols, drawn as vector art.
+ * ISO 3758:2023 textile care symbols, drawn as vector art, plus the two
+ * drying symbols the American ASTM D5489 draws differently.
  *
  * Vector rather than a symbol font because no care-symbol font ships with
  * Windows, and a missing font would silently print tofu boxes onto physical
@@ -72,6 +73,20 @@ function withBars(art: string, count: 1 | 2): string {
     + `<rect x="16" y="92" width="68" height="8" ${SOLID}/>`;
 }
 
+/**
+ * Steam rising from under the soleplate, struck through: iron, but dry. Added
+ * by ISO 3758:2023. The cross covers the steam only — the iron itself is still
+ * allowed, which is the whole point of the symbol.
+ */
+const THIN = STROKE.replace('stroke-width="7"', 'stroke-width="5"');
+const STEAM = `<path d="M38 72 V84 M50 72 V84 M62 72 V84" ${THIN}/>`;
+const STEAM_CROSS = `<path d="M34 68 L66 88 M66 68 L34 88" ${THIN}/>`;
+
+/** ASTM D5489 draws line drying as a sagging clothesline near the top. */
+const CLOTHESLINE = `<path d="M18 26 Q50 46 82 26" ${STROKE}/>`;
+/** ASTM D5489 draws drip drying as three vertical lines, where ISO uses two. */
+const HANG_3 = `<path d="M32 20 V82 M50 20 V82 M68 20 V82" ${STROKE}/>`;
+
 /** Diagonal stroke across the top-left corner: dry out of direct sunlight. */
 const SHADE = `<path d="M11 39 L39 11" ${STROKE}/>`;
 /** Hung to dry; a second line means hung dripping wet, without spinning. */
@@ -96,6 +111,7 @@ export const CARE_SYMBOL_ART: Record<CareSymbol, string> = {
   WASH_30_MILD: withBars(tubText('30'), 1),
   WASH_30_VERY_MILD: withBars(tubText('30'), 2),
   WASH_HAND: `${TUB}${HAND}`,
+  WASH_HAND_MILD: withBars(`${TUB}${HAND}`, 1),
   WASH_NO: `${TUB}${CROSS}`,
 
   BLEACH_OK: TRIANGLE,
@@ -117,10 +133,13 @@ export const CARE_SYMBOL_ART: Record<CareSymbol, string> = {
   DRY_DRIP_SHADE: `${SQUARE}${HANG_2}${SHADE}`,
   DRY_FLAT_SHADE: `${SQUARE}${LAY_1}${SHADE}`,
   DRY_FLAT_DRIP_SHADE: `${SQUARE}${LAY_2}${SHADE}`,
+  ASTM_DRY_LINE: `${SQUARE}${CLOTHESLINE}`,
+  ASTM_DRY_DRIP: `${SQUARE}${HANG_3}`,
 
   IRON_HIGH: `${IRON}${dots(3, 66)}`,
   IRON_MEDIUM: `${IRON}${dots(2, 66)}`,
   IRON_LOW: `${IRON}${dots(1, 66)}`,
+  IRON_NO_STEAM: `<g transform="translate(10 0) scale(0.80)">${IRON}</g>${STEAM}${STEAM_CROSS}`,
   IRON_NO: `${IRON}${CROSS}`,
 
   DRYCLEAN_ANY: CIRCLE,
@@ -168,6 +187,11 @@ export const CARE_SYMBOL_LABELS: Record<CareSymbol, { vi: string; pl: string; en
     vi: 'Giặt tay, tối đa 40°C',
     pl: 'Pranie ręczne, maks. 40°C',
     en: 'Hand wash, max 40°C',
+  },
+  WASH_HAND_MILD: {
+    vi: 'Giặt tay, nước thường',
+    pl: 'Pranie ręczne w temperaturze otoczenia',
+    en: 'Hand wash at ambient temperature',
   },
   WASH_NO: { vi: 'Không giặt', pl: 'Nie prać', en: 'Do not wash' },
 
@@ -220,6 +244,16 @@ export const CARE_SYMBOL_LABELS: Record<CareSymbol, { vi: string; pl: string; en
     pl: 'Suszyć ociekające na płasko w cieniu',
     en: 'Drip dry flat in the shade',
   },
+  ASTM_DRY_LINE: {
+    vi: 'Phơi treo — kiểu Mỹ (dây phơi)',
+    pl: 'Suszyć na sznurze — norma amerykańska',
+    en: 'Line dry — ASTM (clothesline)',
+  },
+  ASTM_DRY_DRIP: {
+    vi: 'Phơi treo, không vắt — kiểu Mỹ (3 vạch dọc)',
+    pl: 'Suszyć ociekające — norma amerykańska (3 kreski)',
+    en: 'Drip dry — ASTM (three lines)',
+  },
 
   IRON_HIGH: { vi: 'Là tối đa 200°C', pl: 'Prasować maks. 200°C', en: 'Iron, max 200°C' },
   IRON_MEDIUM: { vi: 'Là tối đa 150°C', pl: 'Prasować maks. 150°C', en: 'Iron, max 150°C' },
@@ -227,6 +261,11 @@ export const CARE_SYMBOL_LABELS: Record<CareSymbol, { vi: string; pl: string; en
     vi: 'Là tối đa 110°C, không hơi nước',
     pl: 'Prasować maks. 110°C, bez pary',
     en: 'Iron, max 110°C, no steam',
+  },
+  IRON_NO_STEAM: {
+    vi: 'Là được, không dùng hơi nước',
+    pl: 'Prasować bez pary',
+    en: 'Iron without steam',
   },
   IRON_NO: { vi: 'Không là', pl: 'Nie prasować', en: 'Do not iron' },
 

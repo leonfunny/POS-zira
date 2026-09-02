@@ -339,7 +339,7 @@ export const CARE_SYMBOL_FAMILIES = [
       'WASH_50', 'WASH_50_MILD',
       'WASH_40', 'WASH_40_MILD', 'WASH_40_VERY_MILD',
       'WASH_30', 'WASH_30_MILD', 'WASH_30_VERY_MILD',
-      'WASH_HAND', 'WASH_NO',
+      'WASH_HAND', 'WASH_HAND_MILD', 'WASH_NO',
     ],
   },
   {
@@ -362,12 +362,18 @@ export const CARE_SYMBOL_FAMILIES = [
     symbols: [
       'DRY_LINE', 'DRY_DRIP', 'DRY_FLAT', 'DRY_FLAT_DRIP',
       'DRY_LINE_SHADE', 'DRY_DRIP_SHADE', 'DRY_FLAT_SHADE', 'DRY_FLAT_DRIP_SHADE',
+      // The American standard draws two of these differently, and customers
+      // hand the factory artwork in whichever convention they use: a sagging
+      // clothesline for line drying, three vertical lines for drip drying. They
+      // sit in this family because they are the same instruction, so picking
+      // one clears any ISO drying symbol -- a tag states one convention.
+      'ASTM_DRY_LINE', 'ASTM_DRY_DRIP',
     ],
   },
   {
     key: 'iron',
     // Dots are the soleplate ceiling: three 200 °C, two 150 °C, one 110 °C.
-    symbols: ['IRON_HIGH', 'IRON_MEDIUM', 'IRON_LOW', 'IRON_NO'],
+    symbols: ['IRON_HIGH', 'IRON_MEDIUM', 'IRON_LOW', 'IRON_NO_STEAM', 'IRON_NO'],
   },
   {
     key: 'dryclean',
@@ -387,9 +393,11 @@ export const CARE_SYMBOL_FAMILIES = [
 ] as const;
 
 /**
- * ISO 3758:2012 textile care symbols. The renderer draws each one as vector
- * art, so they survive being rasterised at 203 dpi without depending on a
- * symbol font being installed on the machine.
+ * Textile care symbols: the ISO 3758:2023 set (which superseded the 2012 one,
+ * adding hand wash at ambient temperature and ironing without steam), plus the
+ * two drying symbols the American ASTM D5489 draws differently. The renderer
+ * draws each one as vector art, so they survive being rasterised at 203 dpi
+ * without depending on a symbol font being installed on the machine.
  */
 export const CARE_SYMBOLS = CARE_SYMBOL_FAMILIES
   .flatMap((family) => family.symbols) as readonly CareSymbol[];

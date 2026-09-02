@@ -18,9 +18,12 @@ function tag(careSymbols: CareSymbol[]) {
   return { size: 'M', composition: '100% BAWEŁNA', careSymbols, quantity: 1 };
 }
 
-describe('the ISO 3758:2012 set is complete', () => {
-  it('carries all 44 symbols the standard defines', () => {
-    expect(CARE_SYMBOLS).toHaveLength(44);
+describe('the ISO 3758:2023 set is complete', () => {
+  // 46 ISO 3758:2023 symbols -- including the bare square and bare circle that
+  // stand for a whole family, which real tags carry -- plus the two drying
+  // symbols ASTM D5489 draws differently.
+  it('carries the whole set, both conventions', () => {
+    expect(CARE_SYMBOLS).toHaveLength(48);
   });
 
   it('has every washing temperature, with its mild and very mild processes', () => {
@@ -34,7 +37,7 @@ describe('the ISO 3758:2012 set is complete', () => {
       'WASH_50', 'WASH_50_MILD',
       'WASH_40', 'WASH_40_MILD', 'WASH_40_VERY_MILD',
       'WASH_30', 'WASH_30_MILD', 'WASH_30_VERY_MILD',
-      'WASH_HAND', 'WASH_NO',
+      'WASH_HAND', 'WASH_HAND_MILD', 'WASH_NO',
     ]);
   });
 
@@ -54,6 +57,38 @@ describe('the ISO 3758:2012 set is complete', () => {
     expect(CARE_SYMBOLS).toContain('WETCLEAN_W_MILD');
     expect(CARE_SYMBOLS).toContain('WETCLEAN_W_VERY_MILD');
     expect(CARE_SYMBOLS).toContain('WETCLEAN_NO');
+  });
+
+  it('has what ISO 3758:2023 added over the 2012 edition', () => {
+    // Hand wash at ambient temperature, and ironing with the steam struck out
+    // but the iron itself still allowed. Both are absent from the 2012 table
+    // this picker was first built against.
+    expect(CARE_SYMBOLS).toContain('WASH_HAND_MILD');
+    expect(CARE_SYMBOL_ART.WASH_HAND_MILD.match(/<rect/g) ?? []).toHaveLength(1);
+    expect(CARE_SYMBOLS).toContain('IRON_NO_STEAM');
+    // The cross must not be the full-symbol one that means "do not iron": here
+    // the iron is allowed and only the steam is struck out.
+    expect(CARE_SYMBOL_ART.IRON_NO).toContain('M12 12 L88 88');
+    expect(CARE_SYMBOL_ART.IRON_NO_STEAM).not.toContain('M12 12 L88 88');
+  });
+
+  it('has the two drying symbols the American standard draws differently', () => {
+    // A customer's artwork may be in ASTM D5489: a clothesline for line drying,
+    // three vertical lines for drip drying where ISO uses two.
+    expect(CARE_SYMBOLS).toContain('ASTM_DRY_LINE');
+    expect(CARE_SYMBOLS).toContain('ASTM_DRY_DRIP');
+    expect((CARE_SYMBOL_ART.ASTM_DRY_DRIP.match(/V82/g) ?? [])).toHaveLength(3);
+    expect((CARE_SYMBOL_ART.DRY_DRIP.match(/V82/g) ?? [])).toHaveLength(2);
+    expect((CARE_SYMBOL_ART.DRY_LINE.match(/V82/g) ?? [])).toHaveLength(1);
+    // A curve, which no ISO drying symbol has.
+    expect(CARE_SYMBOL_ART.ASTM_DRY_LINE).toContain('Q');
+  });
+
+  it('keeps the two conventions mutually exclusive on one tag', () => {
+    // A label states one convention. Picking the American drip-dry must clear
+    // the ISO one rather than print both.
+    expect(() => parseFabricTagData(tag(['DRY_DRIP', 'ASTM_DRY_DRIP'])))
+      .toThrow(/careSymbols/);
   });
 
   it('has the mild dry-cleaning processes for both solvents', () => {
