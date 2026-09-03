@@ -81,6 +81,28 @@ describe('ApiClient product normalization', () => {
     });
   });
 
+  it('carries the colour and size a garment label prints', async () => {
+    // Without these the fabric workshop's variants arrive as "— / —" rows that
+    // print blank tags, and no amount of re-syncing fixes them.
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
+      items: [
+        { id: 'variant-camel', name: 'LOTUS - beżowy', colorName: 'beżowy', sizeName: 'UNI', is_active: true },
+        { id: 'variant-snake', name: 'LOTUS - czarny', color_name: 'czarny', size_name: 'S', is_active: true },
+        { id: 'variant-none', name: 'Tea', is_active: true },
+      ],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+
+    const result = await new ApiClient('https://api.test').getPosProducts('token-1');
+
+    expect(result.products.map((row: any) => [row.color_name, row.size_name])).toEqual([
+      ['beżowy', 'UNI'],
+      ['czarny', 'S'],
+      // A backend with nothing to say must send null, which upsertMany keeps as
+      // whatever is already stored rather than blanking it.
+      [null, null],
+    ]);
+  });
+
   it('does not multiply stored grosze fields by 100 again', async () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
       items: [{

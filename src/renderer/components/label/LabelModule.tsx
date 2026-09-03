@@ -443,6 +443,15 @@ export default function LabelModule({ language }: LabelModuleProps) {
       if (!group.categoryId && product.category_id) group.categoryId = product.category_id;
     }
     for (const group of groups.values()) {
+      // An import can leave a colourless, sizeless row beside the real ones —
+      // the style's own parent, carried in as if it were sellable. It would
+      // print a tag naming no garment, so drop it wherever the style has rows
+      // that do name one. A style where nothing carries colour or size keeps
+      // every row: that is an ordinary product, not a leftover.
+      const described = group.variants.filter(
+        (variant) => (variant.color_name || '').trim() || (variant.size_name || '').trim(),
+      );
+      if (described.length > 0) group.variants = described;
       const template = templateRows[group.key];
       // Falling back to the shortest variant name rather than the first: the
       // rows read "KOMPLET DRESOWY - CZARNY / S", so the shortest is the one
@@ -859,10 +868,12 @@ export default function LabelModule({ language }: LabelModuleProps) {
                 }`}
               >
                 {copy.allCategories}
-                <span className="ml-2 tabular-nums">{labelProducts.length}</span>
+                <span className="ml-2 tabular-nums">{styleGroups.length}</span>
               </button>
               {filterCategories.map((category) => {
-                const count = labelProducts.filter((product) => product.category_id === category.id).length;
+                // Styles, not variants: the grid shows one card per style, and a
+                // chip promising seven where one card appears reads as a fault.
+                const count = styleGroups.filter((group) => group.categoryId === category.id).length;
                 return (
                   <button
                     key={category.id}

@@ -2584,6 +2584,11 @@ export class ApiClient {
         thumbnail_url: item.thumbnailUrl ?? item.thumbnail_url ?? null,
         sale_unit: item.saleUnit ?? item.sale_unit ?? item.template?.baseUnit ?? item.template?.base_unit ?? null,
         sell_by: item.sellBy ?? item.sell_by ?? item.template?.sellBy ?? item.template?.sell_by ?? 'PIECE',
+        // Colour and size name the garment on its label. A backend that predates
+        // them sends neither, and upsertMany keeps whatever is already stored
+        // rather than blanking a row this sync cannot describe.
+        color_name: item.colorName ?? item.color_name ?? null,
+        size_name: item.sizeName ?? item.size_name ?? null,
         item_type: rawItemType != null ? String(rawItemType).toLowerCase() : null,
         track_inventory: rawTrackInventory === false || rawTrackInventory === 0 ? 0 : 1,
         name_translations: encodeTranslations(translationSource),

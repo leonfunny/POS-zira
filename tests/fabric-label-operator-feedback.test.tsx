@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const harness = vi.hoisted(() => ({
   config: {} as any,
   products: [] as any[],
+  categories: [] as any[],
   listTemplateIds: vi.fn(),
   getTemplate: vi.fn(),
   getProductsByIds: vi.fn(),
@@ -24,7 +25,7 @@ vi.mock('../src/renderer/hooks/useConfig', () => ({
 vi.mock('../src/renderer/hooks/useProducts', () => ({
   useProducts: () => ({
     allProducts: harness.products,
-    categories: [],
+    categories: harness.categories,
     loading: false,
     error: null,
     syncProducts: vi.fn(),
@@ -112,6 +113,7 @@ describe('fabric-label operator feedback', () => {
     // here; otherwise one test's template name renames the styles in the next.
     harness.getProductsByIds.mockReset();
     harness.getProductsByIds.mockResolvedValue([]);
+    harness.categories = [];
     root = null;
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -208,6 +210,48 @@ describe('fabric-label operator feedback', () => {
     expect(card?.textContent).toContain('KOMPLET DRESOWY - ZIMOWY');
     expect(card?.textContent).toContain('115');
     expect(card?.textContent).not.toContain('First EAN product');
+  });
+
+  it('drops the colourless leftover row and counts styles on the chips', async () => {
+    harness.config.labelModuleProductIds = ['ean-one', 'ean-two', 'ean-parent'];
+    harness.categories = [{ id: 'cat-cotton', name: 'Bawełniane' }];
+    harness.products = [
+      { ...harness.products[0], color_name: 'CZARNY', size_name: 'S', category_id: 'cat-cotton' },
+      { ...harness.products[1], color_name: 'CZARNY', size_name: 'M', category_id: 'cat-cotton' },
+      // The style's own parent, carried in by an import as if it were sellable.
+      {
+        id: 'ean-parent',
+        name: 'Komplet LOTUS',
+        template_id: 'LOTUS',
+        category_id: 'cat-cotton',
+        is_active: 1,
+        retail_price: 0,
+      },
+    ];
+
+    await renderLabelModule();
+    await chooseLabelMode('Tem mã sản phẩm / EAN');
+    await settle();
+
+    const card = container.querySelector<HTMLButtonElement>('[data-testid="style-card"]');
+    await act(async () => card?.click());
+    await settle();
+
+    const rows = Array.from(container.querySelectorAll('tbody tr')).map((row) =>
+      Array.from(row.querySelectorAll('td')).slice(0, 2).map((cell) => cell.textContent?.trim()),
+    );
+    // Printing the parent would put a tag naming no garment into the bundle.
+    expect(rows).toEqual([['CZARNY', 'S'], ['CZARNY', 'M']]);
+
+    // Three rows, one style: a chip promising three where one card appears is a
+    // fault the operator cannot act on. Both chips count the same thing.
+    const chipText = (label: string) =>
+      Array.from(container.querySelectorAll('button'))
+        .find((button) => button.textContent?.includes(label))
+        ?.textContent ?? '';
+    expect(chipText('Tất cả')).toContain('1');
+    expect(chipText('Bawełniane')).toContain('1');
+    expect(chipText('Bawełniane')).not.toContain('3');
   });
 
   it('reads care content for the selected style only, never the whole template store', async () => {
