@@ -9,6 +9,7 @@
  */
 import { CareSymbol, FABRIC_TAG_LIMITS } from './types';
 import { encodeCode128 } from './code128';
+import { PACKAGING_STICKER_BARCODE_ENABLED } from './packaging-sticker';
 
 /** Materials the shop uses, in the Polish spelling that goes on the tag. */
 export const FABRIC_MATERIALS = [
@@ -178,7 +179,7 @@ export interface OrderSize {
 export interface OrderRow {
   id: string;
   colorName: string;
-  /** The customer's packaging code. Blank means "no sticker for this colour". */
+  /** Retained customer packaging code; currently hidden on the printed sticker. */
   code: string;
   quantities: Record<string, number>;
 }
@@ -353,9 +354,8 @@ function cellQuantity(row: OrderRow, sizeId: string): number {
 /**
  * Problems that must be fixed before printing.
  *
- * A missing sticker code is deliberately absent: that colour simply gets no
- * sticker, and its fabric tags still print. Blocking a 680-tag order because
- * one code has not arrived yet would be worse than printing what is known.
+ * The dormant sticker code is deliberately ignored while its barcode is off.
+ * If the old barcode layout returns, the same switch restores its validation.
  */
 export function validateOrder(order: LabelPrintOrder): OrderProblem[] {
   const problems = new Set<OrderProblem>();
@@ -367,13 +367,15 @@ export function validateOrder(order: LabelPrintOrder): OrderProblem[] {
   const filled = labels.filter(Boolean);
   if (new Set(filled).size !== filled.length) problems.add('DUPLICATE_SIZE');
 
-  for (const row of order.rows) {
-    const code = row.code.trim();
-    if (!code) continue;
-    try {
-      encodeCode128(code);
-    } catch {
-      problems.add('BAD_CODE');
+  if (PACKAGING_STICKER_BARCODE_ENABLED) {
+    for (const row of order.rows) {
+      const code = row.code.trim();
+      if (!code) continue;
+      try {
+        encodeCode128(code);
+      } catch {
+        problems.add('BAD_CODE');
+      }
     }
   }
 
@@ -412,7 +414,6 @@ export function buildPrintPlan(order: LabelPrintOrder): PrintStep[] {
   if (order.printStickers) {
     for (const row of order.rows) {
       const code = row.code.trim();
-      if (!code) continue; // No code yet: skip this colour, warn in the UI.
 
       // One sticker per colour, covering every size in that row. The sticker
       // goes on the bag, and a bag holds mixed sizes — a size printed on it
@@ -462,8 +463,7 @@ export function buildSamplePlan(order: LabelPrintOrder): PrintStep[] {
   // Built from an order with one of everything rather than from the quantities
   // typed so far: what a label says does not depend on how many are wanted, and
   // the operator wants to look at a tag before filling the grid in. It also
-  // means a first colour with no sticker code still yields a sticker sample,
-  // from the first colour that has one.
+  // means a first colour with no dormant sticker code still yields a sample.
   const oneOfEach: LabelPrintOrder = {
     ...order,
     rows: order.rows.map((row) => ({

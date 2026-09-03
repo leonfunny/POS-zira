@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildPackagingStickerHtml,
+  PACKAGING_STICKER_BARCODE_ENABLED,
   PACKAGING_STICKER_LIMITS,
   parsePackagingSticker,
   layoutPackagingStickerText,
@@ -10,11 +11,12 @@ import {
  * Layout target is the sticker the customer supplied, photographed at the
  * factory (see docs/superpowers/specs/2026-09-02-label-print-order-design.md):
  *
- *   MoonCollection        <- customer, bold
- *   ||| |||| || ||||      <- Code 128
- *   SP006290              <- the code, human readable
+ *   MoonCollection        <- customer
  *   KURTKA - 114          <- style name - style code
  *   CAPPUCCINO            <- colour
+ *
+ * The former SP code and Code 128 stay behind a switch in production source,
+ * but the workshop does not want either printed today.
  */
 const SAMPLE = {
   customerName: 'MoonCollection',
@@ -38,12 +40,12 @@ describe('parsePackagingSticker', () => {
     expect(parsed.code).toBe('SP006290');
   });
 
-  it('requires a non-empty code — a sticker with no barcode is not a sticker', () => {
-    expect(() => parsePackagingSticker({ ...SAMPLE, code: '   ' })).toThrow(/code/i);
+  it('accepts an empty legacy code because the visible sticker no longer uses it', () => {
+    expect(parsePackagingSticker({ ...SAMPLE, code: '   ' }).code).toBe('');
   });
 
-  it('rejects a code the symbology cannot carry rather than printing it wrong', () => {
-    expect(() => parsePackagingSticker({ ...SAMPLE, code: 'CZEKOLADĄ' })).toThrow(/ASCII/i);
+  it('does not apply barcode symbology rules while barcode printing is disabled', () => {
+    expect(parsePackagingSticker({ ...SAMPLE, code: 'CZEKOLADĄ' }).code).toBe('CZEKOLADĄ');
   });
 
   it('caps each text field so long input cannot silently overflow the sticker', () => {
@@ -76,18 +78,18 @@ describe('parsePackagingSticker', () => {
 describe('buildPackagingStickerHtml', () => {
   const html = buildPackagingStickerHtml(parsePackagingSticker(SAMPLE));
 
-  it('prints every line from the sample sticker', () => {
+  it('prints only the four details the workshop asked for', () => {
     expect(html).toContain('MoonCollection');
-    expect(html).toContain('SP006290');
     expect(html).toContain('KURTKA - 114');
     expect(html).toContain('CAPPUCCINO');
+    expect(html).not.toContain('SP006290');
   });
 
-  it('embeds a real barcode, not a decorative placeholder', () => {
-    expect(html).toContain('<svg');
-    // The bar count is symbology-derived; a placeholder would not produce these.
-    const bars = html.match(/<rect /g) ?? [];
-    expect(bars.length).toBeGreaterThan(20);
+  it('keeps the reversible barcode switch off and emits no barcode graphics', () => {
+    expect(PACKAGING_STICKER_BARCODE_ENABLED).toBe(false);
+    expect(html).not.toContain('<div class="barcode">');
+    expect(html).not.toContain('<svg');
+    expect(html).not.toContain('<rect ');
   });
 
   it('sets the page box to the configured label size so the driver cannot rescale', () => {
@@ -160,7 +162,7 @@ describe('long text has to fit the label, not run off it', () => {
   it('steps the type down until the wrapped text fits the space left', () => {
     const layout = layoutPackagingStickerText(worst());
     expect(layout.textMm).toBeLessThanOrEqual(layout.budgetMm);
-    expect(layout.customerPt).toBeLessThan(6.5);
+    expect(layout.customerPt).toBeLessThan(12);
   });
 
   it('leaves a sticker that already fits at full size', () => {
@@ -173,8 +175,9 @@ describe('long text has to fit the label, not run off it', () => {
       widthMm: 50,
       heightMm: 30,
     }));
-    expect(layout.customerPt).toBe(6.5);
-    expect(layout.stylePt).toBe(6.5);
+    expect(layout.customerPt).toBeGreaterThan(10);
+    expect(layout.stylePt).toBeGreaterThan(14);
+    expect(layout.colorPt).toBeGreaterThan(12);
     expect(layout.textMm).toBeLessThanOrEqual(layout.budgetMm);
   });
 

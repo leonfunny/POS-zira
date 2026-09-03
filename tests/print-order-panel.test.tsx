@@ -378,13 +378,16 @@ describe('PrintOrderPanel', () => {
     expect(headers).toHaveLength(1);
   });
 
-  it('warns on a colour with no sticker code but still allows the run', async () => {
+  it('prints a sticker without asking for the dormant barcode code', async () => {
     await render();
     await fillMinimalOrder(40);
     await changeInput(input(container, 'input[placeholder="SP006290"]'), '');
 
-    expect(container.textContent).toContain('fabric tags only');
+    expect(container.textContent).not.toContain('fabric tags only');
     expect(buttonWithText(container, 'Print').disabled).toBe(false);
+    await act(async () => buttonWithText(container, 'Print').click());
+    await settle();
+    expect(printSticker).toHaveBeenCalledTimes(1);
   });
 
   it('prints the stickers and the fabric tags in one run, asking nothing', async () => {
@@ -1086,14 +1089,13 @@ describe('PrintOrderPanel', () => {
     expect(printFabricTag).toHaveBeenCalledTimes(1);
   });
 
-  it('refuses a sample the printer would reject anyway', async () => {
+  it('ignores dormant barcode symbology when deciding whether a sample can print', async () => {
     await render();
     await fillMinimalOrder(40);
-    // A code with a character Code128 cannot carry blocks both buttons.
     await changeInput(input(container, 'input[placeholder="SP006290"]'), 'SP-Ł290');
 
     expect(container.querySelector<HTMLButtonElement>('[data-testid="print-sample"]')!.disabled)
-      .toBe(true);
+      .toBe(false);
   });
 
   it('refuses a sample while the real order is still going out', async () => {

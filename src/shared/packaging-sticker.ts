@@ -2,19 +2,21 @@
  * Packaging sticker for the garment factory: the paper label stuck on the bag,
  * printed on the Honeywell PC42E-D through its Windows driver.
  *
- * Layout mirrors the sticker the customer already supplies, so the factory can
- * keep using one design across both sources:
+ * The current workshop layout deliberately prints only the four details staff
+ * use to identify a bag:
  *
  *   MoonCollection      customer / brand line
- *   |||| || ||||        Code 128 of the customer's own code (SP006290)
- *   SP006290            the same code, human readable
  *   KURTKA - 114        style name - style code
- *   CAPPUCCINO          colour, optionally "COLOUR · SIZE"
+ *   CAPPUCCINO          colour
  *
- * The codes are the customer's (`SP…`), not EAN-13, which is why this lane uses
- * Code 128 and does not touch the product catalog.
+ * The former customer code (`SP…`) and Code 128 implementation are retained
+ * behind the switch below so they can be restored without reconstructing the
+ * old print path.
  */
 import { code128Svg, encodeCode128 } from './code128';
+
+/** Temporary owner decision: keep the old barcode path, but do not print it. */
+export const PACKAGING_STICKER_BARCODE_ENABLED = false;
 
 export const PACKAGING_STICKER_LIMITS = {
   /** Long enough for "MoonCollection" or a two-word colour, short enough to fit. */
@@ -85,14 +87,17 @@ function sideMm(value: unknown, field: string): number {
  * @throws with a field-named message; the caller shows it to the operator.
  */
 export function parsePackagingSticker(input: PackagingStickerInput): PackagingSticker {
-  const code = text(input.code, 'code', true);
-  if (code.length > PACKAGING_STICKER_LIMITS.codeChars) {
-    throw new Error(
-      `Packaging sticker: code must be at most ${PACKAGING_STICKER_LIMITS.codeChars} characters`,
-    );
+  const code = text(input.code, 'code', PACKAGING_STICKER_BARCODE_ENABLED);
+  if (PACKAGING_STICKER_BARCODE_ENABLED) {
+    if (code.length > PACKAGING_STICKER_LIMITS.codeChars) {
+      throw new Error(
+        `Packaging sticker: code must be at most ${PACKAGING_STICKER_LIMITS.codeChars} characters`,
+      );
+    }
+    // Keep symbology validation next to the dormant renderer so one switch
+    // restores the complete, safe barcode path.
+    encodeCode128(code);
   }
-  // Fail here rather than at the printer: encodeCode128 rejects non-ASCII.
-  encodeCode128(code);
 
   return {
     customerName: text(input.customerName, 'customerName'),
@@ -135,19 +140,21 @@ function stickerGeometry(sticker: PackagingSticker) {
   const { widthMm: w, heightMm: h } = sticker;
   const padX = clamp(w * 0.05, 1, 3);
   const padY = clamp(h * 0.06, 0.8, 2.5);
-  const barcodeHeightMm = clamp(h * 0.34, 6, 14);
+  const barcodeHeightMm = PACKAGING_STICKER_BARCODE_ENABLED
+    ? clamp(h * 0.34, 6, 14)
+    : 0;
+  const barcodeGapsMm = PACKAGING_STICKER_BARCODE_ENABLED ? padY * 1.1 : 0;
   return {
     padX,
     padY,
     barcodeHeightMm,
     usableMm: w - padX * 2,
-    // What the barcode, the padding and the two inter-row margins leave.
-    budgetMm: h - padY * 2 - barcodeHeightMm - padY * 0.6 - padY * 0.5,
+    budgetMm: h - padY * 2 - barcodeHeightMm - barcodeGapsMm,
     base: {
-      customerPt: clamp(h * 0.115, 6.5, 11),
+      customerPt: clamp(h * 0.4, 10, 16),
       codePt: clamp(h * 0.105, 6, 10),
-      stylePt: clamp(h * 0.12, 6.5, 11.5),
-      colorPt: clamp(h * 0.115, 6.5, 11),
+      stylePt: clamp(h * 0.58, 13, 22),
+      colorPt: clamp(h * 0.5, 12, 20),
     },
   };
 }
@@ -180,7 +187,9 @@ export function layoutPackagingStickerText(
   const colorLine = sticker.colorName;
   const rows: Array<[string, number]> = [
     [sticker.customerName, base.customerPt],
-    [sticker.code, base.codePt],
+    ...(PACKAGING_STICKER_BARCODE_ENABLED
+      ? [[sticker.code, base.codePt] as [string, number]]
+      : []),
     [styleLine, base.stylePt],
     [colorLine, base.colorPt],
   ];
@@ -213,16 +222,25 @@ export function buildPackagingStickerHtml(sticker: PackagingSticker): string {
   const { padX, padY, barcodeHeightMm } = stickerGeometry(sticker);
   const { customerPt, codePt, stylePt, colorPt } = layoutPackagingStickerText(sticker);
 
-  // A narrow module of ~0.25mm prints crisply at 203 dpi (2 dots).
-  const barcodeWidthMm = w - padX * 2;
-  const symbol = encodeCode128(sticker.code);
-  const totalModules = symbol.modules.length + 20; // + quiet zones
-  const moduleWidth = barcodeWidthMm / totalModules;
-  const svg = code128Svg(symbol, {
-    moduleWidth,
-    height: barcodeHeightMm,
-    unit: 'mm',
-  });
+  // Barcode rendering is intentionally kept intact behind one reversible
+  // switch. The owner currently wants the space used for larger text instead.
+  const barcodeRows: string[] = [];
+  if (PACKAGING_STICKER_BARCODE_ENABLED) {
+    // A narrow module of ~0.25mm prints crisply at 203 dpi (2 dots).
+    const barcodeWidthMm = w - padX * 2;
+    const symbol = encodeCode128(sticker.code);
+    const totalModules = symbol.modules.length + 20; // + quiet zones
+    const moduleWidth = barcodeWidthMm / totalModules;
+    const svg = code128Svg(symbol, {
+      moduleWidth,
+      height: barcodeHeightMm,
+      unit: 'mm',
+    });
+    barcodeRows.push(
+      `<div class="barcode">${svg}</div>`,
+      `<div class="code">${esc(sticker.code)}</div>`,
+    );
+  }
 
   const styleLine = [sticker.styleName, sticker.styleCode].filter(Boolean).join(' - ');
   // Colour and code only. The size used to be optional here, but one sticker
@@ -234,8 +252,7 @@ export function buildPackagingStickerHtml(sticker: PackagingSticker): string {
     sticker.customerName
       ? `<div class="customer">${esc(sticker.customerName)}</div>`
       : '',
-    `<div class="barcode">${svg}</div>`,
-    `<div class="code">${esc(sticker.code)}</div>`,
+    ...barcodeRows,
     styleLine ? `<div class="style">${esc(styleLine)}</div>` : '',
     colorLine ? `<div class="color">${esc(colorLine)}</div>` : '',
   ]

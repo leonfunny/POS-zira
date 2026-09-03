@@ -140,16 +140,16 @@ describe('validateOrder', () => {
     expect(validateOrder(order)).toContain('EMPTY_SIZE');
   });
 
-  it('does not treat a missing sticker code as fatal — that row is skipped', () => {
+  it('does not treat the dormant sticker code as required', () => {
     const order = sampleOrder();
     order.rows[1].code = '';
     expect(validateOrder(order)).toEqual([]);
   });
 
-  it('reports a sticker code the symbology cannot carry', () => {
+  it('does not apply barcode symbology rules while barcode printing is disabled', () => {
     const order = sampleOrder();
     order.rows[0].code = 'CZEKOLADĄ';
-    expect(validateOrder(order)).toContain('BAD_CODE');
+    expect(validateOrder(order)).not.toContain('BAD_CODE');
   });
 
   it('reports a run larger than the documented cap', () => {
@@ -183,13 +183,13 @@ describe('buildPrintPlan', () => {
     expect(stickers[0]).toMatchObject({ quantity: 100 }); // 40 S + 60 M
   });
 
-  it('skips a colour with no code instead of blocking the whole order', () => {
+  it('prints a colour even when its dormant barcode code is empty', () => {
     const order = sampleOrder();
     order.rows[1].code = '   ';
     const plan = buildPrintPlan(order);
     const stickers = plan.filter((s) => s.kind === 'sticker');
-    expect(stickers).toHaveLength(1);
-    // The fabric tags for that colour are still printed.
+    expect(stickers).toHaveLength(2);
+    expect(stickers[1]).toMatchObject({ colorName: 'BORDO', code: '', quantity: 20 });
     expect(plan.filter((s) => s.kind === 'fabric' && s.rowId === 'r2')).toHaveLength(1);
   });
 
@@ -407,11 +407,11 @@ describe('one of each, to look at before the ribbon is committed', () => {
       .toEqual(['sticker']);
   });
 
-  it('takes the sticker from the first colour that has a code', () => {
+  it('takes the sticker from the first colour even when its dormant code is empty', () => {
     const order = sampleOrder();
     order.rows[0].code = '   ';
     const sticker = buildSamplePlan(order).find((s) => s.kind === 'sticker');
-    expect(sticker).toMatchObject({ colorName: order.rows[1].colorName });
+    expect(sticker).toMatchObject({ colorName: order.rows[0].colorName, code: '' });
   });
 
   it('has nothing to show for an order with no colours or no sizes', () => {
