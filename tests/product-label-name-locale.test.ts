@@ -12,8 +12,10 @@ const root = resolve(__dirname, '..');
 const source = (path: string): string =>
   readFileSync(resolve(root, path), 'utf8').replace(/\r\n/g, '\n');
 
+// The Label tab is deliberately absent: it no longer prints a shelf label
+// through `printLabel`. It prints bag labels and fabric tags for a garment
+// style, whose name it still resolves Polish-first through `resolveName`.
 const PRODUCT_LABEL_PRINT_PATHS = [
-  'src/renderer/components/label/LabelModule.tsx',
   'src/renderer/components/pos/POSLayout.tsx',
   'src/renderer/components/pos/templates/retail/RetailTemplate.tsx',
   'src/renderer/components/products/ProductDetailDrawer.tsx',

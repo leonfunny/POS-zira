@@ -407,9 +407,22 @@ export function validateOrder(order: LabelPrintOrder): OrderProblem[] {
  * two colours prints an identical tag, but the bundles leave the table with
  * their garments, so they are kept apart on purpose.
  */
-export function buildPrintPlan(order: LabelPrintOrder): PrintStep[] {
+export function buildPrintPlan(
+  order: LabelPrintOrder,
+  options?: {
+    /**
+     * The composition line, when the caller already holds it as text.
+     *
+     * A sheet keeps its materials as name + percent and prints what they add up
+     * to. A reprint from the catalogue holds the finished line instead, saved
+     * the day the style was filed; parsing it back into percentages would turn
+     * a hand-corrected composition into a silently shortened one.
+     */
+    composition?: string;
+  },
+): PrintStep[] {
   const steps: PrintStep[] = [];
-  const composition = compositionText(order.materials);
+  const composition = options?.composition ?? compositionText(order.materials);
 
   if (order.printStickers) {
     for (const row of order.rows) {

@@ -288,7 +288,9 @@ describe('Fabric Label UI hardening', () => {
     await settle();
 
     expect(container.textContent).toContain('EAN product');
-    expect(container.textContent).toContain('5901234123457');
+    // The card carries the style and its lot code; the per-piece barcode moved
+    // into the variant rows, which is where a reprint is actually chosen.
+    expect(container.querySelector('[data-testid="style-card"]')).not.toBeNull();
     expect(container.textContent).not.toContain('Mác hướng dẫn sử dụng vải');
   });
 

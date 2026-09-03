@@ -64,6 +64,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       searchByCode: (query: string) => ipcRenderer.invoke('pos:products:searchByCode', query),
       getByBarcode: (barcode: string) => ipcRenderer.invoke('pos:products:getByBarcode', barcode),
       getById: (id: string) => ipcRenderer.invoke('pos:products:getById', id),
+      getByIds: (ids: string[]) => ipcRenderer.invoke('pos:products:getByIds', ids),
     },
     localVariantImports: {
       listFailed: () => ipcRenderer.invoke('pos:local-variant-imports:listFailed'),

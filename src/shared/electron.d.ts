@@ -149,6 +149,9 @@ interface PosProduct {
   sale_unit: string | null;
   sell_by?: 'PIECE' | 'WEIGHT' | string | null;
   updated_at: string | null;
+  /** Colour and size of this physical row (migration v900), when it has them. */
+  color_name?: string | null;
+  size_name?: string | null;
 }
 
 interface PosCategory {
@@ -855,6 +858,8 @@ interface ElectronAPI {
       searchByCode: (query: string) => Promise<PosProduct[]>;
       getByBarcode: (barcode: string) => Promise<PosProduct | null>;
       getById: (id: string) => Promise<PosProduct | null>;
+      /** Rows by id, template rows included. The label tab groups by them. */
+      getByIds: (ids: string[]) => Promise<PosProduct[]>;
     };
     localVariantImports: {
       listFailed: () => Promise<{ ok: boolean; count: number; imports: LocalVariantImportFailure[]; error?: string }>;

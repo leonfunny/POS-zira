@@ -75,19 +75,24 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
   let container: HTMLDivElement;
   let root: Root | null = null;
   let createProduct: ReturnType<typeof vi.fn>;
+  let saveFabricTagTemplate: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.stubGlobal('localStorage', memoryStorage());
     container = document.createElement('div');
     document.body.appendChild(container);
     createProduct = vi.fn(async () => created(2));
+    saveFabricTagTemplate = vi.fn(async (template: any) => template);
     Object.defineProperty(window, 'electronAPI', {
       configurable: true,
       writable: true,
       value: {
         printPackagingSticker: vi.fn(async () => ({ success: true })),
         printFabricTag: vi.fn(async () => ({ success: true })),
-        pos: { productAdmin: { createProduct } },
+        pos: {
+          productAdmin: { createProduct },
+          fabricTagTemplates: { save: saveFabricTagTemplate },
+        },
       },
     });
   });
@@ -241,6 +246,34 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
     await settle();
 
     expect(fileResult()).toBe('Saved — 3 variants');
+  });
+
+  // The care content lives on the sheet and nowhere else in the catalogue, so
+  // filing has to copy it across or the product tab can never print a tag.
+  it('saves the care content against the new style', async () => {
+    await render(CATEGORIES);
+    await fillGrid();
+    await act(async () => fileButton().click());
+    await settle();
+
+    expect(saveFabricTagTemplate).toHaveBeenCalledTimes(1);
+    expect(saveFabricTagTemplate.mock.calls[0][0]).toMatchObject({
+      templateId: 'template-1',
+      layout: 'default',
+    });
+  });
+
+  it('says so when the product was created but its care content was not', async () => {
+    saveFabricTagTemplate.mockRejectedValue(new Error('disk full'));
+    await render();
+    await fillGrid();
+    await act(async () => fileButton().click());
+    await settle();
+
+    // The server has already made the product; reporting a plain failure would
+    // send the operator back to file it a second time.
+    expect(fileResult()).toContain('Saved 2 variants');
+    expect(fileResult()).toContain('care content did not save');
   });
 
   it('will not file the same sheet twice', async () => {

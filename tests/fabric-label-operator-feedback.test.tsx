@@ -10,6 +10,7 @@ const harness = vi.hoisted(() => ({
   products: [] as any[],
   listTemplateIds: vi.fn(),
   getTemplate: vi.fn(),
+  getProductsByIds: vi.fn(),
   printLabel: vi.fn(),
   fabricAction: vi.fn(),
   loggerError: vi.fn(),
@@ -107,6 +108,10 @@ describe('fabric-label operator feedback', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // clearAllMocks keeps a queued implementation, so the style rows are reset
+    // here; otherwise one test's template name renames the styles in the next.
+    harness.getProductsByIds.mockReset();
+    harness.getProductsByIds.mockResolvedValue([]);
     root = null;
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -142,6 +147,7 @@ describe('fabric-label operator feedback', () => {
       value: {
         printLabel: harness.printLabel,
         pos: {
+          products: { getByIds: harness.getProductsByIds },
           fabricTagTemplates: {
             listIds: harness.listTemplateIds,
             get: harness.getTemplate,
@@ -185,13 +191,35 @@ describe('fabric-label operator feedback', () => {
     );
   });
 
-  it('does not invoke the retired catalog-template loader and keeps EAN one explicit tab away', async () => {
+  it('names a style from its own row, not from a variant name it cut apart', async () => {
+    harness.getProductsByIds.mockResolvedValue([
+      { id: 'LOTUS', name: 'KOMPLET DRESOWY - ZIMOWY', sku: '115', category_id: null },
+    ]);
+
+    await renderLabelModule();
+    await chooseLabelMode('Tem mã sản phẩm / EAN');
+    await settle();
+
+    // The template row carries a dash of its own. Deriving the style name by
+    // trimming "First EAN product" back to a stem would have produced
+    // "KOMPLET DRESOWY" and printed half a style name onto the bag.
+    expect(harness.getProductsByIds).toHaveBeenCalledWith(['LOTUS']);
+    const card = container.querySelector('[data-testid="style-card"]');
+    expect(card?.textContent).toContain('KOMPLET DRESOWY - ZIMOWY');
+    expect(card?.textContent).toContain('115');
+    expect(card?.textContent).not.toContain('First EAN product');
+  });
+
+  it('reads care content for the selected style only, never the whole template store', async () => {
     harness.listTemplateIds.mockRejectedValueOnce(new Error('template store unavailable'));
 
     await expect(renderLabelModule()).resolves.toBeUndefined();
 
+    // The reprint lane needs the composition and washing symbols of the style
+    // in front of the operator; it has never needed every style on the machine,
+    // and asking for all of them was what made the old loader a liability.
     expect(harness.listTemplateIds).not.toHaveBeenCalled();
-    expect(harness.getTemplate).not.toHaveBeenCalled();
+    expect(harness.getTemplate).toHaveBeenCalledWith('LOTUS');
     expect(container.textContent).toContain('Fabric run remains visible');
     expect(container.querySelector<HTMLElement>('[data-label-mode-panel="ean"]')?.hidden).toBe(true);
 
@@ -215,8 +243,12 @@ describe('fabric-label operator feedback', () => {
 
     expect(harness.listTemplateIds).not.toHaveBeenCalled();
     await chooseLabelMode('Tem mã sản phẩm / EAN');
+    // Both rows belong to one style, so the tab shows the style once. Without a
+    // fabric bridge there is no care content, and the lane says so rather than
+    // going blank.
     expect(container.textContent).toContain('First EAN product');
-    expect(container.textContent).toContain('5901234123457');
+    expect(container.textContent).not.toContain('Second EAN product');
+    expect(container.textContent).toContain('chưa có nội dung tem vải');
     expect(harness.loggerWarn).not.toHaveBeenCalled();
   });
 
@@ -249,12 +281,12 @@ describe('fabric-label operator feedback', () => {
     container.querySelector<HTMLButtonElement>('[data-testid="emit-fabric-status"]')?.click();
     expect(harness.fabricAction).not.toHaveBeenCalled();
 
-    const secondProduct = Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
-      .find((button) => button.textContent?.includes('Second EAN product'));
-    expect(secondProduct).not.toBeUndefined();
-    await act(async () => secondProduct?.click());
+    // One card per style now: both harness rows sit under the same template.
+    const styleCard = container.querySelector<HTMLButtonElement>('[data-testid="style-card"]');
+    expect(styleCard).not.toBeNull();
+    await act(async () => styleCard?.click());
 
-    expect(container.textContent).toContain('Second EAN product');
+    expect(container.textContent).toContain('First EAN product');
 
     await chooseLabelMode('Mác vải từ file khách');
     expect(fabricPanel?.hidden).toBe(false);

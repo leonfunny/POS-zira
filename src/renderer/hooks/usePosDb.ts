@@ -35,6 +35,11 @@ export interface Product {
   // Orders/fiscal payloads use canonical `name`; paper receipts localize
   // separately at print time.
   name_translations?: string | null;
+  // Colour and size of one physical row (migration v900). The sync payload and
+  // `SELECT *` have carried them all along; the label tab reads them to group a
+  // style's variants instead of listing eighteen near-identical rows.
+  color_name?: string | null;
+  size_name?: string | null;
   // Renderer-only marker: this row came from `draft_products`, not
   // `product_variants`. Clicking it must route to the scan-import flow
   // (creates a real variant on the server first) instead of adding to

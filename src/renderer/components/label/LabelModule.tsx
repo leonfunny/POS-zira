@@ -4,43 +4,35 @@ import {
   Barcode,
   Check,
   CheckCircle2,
-  Clock,
   FileImage,
-  Minus,
   Plus,
   Printer,
   RefreshCw,
-  RotateCw,
   Search,
   Settings,
   Table2,
   Tag,
   X,
 } from 'lucide-react';
-import {
-  PRODUCT_LABEL_NAME_LOCALE,
-  resolveName,
-  resolveProductLabelNameResult,
-} from '../../../shared/catalog-names';
+import { PRODUCT_LABEL_NAME_LOCALE, resolveName } from '../../../shared/catalog-names';
 import type { AgentConfig } from '../../../shared/types';
 import { useConfig } from '../../hooks/useConfig';
 import { useProducts } from '../../hooks/useProducts';
 import FabricArtworkPanel from './FabricArtworkPanel';
 import PrintOrderPanel from './PrintOrderPanel';
+import StyleReprintPanel from './StyleReprintPanel';
 import type { ProductListItem } from '../../hooks/useProducts';
 import type { Category } from '../../hooks/usePosDb';
 import { getTranslation, type Language } from '../../i18n/translations';
 import rlog from '../../utils/logger';
 import {
   filterValidLabelSelectionIds,
-  formatProductLabelPriceText,
   isPrintableLabelProduct,
   labelSelectionIdsEqual,
   normalizeLabelSelectionIds,
   toggleLabelSelectionId,
   type LabelLanguage,
 } from '../../utils/product-label';
-import ConfirmActionDialog from '../pos/ConfirmActionDialog';
 
 interface LabelModuleProps {
   language: Language;
@@ -48,27 +40,29 @@ interface LabelModuleProps {
 
 type LabelProduct = ProductListItem & { ean?: string | null };
 
-type LabelStatus =
-  | { type: 'idle'; message: string }
-  | { type: 'printing'; message: string; productId: string }
-  | { type: 'success'; message: string }
-  | { type: 'warning'; message: string }
-  | { type: 'error'; message: string };
-
-interface RecentPrint {
-  id: string;
-  productId: string;
-  productName: string;
-  barcode: string;
-  copies: number;
-  printedAt: Date;
+/**
+ * One style, with the physical rows under it.
+ *
+ * The catalogue keeps a colour-and-size style as one row per cell, and every
+ * list read hides the template that groups them so the till never sells the
+ * stock-0 parent. Printed labels are the other way round: the operator thinks
+ * of one style and picks colours inside it, which is what this groups back
+ * together. A plain item with no variants is a group of one.
+ */
+interface StyleGroup {
+  key: string;
+  name: string;
+  styleCode: string;
+  categoryId: string | null;
+  variants: LabelProduct[];
 }
 
-interface PendingHighCopyPrint {
-  product: LabelProduct;
-  requestedCopies: number;
-  options: { confirmHighCopy?: boolean };
-}
+/**
+ * The tab's own status line. Printing reports inside the reprint panel, so what
+ * is left here is the settings drawer: a category or pin that fails to save is
+ * otherwise silent, and the operator would go on believing it was kept.
+ */
+type LabelStatus = { type: 'idle' | 'error'; message: string };
 
 interface LabelCopy {
   title: string;
@@ -85,30 +79,12 @@ interface LabelCopy {
   setupHint: string;
   openSettings: string;
   noMatch: string;
+  noSelection: string;
   loading: string;
   loadError: string;
-  labelPreview: string;
-  productInfo: string;
-  noSelection: string;
   selectProductHint: string;
-  ean: string;
-  sku: string;
   category: string;
-  price: string;
-  unit: string;
   missingEan: string;
-  missingPrice: string;
-  missingPolishName: string;
-  priceMissingHint: string;
-  noPrice: string;
-  copies: string;
-  printing: string;
-  printed: string;
-  printerError: string;
-  ready: string;
-  recent: string;
-  noRecent: string;
-  reprint: string;
   categories: string;
   categoryHint: string;
   pinnedProducts: string;
@@ -120,20 +96,16 @@ interface LabelCopy {
   noProductsAvailable: string;
   staleSelections: (quantity: number) => string;
   repair: string;
-  highCopyWarning: string;
-  printCopies: (quantity: number) => string;
-  highCopyConfirm: (quantity: number) => string;
+  variantSummary: (colors: number, sizes: number, rows: number) => string;
 }
 
-const HIGH_COPY_CONFIRM_THRESHOLD = 10;
-const RECENT_PRINT_LIMIT = 5;
 
 type LabelMode = 'order' | 'fabric' | 'ean';
 
 const COPY: Record<string, LabelCopy> = {
   en: {
     title: 'Label',
-    subtitle: 'Fresh-counter labels',
+    subtitle: 'Reprint bag labels and fabric tags',
     settings: 'Settings',
     close: 'Close',
     sync: 'Sync',
@@ -146,30 +118,12 @@ const COPY: Record<string, LabelCopy> = {
     setupHint: 'The Label tab stays empty until this counter is configured.',
     openSettings: 'Open settings',
     noMatch: 'No matching label products',
+    noSelection: 'No style selected',
     loading: 'Loading products...',
     loadError: 'Could not load products',
-    labelPreview: 'Label preview',
-    productInfo: 'Product info',
-    noSelection: 'No product selected',
-    selectProductHint: 'Select a product card to preview its label.',
-    ean: 'EAN',
-    sku: 'SKU',
+    selectProductHint: 'Pick a style to print its colours and sizes.',
     category: 'Category',
-    price: 'Price',
-    unit: 'Unit',
     missingEan: 'Missing EAN',
-    missingPrice: 'Missing price',
-    missingPolishName: 'Missing Polish name — the original name will be printed.',
-    priceMissingHint: 'Label can print, but the price line will be blank.',
-    noPrice: 'No price',
-    copies: 'Copies',
-    printing: 'Printing label...',
-    printed: 'Label sent to printer',
-    printerError: 'Label printer error',
-    ready: 'Ready to print',
-    recent: 'Recent prints',
-    noRecent: 'No labels printed yet',
-    reprint: 'Reprint',
     categories: 'Categories',
     categoryHint: 'Selected categories are visible in the Label tab.',
     pinnedProducts: 'Pinned products',
@@ -181,13 +135,14 @@ const COPY: Record<string, LabelCopy> = {
     noProductsAvailable: 'No products found',
     staleSelections: (quantity) => `${quantity} saved Label selection(s) no longer exist or cannot be printed.`,
     repair: 'Repair settings',
-    highCopyWarning: 'Large copy count requires confirmation before printing.',
-    printCopies: (quantity) => quantity === 1 ? 'Print label' : `Print ${quantity} labels`,
-    highCopyConfirm: (quantity) => `You are about to print ${quantity} labels. Continue?`,
+    variantSummary: (colors, sizes, rows) =>
+      colors + sizes === 0
+        ? `${rows} row${rows === 1 ? '' : 's'}`
+        : `${colors} colour${colors === 1 ? '' : 's'} · ${sizes} size${sizes === 1 ? '' : 's'}`,
   },
   vi: {
     title: 'Label',
-    subtitle: 'Tem cho quầy hàng tươi',
+    subtitle: 'In lại tem đóng gói và tem vải',
     settings: 'Cài đặt',
     close: 'Đóng',
     sync: 'Đồng bộ',
@@ -200,30 +155,12 @@ const COPY: Record<string, LabelCopy> = {
     setupHint: 'Tab Label để trống cho đến khi quầy này được cấu hình.',
     openSettings: 'Mở cài đặt',
     noMatch: 'Không tìm thấy sản phẩm tem',
+    noSelection: 'Chưa chọn mẫu nào',
     loading: 'Đang tải sản phẩm...',
     loadError: 'Không tải được sản phẩm',
-    labelPreview: 'Xem trước tem',
-    productInfo: 'Thông tin sản phẩm',
-    noSelection: 'Chưa chọn sản phẩm',
-    selectProductHint: 'Chọn một thẻ sản phẩm để xem tem.',
-    ean: 'EAN',
-    sku: 'SKU',
+    selectProductHint: 'Chọn một mẫu để in màu và size của nó.',
     category: 'Danh mục',
-    price: 'Giá',
-    unit: 'Đơn vị',
     missingEan: 'Thiếu EAN',
-    missingPrice: 'Thiếu giá',
-    missingPolishName: 'Thiếu tên tiếng Ba Lan — tem sẽ in tên gốc.',
-    priceMissingHint: 'Tem vẫn in được, nhưng dòng giá sẽ để trống.',
-    noPrice: 'Không có giá',
-    copies: 'Số bản in',
-    printing: 'Đang in tem...',
-    printed: 'Đã gửi tem đến máy in',
-    printerError: 'Lỗi máy in tem',
-    ready: 'Sẵn sàng in',
-    recent: 'Lịch sử in gần đây',
-    noRecent: 'Chưa in tem nào',
-    reprint: 'In lại',
     categories: 'Danh mục',
     categoryHint: 'Danh mục đã chọn sẽ hiện trong tab Label.',
     pinnedProducts: 'Sản phẩm ghim',
@@ -235,13 +172,12 @@ const COPY: Record<string, LabelCopy> = {
     noProductsAvailable: 'Không tìm thấy sản phẩm',
     staleSelections: (quantity) => `${quantity} lựa chọn Label đã lưu không còn tồn tại hoặc không thể in.`,
     repair: 'Sửa cấu hình',
-    highCopyWarning: 'Số lượng lớn sẽ cần xác nhận trước khi in.',
-    printCopies: (quantity) => quantity === 1 ? 'In tem' : `In ${quantity} tem`,
-    highCopyConfirm: (quantity) => `Bạn sắp in ${quantity} tem. Tiếp tục?`,
+    variantSummary: (colors, sizes, rows) =>
+      colors + sizes === 0 ? `${rows} dòng` : `${colors} màu · ${sizes} size`,
   },
   pl: {
     title: 'Label',
-    subtitle: 'Etykiety na ladę świeżą',
+    subtitle: 'Ponowny druk etykiet i metek',
     settings: 'Ustawienia',
     close: 'Zamknij',
     sync: 'Synchronizuj',
@@ -254,30 +190,12 @@ const COPY: Record<string, LabelCopy> = {
     setupHint: 'Zakładka Label jest pusta, dopóki ta lada nie jest skonfigurowana.',
     openSettings: 'Otwórz ustawienia',
     noMatch: 'Brak pasujących produktów',
+    noSelection: 'Nie wybrano modelu',
     loading: 'Ładowanie produktów...',
     loadError: 'Nie udało się załadować produktów',
-    labelPreview: 'Podgląd etykiety',
-    productInfo: 'Informacje o produkcie',
-    noSelection: 'Nie wybrano produktu',
-    selectProductHint: 'Wybierz kartę produktu, aby zobaczyć etykietę.',
-    ean: 'EAN',
-    sku: 'SKU',
+    selectProductHint: 'Wybierz model, aby wydrukować jego kolory i rozmiary.',
     category: 'Kategoria',
-    price: 'Cena',
-    unit: 'Jednostka',
     missingEan: 'Brak EAN',
-    missingPrice: 'Brak ceny',
-    missingPolishName: 'Brak polskiej nazwy — zostanie wydrukowana nazwa podstawowa.',
-    priceMissingHint: 'Etykieta może zostać wydrukowana, ale linia ceny będzie pusta.',
-    noPrice: 'Brak ceny',
-    copies: 'Kopie',
-    printing: 'Drukowanie etykiety...',
-    printed: 'Etykieta wysłana do drukarki',
-    printerError: 'Błąd drukarki etykiet',
-    ready: 'Gotowe do druku',
-    recent: 'Ostatnie wydruki',
-    noRecent: 'Brak wydrukowanych etykiet',
-    reprint: 'Drukuj ponownie',
     categories: 'Kategorie',
     categoryHint: 'Wybrane kategorie są widoczne w zakładce Label.',
     pinnedProducts: 'Przypięte produkty',
@@ -289,9 +207,8 @@ const COPY: Record<string, LabelCopy> = {
     noProductsAvailable: 'Nie znaleziono produktów',
     staleSelections: (quantity) => `${quantity} zapisanych wyborów Label już nie istnieje lub nie nadaje się do druku.`,
     repair: 'Napraw ustawienia',
-    highCopyWarning: 'Duża liczba kopii wymaga potwierdzenia przed drukiem.',
-    printCopies: (quantity) => quantity === 1 ? 'Drukuj etykietę' : `Drukuj ${quantity} etyk.`,
-    highCopyConfirm: (quantity) => `Zamierzasz wydrukować ${quantity} etykiet. Kontynuować?`,
+    variantSummary: (colors, sizes, rows) =>
+      colors + sizes === 0 ? `${rows} poz.` : `${colors} kolor. · ${sizes} rozm.`,
   },
 };
 
@@ -305,12 +222,6 @@ function normalizeSearch(value: string): string {
     .trim();
 }
 
-function clampCopies(value: unknown): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return 1;
-  return Math.max(1, Math.min(999, Math.round(parsed)));
-}
-
 function resolveLabelCode(product: LabelProduct | null): string {
   if (!product) return '';
   return String(product.barcode ?? product.ean ?? '').trim();
@@ -318,30 +229,6 @@ function resolveLabelCode(product: LabelProduct | null): string {
 
 function productImage(product: LabelProduct): string | null {
   return (product.thumbnail_url || product.image_url || null) as string | null;
-}
-
-function productUnit(product: LabelProduct | null): string {
-  if (!product) return '-';
-  const saleUnit = String(product.sale_unit || '').trim();
-  if (saleUnit) return saleUnit;
-  return product.sell_by === 'WEIGHT' ? 'kg' : 'item';
-}
-
-function formatRecentTime(date: Date, language: Language): string {
-  const locale = language === 'pl'
-    ? 'pl-PL'
-    : language === 'en'
-      ? 'en-US'
-      : 'vi-VN';
-  return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
-}
-
-function barcodeBars(barcode: string): number[] {
-  const seed = barcode || '0000000000000';
-  return Array.from(seed.slice(0, 24)).map((char, index) => {
-    const code = char.charCodeAt(0) + index * 7;
-    return 2 + (code % 4);
-  });
 }
 
 function productMatches(
@@ -362,29 +249,6 @@ function productMatches(
     category ? resolveName(category, labelLanguage) : '',
   ].filter(Boolean).join(' ');
   return normalizeSearch(haystack).includes(query);
-}
-
-function BarcodePreview({ barcode }: { barcode: string }) {
-  const bars = barcodeBars(barcode);
-  return (
-    <div className="rounded-md border border-slate-200 bg-white px-2 py-2" aria-label="Barcode preview">
-      <div className="flex h-9 items-end justify-center gap-[2px] overflow-hidden rounded bg-white">
-        {bars.map((width, index) => (
-          <span
-            key={`${barcode || 'empty'}-${index}`}
-            className="block bg-slate-950"
-            style={{
-              width: `${width}px`,
-              height: `${22 + ((index * 11) % 12)}px`,
-            }}
-          />
-        ))}
-      </div>
-      <div className="mt-1 text-center font-mono text-[11px] font-bold tracking-[0.08em] text-slate-800">
-        {barcode || '------------'}
-      </div>
-    </div>
-  );
 }
 
 export default function LabelModule({ language }: LabelModuleProps) {
@@ -419,30 +283,17 @@ export default function LabelModule({ language }: LabelModuleProps) {
   const [settingsQuery, setSettingsQuery] = useState('');
   const [activeCategoryId, setActiveCategoryId] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [selectedProductId, setSelectedProductId] = useState('');
-  const [copies, setCopies] = useState(1);
+  const [selectedGroupKey, setSelectedGroupKey] = useState('');
   const [status, setStatus] = useState<LabelStatus>({ type: 'idle', message: '' });
-  const [recentPrints, setRecentPrints] = useState<RecentPrint[]>([]);
   const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
   const [optimisticCategoryIds, setOptimisticCategoryIds] = useState<string[]>([]);
   const [optimisticProductIds, setOptimisticProductIds] = useState<string[]>([]);
-  const [pendingHighCopyPrint, setPendingHighCopyPrint] = useState<PendingHighCopyPrint | null>(null);
-  const [confirmingHighCopyPrint, setConfirmingHighCopyPrint] = useState(false);
   const [repairingSettings, setRepairingSettings] = useState(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const pinSearchSectionRef = useRef<HTMLElement | null>(null);
-  const statusResetTimeoutRef = useRef<number | null>(null);
-  const printSequenceRef = useRef(0);
   const configSaveChainRef = useRef<Promise<void>>(Promise.resolve());
   const pendingCategoryConfigSavesRef = useRef(0);
   const pendingProductConfigSavesRef = useRef(0);
-
-  const clearStatusResetTimeout = useCallback(() => {
-    if (statusResetTimeoutRef.current !== null) {
-      window.clearTimeout(statusResetTimeoutRef.current);
-      statusResetTimeoutRef.current = null;
-    }
-  }, []);
 
   useEffect(() => {
     if (pendingCategoryConfigSavesRef.current > 0) return;
@@ -453,10 +304,6 @@ export default function LabelModule({ language }: LabelModuleProps) {
     if (pendingProductConfigSavesRef.current > 0) return;
     setOptimisticProductIds(normalizeLabelSelectionIds(config?.labelModuleProductIds || []));
   }, [config?.labelModuleProductIds]);
-
-  useEffect(() => {
-    return () => clearStatusResetTimeout();
-  }, [clearStatusResetTimeout]);
 
   const categoryById = useMemo(() => new Map(categories.map((category) => [category.id, category])), [categories]);
   const printableProducts = useMemo(
@@ -511,51 +358,140 @@ export default function LabelModule({ language }: LabelModuleProps) {
     }
   }, [activeCategoryId, filterCategories]);
 
-  const visibleProducts = useMemo(() => {
-    const normalized = normalizeSearch(query);
-    return labelProducts
-      .filter((product) => !activeCategoryId || product.category_id === activeCategoryId)
-      .filter((product) => productMatches(product, normalized, categoryById, labelLanguage));
-  }, [activeCategoryId, categoryById, labelLanguage, labelProducts, query]);
+  /**
+   * The template rows behind the styles on screen.
+   *
+   * Read by id on purpose: every list query hides a template that has variants,
+   * and the template is where the style's own name and lot code live. Guessing
+   * the name by cutting a variant name apart breaks on any style whose name
+   * holds a dash, and this shop names styles "KOMPLET DRESOWY".
+   */
+  const [templateRows, setTemplateRows] = useState<Record<string, LabelProduct>>({});
+  /**
+   * Ids already asked for, whether or not a row came back.
+   *
+   * Keyed off the answer instead, a style whose template row is missing would
+   * be requested again on every render — the read returns nothing, the state
+   * object is replaced, the effect sees the id still missing, and the machine
+   * spends the day asking. Asking once per id ends that.
+   */
+  const templateIdsAskedRef = useRef<Set<string>>(new Set());
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  const templateIdsWanted = useMemo(() => {
+    const ids = new Set<string>();
+    for (const product of labelProducts) {
+      if (product.template_id) ids.add(product.template_id);
+    }
+    return [...ids].sort();
+  }, [labelProducts]);
 
   useEffect(() => {
-    if (labelProducts.length === 0) {
-      if (selectedProductId) setSelectedProductId('');
+    const missing = templateIdsWanted.filter((id) => !templateIdsAskedRef.current.has(id));
+    if (missing.length === 0) return;
+    const bridge = (window as any).electronAPI?.pos?.products;
+    if (!bridge?.getByIds) return;
+    for (const id of missing) templateIdsAskedRef.current.add(id);
+    // Deliberately not cancelled when the effect re-runs. An id is asked for
+    // once, so dropping the answer because the product list changed shape mid
+    // flight would leave that style unnamed for as long as the app is open.
+    // Only an unmounted component ignores it.
+    Promise.resolve()
+      .then(() => bridge.getByIds(missing))
+      .then((rows: LabelProduct[]) => {
+        if (!mountedRef.current || !Array.isArray(rows) || rows.length === 0) return;
+        setTemplateRows((current) => {
+          const next = { ...current };
+          for (const row of rows) {
+            if (row?.id) next[row.id] = row;
+          }
+          return next;
+        });
+      })
+      .catch((err: unknown) => {
+        rlog.error('[LabelModule] Failed to read style rows:', err);
+        // Left marked as asked: a read that fails for one style fails for the
+        // next too, and retrying on every render turns a broken bridge into a
+        // busy loop. The style still shows, under its variant's name.
+      });
+  }, [templateIdsWanted]);
+
+  const styleGroups = useMemo(() => {
+    const groups = new Map<string, StyleGroup>();
+    for (const product of labelProducts) {
+      const key = product.template_id || product.id;
+      let group = groups.get(key);
+      if (!group) {
+        group = {
+          key,
+          name: '',
+          styleCode: '',
+          categoryId: product.category_id ?? null,
+          variants: [],
+        };
+        groups.set(key, group);
+      }
+      group.variants.push(product);
+      // A style is shown under whichever category its rows carry; the first one
+      // that has one wins, so a variant saved without a category does not hide
+      // the style from its own category chip.
+      if (!group.categoryId && product.category_id) group.categoryId = product.category_id;
+    }
+    for (const group of groups.values()) {
+      const template = templateRows[group.key];
+      // Falling back to the shortest variant name rather than the first: the
+      // rows read "KOMPLET DRESOWY - CZARNY / S", so the shortest is the one
+      // closest to the style itself while the template row is still loading.
+      const fallback = group.variants
+        .map((variant) => variant.name)
+        .reduce((shortest, name) => (name.length < shortest.length ? name : shortest), group.variants[0].name);
+      // Polish first, like every other customer-facing name in the app: the bag
+      // label leaves the workshop, and the style is written the way the buyer
+      // reads it rather than the way the till happens to be set.
+      group.name = (template ? resolveName(template, labelLanguage) || template.name : '') || fallback;
+      group.styleCode = String(template?.sku || group.variants[0].sku || '').trim();
+      if (!group.categoryId && template?.category_id) group.categoryId = template.category_id;
+    }
+    return [...groups.values()].sort((a, b) => a.name.localeCompare(b.name, 'pl'));
+  }, [labelProducts, templateRows]);
+
+  const visibleGroups = useMemo(() => {
+    const normalized = normalizeSearch(query);
+    return styleGroups
+      .filter((group) => !activeCategoryId || group.categoryId === activeCategoryId)
+      .filter(
+        (group) =>
+          !normalized
+          || normalizeSearch(group.name).includes(normalized)
+          || group.variants.some((variant) =>
+            productMatches(variant, normalized, categoryById, labelLanguage),
+          ),
+      );
+  }, [activeCategoryId, categoryById, labelLanguage, query, styleGroups]);
+
+  useEffect(() => {
+    if (styleGroups.length === 0) {
+      if (selectedGroupKey) setSelectedGroupKey('');
       return;
     }
-    if (!selectedProductId || !labelProducts.some((product) => product.id === selectedProductId)) {
-      setSelectedProductId(labelProducts[0].id);
+    if (!selectedGroupKey || !styleGroups.some((group) => group.key === selectedGroupKey)) {
+      setSelectedGroupKey(styleGroups[0].key);
     }
-  }, [labelProducts, selectedProductId]);
+  }, [selectedGroupKey, styleGroups]);
 
-  const selectedProduct = useMemo(
-    () => labelProducts.find((product) => product.id === selectedProductId) || null,
-    [labelProducts, selectedProductId],
+  const selectedGroup = useMemo(
+    () => styleGroups.find((group) => group.key === selectedGroupKey) || null,
+    [selectedGroupKey, styleGroups],
   );
 
-  const selectedBarcode = resolveLabelCode(selectedProduct);
-  const selectedNameResolution = selectedProduct
-    ? resolveProductLabelNameResult(selectedProduct)
-    : { name: '', missingPolishName: false };
-  const selectedName = selectedProduct
-    ? (selectedNameResolution.name || selectedProduct.name || selectedBarcode)
-    : '';
-  const selectedPriceText = selectedProduct ? formatProductLabelPriceText(selectedProduct, 'zl') : undefined;
-  const selectedCategory = selectedProduct?.category_id ? categoryById.get(selectedProduct.category_id) : null;
-  const selectedUnit = productUnit(selectedProduct);
-  const normalizedCopies = clampCopies(copies);
-  const priceMissing = !!selectedProduct && !selectedPriceText;
-  const canPrint = !!selectedProduct && !!selectedBarcode && status.type !== 'printing';
-  const statusText = status.message || (
-    selectedProduct ? (selectedBarcode ? copy.ready : copy.missingEan) : copy.noSelection
-  );
-  const printButtonText = status.type === 'printing'
-    ? copy.printing
-    : selectedProduct && selectedBarcode
-      ? copy.printCopies(normalizedCopies)
-      : selectedProduct
-        ? copy.missingEan
-        : copy.noSelection;
+  const selectedCategory = selectedGroup?.categoryId
+    ? categoryById.get(selectedGroup.categoryId)
+    : null;
 
   const selectableProducts = useMemo(() => {
     const normalized = normalizeSearch(settingsQuery);
@@ -585,7 +521,6 @@ export default function LabelModule({ language }: LabelModuleProps) {
         await saveConfig(partial);
         return true;
       } catch (err: any) {
-        clearStatusResetTimeout();
         rlog.error('[LabelModule] Failed to save label settings:', err);
         setStatus({ type: 'error', message: err?.message || 'Failed to save label settings' });
         return false;
@@ -598,7 +533,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
     const nextSave = configSaveChainRef.current.then(saveNext, saveNext);
     configSaveChainRef.current = nextSave.then(() => undefined, () => undefined);
     return nextSave;
-  }, [clearStatusResetTimeout, saveConfig]);
+  }, [saveConfig]);
 
   const scrollPinSearchIntoView = useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -654,127 +589,22 @@ export default function LabelModule({ language }: LabelModuleProps) {
     });
   };
 
-  const selectProduct = (product: LabelProduct) => {
-    setSelectedProductId(product.id);
-    if (status.type !== 'printing') {
-      clearStatusResetTimeout();
-      setStatus({ type: 'idle', message: '' });
-    }
+  const selectGroup = (group: StyleGroup) => {
+    setSelectedGroupKey(group.key);
+    setStatus({ type: 'idle', message: '' });
   };
 
-  const printProduct = useCallback(async (
-    product: LabelProduct,
-    requestedCopies: number,
-    options: { confirmHighCopy?: boolean } = {},
-  ) => {
-    if (!isPrintableLabelProduct(product)) {
-      clearStatusResetTimeout();
-      setStatus({ type: 'error', message: copy.noProductsAvailable });
-      return;
-    }
-    const barcode = resolveLabelCode(product);
-    const quantity = clampCopies(requestedCopies);
-    const nameResolution = resolveProductLabelNameResult(product);
-    const labelName = nameResolution.name || product.name || barcode;
-    const priceText = formatProductLabelPriceText(product, 'zl');
-    const printToken = ++printSequenceRef.current;
-
-    clearStatusResetTimeout();
-    setSelectedProductId(product.id);
-    setCopies(quantity);
-
-    if (!barcode) {
-      setStatus({ type: 'error', message: copy.missingEan });
-      return;
-    }
-
-    if (options.confirmHighCopy !== false && quantity > HIGH_COPY_CONFIRM_THRESHOLD) {
-      setPendingHighCopyPrint({ product, requestedCopies, options });
-      return;
-    }
-
-    setStatus({ type: 'printing', message: copy.printing, productId: product.id });
-    try {
-      const result = await window.electronAPI.printLabel(barcode, labelName, {
-        priceText,
-        quantity,
-      });
-      if (!result?.success) {
-        setStatus({ type: 'error', message: result?.error || copy.printerError });
-        return;
-      }
-      setStatus(nameResolution.missingPolishName
-        ? { type: 'warning', message: `${copy.printed}: ${labelName}. ${copy.missingPolishName}` }
-        : { type: 'success', message: `${copy.printed}: ${labelName}` });
-      setRecentPrints((prev) => [
-        {
-          id: `${Date.now()}-${product.id}`,
-          productId: product.id,
-          productName: labelName,
-          barcode,
-          copies: quantity,
-          printedAt: new Date(),
-        },
-        ...prev,
-      ].slice(0, RECENT_PRINT_LIMIT));
-      statusResetTimeoutRef.current = window.setTimeout(() => {
-        if (printSequenceRef.current === printToken) {
-          setStatus({ type: 'idle', message: '' });
-        }
-        statusResetTimeoutRef.current = null;
-      }, 3200);
-    } catch (err: any) {
-      rlog.error('[LabelModule] printLabel failed:', err);
-      setStatus({ type: 'error', message: err?.message || copy.printerError });
-    }
-  }, [clearStatusResetTimeout, copy]);
-
-  const handleCancelHighCopyPrint = useCallback(() => {
-    if (confirmingHighCopyPrint) return;
-    setPendingHighCopyPrint(null);
-    setStatus({ type: 'idle', message: copy.ready });
-  }, [confirmingHighCopyPrint, copy.ready]);
-
-  const handleConfirmHighCopyPrint = useCallback(async () => {
-    const pending = pendingHighCopyPrint;
-    if (!pending || confirmingHighCopyPrint) return;
-    setConfirmingHighCopyPrint(true);
-    try {
-      const currentProduct = products.find((product) => product.id === pending.product.id);
-      if (!currentProduct || !isPrintableLabelProduct(currentProduct)) {
-        clearStatusResetTimeout();
-        setStatus({ type: 'error', message: copy.noProductsAvailable });
-        setPendingHighCopyPrint(null);
-        return;
-      }
-      await printProduct(currentProduct, pending.requestedCopies, {
-        ...pending.options,
-        confirmHighCopy: false,
-      });
-      setPendingHighCopyPrint(null);
-    } finally {
-      setConfirmingHighCopyPrint(false);
-    }
-  }, [clearStatusResetTimeout, confirmingHighCopyPrint, copy.noProductsAvailable, pendingHighCopyPrint, printProduct, products]);
-
-  const handlePrint = useCallback(() => {
-    if (!selectedProduct) {
-      clearStatusResetTimeout();
-      setStatus({ type: 'error', message: copy.noSelection });
-      return;
-    }
-    void printProduct(selectedProduct, copies);
-  }, [clearStatusResetTimeout, copies, copy.noSelection, printProduct, selectedProduct]);
-
-  const handleQuickReprint = useCallback((entry: RecentPrint) => {
-    const product = products.find((row) => row.id === entry.productId);
-    if (!product) {
-      clearStatusResetTimeout();
-      setStatus({ type: 'error', message: copy.noProductsAvailable });
-      return;
-    }
-    void printProduct(product, entry.copies);
-  }, [clearStatusResetTimeout, copy.noProductsAvailable, printProduct, products]);
+  /**
+   * A run inside the reprint panel pins the operator to this tab, the same way
+   * the order sheet's run does: switching away would unmount the loop that is
+   * feeding the printer batch by batch.
+   */
+  const [reprinting, setReprinting] = useState(false);
+  const reprintingRef = useRef(false);
+  const handleReprintingChange = useCallback((printing: boolean) => {
+    reprintingRef.current = printing;
+    setReprinting(printing);
+  }, []);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -811,25 +641,11 @@ export default function LabelModule({ language }: LabelModuleProps) {
         return;
       }
 
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        handlePrint();
-        return;
-      }
-      if (event.key === '+' || event.key === '=') {
-        event.preventDefault();
-        setCopies((value) => clampCopies(value + 1));
-        return;
-      }
-      if (event.key === '-') {
-        event.preventDefault();
-        setCopies((value) => clampCopies(value - 1));
-      }
     };
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [handlePrint, labelMode, query, settingsOpen]);
+  }, [labelMode, query, settingsOpen]);
 
   return (
     <>
@@ -940,87 +756,39 @@ export default function LabelModule({ language }: LabelModuleProps) {
             </div>
           </div>
 
-          <div className="shrink-0 p-3 space-y-3">
-            <div
-              className={`rounded-lg border px-3 py-2 text-sm font-bold inline-flex w-full items-center gap-2 ${
-                status.type === 'success'
-                  ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                  : status.type === 'printing'
-                    ? 'border-sky-200 bg-sky-50 text-sky-800'
-                    : status.type === 'warning' || status.type === 'error' || (!!selectedProduct && !selectedBarcode)
-                      ? 'border-amber-200 bg-amber-50 text-amber-800'
-                      : 'border-slate-200 bg-slate-50 text-slate-700'
-              }`}
-            >
-              {status.type === 'success' ? <CheckCircle2 size={17} /> : status.type === 'printing' ? <RefreshCw size={17} className="animate-spin" /> : status.type === 'warning' || status.type === 'error' || (!!selectedProduct && !selectedBarcode) ? <AlertTriangle size={17} /> : <Printer size={17} />}
-              <span>{statusText}</span>
-            </div>
-
-            {selectedProduct ? (
+          <div className="min-h-0 flex-1 overflow-y-auto p-3 space-y-3">
+            {status.type === 'error' && (
+              <div
+                className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-800"
+                data-testid="label-status"
+              >
+                <AlertTriangle size={17} />
+                <span>{status.message}</span>
+              </div>
+            )}
+            {selectedGroup ? (
               <>
-                <section className="space-y-2">
-                  <div className="text-xs font-extrabold uppercase tracking-wide text-slate-400">{copy.labelPreview}</div>
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">
-                    <div className="mx-auto aspect-[5/3] w-full max-w-[270px] rounded-lg bg-white p-2 shadow-sm flex flex-col justify-between">
-                      <div className="text-xs font-black leading-tight text-slate-950 line-clamp-4">{selectedName}</div>
-                      <div>
-                        <BarcodePreview barcode={selectedBarcode} />
-                      </div>
-                      <div className={`text-2xl font-black leading-none tabular-nums ${selectedPriceText ? 'text-slate-950' : 'text-amber-700'}`}>
-                        {selectedPriceText || copy.noPrice}
-                      </div>
-                    </div>
+                <section className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                  <div className="text-sm font-black leading-tight text-slate-950">
+                    {selectedGroup.name}
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-x-3 text-xs font-bold text-slate-500">
+                    {selectedGroup.styleCode ? <span>{selectedGroup.styleCode}</span> : null}
+                    <span>
+                      {selectedCategory ? resolveName(selectedCategory, labelLanguage) : '-'}
+                    </span>
                   </div>
                 </section>
 
-                {priceMissing && (
-                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">
-                    {copy.missingPrice}. {copy.priceMissingHint}
-                  </div>
-                )}
-
-                {selectedNameResolution.missingPolishName && (
-                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">
-                    {copy.missingPolishName}
-                  </div>
-                )}
-
-                <section className="space-y-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0 text-xs font-extrabold uppercase tracking-wide text-slate-400">{copy.copies}</div>
-                    <div className="grid w-40 grid-cols-[38px,1fr,38px] gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => setCopies((value) => clampCopies(value - 1))}
-                        className="h-10 rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 inline-flex items-center justify-center"
-                        aria-label="Decrease copies"
-                      >
-                        <Minus size={17} />
-                      </button>
-                      <input
-                        type="number"
-                        min={1}
-                        max={999}
-                        value={copies}
-                        onChange={(event) => setCopies(clampCopies(event.target.value))}
-                        className="h-10 min-w-0 rounded-lg border border-slate-200 text-center text-base font-extrabold outline-none focus:ring-2 focus:ring-emerald-200"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setCopies((value) => clampCopies(value + 1))}
-                        className="h-10 rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 inline-flex items-center justify-center"
-                        aria-label="Increase copies"
-                      >
-                        <Plus size={17} />
-                      </button>
-                    </div>
-                  </div>
-                  {normalizedCopies > HIGH_COPY_CONFIRM_THRESHOLD && (
-                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">
-                      {copy.highCopyWarning}
-                    </div>
-                  )}
-                </section>
+                <StyleReprintPanel
+                  key={selectedGroup.key}
+                  language={language}
+                  templateId={selectedGroup.key}
+                  styleName={selectedGroup.name}
+                  styleCode={selectedGroup.styleCode}
+                  variants={selectedGroup.variants}
+                  onPrintingChange={handleReprintingChange}
+                />
               </>
             ) : (
               <div className="rounded-lg border border-dashed border-slate-200 px-4 py-6 text-center">
@@ -1029,94 +797,6 @@ export default function LabelModule({ language }: LabelModuleProps) {
                 <p className="mt-1 text-xs font-semibold text-slate-500">{copy.selectProductHint}</p>
               </div>
             )}
-
-            <button
-              type="button"
-              onClick={handlePrint}
-              disabled={!canPrint}
-              className={`w-full h-14 rounded-lg text-base font-black inline-flex items-center justify-center gap-2 transition-colors touch-manipulation focus:outline-none focus:ring-2 focus:ring-emerald-300 focus:ring-offset-2 ${
-                canPrint
-                  ? 'bg-slate-950 text-white hover:bg-black active:bg-slate-800 shadow-lg shadow-slate-950/20'
-                  : 'bg-slate-200 text-slate-500 cursor-not-allowed'
-              }`}
-            >
-              {status.type === 'printing' ? <RefreshCw size={20} className="animate-spin" /> : <Printer size={20} />}
-              {printButtonText}
-            </button>
-
-          </div>
-
-          <div className="min-h-0 flex-1 overflow-y-auto border-t border-slate-200 p-3 space-y-3">
-            {selectedProduct && (
-              <section className="space-y-2">
-                <div className="text-xs font-extrabold uppercase tracking-wide text-slate-400">{copy.productInfo}</div>
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <div className="rounded-lg bg-slate-50 px-3 py-2">
-                    <div className="text-xs font-bold text-slate-400">{copy.ean}</div>
-                    <div className={`mt-1 font-extrabold break-all ${selectedBarcode ? 'text-slate-900' : 'text-amber-700'}`}>
-                      {selectedBarcode || copy.missingEan}
-                    </div>
-                  </div>
-                  <div className="rounded-lg bg-slate-50 px-3 py-2">
-                    <div className="text-xs font-bold text-slate-400">{copy.price}</div>
-                    <div className={`mt-1 font-extrabold ${selectedPriceText ? 'text-slate-900' : 'text-amber-700'}`}>
-                      {selectedPriceText || copy.noPrice}
-                    </div>
-                  </div>
-                  <div className="rounded-lg bg-slate-50 px-3 py-2">
-                    <div className="text-xs font-bold text-slate-400">{copy.category}</div>
-                    <div className="mt-1 font-extrabold text-slate-900 truncate">
-                      {selectedCategory ? resolveName(selectedCategory, labelLanguage) : '-'}
-                    </div>
-                  </div>
-                  <div className="rounded-lg bg-slate-50 px-3 py-2">
-                    <div className="text-xs font-bold text-slate-400">{copy.unit}</div>
-                    <div className="mt-1 font-extrabold text-slate-900">{selectedUnit}</div>
-                  </div>
-                  <div className="col-span-2 rounded-lg bg-slate-50 px-3 py-2">
-                    <div className="text-xs font-bold text-slate-400">{copy.sku}</div>
-                    <div className="mt-1 font-extrabold text-slate-900 break-all">{selectedProduct.sku || '-'}</div>
-                  </div>
-                </div>
-              </section>
-            )}
-
-            <section className="space-y-2">
-              <div className="text-xs font-extrabold uppercase tracking-wide text-slate-400">{copy.recent}</div>
-              {recentPrints.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-slate-200 px-3 py-3 text-sm font-semibold text-slate-400">
-                  {copy.noRecent}
-                </div>
-              ) : (
-                <div className="flex gap-2 overflow-x-auto pb-1">
-                  {recentPrints.map((entry) => {
-                    const product = products.find((row) => row.id === entry.productId);
-                    const displayName = product
-                      ? (resolveName(product, labelLanguage) || product.name || entry.productName)
-                      : entry.productName;
-
-                    return (
-                      <div key={entry.id} className="w-44 shrink-0 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                        <div className="text-xs font-extrabold text-slate-900 truncate">{displayName}</div>
-                        <div className="mt-1 flex items-center gap-2 text-[11px] font-bold text-slate-500">
-                          <Clock size={12} />
-                          <span>{formatRecentTime(entry.printedAt, language)}</span>
-                          <span>x{entry.copies}</span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handleQuickReprint(entry)}
-                          className="mt-2 h-8 w-full rounded-md border border-slate-200 bg-white px-2 text-[11px] font-extrabold text-slate-700 hover:bg-slate-100 inline-flex items-center justify-center gap-1"
-                        >
-                          <RotateCw size={12} />
-                          {copy.reprint}
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
           </div>
         </aside>
 
@@ -1239,26 +919,35 @@ export default function LabelModule({ language }: LabelModuleProps) {
                     </button>
                   </div>
                 </div>
-              ) : visibleProducts.length === 0 ? (
+              ) : visibleGroups.length === 0 ? (
                 <div className="h-full min-h-[360px] flex items-center justify-center text-sm font-semibold text-slate-500">
                   {copy.noMatch}
                 </div>
               ) : (
                 <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] 2xl:grid-cols-[repeat(auto-fill,minmax(168px,1fr))] gap-3 pb-2">
-                  {visibleProducts.map((product) => {
-                    const displayName = resolveName(product, labelLanguage) || product.name;
-                    const barcode = resolveLabelCode(product);
-                    const priceText = formatProductLabelPriceText(product, 'zl');
-                    const category = product.category_id ? categoryById.get(product.category_id) : null;
-                    const img = productImage(product);
-                    const selected = selectedProduct?.id === product.id;
-                    const showImage = img && !imageErrors[product.id];
+                  {visibleGroups.map((group) => {
+                    const first = group.variants[0];
+                    const category = group.categoryId ? categoryById.get(group.categoryId) : null;
+                    const img = productImage(first);
+                    const selected = selectedGroupKey === group.key;
+                    const showImage = img && !imageErrors[group.key];
+                    const colors = new Set(
+                      group.variants
+                        .map((variant) => (variant.color_name || '').trim())
+                        .filter(Boolean),
+                    ).size;
+                    const sizes = new Set(
+                      group.variants
+                        .map((variant) => (variant.size_name || '').trim())
+                        .filter(Boolean),
+                    ).size;
 
                     return (
                       <button
-                        key={product.id}
+                        key={group.key}
                         type="button"
-                        onClick={() => selectProduct(product)}
+                        onClick={() => selectGroup(group)}
+                        data-testid="style-card"
                         className={`relative min-h-[178px] rounded-lg border-2 text-left overflow-hidden transition-colors touch-manipulation focus:outline-none focus:ring-2 focus:ring-emerald-300 ${
                           selected
                             ? 'border-emerald-600 bg-emerald-50 shadow-sm'
@@ -1276,7 +965,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
                               src={img}
                               alt=""
                               className="h-full w-full object-cover"
-                              onError={() => setImageErrors((prev) => ({ ...prev, [product.id]: true }))}
+                              onError={() => setImageErrors((prev) => ({ ...prev, [group.key]: true }))}
                             />
                           ) : (
                             <Tag size={28} className="text-slate-300" />
@@ -1284,18 +973,18 @@ export default function LabelModule({ language }: LabelModuleProps) {
                         </div>
                         <div className="p-2.5 space-y-1.5">
                           <div className="min-h-[36px] text-sm font-extrabold leading-tight text-slate-950 line-clamp-2">
-                            {displayName}
+                            {group.name}
                           </div>
                           <div className="flex items-center justify-between gap-2 text-xs">
-                            <span className="truncate font-semibold text-slate-500">{category ? resolveName(category, labelLanguage) : '-'}</span>
-                            <span className={`shrink-0 font-extrabold ${priceText ? 'text-slate-950' : 'text-amber-700'}`}>
-                              {priceText || copy.noPrice}
+                            <span className="truncate font-semibold text-slate-500">
+                              {category ? resolveName(category, labelLanguage) : '-'}
+                            </span>
+                            <span className="shrink-0 font-extrabold text-slate-950">
+                              {group.styleCode || '-'}
                             </span>
                           </div>
-                          <div className={`max-w-full text-[11px] font-bold rounded-md px-2 py-1 truncate ${
-                            barcode ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-50 text-amber-700'
-                          }`}>
-                            {barcode || copy.missingEan}
+                          <div className="max-w-full truncate rounded-md bg-slate-100 px-2 py-1 text-[11px] font-bold text-slate-700">
+                            {copy.variantSummary(colors, sizes, group.variants.length)}
                           </div>
                         </div>
                       </button>
@@ -1474,19 +1163,6 @@ export default function LabelModule({ language }: LabelModuleProps) {
         </div>
       </div>
     </div>
-    {pendingHighCopyPrint && (
-      <ConfirmActionDialog
-        open
-        tier="light"
-        title={tOr('common.confirmTitle', 'Please confirm')}
-        body={copy.highCopyConfirm(clampCopies(pendingHighCopyPrint.requestedCopies))}
-        confirmLabel={tOr('common.confirm', 'Confirm')}
-        cancelLabel={tOr('common.cancel', 'Cancel')}
-        busy={confirmingHighCopyPrint}
-        onConfirm={handleConfirmHighCopyPrint}
-        onCancel={handleCancelHighCopyPrint}
-      />
-    )}
     </>
   );
 }

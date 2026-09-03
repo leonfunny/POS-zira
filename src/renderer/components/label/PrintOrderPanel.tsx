@@ -28,6 +28,7 @@ import {
   validateOrder,
 } from '../../../shared/label-print-order';
 import { PasteProblem, parsePastedGrid } from '../../../shared/order-paste';
+import { orderToFabricTagTemplate } from '../../../shared/product-print-selection';
 import {
   CategoryChoice,
   ProductDraftProblem,
@@ -146,6 +147,7 @@ interface Copy {
   fileHint: string;
   fileFailed: (reason: string) => string;
   fileProblem: Record<ProductDraftProblem, string>;
+  filedWithoutTag: (variants: number) => string;
 }
 
 const COPY: Record<string, Copy> = {
@@ -237,6 +239,8 @@ const COPY: Record<string, Copy> = {
     fileProduct: 'Lưu thành sản phẩm',
     filing: 'Đang lưu…',
     filed: (variants) => `Đã lưu — ${variants} biến thể`,
+    filedWithoutTag: (variants) =>
+      `Đã lưu ${variants} biến thể, nhưng chưa lưu được nội dung tem vải — tab tem sẽ không in được vải`,
     fileHint: 'Mỗi ô có số lượng thành một biến thể màu × size',
     fileFailed: (reason) => `Không lưu được: ${reason}`,
     fileProblem: {
@@ -334,6 +338,8 @@ const COPY: Record<string, Copy> = {
     fileProduct: 'Zapisz jako produkt',
     filing: 'Zapisywanie…',
     filed: (variants) => `Zapisano — ${variants} wariantów`,
+    filedWithoutTag: (variants) =>
+      `Zapisano ${variants} wariantów, ale treść metki nie zapisała się — zakładka etykiet nie wydrukuje metki`,
     fileHint: 'Każda wypełniona komórka to jeden wariant koloru i rozmiaru',
     fileFailed: (reason) => `Nie zapisano: ${reason}`,
     fileProblem: {
@@ -431,6 +437,8 @@ const COPY: Record<string, Copy> = {
     fileProduct: 'Save as product',
     filing: 'Saving…',
     filed: (variants) => `Saved — ${variants} variants`,
+    filedWithoutTag: (variants) =>
+      `Saved ${variants} variants, but the care content did not save — the label tab cannot print a fabric tag`,
     fileHint: 'Every filled cell becomes one colour and size variant',
     fileFailed: (reason) => `Not saved: ${reason}`,
     fileProblem: {
@@ -457,6 +465,26 @@ let idCounter = 0;
 function nextId(prefix: string): string {
   idCounter += 1;
   return `${prefix}-${Date.now().toString(36)}-${idCounter}`;
+}
+
+/**
+ * Copy the sheet's care content onto the machine, keyed to the style.
+ *
+ * Reported rather than thrown: the server has already created the product by
+ * the time this runs, and an exception here would leave the operator staring at
+ * a failure for something that succeeded.
+ */
+async function saveFabricTagContent(
+  templateId: string,
+  order: LabelPrintOrder,
+): Promise<boolean> {
+  try {
+    const bridge = (window as any).electronAPI?.pos?.fabricTagTemplates;
+    if (!bridge?.save) return false;
+    return !!(await bridge.save(orderToFabricTagTemplate(templateId, order)));
+  } catch {
+    return false;
+  }
 }
 
 export default function PrintOrderPanel({
@@ -833,9 +861,16 @@ export default function PrintOrderPanel({
       }
       // Only a proven success may stamp the sheet; stamping on a timeout would
       // hide the product that was never created.
-      patch({ productId: result.data!.product?.id ?? created[0].id });
+      const templateId = result.data!.product?.id ?? created[0].id;
+      patch({ productId: templateId });
       fileKeyRef.current = null;
-      setFileNotice(copy.filed(created.length));
+      // The care content lives on the sheet and nowhere else in the catalogue,
+      // so it is copied to the machine now. Without it the product tab can
+      // print a bag label but never a fabric tag, which is what happened to the
+      // first style filed here. A failure to save it must not undo a product
+      // that the server has already created, so it is reported, not thrown.
+      const tagSaved = await saveFabricTagContent(templateId, order);
+      setFileNotice(tagSaved ? copy.filed(created.length) : copy.filedWithoutTag(created.length));
     } catch (err) {
       setFileError(copy.fileFailed(err instanceof Error ? err.message : String(err)));
     } finally {

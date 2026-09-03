@@ -11,6 +11,7 @@ const ROOT = path.resolve(__dirname, '..');
 const APP = fs.readFileSync(path.join(ROOT, 'src/renderer/App.tsx'), 'utf8');
 const SETTINGS = fs.readFileSync(path.join(ROOT, 'src/renderer/components/Settings.tsx'), 'utf8');
 const LABEL_MODULE = fs.readFileSync(path.join(ROOT, 'src/renderer/components/label/LabelModule.tsx'), 'utf8');
+const REPRINT_PANEL = fs.readFileSync(path.join(ROOT, 'src/renderer/components/label/StyleReprintPanel.tsx'), 'utf8');
 const CONFIG_STORE = fs.readFileSync(path.join(ROOT, 'src/main/config/store.ts'), 'utf8');
 const SHARED_TYPES = fs.readFileSync(path.join(ROOT, 'src/shared/types.ts'), 'utf8');
 
@@ -54,7 +55,7 @@ describe('canonical Label tab workflow', () => {
     expect(isPrintableLabelProduct({ is_active: 1 })).toBe(true);
     expect(isPrintableLabelProduct({ is_active: 0 })).toBe(false);
     expect(isPrintableLabelProduct({ is_active: 1, _isDraft: true })).toBe(false);
-    expect(LABEL_MODULE).toContain('if (!isPrintableLabelProduct(product)) {');
+    expect(LABEL_MODULE).toContain('products.filter(isPrintableLabelProduct)');
   });
 
   it('locks customer-facing label content to Polish without changing the POS UI language', () => {
@@ -62,8 +63,6 @@ describe('canonical Label tab workflow', () => {
     expect(SHARED_TYPES).toContain("labelModuleLanguage?: 'vi' | 'pl'");
     expect(LABEL_MODULE).toContain('const labelLanguage: LabelLanguage = PRODUCT_LABEL_NAME_LOCALE;');
     expect(LABEL_MODULE).toContain('const copy = COPY[language] || COPY.vi;');
-    expect(LABEL_MODULE).toContain('resolveProductLabelNameResult(product)');
-    expect(LABEL_MODULE).toContain('copy.missingPolishName');
     expect(LABEL_MODULE).not.toContain('saveConfig({ labelModuleLanguage: next })');
     expect(LABEL_MODULE).not.toContain('saveConfig({ posLanguage: next })');
   });
@@ -108,56 +107,34 @@ describe('canonical Label tab workflow', () => {
     expect(LABEL_MODULE).toContain('pendingProductConfigSavesRef.current = Math.max(0, pendingProductConfigSavesRef.current - 1);');
   });
 
-  it('does not fall back to SKU or product id as the printable barcode', () => {
-    const resolver = LABEL_MODULE.slice(
-      LABEL_MODULE.indexOf('function resolveLabelCode'),
-      LABEL_MODULE.indexOf('function productImage'),
-    );
-    expect(resolver).toContain('product.barcode ?? product.ean ??');
-    expect(resolver).not.toContain('product.sku');
-    expect(resolver).not.toContain('product.id');
-    expect(LABEL_MODULE).toContain('copy.missingEan');
-    expect(LABEL_MODULE).toContain('disabled={!canPrint}');
+  it('groups a style\'s variants into one card instead of listing every cell', () => {
+    expect(LABEL_MODULE).toContain('const key = product.template_id || product.id;');
+    expect(LABEL_MODULE).toContain('data-testid="style-card"');
+    expect(LABEL_MODULE).toContain('onClick={() => selectGroup(group)}');
+    // The template row is hidden from every list read, so its name has to be
+    // fetched by id. Cutting a variant name apart would break on a style whose
+    // own name holds a dash, and this shop sells "KOMPLET DRESOWY".
+    expect(LABEL_MODULE).toContain('bridge.getByIds(missing)');
+    expect(LABEL_MODULE).toContain('const template = templateRows[group.key];');
   });
 
-  it('selects cards for preview and passes quantity to the existing print API', () => {
-    expect(LABEL_MODULE).toContain('onClick={() => selectProduct(product)}');
-    expect(LABEL_MODULE).not.toContain('onClick={() => void printProductLabel(product)}');
-    expect(LABEL_MODULE).toContain('aspect-[5/3]');
-    expect(LABEL_MODULE.indexOf('<BarcodePreview barcode={selectedBarcode} />'))
-      .toBeLessThan(LABEL_MODULE.indexOf('{selectedPriceText || copy.noPrice}'));
-
-    const printCall = LABEL_MODULE.slice(
-      LABEL_MODULE.indexOf('window.electronAPI.printLabel'),
-      LABEL_MODULE.indexOf('});', LABEL_MODULE.indexOf('window.electronAPI.printLabel')),
-    );
-    expect(printCall).toContain('barcode, labelName');
-    expect(printCall).toContain('priceText');
-    expect(printCall).not.toContain('sku:');
-    expect(printCall).toContain('quantity');
+  it('prints through the order-sheet lanes, not the shelf-label printer', () => {
+    // One style, one panel, and the same plan builder the print order uses: a
+    // second renderer for "the same" label is how two lanes drift apart.
+    expect(LABEL_MODULE).toContain('<StyleReprintPanel');
+    expect(LABEL_MODULE).not.toContain('window.electronAPI.printLabel');
+    expect(REPRINT_PANEL).toContain("from './print-order-runner'");
+    expect(REPRINT_PANEL).toContain('buildPrintPlan(order, { composition:');
+    expect(REPRINT_PANEL).toContain('api.printPackagingSticker(request)');
+    expect(REPRINT_PANEL).toContain('api.printFabricTag(request)');
   });
 
-  it('guards success reset timeouts so stale timers cannot clear newer print state', () => {
-    expect(LABEL_MODULE).toContain('const statusResetTimeoutRef = useRef<number | null>(null);');
-    expect(LABEL_MODULE).toContain('const printSequenceRef = useRef(0);');
-    expect(LABEL_MODULE).toContain('window.clearTimeout(statusResetTimeoutRef.current);');
-    expect(LABEL_MODULE).toContain('return () => clearStatusResetTimeout();');
-    expect(LABEL_MODULE).toContain('const printToken = ++printSequenceRef.current;');
-    expect(LABEL_MODULE).toContain('statusResetTimeoutRef.current = window.setTimeout(() => {');
-    expect(LABEL_MODULE).toContain('if (printSequenceRef.current === printToken) {');
-    expect(LABEL_MODULE).toContain('statusResetTimeoutRef.current = null;');
-  });
-
-  it('re-resolves a high-copy confirmation from the current catalog row', () => {
-    expect(LABEL_MODULE).toContain('const currentProduct = products.find((product) => product.id === pending.product.id);');
-    expect(LABEL_MODULE).toContain('await printProduct(currentProduct, pending.requestedCopies');
-    expect(LABEL_MODULE).not.toContain('await printProduct(pending.product, pending.requestedCopies');
-    const printProduct = LABEL_MODULE.slice(
-      LABEL_MODULE.indexOf('const printProduct = useCallback'),
-      LABEL_MODULE.indexOf('const handleCancelHighCopyPrint'),
-    );
-    expect(printProduct).toContain('const barcode = resolveLabelCode(product);');
-    expect(printProduct).toContain('if (!barcode) {');
+  it('never prints a fabric tag with no saved care content', () => {
+    // Without the sheet's composition and washing symbols there is nothing to
+    // put on the tag, and a blank one is worse than none: it is sewn in.
+    expect(REPRINT_PANEL).toContain('const fabricLaneOn = printFabricTags && hasTagContent;');
+    expect(REPRINT_PANEL).toContain('disabled={!hasTagContent}');
+    expect(REPRINT_PANEL).toContain('data-testid="reprint-no-tag"');
   });
 
   it('keeps the pinned-product settings search above the shared touch keyboard', () => {

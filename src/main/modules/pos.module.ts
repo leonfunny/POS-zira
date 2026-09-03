@@ -3634,6 +3634,9 @@ export class PosModule extends BaseModule {
     ipcMain.handle('pos:products:searchByCode', (_e, query: string) => productRepo.searchByCode(query));
     ipcMain.handle('pos:products:getByBarcode', (_e, barcode: string) => productRepo.getByBarcode(barcode));
     ipcMain.handle('pos:products:getById', (_e, id: string) => productRepo.getById(id));
+    ipcMain.handle('pos:products:getByIds', (_e, ids: string[]) =>
+      productRepo.getByIds(Array.isArray(ids) ? ids : []),
+    );
     ipcMain.handle('pos:categories:getAll', () => productRepo.getCategories());
     ipcMain.handle(IPC_CHANNELS.POS_CATEGORIES_GET_ALL_INCLUDING_EMPTY, () => productRepo.getAllCategories());
     ipcMain.handle('pos:local-variant-imports:listFailed', () => ({

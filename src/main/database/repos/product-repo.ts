@@ -353,6 +353,33 @@ export const productRepo = {
     return database.get<ProductVariantRow>('SELECT * FROM product_variants WHERE id = ?', [id]);
   },
 
+  /**
+   * The rows behind a set of ids, template rows included.
+   *
+   * Every list read hides a template that has variants, so the POS never sells
+   * the phantom stock-0 row. The label tab needs exactly that hidden row: it is
+   * where the style's own name lives, and grouping its variants under a name
+   * guessed by cutting the variant name apart breaks on any style whose name
+   * contains a dash. Reading by id keeps the selling queries untouched.
+   */
+  getByIds(ids: readonly string[]): ProductVariantRow[] {
+    const wanted = Array.from(new Set(ids.map((id) => String(id ?? '').trim()).filter(Boolean)));
+    if (wanted.length === 0) return [];
+    const rows: ProductVariantRow[] = [];
+    // SQLite caps a statement at 999 host parameters; a catalogue can hold more
+    // styles than that, and a silent truncation would drop names from the list.
+    for (let from = 0; from < wanted.length; from += 500) {
+      const chunk = wanted.slice(from, from + 500);
+      rows.push(
+        ...database.all<ProductVariantRow>(
+          `SELECT * FROM product_variants WHERE id IN (${chunk.map(() => '?').join(', ')})`,
+          chunk,
+        ),
+      );
+    }
+    return rows;
+  },
+
   getBySku(sku: string): ProductVariantRow | null {
     return database.get<ProductVariantRow>(
       `SELECT * FROM product_variants WHERE sku = ? AND is_active = 1 ${HIDE_TEMPLATES_WITH_VARIANTS}`,
