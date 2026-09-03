@@ -133,7 +133,6 @@ interface Copy {
   finished: (copies: number) => string;
   stopped: (done: number, total: number) => string;
   problem: Record<OrderProblem, string>;
-  supplier: string;
   price: string;
   orderDate: string;
   fileProduct: string;
@@ -226,7 +225,6 @@ const COPY: Record<string, Copy> = {
       PERCENT_NOT_100: 'Tổng phần trăm chất liệu phải bằng 100%',
       ORDER_TOO_LARGE: 'Số lượng quá lớn — kiểm tra lại',
     },
-    supplier: 'Nhà cung cấp',
     price: 'Giá bán (zł)',
     orderDate: 'Ngày đơn',
     fileProduct: 'Lưu thành sản phẩm',
@@ -322,7 +320,6 @@ const COPY: Record<string, Copy> = {
       PERCENT_NOT_100: 'Skład musi sumować się do 100%',
       ORDER_TOO_LARGE: 'Zbyt duża ilość — sprawdź',
     },
-    supplier: 'Dostawca',
     price: 'Cena brutto (zł)',
     orderDate: 'Data zlecenia',
     fileProduct: 'Zapisz jako produkt',
@@ -418,7 +415,6 @@ const COPY: Record<string, Copy> = {
       PERCENT_NOT_100: 'The composition must add up to 100%',
       ORDER_TOO_LARGE: 'Quantity is implausibly large — check the sheet',
     },
-    supplier: 'Supplier',
     price: 'Gross price (zł)',
     orderDate: 'Order date',
     fileProduct: 'Save as product',
@@ -974,18 +970,11 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
         </Field>
       </section>
 
-      {/* Printing ignores all three. They exist so the sheet can be filed as a
-          product, which is why they sit apart from the label fields above. */}
-      <section className="mb-4 grid gap-3 sm:grid-cols-3">
-        <Field label={copy.supplier}>
-          <input
-            className={INPUT}
-            data-testid="order-supplier"
-            value={order.supplierName ?? ''}
-            onChange={(e) => patch({ supplierName: e.target.value })}
-            placeholder="New Fashion"
-          />
-        </Field>
+      {/* Printing ignores both. They exist so the sheet can be filed as a
+          product, which is why they sit apart from the label fields above.
+          There is no supplier field: this workshop sews to order, so the
+          customer on the sheet above IS the counterparty. */}
+      <section className="mb-4 grid gap-3 sm:grid-cols-2">
         <Field label={copy.price}>
           <input
             className={INPUT}

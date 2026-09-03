@@ -147,36 +147,24 @@ describe('buildProductDraft', () => {
     expect(skus[1]).toBe(`${skus[0]}-2`);
   });
 
-  it('carries the name, supplier and price straight through', () => {
+  it('carries the name and price straight through', () => {
     const draft = buildProductDraft(
       sheet([{ name: 'Beżowy', quantities: [1] }], ['M'], {
         styleName: '  Kurtka LOTUS  ',
-        supplierName: '  New Fashion  ',
         priceGrossGrosze: 12900,
       }),
     );
 
     expect(draft.name).toBe('Kurtka LOTUS');
-    expect(draft.supplierName).toBe('New Fashion');
     expect(draft.priceGrossGrosze).toBe(12900);
-  });
-
-  it('reports no supplier rather than an empty one', () => {
-    const draft = buildProductDraft(
-      sheet([{ name: 'Beżowy', quantities: [1] }], ['M'], { supplierName: '   ' }),
-    );
-
-    expect(draft.supplierName).toBeNull();
   });
 
   it('survives a sheet saved before these fields existed', () => {
     const legacy = sheet([{ name: 'Beżowy', quantities: [1] }], ['M']);
-    delete (legacy as Partial<LabelPrintOrder>).supplierName;
     delete (legacy as Partial<LabelPrintOrder>).priceGrossGrosze;
 
     const draft = buildProductDraft(legacy);
 
-    expect(draft.supplierName).toBeNull();
     expect(draft.priceGrossGrosze).toBe(0);
   });
 });

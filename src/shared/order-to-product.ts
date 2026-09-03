@@ -19,7 +19,6 @@ export interface ProductDraftVariant {
 export interface ProductDraft {
   name: string;
   sku: string | null;
-  supplierName: string | null;
   priceGrossGrosze: number;
   variants: ProductDraftVariant[];
 }
@@ -157,7 +156,6 @@ export function buildProductDraft(order: LabelPrintOrder): ProductDraft {
   return {
     name: cleanText(order.styleName),
     sku: base || null,
-    supplierName: cleanText(order.supplierName) || null,
     priceGrossGrosze: Number(order.priceGrossGrosze) || 0,
     variants,
   };

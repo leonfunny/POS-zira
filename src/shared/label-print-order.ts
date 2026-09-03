@@ -195,11 +195,14 @@ export interface LabelPrintOrder {
   printFabricTags: boolean;
   printStickers: boolean;
   /**
-   * The three fields below exist only to turn a sheet into a product; printing
+   * The two fields below exist only to turn a sheet into a product; printing
    * ignores them. They are optional because orders saved before this feature
    * have no such keys, and those sheets must still open.
+   *
+   * There is deliberately no supplier: this workshop sews to order, so the
+   * counterparty is `customerName` above and a second name would only ever
+   * repeat it or contradict it.
    */
-  supplierName?: string;
   /** Gross price per piece, in grosze. 0 means "not priced yet". */
   priceGrossGrosze?: number;
   /** `yyyy-mm-dd`, the day the order was taken. */
@@ -255,7 +258,6 @@ export function createEmptyOrder(): LabelPrintOrder {
     rows: [],
     printFabricTags: true,
     printStickers: true,
-    supplierName: '',
     priceGrossGrosze: 0,
     orderDate: '',
     productId: null,
