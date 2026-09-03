@@ -244,6 +244,14 @@ function applyProduct(entry: SyncLogEntry): boolean {
       ['sell_by', 'sellBy'],
       existing?.sell_by ?? 'PIECE',
     ),
+    color_name: nullableValueOrExisting(
+      ['color_name', 'colorName'],
+      existing?.color_name ?? null,
+    ),
+    size_name: nullableValueOrExisting(
+      ['size_name', 'sizeName'],
+      existing?.size_name ?? null,
+    ),
     name_translations: productTranslations,
     customer_display_enabled: resolveDisplayEnabled(p, existing?.customer_display_enabled ?? 1),
     customer_display_sort_order: resolveNullableInteger(

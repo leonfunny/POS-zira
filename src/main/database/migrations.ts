@@ -2020,4 +2020,18 @@ export const migrations: Migration[] = [
         ON fabric_tag_artworks(salon_id, source_sha256);
     `,
   },
+  {
+    // Numbered from 900, not 69. This branch serves one fabric salon and is
+    // never merged into main, so taking the next sequential number would
+    // collide with whatever main ships as 69 — two different migrations under
+    // one version is exactly the lineage divergence applyMigrations warns about.
+    version: 900,
+    name: 'variant_colour_and_size',
+    // The backend has carried these columns all along and the POS sync payload
+    // already returns them; the local mirror simply had nowhere to put them.
+    up: `
+      ALTER TABLE product_variants ADD COLUMN color_name TEXT;
+      ALTER TABLE product_variants ADD COLUMN size_name TEXT;
+    `,
+  },
 ];

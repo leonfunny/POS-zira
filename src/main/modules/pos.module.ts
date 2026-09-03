@@ -3906,6 +3906,12 @@ export class PosModule extends BaseModule {
         track_inventory: typeof variant.trackInventory === 'boolean'
           ? (variant.trackInventory ? 1 : 0)
           : existing?.track_inventory ?? 1,
+        color_name: Object.prototype.hasOwnProperty.call(variant, 'colorName')
+          ? variant.colorName ?? null
+          : existing?.color_name ?? null,
+        size_name: Object.prototype.hasOwnProperty.call(variant, 'sizeName')
+          ? variant.sizeName ?? null
+          : existing?.size_name ?? null,
       };
 
       productRepo.upsertMany([row]);
@@ -4146,6 +4152,19 @@ export class PosModule extends BaseModule {
               'initialStockQty',
               true,
             );
+            // Each cell of a colour x size grid carries its own price and
+            // quantity, so each is checked here rather than only on the server.
+            if (Array.isArray(payload.variants)) {
+              payload.variants.forEach((cell: any, index: number) => {
+                assertProductMoney(cell?.priceGrossGrosze, true, `variants[${index}].priceGrossGrosze`);
+                assertProductStockQuantity(
+                  cell?.initialStockQty ?? 0,
+                  classifyProductSale(payload).sellBy,
+                  `variants[${index}].initialStockQty`,
+                  true,
+                );
+              });
+            }
             if (payload.purchasePriceGrosze !== undefined && !canAccessProductPurchasePrice(capabilities)) {
               const error = new Error('purchase-price-unavailable') as Error & { code?: string; status?: number };
               error.code = 'UNSUPPORTED_CAPABILITY';
@@ -4255,7 +4274,15 @@ export class PosModule extends BaseModule {
         switch (row.mutation_type) {
           case 'CREATE_PRODUCT':
             await runProductAdminLocalMutationAfterPendingCatalogSync('product_admin_create', () => {
-              mirrorProductAdminVariant(response?.variant, 'product_admin_create');
+              // A grid create answers with every row it wrote. Mirroring only
+              // `variant` would leave 17 of 18 colours invisible until the next
+              // full catalogue sync.
+              const created = Array.isArray(response?.variants) && response.variants.length > 0
+                ? response.variants
+                : [response?.variant];
+              for (const createdVariant of created) {
+                mirrorProductAdminVariant(createdVariant, 'product_admin_create');
+              }
             }, isCurrentProductAdminSession);
             break;
           case 'CREATE_CATEGORY':

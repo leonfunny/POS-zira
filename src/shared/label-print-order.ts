@@ -194,6 +194,21 @@ export interface LabelPrintOrder {
   rows: OrderRow[];
   printFabricTags: boolean;
   printStickers: boolean;
+  /**
+   * The three fields below exist only to turn a sheet into a product; printing
+   * ignores them. They are optional because orders saved before this feature
+   * have no such keys, and those sheets must still open.
+   */
+  supplierName?: string;
+  /** Gross price per piece, in grosze. 0 means "not priced yet". */
+  priceGrossGrosze?: number;
+  /** `yyyy-mm-dd`, the day the order was taken. */
+  orderDate?: string;
+  /**
+   * Set once the sheet has been turned into a product. Its presence is what
+   * stops a second press from creating a duplicate catalogue entry.
+   */
+  productId?: string | null;
 }
 
 export type OrderProblem =
@@ -240,6 +255,10 @@ export function createEmptyOrder(): LabelPrintOrder {
     rows: [],
     printFabricTags: true,
     printStickers: true,
+    supplierName: '',
+    priceGrossGrosze: 0,
+    orderDate: '',
+    productId: null,
   };
 }
 

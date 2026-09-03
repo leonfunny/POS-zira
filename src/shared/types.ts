@@ -3446,6 +3446,20 @@ export interface ProductAdminVariant {
   itemType?: string;
   /** Template-level tracking flag. Non-tracked items reject stock adjustments. */
   trackInventory?: boolean;
+  /** Colour of this physical row; only the fabric salon fills it in today. */
+  colorName?: string | null;
+  /** Size of this physical row; only the fabric salon fills it in today. */
+  sizeName?: string | null;
+}
+
+/** One cell of a colour x size grid sent with a create. */
+export interface ProductAdminCreateVariantInput {
+  colorName?: string | null;
+  sizeName?: string | null;
+  sku?: string | null;
+  barcode?: string | null;
+  priceGrossGrosze?: number;
+  initialStockQty?: number;
 }
 
 export interface ProductAdminCreateProductInput {
@@ -3463,6 +3477,11 @@ export interface ProductAdminCreateProductInput {
   itemType?: ProductAdminItemType;
   trackInventory?: boolean;
   idempotencyKey?: string;
+  /**
+   * Physical rows to create under one template. Omitted for every existing
+   * caller, which keeps creating exactly one variant.
+   */
+  variants?: ProductAdminCreateVariantInput[];
 }
 
 export interface ProductAdminUpdateVariantInput {
@@ -3518,7 +3537,10 @@ export interface ProductAdminStockAdjustment {
 
 export interface ProductAdminProductMutationResponse {
   product: ProductAdminProductTemplate;
+  /** The primary row; for a grid create this is `variants[0]`. */
   variant: ProductAdminVariant;
+  /** Every row created, in request order. Present only for a grid create. */
+  variants?: ProductAdminVariant[];
   serverTime: string;
 }
 

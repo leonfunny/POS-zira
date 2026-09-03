@@ -175,6 +175,10 @@ export interface ProductVariantRow {
   // rows stay in SQLite for history integrity but are hidden from catalog UI.
   sync_tombstone_reason?: string | null;
   sync_tombstoned_at?: string | null;
+  // Colour and size of this physical row (migration v900). The backend has
+  // always carried them; the fabric salon is the first to fill them in.
+  color_name?: string | null;
+  size_name?: string | null;
 }
 
 export interface ProductSyncTombstone {
@@ -463,7 +467,8 @@ export const productRepo = {
           price_net, vat_amount, is_on_sale, thumbnail_url, sale_unit, sell_by,
           name_translations, customer_display_enabled, customer_display_sort_order,
           kiosk_media_json, kiosk_modifier_groups_json, kiosk_note_enabled,
-          item_type, track_inventory, sync_tombstone_reason, sync_tombstoned_at
+          item_type, track_inventory, sync_tombstone_reason, sync_tombstoned_at,
+          color_name, size_name
         )
          VALUES (
           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
@@ -472,7 +477,12 @@ export const productRepo = {
           COALESCE(?, (SELECT kiosk_note_enabled FROM product_variants WHERE id = ?), 0),
           COALESCE(?, (SELECT item_type FROM product_variants WHERE id = ?)),
           COALESCE(?, (SELECT track_inventory FROM product_variants WHERE id = ?), 1),
-          NULL, NULL
+          NULL, NULL,
+          -- INSERT OR REPLACE rewrites the whole row, so a caller that does not
+          -- know about colour/size (an older sync payload) must not blank what
+          -- is already stored.
+          COALESCE(?, (SELECT color_name FROM product_variants WHERE id = ?)),
+          COALESCE(?, (SELECT size_name FROM product_variants WHERE id = ?))
         )`,
         [
           p.id, p.template_id, p.name, p.sku, p.barcode, p.retail_price ?? 0,
@@ -487,6 +497,8 @@ export const productRepo = {
           p.kiosk_note_enabled ?? null, p.id,
           p.item_type ?? null, p.id,
           p.track_inventory ?? null, p.id,
+          p.color_name ?? null, p.id,
+          p.size_name ?? null, p.id,
         ],
       );
     }

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Play, Plus, Save, Trash2, X } from 'lucide-react';
+import { Package, Play, Plus, Save, Trash2, X } from 'lucide-react';
 import {
   CARE_TEXT_MAX_CHARS,
   CARE_TEXT_MAX_LINES,
@@ -28,6 +28,13 @@ import {
   validateOrder,
 } from '../../../shared/label-print-order';
 import { PasteProblem, parsePastedGrid } from '../../../shared/order-paste';
+import {
+  ProductDraftProblem,
+  buildProductDraft,
+  groszeToText,
+  textToGrosze,
+  validateProductDraft,
+} from '../../../shared/order-to-product';
 import {
   CARE_SYMBOLS,
   CARE_SYMBOL_FAMILIES,
@@ -126,6 +133,15 @@ interface Copy {
   finished: (copies: number) => string;
   stopped: (done: number, total: number) => string;
   problem: Record<OrderProblem, string>;
+  supplier: string;
+  price: string;
+  orderDate: string;
+  fileProduct: string;
+  filing: string;
+  filed: (variants: number) => string;
+  fileHint: string;
+  fileFailed: (reason: string) => string;
+  fileProblem: Record<ProductDraftProblem, string>;
 }
 
 const COPY: Record<string, Copy> = {
@@ -210,6 +226,20 @@ const COPY: Record<string, Copy> = {
       PERCENT_NOT_100: 'Tổng phần trăm chất liệu phải bằng 100%',
       ORDER_TOO_LARGE: 'Số lượng quá lớn — kiểm tra lại',
     },
+    supplier: 'Nhà cung cấp',
+    price: 'Giá bán (zł)',
+    orderDate: 'Ngày đơn',
+    fileProduct: 'Lưu thành sản phẩm',
+    filing: 'Đang lưu…',
+    filed: (variants) => `Đã lưu — ${variants} biến thể`,
+    fileHint: 'Mỗi ô có số lượng thành một biến thể màu × size',
+    fileFailed: (reason) => `Không lưu được: ${reason}`,
+    fileProblem: {
+      NO_NAME: 'Chưa có tên hàng',
+      NO_CELLS: 'Chưa ô nào có số lượng',
+      ALREADY_FILED: 'Tờ này đã lưu thành sản phẩm rồi',
+      TOO_MANY_VARIANTS: 'Quá 100 biến thể — tách làm nhiều đơn',
+    },
   },
   pl: {
     title: 'Zlecenie druku',
@@ -291,6 +321,20 @@ const COPY: Record<string, Copy> = {
       BAD_CODE: 'Kod zawiera znaki, których drukarka nie odczyta',
       PERCENT_NOT_100: 'Skład musi sumować się do 100%',
       ORDER_TOO_LARGE: 'Zbyt duża ilość — sprawdź',
+    },
+    supplier: 'Dostawca',
+    price: 'Cena brutto (zł)',
+    orderDate: 'Data zlecenia',
+    fileProduct: 'Zapisz jako produkt',
+    filing: 'Zapisywanie…',
+    filed: (variants) => `Zapisano — ${variants} wariantów`,
+    fileHint: 'Każda wypełniona komórka to jeden wariant koloru i rozmiaru',
+    fileFailed: (reason) => `Nie zapisano: ${reason}`,
+    fileProblem: {
+      NO_NAME: 'Brak nazwy modelu',
+      NO_CELLS: 'Żadna komórka nie ma ilości',
+      ALREADY_FILED: 'To zlecenie jest już zapisane jako produkt',
+      TOO_MANY_VARIANTS: 'Ponad 100 wariantów — podziel zlecenie',
     },
   },
   en: {
@@ -374,6 +418,20 @@ const COPY: Record<string, Copy> = {
       PERCENT_NOT_100: 'The composition must add up to 100%',
       ORDER_TOO_LARGE: 'Quantity is implausibly large — check the sheet',
     },
+    supplier: 'Supplier',
+    price: 'Gross price (zł)',
+    orderDate: 'Order date',
+    fileProduct: 'Save as product',
+    filing: 'Saving…',
+    filed: (variants) => `Saved — ${variants} variants`,
+    fileHint: 'Every filled cell becomes one colour and size variant',
+    fileFailed: (reason) => `Not saved: ${reason}`,
+    fileProblem: {
+      NO_NAME: 'The style has no name',
+      NO_CELLS: 'No cell has a quantity',
+      ALREADY_FILED: 'This sheet is already saved as a product',
+      TOO_MANY_VARIANTS: 'More than 100 variants — split the order',
+    },
   },
 };
 
@@ -411,6 +469,14 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
   const [progress, setProgress] = useState<PrintProgress | null>(null);
   const [result, setResult] = useState<{ type: string; message: string } | null>(null);
   const [savedNotice, setSavedNotice] = useState(false);
+  const [filing, setFiling] = useState(false);
+  const [fileNotice, setFileNotice] = useState<string | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
+  /**
+   * One key per attempt, held across retries. Regenerating it on every press is
+   * exactly how a shaky connection turns one order into two products.
+   */
+  const fileKeyRef = useRef<string | null>(null);
   /**
    * How far the last run of this order got, when it did not finish. Read once on
    * open and only ever changed by the operator pressing one of the three
@@ -456,6 +522,11 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
 
   const totals = useMemo(() => orderTotals(order), [order]);
   const problems = useMemo(() => validateOrder(order), [order]);
+  const productDraft = useMemo(() => buildProductDraft(order), [order]);
+  const productProblems = useMemo(
+    () => validateProductDraft(order, productDraft),
+    [order, productDraft],
+  );
   const plan = useMemo(() => buildPrintPlan(order), [order]);
   const composition = compositionText(order.materials);
   const percentSum = order.materials.reduce((sum, m) => sum + (Number(m.percent) || 0), 0);
@@ -698,6 +769,50 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
   };
 
   /**
+   * File the sheet as a catalogue product: one template, one variant per filled
+   * cell. The sheet keeps the product id afterwards so a second press cannot
+   * make a twin — and a failed attempt keeps its idempotency key, so pressing
+   * again after a dropped connection resumes the same create rather than
+   * starting a second one.
+   */
+  const handleFileProduct = async () => {
+    if (productProblems.length > 0 || filing) return;
+    setFiling(true);
+    setFileError(null);
+    setFileNotice(null);
+    try {
+      fileKeyRef.current ??= nextId('product');
+      const result = await window.electronAPI.pos.productAdmin.createProduct({
+        name: productDraft.name,
+        sku: productDraft.sku,
+        priceGrossGrosze: productDraft.priceGrossGrosze,
+        vatRate: 23,
+        idempotencyKey: fileKeyRef.current,
+        variants: productDraft.variants.map((variant) => ({
+          colorName: variant.colorName,
+          sizeName: variant.sizeName,
+          sku: variant.sku,
+          initialStockQty: variant.initialStockQty,
+        })),
+      });
+      const created = result?.data?.variants ?? (result?.data?.variant ? [result.data.variant] : []);
+      if (!result?.ok || created.length === 0) {
+        setFileError(copy.fileFailed(result?.error || result?.code || '?'));
+        return;
+      }
+      // Only a proven success may stamp the sheet; stamping on a timeout would
+      // hide the product that was never created.
+      patch({ productId: result.data!.product?.id ?? created[0].id });
+      fileKeyRef.current = null;
+      setFileNotice(copy.filed(created.length));
+    } catch (err) {
+      setFileError(copy.fileFailed(err instanceof Error ? err.message : String(err)));
+    } finally {
+      setFiling(false);
+    }
+  };
+
+  /**
    * Filing an order now writes back into the one that is open, so next week's
    * order that differs only in colour would eat last week's if it were opened
    * and edited. Duplicate mints a new id and leaves the sheet exactly as it is.
@@ -855,6 +970,39 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
             value={order.styleCode}
             onChange={(e) => patch({ styleCode: e.target.value })}
             placeholder="114"
+          />
+        </Field>
+      </section>
+
+      {/* Printing ignores all three. They exist so the sheet can be filed as a
+          product, which is why they sit apart from the label fields above. */}
+      <section className="mb-4 grid gap-3 sm:grid-cols-3">
+        <Field label={copy.supplier}>
+          <input
+            className={INPUT}
+            data-testid="order-supplier"
+            value={order.supplierName ?? ''}
+            onChange={(e) => patch({ supplierName: e.target.value })}
+            placeholder="New Fashion"
+          />
+        </Field>
+        <Field label={copy.price}>
+          <input
+            className={INPUT}
+            data-testid="order-price"
+            inputMode="decimal"
+            value={groszeToText(order.priceGrossGrosze)}
+            onChange={(e) => patch({ priceGrossGrosze: textToGrosze(e.target.value) })}
+            placeholder="129,00"
+          />
+        </Field>
+        <Field label={copy.orderDate}>
+          <input
+            className={INPUT}
+            data-testid="order-date"
+            type="date"
+            value={order.orderDate ?? ''}
+            onChange={(e) => patch({ orderDate: e.target.value })}
           />
         </Field>
       </section>
@@ -1376,6 +1524,19 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
           <Save size={18} aria-hidden="true" />
           {savedNotice ? copy.saved : copy.save}
         </button>
+        <button
+          type="button"
+          data-testid="file-product"
+          onClick={handleFileProduct}
+          disabled={productProblems.length > 0 || filing}
+          title={productProblems.length > 0
+            ? copy.fileProblem[productProblems[0]]
+            : copy.fileHint}
+          className="inline-flex min-h-11 items-center gap-2 rounded-md border border-sky-300 px-4 text-sm font-bold text-sky-800 hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Package size={18} aria-hidden="true" />
+          {filing ? copy.filing : copy.fileProduct}
+        </button>
         {openOrderIsFiled && (
           <button
             type="button"
@@ -1434,6 +1595,15 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
           data-testid="print-result"
         >
           {result.message}
+        </p>
+      )}
+
+      {(fileNotice || fileError) && (
+        <p
+          className={`mt-1 text-sm font-bold ${fileError ? 'text-red-700' : 'text-sky-700'}`}
+          data-testid="file-result"
+        >
+          {fileError ?? fileNotice}
         </p>
       )}
 
