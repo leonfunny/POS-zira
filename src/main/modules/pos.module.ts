@@ -4120,6 +4120,8 @@ export class PosModule extends BaseModule {
         throw error;
       }
     };
+    const hasCreateVariants = (payload: { variants?: unknown }) =>
+      Array.isArray(payload.variants) && payload.variants.length > 0;
 
     const productAdminMutationOutbox = new ProductAdminMutationOutbox({
       getScope: currentProductAdminMutationScope,
@@ -4144,7 +4146,7 @@ export class PosModule extends BaseModule {
         switch (row.mutation_type) {
           case 'CREATE_PRODUCT': {
             requireDurableMutationCapability(capabilities, 'canCreateProduct');
-            assertProductMoney(payload.priceGrossGrosze, false, 'priceGrossGrosze');
+            assertProductMoney(payload.priceGrossGrosze, hasCreateVariants(payload), 'priceGrossGrosze');
             assertProductMoney(payload.purchasePriceGrosze, true, 'purchasePriceGrosze');
             assertProductStockQuantity(
               payload.initialStockQty ?? 0,
@@ -4349,7 +4351,7 @@ export class PosModule extends BaseModule {
           'canCreateProduct',
           'create product',
           async (_token, capabilities) => {
-            assertProductMoney(requestPayload.priceGrossGrosze, false, 'priceGrossGrosze');
+            assertProductMoney(requestPayload.priceGrossGrosze, hasCreateVariants(requestPayload), 'priceGrossGrosze');
             assertProductMoney(requestPayload.purchasePriceGrosze, true, 'purchasePriceGrosze');
             assertProductStockQuantity(
               requestPayload.initialStockQty ?? 0,

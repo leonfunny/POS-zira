@@ -50,6 +50,24 @@ describe('multi-variant create wiring', () => {
     expect(dispatch).toContain('variants[${index}].initialStockQty');
   });
 
+  it('allows an empty price only for a non-empty colour and size grid', () => {
+    const module = source('src/main/modules/pos.module.ts');
+    const createHandler =
+      module.match(/IPC_CHANNELS\.POS_PRODUCT_ADMIN_CREATE_PRODUCT,[\s\S]*?\n {4}\);/)?.[0] ?? '';
+    const dispatch =
+      module.match(/case 'CREATE_PRODUCT': \{[\s\S]*?return apiClient\.createProductVariant/)?.[0] ?? '';
+
+    expect(module).toMatch(
+      /const hasCreateVariants = [\s\S]*?Array\.isArray\(payload\.variants\)[\s\S]*?payload\.variants\.length > 0/,
+    );
+    expect(createHandler).toContain(
+      "assertProductMoney(requestPayload.priceGrossGrosze, hasCreateVariants(requestPayload), 'priceGrossGrosze')",
+    );
+    expect(dispatch).toContain(
+      "assertProductMoney(payload.priceGrossGrosze, hasCreateVariants(payload), 'priceGrossGrosze')",
+    );
+  });
+
   it('writes the colour and size columns on every upsert', () => {
     const repo = source('src/main/database/repos/product-repo.ts');
     const upsert = repo.match(/upsertMany\(products: ProductVariantRow\[\]\): void \{[\s\S]*?\n {2}\}/)?.[0] ?? '';
