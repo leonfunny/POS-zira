@@ -81,10 +81,10 @@ describe('PrintOrderPanel', () => {
     vi.unstubAllGlobals();
   });
 
-  async function render() {
+  async function render(language = 'en') {
     await act(async () => {
       root = createRoot(container);
-      root.render(<PrintOrderPanel language="en" active onPrintingChange={() => {}} />);
+      root.render(<PrintOrderPanel language={language} active onPrintingChange={() => {}} />);
     });
     await settle();
   }
@@ -116,6 +116,16 @@ describe('PrintOrderPanel', () => {
     Array.from(container.querySelectorAll('[data-care-line]')).map(
       (li) => li.querySelector('span:nth-of-type(2)')?.textContent?.trim() ?? '',
     );
+
+  it.each([
+    ['vi', 'vi-VN'],
+    ['pl', 'pl-PL'],
+    ['en', 'en-GB'],
+  ])('shows the order calendar in the %s tab locale', async (language, locale) => {
+    await render(language);
+
+    expect(input(container, '[data-testid="order-date"]').getAttribute('lang')).toBe(locale);
+  });
 
   it('adds a size column from a suggestion and from free text', async () => {
     await render();

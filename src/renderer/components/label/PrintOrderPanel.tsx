@@ -445,6 +445,7 @@ function nextId(prefix: string): string {
 
 export default function PrintOrderPanel({ language, active, onPrintingChange }: Props) {
   const copy = COPY[language] || COPY.vi;
+  const dateLocale = language === 'pl' ? 'pl-PL' : language === 'en' ? 'en-GB' : 'vi-VN';
 
   // Loading a draft goes through the same gate as typing, so an order saved
   // before this rule opens in capitals like every other one.
@@ -990,6 +991,7 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
             className={INPUT}
             data-testid="order-date"
             type="date"
+            lang={dateLocale}
             value={order.orderDate ?? ''}
             onChange={(e) => patch({ orderDate: e.target.value })}
           />
