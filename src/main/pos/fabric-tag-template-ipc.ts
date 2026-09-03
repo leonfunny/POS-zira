@@ -45,6 +45,41 @@ function nullableLogoDataUrl(record: Record<string, unknown>): string | null {
   return parseFabricTagLogoDataUrl(record.logoDataUrl, 'fabric tag template')?.dataUrl ?? null;
 }
 
+/**
+ * The parts a composition line was built from, checked the way every other
+ * field here is. A malformed list is refused rather than trimmed to something
+ * plausible: the renderer builds it from a fixed picker, so anything else
+ * arriving is a bug worth hearing about, not a shape to guess at.
+ */
+function parseFabricTagMaterials(value: unknown): { name: string; percent: number }[] {
+  if (value == null) return [];
+  if (!Array.isArray(value)) {
+    throw new TypeError('Invalid fabric tag template materials: expected an array');
+  }
+  if (value.length > FABRIC_TAG_TEMPLATE_LIMITS.materials) {
+    throw new TypeError(
+      `Invalid fabric tag template materials: at most ${FABRIC_TAG_TEMPLATE_LIMITS.materials} entries`,
+    );
+  }
+  return value.map((entry) => {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      throw new TypeError('Invalid fabric tag template material: expected an object');
+    }
+    const record = entry as Record<string, unknown>;
+    const name = parseFabricTagText(
+      record.name,
+      'material name',
+      FABRIC_TAG_TEMPLATE_LIMITS.materialName,
+      { context: 'fabric tag template', required: true },
+    )!;
+    const percent = Number(record.percent ?? 0);
+    if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
+      throw new TypeError('Invalid fabric tag template material percent: expected 0-100');
+    }
+    return { name, percent: Math.floor(percent) };
+  });
+}
+
 /** Validate and normalize untrusted renderer input before it reaches SQLite. */
 export function parseFabricTagTemplateInput(value: unknown): FabricTagTemplate {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -66,6 +101,7 @@ export function parseFabricTagTemplateInput(value: unknown): FabricTagTemplate {
     composition: nullableString(record, 'composition'),
     careSymbols,
     careText: nullableString(record, 'careText'),
+    materials: parseFabricTagMaterials(record.materials),
     fabric: nullableString(record, 'fabric'),
     layout: rawLayout ?? 'default',
   };

@@ -26,6 +26,10 @@ const TAG = {
   composition: '70% BAWEŁNA 30% POLIESTER',
   careSymbols: ['wash-30'],
   careText: 'PRAĆ NA LEWEJ STRONIE',
+  materials: [
+    { name: 'BAWEŁNA', percent: 70 },
+    { name: 'POLIESTER', percent: 30 },
+  ],
   fabric: null,
   layout: 'default' as const,
 };
@@ -44,6 +48,7 @@ describe('StyleReprintPanel', () => {
   let printPackagingSticker: ReturnType<typeof vi.fn>;
   let printFabricTag: ReturnType<typeof vi.fn>;
   let getTemplate: ReturnType<typeof vi.fn>;
+  let saveTemplate: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     container = document.createElement('div');
@@ -51,13 +56,14 @@ describe('StyleReprintPanel', () => {
     printPackagingSticker = vi.fn(async () => ({ success: true }));
     printFabricTag = vi.fn(async () => ({ success: true }));
     getTemplate = vi.fn(async () => TAG);
+    saveTemplate = vi.fn(async (template: any) => template);
     Object.defineProperty(window, 'electronAPI', {
       configurable: true,
       writable: true,
       value: {
         printPackagingSticker,
         printFabricTag,
-        pos: { fabricTagTemplates: { get: getTemplate } },
+        pos: { fabricTagTemplates: { get: getTemplate, save: saveTemplate } },
       },
     });
   });
@@ -234,6 +240,117 @@ describe('StyleReprintPanel', () => {
     expect(statusText()).toContain('out of ribbon');
     const box = container.querySelector<HTMLInputElement>('input[aria-label="CZARNY S"]')!;
     expect(box.value).toBe('2');
+  });
+
+  const openTagEditor = async () => {
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="tag-edit-toggle"]')!.click(),
+    );
+    await settle();
+  };
+
+  it('opens the tag editor on what the machine would print, not on blank', async () => {
+    await render();
+    await openTagEditor();
+
+    expect(container.querySelector<HTMLInputElement>('[data-testid="tag-brand"]')!.value)
+      .toBe('MoonCollection');
+    // The saved parts come back as the picker's own state, so a correction
+    // starts from 70/30 rather than from an empty composition.
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="BAWEŁNA %"]')!.value)
+      .toBe('70');
+    expect(container.querySelector('[data-testid="composition-preview"]')?.textContent)
+      .toBe('70% BAWEŁNA 30% POLIESTER');
+    expect(container.querySelector('[data-testid="care-lines"]')?.textContent)
+      .toContain('PRAĆ NA LEWEJ STRONIE');
+  });
+
+  it('saves a corrected composition and prints the corrected one', async () => {
+    await render();
+    await openTagEditor();
+
+    // Drop polyester: the style turned out to be pure cotton.
+    const materialButton = (name: string) =>
+      Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent?.trim() === name,
+      )!;
+    await act(async () => materialButton('POLIESTER').click());
+    // Re-queried after the toggle: the earlier node is detached, and typing
+    // into a detached input would pass here while doing nothing on screen.
+    await typeQuantity('BAWEŁNA %', '100');
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="tag-save"]')!.click(),
+    );
+    await settle();
+
+    expect(saveTemplate).toHaveBeenCalledTimes(1);
+    expect(saveTemplate.mock.calls[0][0]).toMatchObject({
+      templateId: 'template-1',
+      composition: '100% BAWEŁNA',
+      materials: [{ name: 'BAWEŁNA', percent: 100 }],
+    });
+
+    // The saved row is what the panel prints from, without a reload: a
+    // correction the operator just made must reach the next tag.
+    await typeQuantity('CZARNY S', '1');
+    await act(async () => printButton().click());
+    await settle();
+    expect(printFabricTag.mock.calls[0][0].composition).toBe('100% BAWEŁNA');
+  });
+
+  it('fills in a style that had no care content, and unlocks the fabric lane', async () => {
+    getTemplate.mockResolvedValue(null);
+    await render();
+
+    const fabricLane = () =>
+      container.querySelector<HTMLInputElement>('[data-testid="lane-fabric"]')!;
+    expect(fabricLane().disabled).toBe(true);
+
+    await openTagEditor();
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-symbol="WASH_30"]')!.click(),
+    );
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="tag-save"]')!.click(),
+    );
+    await settle();
+
+    expect(saveTemplate.mock.calls[0][0].careSymbols).toEqual(['WASH_30']);
+    expect(fabricLane().disabled).toBe(false);
+  });
+
+  it('keeps a stored composition line it cannot take apart', async () => {
+    // Written by hand, or by an older version that stored only the line. Losing
+    // it because someone edited the care symbols would change what a garment
+    // says about its fabric.
+    getTemplate.mockResolvedValue({ ...TAG, materials: [], composition: '70% BAWEŁNA + dodatki' });
+    await render();
+    await openTagEditor();
+
+    expect(container.querySelector('[data-testid="tag-kept-composition"]')?.textContent)
+      .toContain('70% BAWEŁNA + dodatki');
+
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="tag-save"]')!.click(),
+    );
+    await settle();
+
+    expect(saveTemplate.mock.calls[0][0].composition).toBe('70% BAWEŁNA + dodatki');
+  });
+
+  it('keeps the typed correction on screen when the save fails', async () => {
+    saveTemplate.mockRejectedValue(new Error('database is locked'));
+    await render();
+    await openTagEditor();
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="tag-save"]')!.click(),
+    );
+    await settle();
+
+    expect(statusText()).toContain('Could not save');
+    // Still open, still holding what was typed — a failed write must not throw
+    // the correction away.
+    expect(container.querySelector('[data-testid="tag-brand"]')).not.toBeNull();
   });
 
   it('survives a machine whose fabric tag store is not wired up', async () => {

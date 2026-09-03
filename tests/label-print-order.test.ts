@@ -6,6 +6,7 @@ import {
   buildPrintPlan,
   buildSamplePlan,
   compositionText,
+  parseCompositionText,
   createEmptyOrder,
   orderTotals,
   percentFix,
@@ -66,6 +67,25 @@ describe('compositionText', () => {
 
   it('is empty when nothing is entered', () => {
     expect(compositionText([])).toBe('');
+  });
+
+  it('reads its own line back into the parts that made it', () => {
+    // Rows saved before the parts were stored beside the line carry only the
+    // line; reopening the editor has to start from what the tag would print.
+    expect(parseCompositionText('70% POLIESTER 30% AKRYL')).toEqual([
+      { name: 'POLIESTER', percent: 70 },
+      { name: 'AKRYL', percent: 30 },
+    ]);
+    expect(parseCompositionText('100% BAWEŁNA')).toEqual([{ name: 'BAWEŁNA', percent: 100 }]);
+  });
+
+  it('gives up on a line it cannot rebuild rather than shortening it', () => {
+    // Wording someone typed by hand is the whole point of giving up here: the
+    // caller keeps showing the stored line instead of a rewritten one.
+    expect(parseCompositionText('70% BAWEŁNA + dodatki')).toEqual([]);
+    expect(parseCompositionText('mieszanka bawełny')).toEqual([]);
+    expect(parseCompositionText('')).toEqual([]);
+    expect(parseCompositionText(null)).toEqual([]);
   });
 
   it('offers the materials the factory actually uses, in Polish', () => {

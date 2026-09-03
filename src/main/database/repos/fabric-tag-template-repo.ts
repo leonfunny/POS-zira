@@ -19,6 +19,8 @@ export interface FabricTagTemplateRow {
   /** JSON array of CareSymbol. Stored as text because SQLite has no arrays. */
   care_symbols: string | null;
   care_text: string | null;
+  /** JSON array of {name, percent}. Null on rows saved before migration 901. */
+  materials: string | null;
   fabric: string | null;
   layout: string;
   backend_id: string | null;
@@ -35,6 +37,12 @@ export interface FabricTagTemplate {
   composition: string | null;
   careSymbols: CareSymbol[];
   careText: string | null;
+  /**
+   * The parts the composition line was built from, so the editor can open it
+   * again without reading percentages back out of the finished line. Empty on
+   * rows written before this was stored — `composition` is still what prints.
+   */
+  materials: { name: string; percent: number }[];
   fabric: string | null;
   layout: FabricTagData['layout'];
 }
@@ -63,6 +71,28 @@ function parseCareSymbols(raw: string | null, templateId: string): CareSymbol[] 
   }
 }
 
+/**
+ * Materials round-trip through JSON like the care symbols, and like them a
+ * damaged row must not take the tag down: an unreadable list simply reopens
+ * empty, leaving the printed composition line untouched.
+ */
+function parseMaterials(raw: string | null, templateId: string): { name: string; percent: number }[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((entry) => entry && typeof entry.name === 'string' && entry.name.trim())
+      .map((entry) => ({
+        name: String(entry.name),
+        percent: Math.max(0, Math.min(100, Math.floor(Number(entry.percent) || 0))),
+      }));
+  } catch {
+    logger.warn(`[FabricTagTemplate] Unreadable materials for ${templateId}; treating as none`);
+    return [];
+  }
+}
+
 function toTemplate(row: FabricTagTemplateRow): FabricTagTemplate {
   return {
     templateId: row.template_id,
@@ -71,6 +101,7 @@ function toTemplate(row: FabricTagTemplateRow): FabricTagTemplate {
     composition: row.composition,
     careSymbols: parseCareSymbols(row.care_symbols, row.template_id),
     careText: row.care_text,
+    materials: parseMaterials(row.materials, row.template_id),
     fabric: row.fabric,
     layout: row.layout === 'care-first' ? 'care-first' : 'default',
   };
@@ -103,7 +134,7 @@ export const fabricTagTemplateRepo = {
     // template whose full payload is actually needed.
     const rows = database.all<FabricTagTemplateRow>(
       `SELECT template_id, brand_name, NULL AS logo_data_url, composition,
-              care_symbols, care_text, fabric, layout, backend_id, synced,
+              care_symbols, care_text, materials, fabric, layout, backend_id, synced,
               synced_at, updated_at
        FROM fabric_tag_templates
        ORDER BY updated_at DESC`,
@@ -123,14 +154,15 @@ export const fabricTagTemplateRepo = {
     database.run(
       `INSERT INTO fabric_tag_templates (
          template_id, brand_name, logo_data_url, composition, care_symbols,
-         care_text, fabric, layout, synced, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, datetime('now'))
+         care_text, materials, fabric, layout, synced, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, datetime('now'))
        ON CONFLICT(template_id) DO UPDATE SET
          brand_name = excluded.brand_name,
          logo_data_url = excluded.logo_data_url,
          composition = excluded.composition,
          care_symbols = excluded.care_symbols,
          care_text = excluded.care_text,
+         materials = excluded.materials,
          fabric = excluded.fabric,
          layout = excluded.layout,
          synced = 0,
@@ -142,6 +174,7 @@ export const fabricTagTemplateRepo = {
         template.composition ?? null,
         JSON.stringify(template.careSymbols ?? []),
         template.careText ?? null,
+        JSON.stringify(template.materials ?? []),
         template.fabric ?? null,
         template.layout === 'care-first' ? 'care-first' : 'default',
       ],

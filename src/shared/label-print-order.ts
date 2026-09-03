@@ -273,6 +273,32 @@ export function compositionText(materials: OrderMaterial[]): string {
     .join(' ');
 }
 
+/**
+ * Read a composition line back into the parts that built it.
+ *
+ * Only for rows saved before the parts were stored beside the line. Every part
+ * must name a fabric the picker offers and the whole line must rebuild to
+ * itself; anything else returns nothing, because a line reading "70% BAWEŁNA +
+ * dodatki" says more than a percentage list can hold and rewriting it would
+ * drop the rest. The caller goes on showing the stored line in that case.
+ */
+export function parseCompositionText(line: string | null | undefined): OrderMaterial[] {
+  const text = (line ?? '').trim();
+  if (!text) return [];
+  const known = new Set<string>(FABRIC_MATERIALS);
+  const matches = [...text.matchAll(/(\d{1,3})%\s*([^\d%]+)/g)];
+  if (matches.length === 0) return [];
+  const materials: OrderMaterial[] = [];
+  for (const match of matches) {
+    const percent = Number(match[1]);
+    const name = match[2].trim();
+    if (!known.has(name) || !Number.isFinite(percent) || percent <= 0 || percent > 100) return [];
+    materials.push({ name, percent });
+  }
+  // A line that does not rebuild to itself carries wording between the parts.
+  return compositionText(materials) === text ? materials : [];
+}
+
 export function materialPercentSum(materials: OrderMaterial[]): number {
   return materials.reduce(
     (sum, m) => sum + (Number.isFinite(m.percent) ? Number(m.percent) : 0),

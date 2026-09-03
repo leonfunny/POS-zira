@@ -72,6 +72,9 @@ describe('fabric tag template IPC boundary', () => {
       composition: null,
       careSymbols: ['WASH_30', 'IRON_LOW'],
       careText: null,
+      // A payload that names no materials stores an empty list, not undefined:
+      // the row is rewritten whole, and undefined would drop the column.
+      materials: [],
       fabric: null,
       layout: 'default',
     });
@@ -99,6 +102,16 @@ describe('fabric tag template IPC boundary', () => {
     ['contradictory care symbols', { templateId: 'style-1', careSymbols: ['WASH_30', 'WASH_NO'] }, /careSymbols/],
     ['an unknown layout', { templateId: 'style-1', layout: 'sideways' }, /layout/],
     ['a non-string text field', { templateId: 'style-1', composition: 100 }, /composition/],
+    ['non-array materials', { templateId: 'style-1', materials: '70% BAWEŁNA' }, /materials/],
+    ['a material that is not an object', { templateId: 'style-1', materials: ['BAWEŁNA'] }, /material/],
+    ['a nameless material', { templateId: 'style-1', materials: [{ percent: 70 }] }, /material name/],
+    ['a percent over 100', { templateId: 'style-1', materials: [{ name: 'LEN', percent: 140 }] }, /percent/],
+    ['a negative percent', { templateId: 'style-1', materials: [{ name: 'LEN', percent: -1 }] }, /percent/],
+    [
+      'more materials than a garment has',
+      { templateId: 'style-1', materials: new Array(13).fill({ name: 'LEN', percent: 1 }) },
+      /materials/,
+    ],
   ])('rejects %s without writing', (_label, input, message) => {
     const { handlers, repository } = setupHandlers();
     expect(() => handlers.get(FABRIC_TAG_TEMPLATE_CHANNELS.save)!({}, input)).toThrow(message);
@@ -124,6 +137,17 @@ describe('fabric tag template IPC boundary', () => {
     handlers.get(FABRIC_TAG_TEMPLATE_CHANNELS.remove)!({}, ' style-2  ');
     expect(repository.get).toHaveBeenCalledWith('style-1');
     expect(repository.remove).toHaveBeenCalledWith('style-2');
+  });
+
+  it('keeps the composition parts a renderer sends, floored to whole percentages', () => {
+    const parsed = parseFabricTagTemplateInput({
+      templateId: 'style-1',
+      materials: [{ name: '  BAWEŁNA  ', percent: 69.9 }, { name: 'LEN', percent: 30 }],
+    });
+    expect(parsed.materials).toEqual([
+      { name: 'BAWEŁNA', percent: 69 },
+      { name: 'LEN', percent: 30 },
+    ]);
   });
 
   it('copies careSymbols so later caller mutation cannot alter the validated value', () => {

@@ -14,6 +14,8 @@ import {
   LabelPrintOrder,
   SIZE_SUGGESTIONS,
   buildPrintPlan,
+  compositionText,
+  parseCompositionText,
 } from '../../../shared/label-print-order';
 import {
   SelectionInput,
@@ -25,6 +27,7 @@ import {
 } from '../../../shared/product-print-selection';
 import type { FabricTagTemplate } from '../../../shared/types';
 import { PrintProgress, runPrintPlan } from './print-order-runner';
+import FabricTagFields, { type FabricTagContent } from './FabricTagFields';
 import rlog from '../../utils/logger';
 
 /** One catalogue row of the style, as the label tab holds it. */
@@ -65,6 +68,15 @@ interface Copy {
   stopped: (done: number, total: number) => string;
   failed: (reason: string) => string;
   clear: string;
+  tagEdit: string;
+  tagEditOpen: string;
+  tagEditClose: string;
+  tagBrand: string;
+  tagSave: string;
+  tagSaving: string;
+  tagSaved: string;
+  tagSaveFailed: string;
+  tagCompositionKept: (line: string) => string;
   problem: Record<SelectionProblem, string>;
 }
 
@@ -78,7 +90,7 @@ const COPY: Record<string, Copy> = {
     stickers: 'Tem đóng gói',
     fabricTags: 'Tem vải',
     noTagContent:
-      'Mẫu này chưa có nội dung tem vải trên máy — chỉ in được tem đóng gói. Tạo lại từ tab Đơn in thì sẽ có.',
+      'Mẫu này chưa có nội dung tem vải trên máy — chỉ in được tem đóng gói. Bấm “Sửa nội dung tem” ở dưới để điền.',
     totals: (stickers, fabricTags) => `${stickers} tem đóng gói · ${fabricTags} tem vải`,
     print: (labels) => (labels > 0 ? `In ${labels} tem` : 'In'),
     confirm: (labels) => `Bấm lần nữa để in ${labels} tem`,
@@ -89,6 +101,15 @@ const COPY: Record<string, Copy> = {
     stopped: (done, total) => `Đã dừng — in ${done}/${total} tem`,
     failed: (reason) => `Máy in báo lỗi: ${reason}`,
     clear: 'Xoá số đã gõ',
+    tagEdit: 'Nội dung tem vải',
+    tagEditOpen: 'Sửa nội dung tem',
+    tagEditClose: 'Đóng',
+    tagBrand: 'Tên thương hiệu in trên tem',
+    tagSave: 'Lưu nội dung tem',
+    tagSaving: 'Đang lưu…',
+    tagSaved: 'Đã lưu nội dung tem vải',
+    tagSaveFailed: 'Không lưu được nội dung tem vải',
+    tagCompositionKept: (line) => `Giữ nguyên dòng chất liệu đã lưu: ${line}`,
     problem: {
       NOTHING_SELECTED: 'Chưa gõ số lượng cho dòng nào',
       NO_LANE: 'Chưa chọn in tem đóng gói hay tem vải',
@@ -104,7 +125,7 @@ const COPY: Record<string, Copy> = {
     stickers: 'Etykiety na worek',
     fabricTags: 'Metki',
     noTagContent:
-      'Ten model nie ma zapisanej treści metki — można wydrukować tylko etykietę na worek. Zlecenie druku zapisze treść.',
+      'Ten model nie ma zapisanej treści metki — można wydrukować tylko etykietę na worek. Kliknij „Edytuj treść metki” poniżej.',
     totals: (stickers, fabricTags) => `${stickers} etykiet · ${fabricTags} metek`,
     print: (labels) => (labels > 0 ? `Drukuj ${labels} szt.` : 'Drukuj'),
     confirm: (labels) => `Naciśnij ponownie, aby wydrukować ${labels} szt.`,
@@ -115,6 +136,15 @@ const COPY: Record<string, Copy> = {
     stopped: (done, total) => `Zatrzymano — ${done}/${total} szt.`,
     failed: (reason) => `Błąd drukarki: ${reason}`,
     clear: 'Wyczyść ilości',
+    tagEdit: 'Treść metki',
+    tagEditOpen: 'Edytuj treść metki',
+    tagEditClose: 'Zamknij',
+    tagBrand: 'Marka drukowana na metce',
+    tagSave: 'Zapisz treść metki',
+    tagSaving: 'Zapisywanie…',
+    tagSaved: 'Treść metki zapisana',
+    tagSaveFailed: 'Nie udało się zapisać treści metki',
+    tagCompositionKept: (line) => `Zapisany skład pozostaje bez zmian: ${line}`,
     problem: {
       NOTHING_SELECTED: 'Żaden wiersz nie ma ilości',
       NO_LANE: 'Nie wybrano etykiet ani metek',
@@ -130,7 +160,7 @@ const COPY: Record<string, Copy> = {
     stickers: 'Bag labels',
     fabricTags: 'Fabric tags',
     noTagContent:
-      'This style has no care content on the machine — only bag labels can print. Filing it from the print order saves the content.',
+      'This style has no care content on the machine — only bag labels can print. Use “Edit tag content” below to fill it in.',
     totals: (stickers, fabricTags) => `${stickers} bag labels · ${fabricTags} fabric tags`,
     print: (labels) => (labels > 0 ? `Print ${labels} labels` : 'Print'),
     confirm: (labels) => `Press again to print ${labels} labels`,
@@ -141,6 +171,15 @@ const COPY: Record<string, Copy> = {
     stopped: (done, total) => `Stopped — ${done}/${total} printed`,
     failed: (reason) => `Printer error: ${reason}`,
     clear: 'Clear quantities',
+    tagEdit: 'Fabric tag content',
+    tagEditOpen: 'Edit tag content',
+    tagEditClose: 'Close',
+    tagBrand: 'Brand printed on the tag',
+    tagSave: 'Save tag content',
+    tagSaving: 'Saving…',
+    tagSaved: 'Fabric tag content saved',
+    tagSaveFailed: 'Could not save the fabric tag content',
+    tagCompositionKept: (line) => `Keeping the stored composition line: ${line}`,
     problem: {
       NOTHING_SELECTED: 'No row has a quantity',
       NO_LANE: 'Neither bag labels nor fabric tags are selected',
@@ -248,6 +287,51 @@ export default function StyleReprintPanel({
     return () => {
       cancelled = true;
     };
+  }, [templateId]);
+
+  // Editing the tag in place. The draft is seeded from the saved row so a
+  // correction starts from what the machine would print, not from blank.
+  const [editing, setEditing] = useState(false);
+  const [brandDraft, setBrandDraft] = useState('');
+  const [contentDraft, setContentDraft] = useState<FabricTagContent>({
+    materials: [],
+    careSymbols: [],
+    careText: '',
+  });
+  const [saving, setSaving] = useState(false);
+
+  /**
+   * The composition line a row was saved with, when its parts could not be
+   * recovered from it. Shown as-is and kept on save: a line someone wrote by
+   * hand outranks anything this could infer.
+   */
+  const keptComposition = useMemo(() => {
+    const line = (tag?.composition ?? '').trim();
+    if (!line) return '';
+    if (tag?.materials?.length) return '';
+    return parseCompositionText(line).length > 0 ? '' : line;
+  }, [tag]);
+
+  const seedDraft = useCallback(() => {
+    setBrandDraft(tag?.brandName ?? '');
+    setContentDraft({
+      // Rows written before the parts were stored carry only the finished line;
+      // reading it back is exact for lines this app produced and gives up
+      // rather than guessing at anything else.
+      materials: tag?.materials?.length
+        ? tag.materials.map((material) => ({ ...material }))
+        : parseCompositionText(tag?.composition ?? ''),
+      careSymbols: [...(tag?.careSymbols ?? [])],
+      careText: tag?.careText ?? '',
+    });
+  }, [tag]);
+
+  // A style change closes the editor: a half-typed correction belongs to the
+  // style it was typed against, and carrying it across would save it onto
+  // another garment.
+  useEffect(() => {
+    setEditing(false);
+    setSaving(false);
   }, [templateId]);
 
   const hasTagContent = !!tag;
@@ -385,6 +469,46 @@ export default function StyleReprintPanel({
     setStopping(true);
   };
 
+  const openEditor = () => {
+    seedDraft();
+    setEditing(true);
+  };
+
+  const handleSaveTag = async () => {
+    if (saving) return;
+    setSaving(true);
+    const line = compositionText(contentDraft.materials);
+    const next: FabricTagTemplate = {
+      templateId,
+      brandName: brandDraft.trim() || null,
+      logoDataUrl: tag?.logoDataUrl ?? null,
+      // A composition typed here wins. With nothing typed, a line that could
+      // not be taken apart is kept exactly as saved rather than cleared by an
+      // edit that was never about the composition.
+      composition: line || keptComposition || null,
+      careSymbols: [...contentDraft.careSymbols],
+      careText: contentDraft.careText.trim() || null,
+      materials: contentDraft.materials.map((material) => ({ ...material })),
+      fabric: tag?.fabric ?? null,
+      layout: tag?.layout ?? 'default',
+    };
+    try {
+      const bridge = (window as any).electronAPI?.pos?.fabricTagTemplates;
+      const saved = await Promise.resolve().then(() => bridge?.save?.(next));
+      if (!saved) throw new Error('fabric tag template save returned nothing');
+      setTag(saved as FabricTagTemplate);
+      setEditing(false);
+      setStatus({ type: 'success', message: copy.tagSaved });
+    } catch (err) {
+      rlog.error('[StyleReprintPanel] Failed to save fabric tag content:', err);
+      // The editor stays open with the typed content: a correction the operator
+      // has just typed must not vanish because a write failed.
+      setStatus({ type: 'error', message: copy.tagSaveFailed });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const statusText =
     status.type === 'idle'
       ? problems.length > 0
@@ -426,6 +550,65 @@ export default function StyleReprintPanel({
           {copy.noTagContent}
         </div>
       )}
+
+      <section className="rounded-lg border border-slate-200" data-testid="tag-editor">
+        <div className="flex items-center justify-between gap-2 px-3 py-2">
+          <div className="text-xs font-extrabold uppercase tracking-wide text-slate-400">
+            {copy.tagEdit}
+          </div>
+          <button
+            type="button"
+            data-testid="tag-edit-toggle"
+            disabled={running}
+            onClick={() => (editing ? setEditing(false) : openEditor())}
+            className="rounded-md border border-slate-200 px-2 py-1 text-[11px] font-extrabold text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+          >
+            {editing ? copy.tagEditClose : copy.tagEditOpen}
+          </button>
+        </div>
+        {editing && (
+          <div className="border-t border-slate-200 px-3 pt-3">
+            <label className="mb-3 block">
+              <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                {copy.tagBrand}
+              </span>
+              <input
+                className="h-10 w-full rounded-md border border-slate-300 px-2.5 text-sm"
+                data-testid="tag-brand"
+                value={brandDraft}
+                disabled={saving}
+                onChange={(e) => setBrandDraft(e.target.value)}
+              />
+            </label>
+
+            <FabricTagFields
+              language={language}
+              value={contentDraft}
+              onChange={(changes) => setContentDraft((current) => ({ ...current, ...changes }))}
+              disabled={saving}
+            />
+
+            {keptComposition && contentDraft.materials.length === 0 && (
+              <p
+                className="mb-3 text-xs font-bold text-slate-500"
+                data-testid="tag-kept-composition"
+              >
+                {copy.tagCompositionKept(keptComposition)}
+              </p>
+            )}
+
+            <button
+              type="button"
+              data-testid="tag-save"
+              onClick={handleSaveTag}
+              disabled={saving}
+              className="mb-3 h-11 w-full rounded-lg bg-slate-800 text-sm font-black text-white hover:bg-slate-700 disabled:opacity-60"
+            >
+              {saving ? copy.tagSaving : copy.tagSave}
+            </button>
+          </div>
+        )}
+      </section>
 
       <section className="space-y-2">
         <div className="text-xs font-extrabold uppercase tracking-wide text-slate-400">

@@ -2034,4 +2034,17 @@ export const migrations: Migration[] = [
       ALTER TABLE product_variants ADD COLUMN size_name TEXT;
     `,
   },
+  {
+    version: 901,
+    name: 'fabric_tag_materials',
+    // `composition` holds the finished line the tag prints ("70% BAWEŁNA 30%
+    // POLIESTER"). Editing it again needs the parts back, and reading them out
+    // of the line would mean guessing at anything a person wrote by hand.
+    // Keeping the list beside the line costs one column and never guesses; the
+    // line stays what printing reads, so a row saved before this column still
+    // prints exactly what it printed before.
+    up: `
+      ALTER TABLE fabric_tag_templates ADD COLUMN materials TEXT;
+    `,
+  },
 ];

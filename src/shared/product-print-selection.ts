@@ -179,6 +179,12 @@ export function orderToFabricTagTemplate(
     composition: compositionText(order.materials) || null,
     careSymbols: [...order.careSymbols],
     careText: cleanText(order.careText) || null,
+    // The finished line still prints; the parts ride along so the style's own
+    // panel can reopen the composition instead of parsing it back apart.
+    materials: order.materials.map((material) => ({
+      name: material.name,
+      percent: Math.max(0, Math.min(100, Math.floor(Number(material.percent) || 0))),
+    })),
     fabric: null,
     layout: 'default',
   };

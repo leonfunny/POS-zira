@@ -175,6 +175,12 @@ describe('orderToFabricTagTemplate', () => {
       composition: '70% BAWEŁNA 30% POLIESTER',
       careSymbols: ['wash-30'],
       careText: 'PRAĆ NA LEWEJ STRONIE',
+      // The parts ride along with the finished line so the style's own panel
+      // can reopen the composition instead of parsing it back apart.
+      materials: [
+        { name: 'BAWEŁNA', percent: 70 },
+        { name: 'POLIESTER', percent: 30 },
+      ],
       fabric: null,
       layout: 'default',
     });

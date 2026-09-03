@@ -42,6 +42,13 @@ export interface FabricTagTemplate {
   composition: string | null;
   careSymbols: CareSymbol[];
   careText: string | null;
+  /**
+   * The parts `composition` was built from. Kept so the editor can reopen a
+   * saved tag without reading percentages back out of the finished line; rows
+   * written before this existed carry an empty list and still print from
+   * `composition`.
+   */
+  materials: { name: string; percent: number }[];
   fabric: string | null;
   layout: 'default' | 'care-first';
 }
@@ -460,6 +467,13 @@ export const FABRIC_TAG_LIMITS = {
   logoMaxDimension: 4096,
   logoMaxPixels: 4 * 1024 * 1024,
   careSymbols: CARE_SYMBOLS.length,
+  /**
+   * Parts a composition may name. The picker offers twelve fabrics; a payload
+   * naming more is not a garment, so it is refused at the trust boundary
+   * rather than stored and printed.
+   */
+  materials: 12,
+  materialName: 40,
   quantity: 999,
   priceGrosze: 999_999_999,
 } as const;
