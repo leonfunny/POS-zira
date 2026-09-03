@@ -228,14 +228,17 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
     expect(createProduct.mock.calls[0][0].categoryId).toBeNull();
   });
 
-  it('sends the price the shop typed in Polish notation', async () => {
+  it('files a sheet with no price, because the sheet no longer asks for one', async () => {
     await render();
     await fillGrid();
-    await changeInput(input(container, '[data-testid="order-price"]'), '129,50');
     await act(async () => fileButton().click());
     await settle();
 
-    expect(createProduct.mock.calls[0][0].priceGrossGrosze).toBe(12950);
+    // The workshop sews to order and does not sell these over a counter. The
+    // field is gone from the sheet; the product still needs a number, and 0 is
+    // the honest one rather than something inferred.
+    expect(container.querySelector('[data-testid="order-price"]')).toBeNull();
+    expect(createProduct.mock.calls[0][0].priceGrossGrosze).toBe(0);
   });
 
   it('reports how many rows were created', async () => {

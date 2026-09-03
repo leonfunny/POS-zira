@@ -33,9 +33,7 @@ import {
   CategoryChoice,
   ProductDraftProblem,
   buildProductDraft,
-  groszeToText,
   resolveCategoryForStyle,
-  textToGrosze,
   validateProductDraft,
 } from '../../../shared/order-to-product';
 import {
@@ -137,7 +135,6 @@ interface Copy {
   finished: (copies: number) => string;
   stopped: (done: number, total: number) => string;
   problem: Record<OrderProblem, string>;
-  price: string;
   orderDate: string;
   category: string;
   categoryNone: string;
@@ -232,7 +229,6 @@ const COPY: Record<string, Copy> = {
       PERCENT_NOT_100: 'Tổng phần trăm chất liệu phải bằng 100%',
       ORDER_TOO_LARGE: 'Số lượng quá lớn — kiểm tra lại',
     },
-    price: 'Giá bán (zł)',
     orderDate: 'Ngày đơn',
     category: 'Danh mục',
     categoryNone: 'Không khớp danh mục nào — sẽ không hiện ở tab tem',
@@ -331,7 +327,6 @@ const COPY: Record<string, Copy> = {
       PERCENT_NOT_100: 'Skład musi sumować się do 100%',
       ORDER_TOO_LARGE: 'Zbyt duża ilość — sprawdź',
     },
-    price: 'Cena brutto (zł)',
     orderDate: 'Data zlecenia',
     category: 'Kategoria',
     categoryNone: 'Brak pasującej kategorii — nie pojawi się w zakładce etykiet',
@@ -430,7 +425,6 @@ const COPY: Record<string, Copy> = {
       PERCENT_NOT_100: 'The composition must add up to 100%',
       ORDER_TOO_LARGE: 'Quantity is implausibly large — check the sheet',
     },
-    price: 'Gross price (zł)',
     orderDate: 'Order date',
     category: 'Category',
     categoryNone: 'No category matches — it will not show in the label tab',
@@ -1040,21 +1034,14 @@ export default function PrintOrderPanel({
         </Field>
       </section>
 
-      {/* Printing ignores both. They exist so the sheet can be filed as a
+      {/* Printing ignores these. They exist so the sheet can be filed as a
           product, which is why they sit apart from the label fields above.
           There is no supplier field: this workshop sews to order, so the
-          customer on the sheet above IS the counterparty. */}
+          customer on the sheet above IS the counterparty. There is no price
+          field either — the workshop is not selling these over a counter, so a
+          sheet files at 0 and `priceGrossGrosze` stays on the order for the day
+          that changes. */}
       <section className="mb-4 grid gap-3 sm:grid-cols-2">
-        <Field label={copy.price}>
-          <input
-            className={INPUT}
-            data-testid="order-price"
-            inputMode="decimal"
-            value={groszeToText(order.priceGrossGrosze)}
-            onChange={(e) => patch({ priceGrossGrosze: textToGrosze(e.target.value) })}
-            placeholder="129,00"
-          />
-        </Field>
         <Field label={copy.orderDate}>
           <input
             className={INPUT}
