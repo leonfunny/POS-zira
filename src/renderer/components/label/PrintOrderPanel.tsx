@@ -29,9 +29,11 @@ import {
 } from '../../../shared/label-print-order';
 import { PasteProblem, parsePastedGrid } from '../../../shared/order-paste';
 import {
+  CategoryChoice,
   ProductDraftProblem,
   buildProductDraft,
   groszeToText,
+  resolveCategoryForStyle,
   textToGrosze,
   validateProductDraft,
 } from '../../../shared/order-to-product';
@@ -43,6 +45,7 @@ import {
   FABRIC_TAG_EXCLUSIVE_CARE_SYMBOL_GROUPS,
 } from '../../../shared/types';
 import { careSymbolLabel, careSymbolSvg } from '../../../shared/care-symbols';
+import { PACKAGING_STICKER_BARCODE_ENABLED } from '../../../shared/packaging-sticker';
 import { PrintProgress, runPrintPlan } from './print-order-runner';
 import {
   PrintProgressRecord,
@@ -135,6 +138,8 @@ interface Copy {
   problem: Record<OrderProblem, string>;
   price: string;
   orderDate: string;
+  category: string;
+  categoryNone: string;
   fileProduct: string;
   filing: string;
   filed: (variants: number) => string;
@@ -227,6 +232,8 @@ const COPY: Record<string, Copy> = {
     },
     price: 'Giá bán (zł)',
     orderDate: 'Ngày đơn',
+    category: 'Danh mục',
+    categoryNone: 'Không khớp danh mục nào — sẽ không hiện ở tab tem',
     fileProduct: 'Lưu thành sản phẩm',
     filing: 'Đang lưu…',
     filed: (variants) => `Đã lưu — ${variants} biến thể`,
@@ -322,6 +329,8 @@ const COPY: Record<string, Copy> = {
     },
     price: 'Cena brutto (zł)',
     orderDate: 'Data zlecenia',
+    category: 'Kategoria',
+    categoryNone: 'Brak pasującej kategorii — nie pojawi się w zakładce etykiet',
     fileProduct: 'Zapisz jako produkt',
     filing: 'Zapisywanie…',
     filed: (variants) => `Zapisano — ${variants} wariantów`,
@@ -417,6 +426,8 @@ const COPY: Record<string, Copy> = {
     },
     price: 'Gross price (zł)',
     orderDate: 'Order date',
+    category: 'Category',
+    categoryNone: 'No category matches — it will not show in the label tab',
     fileProduct: 'Save as product',
     filing: 'Saving…',
     filed: (variants) => `Saved — ${variants} variants`,
@@ -435,6 +446,11 @@ interface Props {
   language: string;
   active: boolean;
   onPrintingChange?: (printing: boolean) => void;
+  /**
+   * The salon's categories, already loaded by the parent for the label list.
+   * Passed in rather than fetched again so both tabs read the same rows.
+   */
+  categories?: readonly CategoryChoice[];
 }
 
 let idCounter = 0;
@@ -443,7 +459,12 @@ function nextId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${idCounter}`;
 }
 
-export default function PrintOrderPanel({ language, active, onPrintingChange }: Props) {
+export default function PrintOrderPanel({
+  language,
+  active,
+  onPrintingChange,
+  categories = [],
+}: Props) {
   const copy = COPY[language] || COPY.vi;
   const dateLocale = language === 'pl' ? 'pl-PL' : language === 'en' ? 'en-GB' : 'vi-VN';
 
@@ -523,6 +544,13 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
   const productProblems = useMemo(
     () => validateProductDraft(order, productDraft),
     [order, productDraft],
+  );
+  // Filed without a category the product never reaches the label tab, so the
+  // resolved one is shown next to the button rather than left to be discovered
+  // as an empty list days later.
+  const productCategory = useMemo(
+    () => resolveCategoryForStyle(order.styleName, categories),
+    [categories, order.styleName],
   );
   const plan = useMemo(() => buildPrintPlan(order), [order]);
   const composition = compositionText(order.materials);
@@ -784,11 +812,17 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
         sku: productDraft.sku,
         priceGrossGrosze: productDraft.priceGrossGrosze,
         vatRate: 23,
+        categoryId: productCategory?.id ?? null,
         idempotencyKey: fileKeyRef.current,
         variants: productDraft.variants.map((variant) => ({
           colorName: variant.colorName,
           sizeName: variant.sizeName,
           sku: variant.sku,
+          // The label tab prints whatever `barcode ?? ean` holds and refuses a
+          // product with neither. The SKU is already unique per cell and reads
+          // as the goods themselves - 115-CZARNY-S - so it is the barcode too
+          // rather than a second, meaningless number to keep in step.
+          barcode: variant.sku,
           initialStockQty: variant.initialStockQty,
         })),
       });
@@ -995,6 +1029,14 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
             value={order.orderDate ?? ''}
             onChange={(e) => patch({ orderDate: e.target.value })}
           />
+        </Field>
+        <Field label={copy.category}>
+          <p
+            className={`text-sm ${productCategory ? 'font-semibold text-slate-700' : 'text-amber-700'}`}
+            data-testid="order-category"
+          >
+            {productCategory ? productCategory.name : copy.categoryNone}
+          </p>
         </Field>
       </section>
 
@@ -1351,7 +1393,9 @@ export default function PrintOrderPanel({ language, active, onPrintingChange }: 
                       placeholder="SP006290"
                       aria-label={copy.code}
                     />
-                    {order.printStickers && !row.code.trim() && (
+                    {PACKAGING_STICKER_BARCODE_ENABLED
+                      && order.printStickers
+                      && !row.code.trim() && (
                       <p className="mt-0.5 text-[11px] font-bold text-amber-700">
                         {copy.missingCode}
                       </p>

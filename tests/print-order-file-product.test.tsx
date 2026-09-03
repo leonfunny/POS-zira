@@ -102,10 +102,23 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
     vi.unstubAllGlobals();
   });
 
-  async function render() {
+  /** The label tab's categories, as `LabelModule` passes them down. */
+  const CATEGORIES = [
+    { id: 'cat-jackets', name: 'Kurtki' },
+    { id: 'cat-tracksuits', name: 'KOMPLETY DRESOWE' },
+  ];
+
+  async function render(categories: { id: string; name: string }[] = []) {
     await act(async () => {
       root = createRoot(container);
-      root.render(<PrintOrderPanel language="en" active onPrintingChange={() => {}} />);
+      root.render(
+        <PrintOrderPanel
+          language="en"
+          active
+          onPrintingChange={() => {}}
+          categories={categories}
+        />,
+      );
     });
     await settle();
   }
@@ -153,10 +166,61 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
     const payload = createProduct.mock.calls[0][0];
     expect(payload.name).toBe('KURTKA');
     expect(payload.variants).toEqual([
-      { colorName: 'BEŻOWY', sizeName: 'S', sku: 'LOT114-BEZOWY-S', initialStockQty: 4 },
-      { colorName: 'BEŻOWY', sizeName: 'M', sku: 'LOT114-BEZOWY-M', initialStockQty: 6 },
-      { colorName: 'CZARNY', sizeName: 'S', sku: 'LOT114-CZARNY-S', initialStockQty: 3 },
+      {
+        colorName: 'BEŻOWY',
+        sizeName: 'S',
+        sku: 'LOT114-BEZOWY-S',
+        barcode: 'LOT114-BEZOWY-S',
+        initialStockQty: 4,
+      },
+      {
+        colorName: 'BEŻOWY',
+        sizeName: 'M',
+        sku: 'LOT114-BEZOWY-M',
+        barcode: 'LOT114-BEZOWY-M',
+        initialStockQty: 6,
+      },
+      {
+        colorName: 'CZARNY',
+        sizeName: 'S',
+        sku: 'LOT114-CZARNY-S',
+        barcode: 'LOT114-CZARNY-S',
+        initialStockQty: 3,
+      },
     ]);
+  });
+
+  // Without a category the filed product never reaches the label tab, and
+  // without a barcode the tab refuses to print it — the two reasons the first
+  // real sheet went in and came out invisible.
+  it('files the sheet into the category its style belongs to', async () => {
+    await render(CATEGORIES);
+    await fillGrid();
+    await act(async () => fileButton().click());
+    await settle();
+
+    expect(createProduct.mock.calls[0][0].categoryId).toBe('cat-jackets');
+  });
+
+  it('shows the resolved category before the sheet is filed', async () => {
+    await render(CATEGORIES);
+    await fillGrid();
+
+    expect(
+      container.querySelector('[data-testid="order-category"]')?.textContent,
+    ).toBe('Kurtki');
+  });
+
+  it('warns instead of guessing when no category carries the style name', async () => {
+    await render([{ id: 'cat-other', name: 'Spodnie' }]);
+    await fillGrid();
+    await act(async () => fileButton().click());
+    await settle();
+
+    expect(
+      container.querySelector('[data-testid="order-category"]')?.textContent,
+    ).toContain('No category matches');
+    expect(createProduct.mock.calls[0][0].categoryId).toBeNull();
   });
 
   it('sends the price the shop typed in Polish notation', async () => {

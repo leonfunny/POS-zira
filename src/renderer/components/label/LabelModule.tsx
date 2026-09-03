@@ -905,6 +905,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
             language={language}
             active={labelMode === 'order'}
             onPrintingChange={handleOrderPrintingChange}
+            categories={categories}
           />
         </div>
         <div

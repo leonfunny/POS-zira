@@ -29,6 +29,52 @@ export type ProductDraftProblem =
   | 'ALREADY_FILED'
   | 'TOO_MANY_VARIANTS';
 
+/**
+ * The styles this workshop makes map one-to-one onto the categories its label
+ * tab is configured to show. Without a category the filed product is invisible
+ * there — `LabelModule` lists a product only when its category is configured or
+ * the product is pinned — so the style the operator already picked is what
+ * chooses the category, rather than asking them the same thing twice.
+ *
+ * Written as names, not ids: ids differ per salon, names are what the operator
+ * sees. A category renamed in the dashboard stops matching, which is why the
+ * panel shows the resolved category instead of filing silently without one.
+ */
+const STYLE_CATEGORY_NAMES: Record<string, string> = {
+  KURTKA: 'Kurtki',
+  BAWEŁNIANE: 'Bawełniane',
+  'KOMPLET DRESOWY': 'Komplety dresowe',
+};
+
+/**
+ * Compares category names the way a person would: case, spacing and Polish
+ * diacritics are noise here, so `Komplety dresowe` and `KOMPLETY DRESOWE` are
+ * the same category. `skuToken` already folds exactly that, with a length big
+ * enough that no real category name is cut short.
+ */
+function foldName(value: string): string {
+  return skuToken(value, 200);
+}
+
+export interface CategoryChoice {
+  id: string;
+  name: string;
+}
+
+/**
+ * The category a sheet's style belongs to, or null when the style is one of the
+ * free-text ones the shop invents and no category carries that name.
+ */
+export function resolveCategoryForStyle(
+  styleName: string,
+  categories: readonly CategoryChoice[],
+): CategoryChoice | null {
+  const wanted = STYLE_CATEGORY_NAMES[cleanText(styleName).toUpperCase()];
+  if (!wanted) return null;
+  const folded = foldName(wanted);
+  return categories.find((category) => foldName(category.name) === folded) ?? null;
+}
+
 /** Matches the server's own ceiling for one create. */
 export const MAX_PRODUCT_VARIANTS = 100;
 

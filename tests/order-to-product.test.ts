@@ -5,6 +5,7 @@ import {
   MAX_PRODUCT_VARIANTS,
   buildProductDraft,
   groszeToText,
+  resolveCategoryForStyle,
   skuToken,
   textToGrosze,
   validateProductDraft,
@@ -262,5 +263,36 @@ describe('validateProductDraft', () => {
     const order = sheet(colours, ['M']);
 
     expect(validateProductDraft(order, buildProductDraft(order))).toEqual([]);
+  });
+});
+
+describe('resolveCategoryForStyle', () => {
+  const CATEGORIES = [
+    { id: 'cat-jackets', name: 'Kurtki' },
+    { id: 'cat-tracksuits', name: 'Komplety dresowe' },
+  ];
+
+  it('matches the style the operator picked to the salon category', () => {
+    expect(resolveCategoryForStyle('KURTKA', CATEGORIES)?.id).toBe('cat-jackets');
+    expect(resolveCategoryForStyle('KOMPLET DRESOWY', CATEGORIES)?.id).toBe(
+      'cat-tracksuits',
+    );
+  });
+
+  it('ignores case, spacing and Polish diacritics in the category name', () => {
+    expect(
+      resolveCategoryForStyle('  kurtka ', [{ id: 'c', name: ' KÓRTKI ' }]),
+    ).toBeNull();
+    expect(
+      resolveCategoryForStyle('kurtka', [{ id: 'c', name: '  kurtki  ' }])?.id,
+    ).toBe('c');
+  });
+
+  it('returns null for a style the shop invented, rather than a wrong category', () => {
+    expect(resolveCategoryForStyle('SUKIENKA', CATEGORIES)).toBeNull();
+  });
+
+  it('returns null when the salon has no category by that name', () => {
+    expect(resolveCategoryForStyle('KURTKA', [{ id: 'c', name: 'Spodnie' }])).toBeNull();
   });
 });
