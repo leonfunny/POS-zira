@@ -6,6 +6,8 @@ import {
   buildAddedVariant,
   buildMissingVariants,
   buildProductDraft,
+  rowBelongsToStyle,
+  styleCodeOfRow,
   groszeToText,
   resolveCategoryForStyle,
   resolveOrderCategory,
@@ -52,6 +54,29 @@ const TWO_BY_TWO = sheet(
   ],
   ['M', 'L'],
 );
+
+describe('styleCodeOfRow / rowBelongsToStyle', () => {
+  // The server keeps no style code for a style filed from the sheet; the
+  // rows' SKUs are all the tab has to recognise it by.
+  it('takes the colour and size tokens back off a row SKU', () => {
+    expect(styleCodeOfRow('115-CZARNY-S', 'CZARNY', 'S')).toBe('115');
+    expect(styleCodeOfRow('LOT114-BEZOWY-M', 'Beżowy', 'M')).toBe('LOT114');
+    expect(styleCodeOfRow('115-CZARNY-S-2', 'CZARNY', 'S')).toBe('115');
+    expect(styleCodeOfRow('MOON-VE114-BEZ', 'beżowy', 'UNI')).toBe('MOON-VE114-BEZ');
+    expect(styleCodeOfRow('115-M', null, 'M')).toBe('115');
+    expect(styleCodeOfRow(null, 'CZARNY', 'S')).toBe('');
+  });
+
+  it('knows which rows were built from a style code, and which merely start alike', () => {
+    expect(rowBelongsToStyle('115-CZARNY-S', '115')).toBe(true);
+    expect(rowBelongsToStyle('115-CZARNY-S', ' 115 ')).toBe(true);
+    expect(rowBelongsToStyle('MOON-VE114-BEZ', 'MOON-VE114')).toBe(true);
+    expect(rowBelongsToStyle('lot114-bezowy-s', 'LOT114')).toBe(true);
+    expect(rowBelongsToStyle('115-CZARNY-S', '11')).toBe(false);
+    expect(rowBelongsToStyle('115-CZARNY-S', '1150')).toBe(false);
+    expect(rowBelongsToStyle('115-CZARNY-S', '')).toBe(false);
+  });
+});
 
 describe('buildProductDraft', () => {
   it('makes one variant per colour and size, with the stock opened at zero', () => {

@@ -16,7 +16,7 @@ import {
   X,
 } from 'lucide-react';
 import { PRODUCT_LABEL_NAME_LOCALE, resolveName } from '../../../shared/catalog-names';
-import { sameStyleCode } from '../../../shared/order-to-product';
+import { rowBelongsToStyle, sameStyleCode, styleCodeOfRow } from '../../../shared/order-to-product';
 import type { AgentConfig, ProductAdminCapabilities } from '../../../shared/types';
 import { useConfig } from '../../hooks/useConfig';
 import { useProducts } from '../../hooks/useProducts';
@@ -510,7 +510,12 @@ export default function LabelModule({ language }: LabelModuleProps) {
       // label leaves the workshop, and the style is written the way the buyer
       // reads it rather than the way the till happens to be set.
       group.name = (template ? resolveName(template, labelLanguage) || template.name : '') || fallback;
-      group.styleCode = String(template?.sku || group.variants[0].sku || '').trim();
+      // A style filed from the sheet has no template row of its own on this
+      // till: its code is what the first row's SKU was built from.
+      const first = group.variants[0];
+      group.styleCode = String(
+        template?.sku || styleCodeOfRow(first.sku, first.color_name, first.size_name) || '',
+      ).trim();
       if (!group.categoryId && template?.category_id) group.categoryId = template.category_id;
     }
     return [...groups.values()].sort((a, b) => a.name.localeCompare(b.name, 'pl'));
@@ -806,7 +811,14 @@ export default function LabelModule({ language }: LabelModuleProps) {
                 : null;
             }}
             styleByCode={(styleCode) => {
-              const group = styleGroups.find((candidate) => sameStyleCode(candidate.styleCode, styleCode));
+              // By the style's own code first, then by any row whose SKU was
+              // built from it: a style whose first row is "115-CZARNY-S-2" or
+              // an imported one whose rows read "MOON-VE114-BEZ" still answers.
+              const group = styleGroups.find(
+                (candidate) =>
+                  sameStyleCode(candidate.styleCode, styleCode)
+                  || candidate.variants.some((row) => rowBelongsToStyle(row.sku, styleCode)),
+              );
               return group
                 ? { id: group.key, name: group.name, categoryId: group.categoryId, variants: group.variants }
                 : null;

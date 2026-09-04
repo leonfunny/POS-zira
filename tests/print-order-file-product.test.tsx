@@ -585,10 +585,10 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
       name: 'KURTKA',
       categoryId: 'cat-jackets',
       variants: [
-        { id: 'variant-0', color_name: 'BEŻOWY', size_name: 'S', sku: 'LOT114-BEZOWY-S' },
-        { id: 'variant-1', color_name: 'BEŻOWY', size_name: 'M', sku: 'LOT114-BEZOWY-M' },
-        { id: 'variant-2', color_name: 'CZARNY', size_name: 'S', sku: 'LOT114-CZARNY-S' },
-        { id: 'variant-3', color_name: 'CZARNY', size_name: 'M', sku: 'LOT114-CZARNY-M' },
+        { id: 'variant-0', color_name: 'BEŻOWY', size_name: 'S', sku: 'LOT114-BEZOWY-S', retail_price: 12900 },
+        { id: 'variant-1', color_name: 'BEŻOWY', size_name: 'M', sku: 'LOT114-BEZOWY-M', retail_price: 12900 },
+        { id: 'variant-2', color_name: 'CZARNY', size_name: 'S', sku: 'LOT114-CZARNY-S', retail_price: 12900 },
+        { id: 'variant-3', color_name: 'CZARNY', size_name: 'M', sku: 'LOT114-CZARNY-M', retail_price: 12900 },
       ],
     };
 
@@ -641,6 +641,38 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
       expect(fileResult()).toContain('Product updated');
     });
 
+    it('brings the rows the product already had to the price now on the sheet', async () => {
+      await fileSheet();
+      styleById.mockReturnValue({
+        ...STYLE,
+        variants: STYLE.variants.map((row, index) => ({ ...row, retail_price: index === 0 ? 12900 : 9900 })),
+      });
+      await act(async () => updateButton().click());
+      await settle();
+
+      expect(updateVariant.mock.calls).toEqual([
+        ['variant-1', { priceGrossGrosze: 12900 }],
+        ['variant-2', { priceGrossGrosze: 12900 }],
+        ['variant-3', { priceGrossGrosze: 12900 }],
+      ]);
+      expect(fileResult()).toContain('3 existing rows');
+    });
+
+    it('stops and says so when an old row will not take the price', async () => {
+      await fileSheet();
+      styleById.mockReturnValue({
+        ...STYLE,
+        variants: STYLE.variants.map((row) => ({ ...row, retail_price: 9900 })),
+      });
+      updateVariant.mockResolvedValueOnce({ ok: false, error: 'stale' });
+      await act(async () => updateButton().click());
+      await settle();
+
+      expect(updateVariant).toHaveBeenCalledTimes(1);
+      expect(fileResult()).toContain('stale');
+      expect(uploadMainImage).not.toHaveBeenCalled();
+    });
+
     it('moves the product when the sheet picked another category', async () => {
       await fileSheet();
       await pickCategory('cat-tracksuits');
@@ -689,7 +721,7 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
         id: 'template-9',
         name: 'KURTKA STARA',
         categoryId: 'cat-tracksuits',
-        variants: [{ id: 'old-0', color_name: 'BEŻOWY', size_name: 'S', sku: 'LOT114-BEZOWY-S' }],
+        variants: [{ id: 'old-0', color_name: 'BEŻOWY', size_name: 'S', sku: 'LOT114-BEZOWY-S', retail_price: 100 }],
       };
 
       const attachButton = () =>
@@ -730,8 +762,9 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
         expect(payload.variants.map((v: any) => `${v.colorName} ${v.sizeName}`)).toEqual([
           'BEŻOWY M', 'CZARNY S', 'CZARNY M',
         ]);
-        // The style keeps its category; the sheet takes it over.
-        expect(updateVariant).not.toHaveBeenCalled();
+        // The style keeps its category; the sheet takes it over. Its one old
+        // row, filed at 1 zł, is brought to the sheet's price.
+        expect(updateVariant.mock.calls).toEqual([['old-0', { priceGrossGrosze: 12900 }]]);
         expect(onProductFiled).toHaveBeenLastCalledWith({ categoryId: 'cat-tracksuits' });
         expect(categorySelect().value).toBe('cat-tracksuits');
         expect(attachButton()).toBeNull();

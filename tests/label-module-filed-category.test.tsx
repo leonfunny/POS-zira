@@ -227,6 +227,31 @@ describe('LabelModule — a filed sheet reaches the product tab', () => {
     expect(createProduct.mock.calls[0][0].variants.map((v: any) => v.colorName)).toEqual(['CZARNY']);
   });
 
+  it('recognises a style filed from this sheet by its rows alone, with no template row on the till', async () => {
+    // What the server actually gives a POS-filed style: rows named after the
+    // style, SKUs built from its code, and no row for the template itself.
+    harness.products = [
+      {
+        id: 'row-0', template_id: 'template-115', name: 'KOMPLET DRESOWY - CZARNY / S',
+        sku: '115-CZARNY-S', barcode: '115-CZARNY-S', category_id: 'cat-old',
+        color_name: 'CZARNY', size_name: 'S', retail_price: 100,
+      },
+    ];
+    (window as any).electronAPI.pos.products.getByIds = vi.fn(async () => []);
+    await renderModule();
+    await fillSheet('KOMPLET DRESOWY');
+    await changeInput(input(container, 'input[placeholder="114"]'), '115');
+
+    const attach = container.querySelector<HTMLButtonElement>('[data-testid="attach-product"]');
+    expect(attach?.textContent).toContain('KOMPLET DRESOWY');
+    expect(container.querySelector('[data-testid="file-product"]')).toBeNull();
+
+    // A code that merely starts the same is a different style.
+    await changeInput(input(container, 'input[placeholder="114"]'), '11');
+    expect(container.querySelector('[data-testid="attach-product"]')).toBeNull();
+    expect(container.querySelector('[data-testid="file-product"]')).not.toBeNull();
+  });
+
   it('reloads the category list after one is created from the sheet', async () => {
     await renderModule();
     await fillSheet('SPODNIE');

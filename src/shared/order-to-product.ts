@@ -331,6 +331,42 @@ export interface ExistingVariant {
   color_name?: string | null;
   size_name?: string | null;
   sku?: string | null;
+  /** Grosze, as the local catalogue stores it. */
+  retail_price?: number | null;
+}
+
+/**
+ * The style code a row's SKU was built from, by taking the colour and size
+ * tokens back off: "115-CZARNY-S" with CZARNY / S gives "115". The server
+ * keeps no style code of its own for a style filed from the sheet — only the
+ * rows carry SKUs — so this is the only way the tab can show the code the
+ * operator typed, or tell a sheet that it is that style.
+ */
+export function styleCodeOfRow(
+  sku: string | null | undefined,
+  colorName: string | null | undefined,
+  sizeName: string | null | undefined,
+): string {
+  let code = cleanText(sku).toUpperCase();
+  // A row that was the second of its cell carries "-2" after the size.
+  code = code.replace(/-\d+$/, (suffix) => (code.endsWith(suffix) && /-[A-Z]/.test(code) ? '' : suffix));
+  for (const part of [sizeName, colorName]) {
+    const token = part ? skuToken(part) : '';
+    if (token && code.endsWith(`-${token}`)) code = code.slice(0, -token.length - 1);
+  }
+  return code;
+}
+
+/**
+ * Whether a row's SKU was built from this style code: "115-CZARNY-S" belongs
+ * to "115" and to "115 " typed with a space, not to "11" or "1150".
+ */
+export function rowBelongsToStyle(sku: string | null | undefined, styleCode: string): boolean {
+  const code = cleanText(sku).toUpperCase();
+  // The sheet builds row SKUs from the folded token ("MOONVE114"); a style
+  // imported from the web keeps the code as typed ("MOON-VE114-BEZ").
+  const bases = [skuToken(cleanText(styleCode), 16), cleanText(styleCode).toUpperCase()].filter(Boolean);
+  return bases.some((base) => code === base || code.startsWith(`${base}-`));
 }
 
 /**

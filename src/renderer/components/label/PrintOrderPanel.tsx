@@ -167,6 +167,8 @@ interface Copy {
   imageClear: string;
   imageBadType: string;
   imageUploaded: (done: number, total: number) => string;
+  priceSynced: (rows: number) => string;
+  priceSyncFailed: (reason: string) => string;
   categoryPick: string;
   createCategory: (name: string) => string;
   creatingCategory: string;
@@ -287,6 +289,8 @@ const COPY: Record<string, Copy> = {
     imageClear: 'Bỏ ảnh',
     imageBadType: 'Chỉ nhận ảnh JPG, PNG hoặc WEBP',
     imageUploaded: (done, total) => (done === total ? ' · đã gắn ảnh' : ` · ảnh gắn được ${done}/${total} dòng`),
+    priceSynced: (rows) => ` · đổi giá ${rows} dòng cũ theo tờ`,
+    priceSyncFailed: (reason) => `Đã thêm dòng nhưng chưa đổi được giá dòng cũ: ${reason}`,
     categoryNone: 'Chưa có nhóm — chọn ở trên hoặc tạo nhóm mới, không thì hàng sẽ không hiện ở tab tem',
     categoryPick: '— Chọn nhóm —',
     createCategory: (name) => `Tạo nhóm “${name}”`,
@@ -416,6 +420,8 @@ const COPY: Record<string, Copy> = {
     imageClear: 'Usuń zdjęcie',
     imageBadType: 'Tylko JPG, PNG lub WEBP',
     imageUploaded: (done, total) => (done === total ? ' · zdjęcie dodane' : ` · zdjęcie dodano do ${done}/${total} wierszy`),
+    priceSynced: (rows) => ` · cena ${rows} starych wierszy zmieniona wg arkusza`,
+    priceSyncFailed: (reason) => `Wiersze dodane, ale cena starych nie zmieniona: ${reason}`,
     categoryNone: 'Brak kategorii — wybierz powyżej lub utwórz nową, inaczej model nie pojawi się w zakładce etykiet',
     categoryPick: '— Wybierz kategorię —',
     createCategory: (name) => `Utwórz kategorię „${name}”`,
@@ -545,6 +551,8 @@ const COPY: Record<string, Copy> = {
     imageClear: 'Remove photo',
     imageBadType: 'JPG, PNG or WEBP only',
     imageUploaded: (done, total) => (done === total ? ' · photo attached' : ` · photo attached to ${done}/${total} rows`),
+    priceSynced: (rows) => ` · price of ${rows} existing rows set from the sheet`,
+    priceSyncFailed: (reason) => `Rows added, but the existing rows kept their price: ${reason}`,
     categoryNone: 'No category — pick one above or create it, or the style will not show in the label tab',
     categoryPick: '— Pick a category —',
     createCategory: (name) => `Create category “${name}”`,
@@ -1091,6 +1099,26 @@ export default function PrintOrderPanel({
         // and its stickers say what the style's category says.
         patch({ productId: templateId, categoryId });
       }
+      // One price for the whole style, the one on the sheet: rows the style
+      // already had are brought to it, so a colour added today does not ring
+      // up at a different number from the colour filed last week.
+      let priceNote = '';
+      const sheetPrice = productDraft.priceGrossGrosze;
+      if (sheetPrice >= 1) {
+        const stale = style.variants.filter(
+          (variant) => Math.floor(Number(variant.retail_price) || 0) !== sheetPrice,
+        );
+        for (const variant of stale) {
+          const priced = await window.electronAPI.pos.productAdmin.updateVariant(variant.id, {
+            priceGrossGrosze: sheetPrice,
+          });
+          if (!priced?.ok) {
+            setFileError(copy.priceSyncFailed(priced?.error || priced?.code || '?'));
+            return;
+          }
+        }
+        if (stale.length > 0) priceNote = copy.priceSynced(stale.length);
+      }
       const tagSaved = await saveFabricTagContent(templateId, order);
       let imageNote = '';
       if (order.imageDataUrl) {
@@ -1107,7 +1135,7 @@ export default function PrintOrderPanel({
         onProductFiled?.({ categoryId });
       }
       const done = mode === 'attach' ? copy.attached(style.name, createdIds.length) : copy.updated(createdIds.length);
-      setFileNotice((tagSaved ? done : copy.filedWithoutTag(createdIds.length)) + imageNote);
+      setFileNotice((tagSaved ? done : copy.filedWithoutTag(createdIds.length)) + priceNote + imageNote);
     } catch (err) {
       setFileError(copy.fileFailed(err instanceof Error ? err.message : String(err)));
     } finally {
