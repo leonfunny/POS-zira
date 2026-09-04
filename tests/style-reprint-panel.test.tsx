@@ -52,6 +52,7 @@ describe('StyleReprintPanel', () => {
   let createProduct: ReturnType<typeof vi.fn>;
   let updateVariant: ReturnType<typeof vi.fn>;
   let deactivateVariant: ReturnType<typeof vi.fn>;
+  let uploadMainImage: ReturnType<typeof vi.fn>;
   let onCatalogChanged: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
@@ -64,6 +65,13 @@ describe('StyleReprintPanel', () => {
     createProduct = vi.fn(async () => ({ ok: true, data: { variants: [{ id: 'v-new' }] } }));
     updateVariant = vi.fn(async () => ({ ok: true, data: { variant: { id: 'v1' } } }));
     deactivateVariant = vi.fn(async () => ({ ok: true, data: { variant: { id: 'v1' } } }));
+    uploadMainImage = vi.fn(async () => ({ ok: true, data: {} }));
+    vi.stubGlobal('Image', class {
+      onerror: (() => void) | null = null;
+      set src(_value: string) {
+        queueMicrotask(() => this.onerror?.());
+      }
+    });
     onCatalogChanged = vi.fn(async () => undefined);
     Object.defineProperty(window, 'electronAPI', {
       configurable: true,
@@ -73,7 +81,7 @@ describe('StyleReprintPanel', () => {
         printFabricTag,
         pos: {
           fabricTagTemplates: { get: getTemplate, save: saveTemplate },
-          productAdmin: { createProduct, updateVariant, deactivateVariant },
+          productAdmin: { createProduct, updateVariant, deactivateVariant, uploadMainImage },
         },
       },
     });
@@ -560,6 +568,73 @@ describe('StyleReprintPanel', () => {
       expect(onCatalogChanged).not.toHaveBeenCalled();
       expect(hideButtons()).toHaveLength(2);
       expect(container.querySelector('[data-testid="hide-confirm"]')).not.toBeNull();
+    });
+  });
+
+  describe('the style photo', () => {
+    async function pickPhoto(name = 'moon.jpg', type = 'image/jpeg') {
+      const file = new File(['abc'], name, { type });
+      const picker = container.querySelector<HTMLInputElement>('[data-testid="style-image"]')!;
+      Object.defineProperty(picker, 'files', { value: [file], configurable: true });
+      await act(async () => {
+        picker.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      // The file is read off the event loop, not the microtask queue.
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+      await settle();
+    }
+
+    it('shows the picture a row already carries', async () => {
+      await render({
+        variants: [{ ...VARIANTS[0], thumbnail_url: 'https://img/thumb.jpg' }, VARIANTS[1]],
+      });
+      expect(
+        container.querySelector<HTMLImageElement>('[data-testid="style-image-preview"]')?.src,
+      ).toBe('https://img/thumb.jpg');
+    });
+
+    it('puts a picked photo on every row and pulls the catalogue', async () => {
+      await render();
+      expect(container.querySelector('[data-testid="style-image-preview"]')).toBeNull();
+      await pickPhoto();
+
+      expect(uploadMainImage).toHaveBeenCalledTimes(3);
+      expect(new Set(uploadMainImage.mock.calls.map((call) => call[0]))).toEqual(
+        new Set(['v1', 'v2', 'v3']),
+      );
+      expect(uploadMainImage.mock.calls[0][1]).toMatchObject({ dataUrl: 'data:image/jpeg;base64,YWJj' });
+      expect(onCatalogChanged).toHaveBeenCalledTimes(1);
+      expect(statusText()).toContain('Photo set');
+    });
+
+    it('says how many rows took the photo when one refuses it', async () => {
+      uploadMainImage.mockImplementation(async (variantId: string) =>
+        variantId === 'v2' ? { ok: false, error: 'stale' } : { ok: true, data: {} },
+      );
+      await render();
+      await pickPhoto();
+
+      expect(statusText()).toContain('2/3');
+      expect(onCatalogChanged).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports a photo no row would take, and pulls nothing', async () => {
+      uploadMainImage.mockResolvedValue({ ok: false, error: 'offline' });
+      await render();
+      await pickPhoto();
+
+      expect(statusText()).toContain('Could not attach');
+      expect(onCatalogChanged).not.toHaveBeenCalled();
+    });
+
+    it('refuses a file that is not a picture before uploading anything', async () => {
+      await render();
+      await pickPhoto('sheet.pdf', 'application/pdf');
+
+      expect(uploadMainImage).not.toHaveBeenCalled();
+      expect(statusText()).toContain('JPG');
     });
   });
 });

@@ -76,6 +76,7 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
   let root: Root | null = null;
   let createProduct: ReturnType<typeof vi.fn>;
   let createCategory: ReturnType<typeof vi.fn>;
+  let uploadMainImage: ReturnType<typeof vi.fn>;
   let saveFabricTagTemplate: ReturnType<typeof vi.fn>;
   let onCategoriesChanged: ReturnType<typeof vi.fn>;
   let onProductFiled: ReturnType<typeof vi.fn>;
@@ -90,6 +91,14 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
       data: { category: { id: 'cat-new', name, isActive: true } },
     }));
     saveFabricTagTemplate = vi.fn(async (template: any) => template);
+    uploadMainImage = vi.fn(async () => ({ ok: true, data: {} }));
+    // No decoder in the harness: the picture is sent as it was picked.
+    vi.stubGlobal('Image', class {
+      onerror: (() => void) | null = null;
+      set src(_value: string) {
+        queueMicrotask(() => this.onerror?.());
+      }
+    });
     onCategoriesChanged = vi.fn(async () => {});
     onProductFiled = vi.fn();
     Object.defineProperty(window, 'electronAPI', {
@@ -99,7 +108,7 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
         printPackagingSticker: vi.fn(async () => ({ success: true })),
         printFabricTag: vi.fn(async () => ({ success: true })),
         pos: {
-          productAdmin: { createProduct, createCategory },
+          productAdmin: { createProduct, createCategory, uploadMainImage },
           fabricTagTemplates: { save: saveFabricTagTemplate },
         },
       },
@@ -349,6 +358,84 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
     // the honest one rather than something inferred.
     expect(container.querySelector('[data-testid="order-price"]')).toBeNull();
     expect(createProduct.mock.calls[0][0].priceGrossGrosze).toBe(0);
+  });
+
+  async function pickPhoto(name = 'moon.jpg', type = 'image/jpeg') {
+    const file = new File(['abc'], name, { type });
+    const picker = container.querySelector<HTMLInputElement>('[data-testid="order-image"]')!;
+    Object.defineProperty(picker, 'files', { value: [file], configurable: true });
+    await act(async () => {
+      picker.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    // The file is read off the event loop, not the microtask queue.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    await settle();
+  }
+
+  it('keeps a picked photo on the sheet and puts it on every row it files', async () => {
+    await render();
+    await fillGrid();
+    await pickPhoto();
+    expect(container.querySelector('[data-testid="order-image-preview"]')).not.toBeNull();
+
+    await act(async () => fileButton().click());
+    await settle();
+
+    expect(uploadMainImage).toHaveBeenCalledTimes(2);
+    expect(uploadMainImage.mock.calls.map((call) => call[0])).toEqual(['variant-0', 'variant-1']);
+    expect(uploadMainImage.mock.calls[0][1]).toMatchObject({
+      dataUrl: 'data:image/jpeg;base64,YWJj',
+      mimeType: 'image/jpeg',
+    });
+    expect(fileResult()).toContain('photo attached');
+  });
+
+  it('says how many rows got the photo when some refuse it', async () => {
+    uploadMainImage.mockImplementation(async (variantId: string) =>
+      variantId === 'variant-1' ? { ok: false, error: 'stale' } : { ok: true, data: {} },
+    );
+    await render();
+    await fillGrid();
+    await pickPhoto();
+    await act(async () => fileButton().click());
+    await settle();
+
+    expect(fileResult()).toContain('1/2');
+  });
+
+  it('files without a photo when none was picked, and uploads nothing', async () => {
+    await render();
+    await fillGrid();
+    await act(async () => fileButton().click());
+    await settle();
+
+    expect(uploadMainImage).not.toHaveBeenCalled();
+    expect(fileResult()).not.toContain('photo');
+  });
+
+  it('refuses a file that is not a picture and keeps the sheet as it was', async () => {
+    await render();
+    await fillGrid();
+    await pickPhoto('sheet.pdf', 'application/pdf');
+
+    expect(container.querySelector('[data-testid="order-image-preview"]')).toBeNull();
+    expect(container.querySelector('[data-testid="order-image-error"]')?.textContent).toContain('JPG');
+  });
+
+  it('lets the photo be taken off the sheet again', async () => {
+    await render();
+    await fillGrid();
+    await pickPhoto();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="order-image-clear"]')!.click();
+    });
+
+    expect(container.querySelector('[data-testid="order-image-preview"]')).toBeNull();
+    await act(async () => fileButton().click());
+    await settle();
+    expect(uploadMainImage).not.toHaveBeenCalled();
   });
 
   it('reports how many rows were created', async () => {

@@ -51,6 +51,12 @@ import {
 import { careSymbolLabel, careSymbolSvg } from '../../../shared/care-symbols';
 import { PrintProgress, runPrintPlan } from './print-order-runner';
 import {
+  IMAGE_ACCEPT,
+  SHEET_IMAGE_MAX_PX,
+  readImageFile,
+  uploadImageToVariants,
+} from './image-file';
+import {
   PrintProgressRecord,
   SavedPrintOrder,
   clearDraft,
@@ -144,6 +150,12 @@ interface Copy {
   orderDate: string;
   category: string;
   categoryNone: string;
+  image: string;
+  imagePick: string;
+  imageChange: string;
+  imageClear: string;
+  imageBadType: string;
+  imageUploaded: (done: number, total: number) => string;
   categoryPick: string;
   createCategory: (name: string) => string;
   creatingCategory: string;
@@ -245,6 +257,12 @@ const COPY: Record<string, Copy> = {
     },
     orderDate: 'Ngày đơn',
     category: 'Danh mục',
+    image: 'Ảnh hàng',
+    imagePick: 'Chọn ảnh',
+    imageChange: 'Đổi ảnh',
+    imageClear: 'Bỏ ảnh',
+    imageBadType: 'Chỉ nhận ảnh JPG, PNG hoặc WEBP',
+    imageUploaded: (done, total) => (done === total ? ' · đã gắn ảnh' : ` · ảnh gắn được ${done}/${total} dòng`),
     categoryNone: 'Chưa có nhóm — chọn ở trên hoặc tạo nhóm mới, không thì hàng sẽ không hiện ở tab tem',
     categoryPick: '— Chọn nhóm —',
     createCategory: (name) => `Tạo nhóm “${name}”`,
@@ -353,6 +371,12 @@ const COPY: Record<string, Copy> = {
     },
     orderDate: 'Data zlecenia',
     category: 'Kategoria',
+    image: 'Zdjęcie',
+    imagePick: 'Wybierz zdjęcie',
+    imageChange: 'Zmień zdjęcie',
+    imageClear: 'Usuń zdjęcie',
+    imageBadType: 'Tylko JPG, PNG lub WEBP',
+    imageUploaded: (done, total) => (done === total ? ' · zdjęcie dodane' : ` · zdjęcie dodano do ${done}/${total} wierszy`),
     categoryNone: 'Brak kategorii — wybierz powyżej lub utwórz nową, inaczej model nie pojawi się w zakładce etykiet',
     categoryPick: '— Wybierz kategorię —',
     createCategory: (name) => `Utwórz kategorię „${name}”`,
@@ -461,6 +485,12 @@ const COPY: Record<string, Copy> = {
     },
     orderDate: 'Order date',
     category: 'Category',
+    image: 'Photo',
+    imagePick: 'Pick a photo',
+    imageChange: 'Change photo',
+    imageClear: 'Remove photo',
+    imageBadType: 'JPG, PNG or WEBP only',
+    imageUploaded: (done, total) => (done === total ? ' · photo attached' : ` · photo attached to ${done}/${total} rows`),
     categoryNone: 'No category — pick one above or create it, or the style will not show in the label tab',
     categoryPick: '— Pick a category —',
     createCategory: (name) => `Create category “${name}”`,
@@ -593,6 +623,8 @@ export default function PrintOrderPanel({
    */
   const [createdCategories, setCreatedCategories] = useState<CategoryChoice[]>([]);
   const [creatingCategory, setCreatingCategory] = useState(false);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const printInFlight = useRef(false);
@@ -917,6 +949,17 @@ export default function PrintOrderPanel({
     setSavedNotice(true);
   };
 
+  const handlePickImage = async (file: File | undefined) => {
+    if (!file) return;
+    const picked = await readImageFile(file, SHEET_IMAGE_MAX_PX);
+    if (!picked) {
+      setImageError(copy.imageBadType);
+      return;
+    }
+    setImageError(null);
+    patch({ imageDataUrl: picked.dataUrl });
+  };
+
   /**
    * File the sheet as a catalogue product: one template, one variant per filled
    * cell. The sheet keeps the product id afterwards so a second press cannot
@@ -972,7 +1015,19 @@ export default function PrintOrderPanel({
       // first style filed here. A failure to save it must not undo a product
       // that the server has already created, so it is reported, not thrown.
       const tagSaved = await saveFabricTagContent(templateId, order);
-      setFileNotice(tagSaved ? copy.filed(created.length) : copy.filedWithoutTag(created.length));
+      // The photo goes on every row that was just made, so the product tab
+      // shows it whichever colour it opens. Reported, not thrown, like the tag.
+      let imageNote = '';
+      if (order.imageDataUrl) {
+        const outcome = await uploadImageToVariants(
+          created.map((variant: { id: string }) => variant.id),
+          { dataUrl: order.imageDataUrl, fileName: 'sheet.jpg', mimeType: 'image/jpeg' },
+        );
+        imageNote = copy.imageUploaded(outcome.uploaded.length, created.length);
+      }
+      setFileNotice(
+        (tagSaved ? copy.filed(created.length) : copy.filedWithoutTag(created.length)) + imageNote,
+      );
     } catch (err) {
       setFileError(copy.fileFailed(err instanceof Error ? err.message : String(err)));
     } finally {
@@ -1149,7 +1204,53 @@ export default function PrintOrderPanel({
           field either — the workshop is not selling these over a counter, so a
           sheet files at 0 and `priceGrossGrosze` stays on the order for the day
           that changes. */}
-      <section className="mb-4 grid gap-3 sm:grid-cols-2">
+      <section className="mb-4 grid gap-3 sm:grid-cols-3">
+        <Field label={copy.image}>
+          <div className="flex items-center gap-2">
+            {order.imageDataUrl && (
+              <img
+                src={order.imageDataUrl}
+                alt=""
+                data-testid="order-image-preview"
+                className="h-10 w-10 rounded-md border border-slate-200 object-cover"
+              />
+            )}
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept={IMAGE_ACCEPT}
+              data-testid="order-image"
+              className="hidden"
+              onChange={(e) => {
+                void handlePickImage(e.target.files?.[0]);
+                e.target.value = '';
+              }}
+            />
+            <button
+              type="button"
+              data-testid="order-image-pick"
+              onClick={() => imageInputRef.current?.click()}
+              className="min-h-9 rounded border border-slate-300 px-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+            >
+              {order.imageDataUrl ? copy.imageChange : copy.imagePick}
+            </button>
+            {order.imageDataUrl && (
+              <button
+                type="button"
+                data-testid="order-image-clear"
+                onClick={() => patch({ imageDataUrl: null })}
+                className="min-h-9 rounded border border-slate-200 px-2 text-xs font-bold text-slate-500 hover:text-red-600"
+              >
+                {copy.imageClear}
+              </button>
+            )}
+          </div>
+          {imageError && (
+            <p className="mt-1 text-[11px] font-bold text-red-700" data-testid="order-image-error">
+              {imageError}
+            </p>
+          )}
+        </Field>
         <Field label={copy.orderDate}>
           <input
             className={INPUT}

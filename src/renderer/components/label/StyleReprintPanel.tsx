@@ -35,6 +35,12 @@ import type { FabricTagTemplate } from '../../../shared/types';
 import { PrintProgress, runPrintPlan } from './print-order-runner';
 import FabricTagFields, { type FabricTagContent } from './FabricTagFields';
 import rlog from '../../utils/logger';
+import {
+  CATALOG_IMAGE_MAX_PX,
+  IMAGE_ACCEPT,
+  readImageFile,
+  uploadImageToVariants,
+} from './image-file';
 
 /** One catalogue row of the style, as the label tab holds it. */
 export interface StyleVariant {
@@ -45,6 +51,8 @@ export interface StyleVariant {
   size_name?: string | null;
   /** Grosze, as the local catalogue stores it. A new row of the style copies it. */
   retail_price?: number | null;
+  image_url?: string | null;
+  thumbnail_url?: string | null;
 }
 
 interface Props {
@@ -98,6 +106,13 @@ interface Copy {
   tagCompositionKept: (line: string) => string;
   addTitle: string;
   profileTitle: string;
+  image: string;
+  imagePick: string;
+  imageChange: string;
+  imageBadType: string;
+  imageUploading: (done: number, total: number) => string;
+  imageDone: (done: number, total: number) => string;
+  imageFailed: string;
   profileName: string;
   profileNameHint: string;
   profileCode: string;
@@ -152,6 +167,13 @@ const COPY: Record<string, Copy> = {
     tagCompositionKept: (line) => `Giữ nguyên dòng chất liệu đã lưu: ${line}`,
     addTitle: 'Thêm màu / size',
     profileTitle: 'Hồ sơ kiểu',
+    image: 'Ảnh',
+    imagePick: 'Đặt ảnh',
+    imageChange: 'Đổi ảnh',
+    imageBadType: 'Chỉ nhận ảnh JPG, PNG hoặc WEBP',
+    imageUploading: (done, total) => `Đang gắn ảnh… ${done}/${total}`,
+    imageDone: (done, total) => (done === total ? 'Đã gắn ảnh cho kiểu' : `Ảnh gắn được ${done}/${total} dòng`),
+    imageFailed: 'Không gắn được ảnh',
     profileName: 'Tên hàng',
     profileNameHint: 'Đổi tên trên bảng điều khiển web — tên các dòng màu đi theo tên kiểu',
     profileCode: 'Mã hàng',
@@ -212,6 +234,13 @@ const COPY: Record<string, Copy> = {
     tagCompositionKept: (line) => `Zapisany skład pozostaje bez zmian: ${line}`,
     addTitle: 'Dodaj kolor / rozmiar',
     profileTitle: 'Karta modelu',
+    image: 'Zdjęcie',
+    imagePick: 'Dodaj zdjęcie',
+    imageChange: 'Zmień zdjęcie',
+    imageBadType: 'Tylko JPG, PNG lub WEBP',
+    imageUploading: (done, total) => `Wysyłanie zdjęcia… ${done}/${total}`,
+    imageDone: (done, total) => (done === total ? 'Zdjęcie dodane do modelu' : `Zdjęcie dodano do ${done}/${total} wierszy`),
+    imageFailed: 'Nie udało się dodać zdjęcia',
     profileName: 'Nazwa modelu',
     profileNameHint: 'Nazwę zmienia się w panelu web — nazwy kolorów idą za nazwą modelu',
     profileCode: 'Kod modelu',
@@ -272,6 +301,13 @@ const COPY: Record<string, Copy> = {
     tagCompositionKept: (line) => `Keeping the stored composition line: ${line}`,
     addTitle: 'Add a colour or size',
     profileTitle: 'Style profile',
+    image: 'Photo',
+    imagePick: 'Set photo',
+    imageChange: 'Change photo',
+    imageBadType: 'JPG, PNG or WEBP only',
+    imageUploading: (done, total) => `Attaching photo… ${done}/${total}`,
+    imageDone: (done, total) => (done === total ? 'Photo set on the style' : `Photo attached to ${done}/${total} rows`),
+    imageFailed: 'Could not attach the photo',
     profileName: 'Style name',
     profileNameHint: 'Rename on the web dashboard — the colour rows follow the style name',
     profileCode: 'Style code',
@@ -440,6 +476,39 @@ export default function StyleReprintPanel({
   /** The row whose Hide button was pressed once; the second press is the act. */
   const [hideArmedId, setHideArmedId] = useState<string | null>(null);
   const [hiding, setHiding] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  /** The picture the tab shows for this style: whichever row carries one. */
+  const styleImage = rows.map((row) => row.thumbnail_url || row.image_url).find(Boolean) ?? null;
+
+  /**
+   * One picture for the whole style, put on every row, because the tab reads
+   * the picture off the row it happens to be showing.
+   */
+  const handlePickImage = async (file: File | undefined) => {
+    if (!file || uploadingImage) return;
+    const picked = await readImageFile(file, CATALOG_IMAGE_MAX_PX);
+    if (!picked) {
+      setStatus({ type: 'error', message: copy.imageBadType });
+      return;
+    }
+    setUploadingImage(true);
+    setStatus({ type: 'printing', message: copy.imageUploading(0, rows.length) });
+    try {
+      const outcome = await uploadImageToVariants(rows.map((row) => row.id), picked);
+      if (outcome.uploaded.length === 0) {
+        setStatus({ type: 'error', message: copy.imageFailed });
+        return;
+      }
+      setStatus({
+        type: outcome.failed.length === 0 ? 'success' : 'warning',
+        message: copy.imageDone(outcome.uploaded.length, rows.length),
+      });
+      await onCatalogChanged?.();
+    } finally {
+      setUploadingImage(false);
+    }
+  };
 
   useEffect(() => {
     setHideArmedId(null);
@@ -838,6 +907,37 @@ export default function StyleReprintPanel({
           {copy.profileTitle}
         </div>
         <dl className="grid gap-x-4 gap-y-1 text-sm sm:grid-cols-[auto_1fr]">
+          <dt className="self-center font-bold text-slate-500">{copy.image}</dt>
+          <dd className="flex items-center gap-2">
+            {styleImage && (
+              <img
+                src={styleImage}
+                alt=""
+                data-testid="style-image-preview"
+                className="h-12 w-12 rounded-md border border-slate-200 object-cover"
+              />
+            )}
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept={IMAGE_ACCEPT}
+              data-testid="style-image"
+              className="hidden"
+              onChange={(e) => {
+                void handlePickImage(e.target.files?.[0]);
+                e.target.value = '';
+              }}
+            />
+            <button
+              type="button"
+              data-testid="style-image-pick"
+              disabled={uploadingImage || running || rows.length === 0}
+              onClick={() => imageInputRef.current?.click()}
+              className="rounded-md border border-slate-200 px-2 py-1 text-[11px] font-extrabold text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+            >
+              {styleImage ? copy.imageChange : copy.imagePick}
+            </button>
+          </dd>
           <dt className="font-bold text-slate-500">{copy.profileName}</dt>
           <dd className="font-bold text-slate-800">
             <span data-testid="profile-name">{styleName}</span>

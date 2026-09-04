@@ -219,6 +219,11 @@ export interface LabelPrintOrder {
    * name and then to the built-in guess — see `resolveOrderCategory`.
    */
   categoryId?: string | null;
+  /**
+   * A photo of the garment, shrunk to fit browser storage. Becomes the
+   * product picture when the sheet is filed; printing ignores it.
+   */
+  imageDataUrl?: string | null;
 }
 
 export type OrderProblem =
@@ -290,6 +295,7 @@ export function createEmptyOrder(): LabelPrintOrder {
     orderDate: todayIsoDate(),
     productId: null,
     categoryId: null,
+    imageDataUrl: null,
   };
 }
 
