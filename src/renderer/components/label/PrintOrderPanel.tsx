@@ -1424,9 +1424,13 @@ export default function PrintOrderPanel({
           <table className="w-full min-w-[600px] border-collapse text-sm">
             <thead>
               <tr>
-                <th className="border-b border-slate-200 p-2 text-left font-bold">{copy.color}</th>
+                {/* Widths pinned on every column but the last: with the sticker
+                    code column gone, the colour input was the only flexible
+                    thing left and grew to the whole row. The last column takes
+                    what is left, which keeps the numbers under their headers. */}
+                <th className="w-56 border-b border-slate-200 p-2 text-left font-bold">{copy.color}</th>
                 {order.sizes.map((size) => (
-                  <th key={size.id} className="border-b border-slate-200 p-2 font-bold">
+                  <th key={size.id} className="w-24 border-b border-slate-200 p-2 text-center font-bold">
                     <span className="inline-flex items-center gap-1">
                       {size.label}
                       <button
@@ -1440,7 +1444,7 @@ export default function PrintOrderPanel({
                     </span>
                   </th>
                 ))}
-                <th className="border-b border-slate-200 p-2 font-bold">{copy.rowTotal}</th>
+                <th className="w-20 border-b border-slate-200 p-2 text-center font-bold">{copy.rowTotal}</th>
                 <th className="border-b border-slate-200 p-2" />
               </tr>
             </thead>
@@ -1463,7 +1467,7 @@ export default function PrintOrderPanel({
                     />
                   </td>
                   {order.sizes.map((size) => (
-                    <td key={size.id} className="border-b border-slate-100 p-1">
+                    <td key={size.id} className="border-b border-slate-100 p-1 text-center">
                       <input
                         type="number"
                         min={0}
@@ -1492,9 +1496,7 @@ export default function PrintOrderPanel({
             </tbody>
             <tfoot>
               <tr>
-                <td className="p-2 font-bold" colSpan={2}>
-                  {copy.total}
-                </td>
+                <td className="p-2 font-bold">{copy.total}</td>
                 {order.sizes.map((size) => (
                   <td key={size.id} className="p-2 text-center font-bold">
                     {totals.sizeTotals[size.id] || 0}

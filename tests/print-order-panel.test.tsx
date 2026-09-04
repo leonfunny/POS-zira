@@ -447,6 +447,21 @@ describe('PrintOrderPanel', () => {
     expect(container.querySelector('[data-testid="add-care-line"]')).not.toBeNull();
   });
 
+  it('keeps the totals row under the same columns as the header', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => buttonWithText(container, '+ M').click());
+
+    const headerCells = container.querySelectorAll('thead th').length;
+    const totalCells = Array.from(container.querySelectorAll('tfoot td')).reduce(
+      (sum, cell) => sum + (cell.colSpan || 1),
+      0,
+    );
+    const rowCells = container.querySelectorAll('tbody tr:first-child td').length;
+    expect(totalCells).toBe(headerCells);
+    expect(rowCells).toBe(headerCells);
+  });
+
   it('dates a fresh sheet today', async () => {
     await render();
     const today = new Date();
