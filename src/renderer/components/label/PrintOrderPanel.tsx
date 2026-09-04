@@ -1028,6 +1028,7 @@ export default function PrintOrderPanel({
           name: productDraft.name,
           sku: productDraft.sku,
           priceGrossGrosze: productDraft.priceGrossGrosze,
+          trackInventory: productDraft.trackInventory,
           vatRate: 23,
           idempotencyKey: fileKeyRef.current,
           variants: missing.map((variant) => ({
@@ -1172,6 +1173,7 @@ export default function PrintOrderPanel({
         name: productDraft.name,
         sku: productDraft.sku,
         priceGrossGrosze: productDraft.priceGrossGrosze,
+        trackInventory: productDraft.trackInventory,
         vatRate: 23,
         categoryId: productCategory!.id,
         idempotencyKey: fileKeyRef.current,

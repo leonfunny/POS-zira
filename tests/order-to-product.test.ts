@@ -334,6 +334,12 @@ describe('adding a colour or size to a style that already exists', () => {
     { colorName: 'CZARNY', sizeName: 'M' },
   ];
 
+  it('files every style as not stock-tracked, because a workshop sews to order', () => {
+    // Left tracked, the till refuses to sell at zero stock until goods that
+    // were never bought are booked in.
+    expect(buildProductDraft(TWO_BY_TWO).trackInventory).toBe(false);
+  });
+
   it('builds the SKU the print order sheet would have built', () => {
     expect(
       buildAddedVariant('115', { colorName: 'ZIELONY', sizeName: 'L' }, []),

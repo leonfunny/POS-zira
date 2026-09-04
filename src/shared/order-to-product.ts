@@ -20,6 +20,12 @@ export interface ProductDraft {
   name: string;
   sku: string | null;
   priceGrossGrosze: number;
+  /**
+   * Always false: a workshop sews to order and sells what it has just made,
+   * so there is no count to keep. Left tracked, the till refuses to sell a
+   * style at zero stock until someone books goods in that were never bought.
+   */
+  trackInventory: false;
   variants: ProductDraftVariant[];
 }
 
@@ -240,6 +246,7 @@ export function buildProductDraft(order: LabelPrintOrder): ProductDraft {
     // reprint must read the same as the first run. Only the row SKUs fold it.
     sku: cleanText(order.styleCode).toUpperCase() || null,
     priceGrossGrosze: Number(order.priceGrossGrosze) || 0,
+    trackInventory: false,
     variants,
   };
 }

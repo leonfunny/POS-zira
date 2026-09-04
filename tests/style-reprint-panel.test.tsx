@@ -420,6 +420,8 @@ describe('StyleReprintPanel', () => {
       // Sibling rows set the price: a new colour of a style the till sells
       // must not ring up at a different number.
       priceGrossGrosze: 12900,
+      // Sewn to order: no count is kept for a workshop style.
+      trackInventory: false,
     });
     expect(payload.variants).toEqual([
       {

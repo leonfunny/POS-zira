@@ -221,6 +221,8 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
     expect(createProduct).toHaveBeenCalledTimes(1);
     const payload = createProduct.mock.calls[0][0];
     expect(payload.name).toBe('KURTKA');
+    // Sewn to order: the till must sell the style at zero stock, so no count is kept.
+    expect(payload.trackInventory).toBe(false);
     expect(payload.variants).toEqual([
       {
         colorName: 'BEŻOWY',
@@ -709,6 +711,7 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
         expect(createProduct).toHaveBeenCalledTimes(1);
         const payload = createProduct.mock.calls[0][0];
         expect(payload.productId).toBe('template-9');
+        expect(payload.trackInventory).toBe(false);
         expect(payload.variants.map((v: any) => `${v.colorName} ${v.sizeName}`)).toEqual([
           'BEŻOWY M', 'CZARNY S', 'CZARNY M',
         ]);

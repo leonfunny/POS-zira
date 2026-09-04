@@ -812,6 +812,8 @@ export default function StyleReprintPanel({
           // The rows the style already has set the price; a new colour of a
           // style the till sells must not ring up at a different number.
           priceGrossGrosze: siblingPriceGrosze,
+          // Sewn to order: no count is kept for any row of a workshop style.
+          trackInventory: false,
           vatRate: 23,
           // One key per attempt, kept across retries of the same cell: a
           // network answer lost on the way back must not add the colour twice.
