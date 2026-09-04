@@ -15,6 +15,7 @@ import {
   orderWarnings,
   randomStickerCode,
   fallbackStickerCode,
+  foldGridIntoSizes,
   todayIsoDate,
   stickerGarmentType,
   CARE_TEXT_MAX_CHARS,
@@ -47,14 +48,15 @@ function sampleOrder(): LabelPrintOrder {
     ],
     careSymbols: ['WASH_30', 'IRON_LOW'],
     careText: '',
+    // 60 garments in S and 60 in M across both colours; 24 bags of the first
+    // colour and 5 of the second.
     sizes: [
-      { id: 's', label: 'S' },
-      { id: 'm', label: 'M' },
+      { id: 's', label: 'S', quantity: 60 },
+      { id: 'm', label: 'M', quantity: 60 },
     ],
     rows: [
-      // 100 garments packed in 24 bags; 20 garments in 5.
-      { id: 'r1', colorName: 'CZEKOLADA', code: 'SP006290', quantities: { s: 40, m: 60 }, stickerQuantity: 24 },
-      { id: 'r2', colorName: 'BORDO', code: 'SP006291', quantities: { s: 20, m: 0 }, stickerQuantity: 5 },
+      { id: 'r1', colorName: 'CZEKOLADA', code: 'SP006290', quantities: {}, stickerQuantity: 24 },
+      { id: 'r2', colorName: 'BORDO', code: 'SP006291', quantities: {}, stickerQuantity: 5 },
     ],
     printFabricTags: true,
     printStickers: true,
@@ -104,28 +106,39 @@ describe('compositionText', () => {
 });
 
 describe('orderTotals', () => {
-  it('totals each row, each size column and the whole order', () => {
+  it('totals each size and the whole order', () => {
     const totals = orderTotals(sampleOrder());
-    expect(totals.rowTotals).toEqual({ r1: 100, r2: 20 });
     expect(totals.sizeTotals).toEqual({ s: 60, m: 60 });
     expect(totals.grandTotal).toBe(120);
   });
 
-  it('counts a negative cell as zero instead of subtracting from the totals', () => {
+  it('counts a negative size as zero instead of subtracting from the totals', () => {
     const order = sampleOrder();
-    order.rows[0].quantities.s = -30;
+    order.sizes[0].quantity = -30;
     const totals = orderTotals(order);
-    expect(totals.rowTotals.r1).toBe(60);
-    expect(totals.sizeTotals.s).toBe(20);
-    expect(totals.grandTotal).toBe(80);
+    expect(totals.sizeTotals.s).toBe(0);
+    expect(totals.grandTotal).toBe(60);
   });
 
-  it('ignores quantities for sizes that were removed from the grid', () => {
+  it('counts only the sizes still on the sheet', () => {
     const order = sampleOrder();
-    order.sizes = [{ id: 's', label: 'S' }];
-    const totals = orderTotals(order);
-    expect(totals.rowTotals.r1).toBe(40);
-    expect(totals.grandTotal).toBe(60);
+    order.sizes = [{ id: 's', label: 'S', quantity: 60 }];
+    expect(orderTotals(order).grandTotal).toBe(60);
+  });
+
+  it('folds a sheet saved with the colour × size grid into garments per size', () => {
+    // Sheets saved before the top row existed carry the customer grid; the
+    // column sums become the size counts and the cells are emptied, once.
+    const old = sampleOrder();
+    old.sizes = [{ id: 's', label: 'S' }, { id: 'm', label: 'M' }];
+    old.rows[0].quantities = { s: 40, m: 60 };
+    old.rows[1].quantities = { s: 20 };
+    const folded = upperCaseOrder(old);
+    expect(folded.sizes.map((size) => size.quantity)).toEqual([60, 60]);
+    expect(folded.rows.every((row) => Object.keys(row.quantities).length === 0)).toBe(true);
+    expect(upperCaseOrder(folded)).toEqual(folded);
+    // A sheet already in the new shape is left alone.
+    expect(foldGridIntoSizes(sampleOrder().sizes, sampleOrder().rows).sizes).toEqual(sampleOrder().sizes);
   });
 });
 
@@ -136,7 +149,8 @@ describe('validateOrder', () => {
 
   it('reports an order with nothing to print', () => {
     const order = sampleOrder();
-    order.rows = order.rows.map((row) => ({ ...row, quantities: {}, stickerQuantity: undefined }));
+    order.sizes = order.sizes.map((size) => ({ ...size, quantity: undefined }));
+    order.rows = order.rows.map((row) => ({ ...row, stickerQuantity: undefined }));
     expect(validateOrder(order)).toContain('EMPTY_ORDER');
   });
 
@@ -181,7 +195,7 @@ describe('validateOrder', () => {
 
   it('reports a run larger than the documented cap', () => {
     const order = sampleOrder();
-    order.rows[0].quantities.s = LABEL_PRINT_ORDER_LIMITS.maxOrderQuantity;
+    order.sizes[0].quantity = LABEL_PRINT_ORDER_LIMITS.maxOrderQuantity;
     expect(validateOrder(order)).toContain('ORDER_TOO_LARGE');
   });
 });
@@ -216,13 +230,12 @@ describe('buildPrintPlan', () => {
     order.rows[1].stickerQuantity = undefined;
     const plan = buildPrintPlan(order);
     expect(plan.filter((s) => s.kind === 'sticker').map((s) => s.rowId)).toEqual(['r1']);
-    expect(plan.filter((s) => s.kind === 'fabric' && s.rowId === 'r2')).toHaveLength(1);
+    expect(plan.filter((s) => s.kind === 'fabric').reduce((sum, s) => sum + s.quantity, 0)).toBe(120);
   });
 
   it('prints stickers alone for a sheet with bag counts and no garment quantities', () => {
     const order = { ...sampleOrder(), printFabricTags: false };
-    order.rows[0].quantities = {};
-    order.rows[1].quantities = {};
+    order.sizes = order.sizes.map((size) => ({ ...size, quantity: undefined }));
     expect(validateOrder(order)).toEqual([]);
     expect(buildPrintPlan(order).map((s) => s.quantity)).toEqual([24, 5]);
   });
@@ -238,17 +251,17 @@ describe('buildPrintPlan', () => {
       code: fallbackStickerCode(order.styleCode, 'BORDO'),
       quantity: 5,
     });
-    expect(plan.filter((s) => s.kind === 'fabric' && s.rowId === 'r2')).toHaveLength(1);
   });
 
-  it('keeps fabric runs per colour and size, splitting a cell over the chunk size', () => {
+  it('runs fabric tags once per size across every colour, split over the chunk size', () => {
+    // The tag names the size, never the colour: S=60 -> 50+10; M=60 -> 50+10.
     const fabric = buildPrintPlan(sampleOrder()).filter((s) => s.kind === 'fabric');
-    // r1/S=40 -> one run; r1/M=60 -> 50+10; r2/S=20 -> one run; r2/M=0 -> none.
     expect(fabric).toHaveLength(4);
-    expect(fabric[0]).toMatchObject({ rowId: 'r1', sizeText: 'S', quantity: 40 });
-    expect(fabric[1]).toMatchObject({ rowId: 'r1', sizeText: 'M', quantity: 50 });
-    expect(fabric[2]).toMatchObject({ rowId: 'r1', sizeText: 'M', quantity: 10 });
-    expect(fabric[3]).toMatchObject({ rowId: 'r2', sizeText: 'S', quantity: 20 });
+    expect(fabric[0]).toMatchObject({ rowId: 's', sizeText: 'S', quantity: 50 });
+    expect(fabric[1]).toMatchObject({ rowId: 's', sizeText: 'S', quantity: 10 });
+    expect(fabric[2]).toMatchObject({ rowId: 'm', sizeText: 'M', quantity: 50 });
+    expect(fabric[3]).toMatchObject({ rowId: 'm', sizeText: 'M', quantity: 10 });
+    expect(fabric.every((s) => !('colorName' in s))).toBe(true);
   });
 
   it('never chunks stickers — the paper printer runs unattended', () => {
@@ -276,16 +289,23 @@ describe('buildPrintPlan', () => {
 
   it('splits any run over the chunk size so the operator can tear between bundles', () => {
     const order = sampleOrder();
-    order.rows[0].quantities.s = 120;
+    order.sizes[0].quantity = 120;
     const runs = buildPrintPlan(order).filter((s) => s.kind === 'fabric' && s.sizeText === 'S');
-    expect(runs.map((r) => r.quantity)).toEqual([50, 50, 20, 20]);
+    expect(runs.map((r) => r.quantity)).toEqual([50, 50, 20]);
+  });
+
+  it('floors a fractional garment count rather than asking the printer for 2.7 tags', () => {
+    const order = sampleOrder();
+    order.sizes[0].quantity = 2.7;
+    const runs = buildPrintPlan(order).filter((s) => s.kind === 'fabric' && s.sizeText === 'S');
+    expect(runs.map((r) => r.quantity)).toEqual([2]);
   });
 
   it('drops zero and negative cells rather than sending an empty job', () => {
     const order = sampleOrder();
-    order.rows[0].quantities.s = 0;
-    order.rows[0].quantities.m = -5;
-    const fabric = buildPrintPlan(order).filter((s) => s.kind === 'fabric' && s.rowId === 'r1');
+    order.sizes[0].quantity = 0;
+    order.sizes[1].quantity = -5;
+    const fabric = buildPrintPlan(order).filter((s) => s.kind === 'fabric');
     expect(fabric).toHaveLength(0);
   });
 
@@ -415,8 +435,8 @@ describe('everything typed into a print order is printed in capitals', () => {
     const before = {
       ...createEmptyOrder(),
       customerName: 'MOON',
-      rows: [{ id: 'r1', colorName: 'CZEKOLADA', code: '', quantities: { s1: 4 } }],
-      sizes: [{ id: 's1', label: 'S' }],
+      rows: [{ id: 'r1', colorName: 'CZEKOLADA', code: '', quantities: {} }],
+      sizes: [{ id: 's1', label: 'S', quantity: 4 }],
       printStickers: false,
     };
     expect(upperCaseOrder(before)).toEqual(before);
@@ -443,7 +463,8 @@ describe('one of each, to look at before the ribbon is committed', () => {
 
   it('works before any quantity is typed — a tag reads the same either way', () => {
     const order = sampleOrder();
-    order.rows = order.rows.map((row) => ({ ...row, quantities: {}, stickerQuantity: undefined }));
+    order.sizes = order.sizes.map((size) => ({ ...size, quantity: undefined }));
+    order.rows = order.rows.map((row) => ({ ...row, stickerQuantity: undefined }));
     expect(buildPrintPlan(order)).toHaveLength(0);
     expect(buildSamplePlan(order)).toHaveLength(2);
   });
@@ -607,14 +628,11 @@ describe('validateOrder — what the labels cannot go without', () => {
 });
 
 describe('orderWarnings', () => {
-  it('wants a bag count for every colour with garments while the sticker lane is on', () => {
+  it('wants a bag count for every colour while the sticker lane is on', () => {
     const order = sampleOrder();
     order.rows[1].stickerQuantity = undefined;
     expect(validateOrder(order)).toContain('NO_STICKER_QTY');
     expect(validateOrder({ ...order, printStickers: false })).not.toContain('NO_STICKER_QTY');
-    // A colour with no garments at all is not asked for bags.
-    order.rows[1].quantities = {};
-    expect(validateOrder(order)).not.toContain('NO_STICKER_QTY');
   });
 
   it('counts bags and garments apart', () => {

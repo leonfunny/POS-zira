@@ -237,7 +237,8 @@ describe('fabric-label operator feedback', () => {
     await act(async () => card?.click());
     await settle();
 
-    const rows = Array.from(container.querySelectorAll('tbody tr')).map((row) =>
+    // The print-order sheet on the same screen has a garment-count row of its own.
+    const rows = Array.from(container.querySelectorAll('tbody tr:not([data-testid="fabric-row"])')).map((row) =>
       Array.from(row.querySelectorAll('td')).slice(0, 2).map((cell) => cell.textContent?.trim()),
     );
     // Printing the parent would put a tag naming no garment into the bundle.

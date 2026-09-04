@@ -104,7 +104,7 @@ describe('PrintOrderPanel', () => {
     await act(async () => buttonWithText(container, '+ S').click());
     await act(async () => buttonWithText(container, 'Add colour').click());
     await changeInput(input(container, 'input[placeholder="CZEKOLADA"]'), 'CZEKOLADA');
-    await changeInput(input(container, 'input[aria-label="CZEKOLADA S"]'), String(quantity));
+    await changeInput(input(container, 'input[aria-label="Fabric tags S"]'), String(quantity));
     await changeInput(input(container, 'input[aria-label="Bag stickers CZEKOLADA"]'), String(stickers));
   }
 
@@ -402,7 +402,6 @@ describe('PrintOrderPanel', () => {
       container.querySelectorAll<HTMLInputElement>('input[placeholder="CZEKOLADA"]'),
     );
     await changeInput(colours[1], 'BORDO');
-    await changeInput(input(container, 'input[aria-label="BORDO S"]'), '5');
     await changeInput(input(container, 'input[aria-label="Bag stickers BORDO"]'), '1');
 
     // No code column on the sheet any more — the sticker does not print it.
@@ -492,9 +491,69 @@ describe('PrintOrderPanel', () => {
       (sum, cell) => sum + (cell.colSpan || 1),
       0,
     );
-    const rowCells = container.querySelectorAll('tbody tr:first-child td').length;
+    const fabricCells = container.querySelectorAll('tbody tr:first-child td').length;
+    const colourCells = container.querySelectorAll('tbody tr:nth-child(2) td').length;
     expect(totalCells).toBe(headerCells);
-    expect(rowCells).toBe(headerCells);
+    expect(fabricCells).toBe(headerCells);
+    expect(colourCells).toBe(headerCells);
+  });
+
+  describe('garments counted per size on the top row', () => {
+    // A fabric tag names the size and never the colour, so the sheet asks how
+    // many garments of each size, once, on its first row. A colour row carries
+    // only its name and its bag count; its size cells stay empty.
+    it('takes garment counts on the fabric row only, and leaves colour rows without size cells', async () => {
+      await render();
+      await fillMinimalOrder(40, 10);
+      await act(async () => buttonWithText(container, '+ M').click());
+      await changeInput(input(container, 'input[aria-label="Fabric tags M"]'), '5');
+
+      const fabricRow = container.querySelector('[data-testid="fabric-row"]')!;
+      expect(fabricRow.querySelectorAll('input[type=number]')).toHaveLength(2);
+      expect(fabricRow.querySelector('[data-testid="fabric-total"]')?.textContent).toBe('45');
+      expect(text('[data-testid="grand-total"]')).toBe('45');
+
+      const colourRow = container.querySelector('tbody tr:nth-child(2)')!;
+      const colourInputs = Array.from(colourRow.querySelectorAll('input[type=number]'));
+      expect(colourInputs.map((box) => box.getAttribute('aria-label'))).toEqual(['Bag stickers CZEKOLADA']);
+
+      await act(async () => buttonWithText(container, 'Print').click());
+      await settle();
+      // Two fabric runs, one per size, none of them tied to a colour.
+      expect(printFabricTag.mock.calls.map((call) => [call[0].size, call[0].quantity])).toEqual([
+        ['S', 40], ['M', 5],
+      ]);
+    });
+
+    it('disables the garment boxes while the fabric-tag lane is off', async () => {
+      await render();
+      await fillMinimalOrder(40, 10);
+      const box = () => input(container, 'input[aria-label="Fabric tags S"]');
+      expect(box().disabled).toBe(false);
+      await act(async () => { laneBoxes()[0].click(); });
+      expect(box().disabled).toBe(true);
+    });
+
+    it('folds the colour × size grid of a sheet saved before the fabric row into size counts', async () => {
+      // Drafts written by the old panel carry quantities in the colour rows.
+      window.localStorage.setItem(
+        'zira.labelPrintOrder.draft',
+        JSON.stringify({
+          customerName: 'MOON',
+          styleName: 'KURTKA',
+          styleCode: '114',
+          sizes: [{ id: 's', label: 'S' }, { id: 'm', label: 'M' }],
+          rows: [
+            { id: 'r1', colorName: 'CZEKOLADA', code: 'SP000001', quantities: { s: 40, m: 60 } },
+            { id: 'r2', colorName: 'BORDO', code: 'SP000002', quantities: { s: 20 } },
+          ],
+        }),
+      );
+      await render();
+      expect(input(container, 'input[aria-label="Fabric tags S"]').value).toBe('60');
+      expect(input(container, 'input[aria-label="Fabric tags M"]').value).toBe('60');
+      expect(text('[data-testid="grand-total"]')).toBe('120');
+    });
   });
 
   it('prints the kind of garment on the bag sticker, not the style name', async () => {
@@ -658,7 +717,7 @@ describe('PrintOrderPanel', () => {
     await fillMinimalOrder(40);
     await act(async () => buttonWithText(container, 'Save order').click());
 
-    await changeInput(input(container, 'input[aria-label="CZEKOLADA S"]'), '55');
+    await changeInput(input(container, 'input[aria-label="Fabric tags S"]'), '55');
     await act(async () => buttonWithText(container, 'Save order').click());
 
     expect(container.querySelectorAll('[data-saved-order]')).toHaveLength(1);
@@ -673,7 +732,7 @@ describe('PrintOrderPanel', () => {
     await act(async () => buttonWithText(container, 'Save order').click());
     expect(() => buttonWithText(container, 'Saved')).not.toThrow();
 
-    await changeInput(input(container, 'input[aria-label="CZEKOLADA S"]'), '55');
+    await changeInput(input(container, 'input[aria-label="Fabric tags S"]'), '55');
     expect(() => buttonWithText(container, 'Save order')).not.toThrow();
   });
 
@@ -689,7 +748,7 @@ describe('PrintOrderPanel', () => {
     root = null;
     await render();
 
-    await changeInput(input(container, 'input[aria-label="CZEKOLADA S"]'), '55');
+    await changeInput(input(container, 'input[aria-label="Fabric tags S"]'), '55');
     await act(async () => buttonWithText(container, 'Save order').click());
 
     expect(container.querySelectorAll('[data-saved-order]')).toHaveLength(1);
@@ -712,7 +771,7 @@ describe('PrintOrderPanel', () => {
 
     await act(async () => container.querySelector<HTMLButtonElement>(
       '[data-testid="duplicate-order"]')!.click());
-    await changeInput(input(container, 'input[aria-label="CZEKOLADA S"]'), '55');
+    await changeInput(input(container, 'input[aria-label="Fabric tags S"]'), '55');
     await act(async () => buttonWithText(container, 'Save order').click());
 
     expect(container.querySelectorAll('[data-saved-order]')).toHaveLength(2);
@@ -979,7 +1038,7 @@ describe('PrintOrderPanel', () => {
       await act(async () => buttonWithText(container, '+ M').click());
       // 40 + 5 copies is one sticker batch, so the plan is three batches:
       // the stickers, then one fabric batch per size.
-      await changeInput(input(container, 'input[aria-label="CZEKOLADA M"]'), '5');
+      await changeInput(input(container, 'input[aria-label="Fabric tags M"]'), '5');
 
       // First run: stop with the stickers out and both fabric batches to go.
       let releaseSticker: (value: { success: boolean }) => void = () => {};
@@ -1017,7 +1076,7 @@ describe('PrintOrderPanel', () => {
       await act(async () => buttonWithText(container, '+ M').click());
       // 40 + 5 copies is one sticker batch, so the plan is three batches:
       // the stickers, then one fabric batch per size.
-      await changeInput(input(container, 'input[aria-label="CZEKOLADA M"]'), '5');
+      await changeInput(input(container, 'input[aria-label="Fabric tags M"]'), '5');
 
       let releaseFabric: (value: { success: boolean }) => void = () => {};
       printFabricTag.mockImplementation(
@@ -1143,10 +1202,10 @@ describe('PrintOrderPanel', () => {
       expect(text('[data-testid="grand-total"]')).toBe('120');
       expect(container.querySelector('[data-testid="paste-box"]')).toBeNull();
       expect(input(container, 'input[placeholder="CZEKOLADA"]').value).toBe('CZEKOLADA');
-      // The old single column is gone, not added to.
+      // The old single column is gone, not added to: one garment box per size.
       expect(
-        container.querySelectorAll('input[type=number][aria-label]:not([aria-label^="Bag stickers"])'),
-      ).toHaveLength(4);
+        container.querySelectorAll('input[type=number][aria-label^="Fabric tags"]'),
+      ).toHaveLength(2);
       // The pasted sheet carries garments, not bags: the packer types those.
       expect(buttonWithText(container, 'Print').disabled).toBe(true);
     });

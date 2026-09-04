@@ -20,6 +20,7 @@ import {
   OrderSize,
   compositionText,
   createEmptyOrder,
+  foldGridIntoSizes,
 } from './label-print-order';
 
 /** One physical catalogue row: a colour, a size, and the codes on it. */
@@ -168,6 +169,10 @@ export function buildSelectionOrder(input: SelectionInput): LabelPrintOrder {
     row.quantities[size.id] = (row.quantities[size.id] ?? 0) + quantity;
   }
 
+  // The sheet prints fabric tags per size across colours; the cells typed
+  // per variant are folded the same way a pasted grid is.
+  const folded = foldGridIntoSizes(sizes, rows);
+
   return {
     ...createEmptyOrder(),
     customerName: cleanText(input.customerName),
@@ -178,8 +183,8 @@ export function buildSelectionOrder(input: SelectionInput): LabelPrintOrder {
     // Materials stay empty on purpose: the saved composition is already a
     // finished line and is handed to the plan builder as one.
     materials: [],
-    sizes,
-    rows,
+    sizes: folded.sizes,
+    rows: folded.rows,
     printStickers: input.printStickers,
     printFabricTags: input.printFabricTags,
   };

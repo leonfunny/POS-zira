@@ -29,6 +29,7 @@ import {
   orderTotals,
   percentFix,
   toggleCareTextPreset,
+  foldGridIntoSizes,
   upperCaseOrder,
   validateOrder,
 } from '../../../shared/label-print-order';
@@ -112,6 +113,7 @@ interface Copy {
   codeHint: string;
   rowTotal: string;
   stickerQty: string;
+  fabricRow: string;
   addRow: string;
   total: string;
   whatToPrint: string;
@@ -211,6 +213,7 @@ const COPY: Record<string, Copy> = {
     codeHint: 'Để trống thì màu này không in tem dán',
     rowTotal: 'Tổng',
     stickerQty: 'Tem túi',
+    fabricRow: 'Mác vải',
     addRow: 'Thêm màu',
     total: 'Tổng cộng',
     whatToPrint: 'In gì',
@@ -261,7 +264,7 @@ const COPY: Record<string, Copy> = {
       NOTHING_SELECTED: 'Chưa chọn in loại nhãn nào',
       NO_CUSTOMER: 'Chưa có tên khách',
       NO_STYLE_CODE: 'Chưa có mã hàng — tem túi cần mã',
-      NO_STICKER_QTY: 'Chưa nhập số tem túi cho màu có số lượng — mỗi màu một số, tính theo chồng đóng túi',
+      NO_STICKER_QTY: 'Chưa nhập số tem túi cho một màu — mỗi màu một số, tính theo chồng đóng túi',
       DUPLICATE_SIZE: 'Có hai cột size trùng tên',
       EMPTY_SIZE: 'Có cột size chưa đặt tên',
       BAD_CODE: 'Mã tem có ký tự máy in không đọc được',
@@ -305,7 +308,7 @@ const COPY: Record<string, Copy> = {
       NO_NAME: 'Chưa có tên hàng',
       NO_CUSTOMER: 'Chưa có tên khách',
       NO_CATEGORY: 'Chưa chọn nhóm hàng',
-      NO_CELLS: 'Chưa ô nào có số lượng',
+      NO_CELLS: 'Chưa có màu nào — mỗi màu × size thành một biến thể',
       ALREADY_FILED: 'Tờ này đã lưu thành sản phẩm rồi',
       TOO_MANY_VARIANTS: 'Quá 100 biến thể — tách làm nhiều đơn',
     },
@@ -337,6 +340,7 @@ const COPY: Record<string, Copy> = {
     codeHint: 'Puste = bez naklejki dla tego koloru',
     rowTotal: 'Razem',
     stickerQty: 'Naklejki',
+    fabricRow: 'Metki',
     addRow: 'Dodaj kolor',
     total: 'Razem',
     whatToPrint: 'Co drukować',
@@ -387,7 +391,7 @@ const COPY: Record<string, Copy> = {
       NOTHING_SELECTED: 'Nie wybrano rodzaju etykiety',
       NO_CUSTOMER: 'Brak nazwy klienta',
       NO_STYLE_CODE: 'Brak kodu modelu — naklejka go wymaga',
-      NO_STICKER_QTY: 'Brak liczby naklejek na worek dla koloru z ilością — po jednej na kolor, według paczek',
+      NO_STICKER_QTY: 'Brak liczby naklejek na worek dla koloru — po jednej na kolor, według paczek',
       DUPLICATE_SIZE: 'Dwie kolumny mają ten sam rozmiar',
       EMPTY_SIZE: 'Kolumna rozmiaru bez nazwy',
       BAD_CODE: 'Kod zawiera znaki, których drukarka nie odczyta',
@@ -431,7 +435,7 @@ const COPY: Record<string, Copy> = {
       NO_NAME: 'Brak nazwy modelu',
       NO_CUSTOMER: 'Brak nazwy klienta',
       NO_CATEGORY: 'Nie wybrano kategorii',
-      NO_CELLS: 'Żadna komórka nie ma ilości',
+      NO_CELLS: 'Brak kolorów — każdy kolor × rozmiar to jeden wariant',
       ALREADY_FILED: 'To zlecenie jest już zapisane jako produkt',
       TOO_MANY_VARIANTS: 'Ponad 100 wariantów — podziel zlecenie',
     },
@@ -463,6 +467,7 @@ const COPY: Record<string, Copy> = {
     codeHint: 'Blank means no packaging sticker for this colour',
     rowTotal: 'Total',
     stickerQty: 'Bag stickers',
+    fabricRow: 'Fabric tags',
     addRow: 'Add colour',
     total: 'Grand total',
     whatToPrint: 'What to print',
@@ -513,7 +518,7 @@ const COPY: Record<string, Copy> = {
       NOTHING_SELECTED: 'No label kind selected',
       NO_CUSTOMER: 'No customer name',
       NO_STYLE_CODE: 'No style code — the bag sticker needs one',
-      NO_STICKER_QTY: 'A colour with garments has no bag sticker count — one per colour, by stacks packed',
+      NO_STICKER_QTY: 'A colour has no bag sticker count — one per colour, by stacks packed',
       DUPLICATE_SIZE: 'Two size columns share a name',
       EMPTY_SIZE: 'A size column has no name',
       BAD_CODE: 'A sticker code has characters the printer cannot encode',
@@ -557,7 +562,7 @@ const COPY: Record<string, Copy> = {
       NO_NAME: 'The style has no name',
       NO_CUSTOMER: 'No customer name',
       NO_CATEGORY: 'No category picked',
-      NO_CELLS: 'No cell has a quantity',
+      NO_CELLS: 'No colour yet — every colour × size becomes one variant',
       ALREADY_FILED: 'This sheet is already saved as a product',
       TOO_MANY_VARIANTS: 'More than 100 variants — split the order',
     },
@@ -773,13 +778,11 @@ export default function PrintOrderPanel({
     }));
   };
 
-  const setCell = (rowId: string, sizeId: string, value: string) => {
-    const quantity = value === '' ? 0 : Math.max(0, Math.floor(Number(value) || 0));
+  const setSizeQuantity = (sizeId: string, value: string) => {
+    const quantity = value === '' ? undefined : Math.max(0, Math.floor(Number(value) || 0));
     setOrder((current) => ({
       ...current,
-      rows: current.rows.map((row) =>
-        row.id === rowId ? { ...row, quantities: { ...row.quantities, [sizeId]: quantity } } : row,
-      ),
+      sizes: current.sizes.map((size) => (size.id === sizeId ? { ...size, quantity } : size)),
     }));
   };
 
@@ -878,9 +881,12 @@ export default function PrintOrderPanel({
     // Fresh ids all round, so nothing is inherited from the sheet being
     // replaced — including an interrupted run's batches.
     // A pasted sheet without a code column gets codes like a typed one does.
+    // Its colour × size cells become one garment count per size; the bag
+    // counts per colour are the packer's to type.
+    const folded = foldGridIntoSizes(pasted.sizes, pasted.rows);
     patch({
-      sizes: pasted.sizes,
-      rows: pasted.rows.map((row) => (row.code.trim() ? row : { ...row, code: randomStickerCode() })),
+      sizes: folded.sizes,
+      rows: folded.rows.map((row) => (row.code.trim() ? row : { ...row, code: randomStickerCode() })),
     });
     setPasteText(null);
   };
@@ -972,12 +978,14 @@ export default function PrintOrderPanel({
    * wrong wash symbol is only visible on the printed tag, and by then the whole
    * order is out.
    *
-   * A quantity is not needed to look at a tag, so an empty order does not block
-   * it — but a code the printer would refuse does, since that sample cannot
-   * print either.
+   * A quantity is not needed to look at a tag, so an empty order or a colour
+   * without a bag count does not block it — but a code the printer would
+   * refuse does, since that sample cannot print either.
    */
   const samplePlan = useMemo(() => buildSamplePlan(order), [order]);
-  const blockingForSample = problems.filter((problem) => problem !== 'EMPTY_ORDER');
+  const blockingForSample = problems.filter(
+    (problem) => problem !== 'EMPTY_ORDER' && problem !== 'NO_STICKER_QTY',
+  );
   const canPrintSample =
     progress?.type !== 'printing' && blockingForSample.length === 0 && samplePlan.length > 0;
 
@@ -1638,6 +1646,30 @@ export default function PrintOrderPanel({
               </tr>
             </thead>
             <tbody>
+              {/* The top row is the fabric lane: garments per size across every
+                  colour, since a fabric tag names the size and not the colour.
+                  The colour rows below carry only the bag sticker count. */}
+              <tr data-testid="fabric-row" className="bg-emerald-50/60">
+                <td className="border-b border-slate-100 p-2 font-bold text-emerald-900">{copy.fabricRow}</td>
+                {order.sizes.map((size) => (
+                  <td key={size.id} className="border-b border-slate-100 p-1 text-center">
+                    <input
+                      type="number"
+                      min={0}
+                      className="h-10 w-20 rounded-md border border-emerald-300 px-2 text-center text-sm"
+                      value={size.quantity ?? ''}
+                      onChange={(e) => setSizeQuantity(size.id, e.target.value)}
+                      disabled={!order.printFabricTags}
+                      aria-label={`${copy.fabricRow} ${size.label}`}
+                    />
+                  </td>
+                ))}
+                <td className="border-b border-slate-100 p-2 text-center font-extrabold" data-testid="fabric-total">
+                  {totals.grandTotal}
+                </td>
+                <td className="border-b border-slate-100 p-2" />
+                <td className="border-b border-slate-100 p-2" />
+              </tr>
               {order.rows.map((row) => (
                 <tr key={row.id}>
                   <td className="border-b border-slate-100 p-1">
@@ -1656,20 +1688,9 @@ export default function PrintOrderPanel({
                     />
                   </td>
                   {order.sizes.map((size) => (
-                    <td key={size.id} className="border-b border-slate-100 p-1 text-center">
-                      <input
-                        type="number"
-                        min={0}
-                        className="h-10 w-20 rounded-md border border-slate-300 px-2 text-center text-sm"
-                        value={row.quantities[size.id] || ''}
-                        onChange={(e) => setCell(row.id, size.id, e.target.value)}
-                        aria-label={`${row.colorName || copy.color} ${size.label}`}
-                      />
-                    </td>
+                    <td key={size.id} className="border-b border-slate-100 p-1" />
                   ))}
-                  <td className="border-b border-slate-100 p-2 text-center font-extrabold">
-                    {totals.rowTotals[row.id] || 0}
-                  </td>
+                  <td className="border-b border-slate-100 p-2" />
                   <td className="border-b border-slate-100 p-1 text-center">
                     <input
                       type="number"
@@ -1698,9 +1719,7 @@ export default function PrintOrderPanel({
               <tr>
                 <td className="p-2 font-bold">{copy.total}</td>
                 {order.sizes.map((size) => (
-                  <td key={size.id} className="p-2 text-center font-bold">
-                    {totals.sizeTotals[size.id] || 0}
-                  </td>
+                  <td key={size.id} className="p-2" />
                 ))}
                 <td className="p-2 text-center text-base font-extrabold" data-testid="grand-total">
                   {totals.grandTotal}

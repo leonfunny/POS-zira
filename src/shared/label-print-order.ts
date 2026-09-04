@@ -133,6 +133,10 @@ export function toggleCareTextPreset(current: string, preset: string): string {
  */
 export function upperCaseOrder(order: LabelPrintOrder): LabelPrintOrder {
   const up = (value: string) => value.toUpperCase();
+  // Runs on every change as well as on load, so a sheet saved with the old
+  // colour × size grid is folded the first time it is opened and left alone
+  // after.
+  const folded = foldGridIntoSizes(order.sizes, order.rows);
   return {
     ...order,
     customerName: up(order.customerName),
@@ -140,8 +144,8 @@ export function upperCaseOrder(order: LabelPrintOrder): LabelPrintOrder {
     styleCode: up(order.styleCode),
     careText: up(order.careText),
     materials: order.materials.map((material) => ({ ...material, name: up(material.name) })),
-    sizes: order.sizes.map((size) => ({ ...size, label: up(size.label) })),
-    rows: order.rows.map((row) => ({
+    sizes: folded.sizes.map((size) => ({ ...size, label: up(size.label) })),
+    rows: folded.rows.map((row) => ({
       ...row,
       colorName: up(row.colorName),
       code: up(row.code),
@@ -174,6 +178,13 @@ export interface OrderMaterial {
 export interface OrderSize {
   id: string;
   label: string;
+  /**
+   * Garments of this size, across every colour: what the fabric lane prints,
+   * since a fabric tag names the size and never the colour. Typed on the
+   * sheet's top row. Sheets saved with a colour × size grid are folded into
+   * this on load (`foldGridIntoSizes`).
+   */
+  quantity?: number;
 }
 
 export interface OrderRow {
@@ -181,6 +192,10 @@ export interface OrderRow {
   colorName: string;
   /** The bag code under the barcode; generated, never typed. */
   code: string;
+  /**
+   * Left over from the colour × size grid the sheet used to have. No longer
+   * typed; folded into `OrderSize.quantity` on load and kept empty since.
+   */
   quantities: Record<string, number>;
   /**
    * Bag stickers for this colour, typed by hand: one per stack packed, which
@@ -404,7 +419,6 @@ export function percentFix(materials: OrderMaterial[]): PercentFix | null {
 }
 
 export interface OrderTotals {
-  rowTotals: Record<string, number>;
   sizeTotals: Record<string, number>;
   /** Garments, which is what the fabric lane prints. */
   grandTotal: number;
@@ -419,29 +433,47 @@ export function rowStickerQuantity(row: OrderRow): number {
 }
 
 export function orderTotals(order: LabelPrintOrder): OrderTotals {
-  const rowTotals: Record<string, number> = {};
   const sizeTotals: Record<string, number> = {};
   let grandTotal = 0;
-
-  for (const row of order.rows) {
-    let rowTotal = 0;
-    for (const size of order.sizes) {
-      const quantity = cellQuantity(row, size.id);
-      rowTotal += quantity;
-      sizeTotals[size.id] = (sizeTotals[size.id] ?? 0) + quantity;
-    }
-    rowTotals[row.id] = rowTotal;
-    grandTotal += rowTotal;
+  for (const size of order.sizes) {
+    sizeTotals[size.id] = sizeQuantity(size);
+    grandTotal += sizeTotals[size.id];
   }
-
   const stickerTotal = order.rows.reduce((sum, row) => sum + rowStickerQuantity(row), 0);
-  return { rowTotals, sizeTotals, grandTotal, stickerTotal };
+  return { sizeTotals, grandTotal, stickerTotal };
+}
+
+/** The garments typed for a size, or 0 when the box is still empty. */
+export function sizeQuantity(size: OrderSize): number {
+  const raw = size.quantity;
+  return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0;
 }
 
 function cellQuantity(row: OrderRow, sizeId: string): number {
   const raw = row.quantities?.[sizeId];
   if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0) return 0;
   return Math.floor(raw);
+}
+
+/**
+ * A colour × size grid, as older sheets and a pasted customer sheet carry it,
+ * folded into one garment count per size. Column sums land on the sizes and
+ * the cells are emptied, so folding twice changes nothing. A sheet with no
+ * cells is returned as it is.
+ */
+export function foldGridIntoSizes(
+  sizes: readonly OrderSize[],
+  rows: readonly OrderRow[],
+): { sizes: OrderSize[]; rows: OrderRow[] } {
+  const hasCells = rows.some((row) => sizes.some((size) => cellQuantity(row, size.id) > 0));
+  if (!hasCells) return { sizes: [...sizes], rows: [...rows] };
+  return {
+    sizes: sizes.map((size) => ({
+      ...size,
+      quantity: sizeQuantity(size) + rows.reduce((sum, row) => sum + cellQuantity(row, size.id), 0),
+    })),
+    rows: rows.map((row) => ({ ...row, quantities: {} })),
+  };
 }
 
 /**
@@ -519,15 +551,10 @@ export function validateOrder(order: LabelPrintOrder): OrderProblem[] {
 
   const totals = orderTotals(order);
   // Stickers are counted by the packer, not derived from the garments: a
-  // colour with garments and no sticker count is a sheet half filled in, and
+  // colour on the sheet with no sticker count is a sheet half filled in, and
   // printing zero stickers for it silently would be the worse outcome.
-  if (order.printStickers) {
-    for (const row of order.rows) {
-      if (totals.rowTotals[row.id] > 0 && rowStickerQuantity(row) === 0) {
-        problems.add('NO_STICKER_QTY');
-        break;
-      }
-    }
+  if (order.printStickers && order.rows.some((row) => rowStickerQuantity(row) === 0)) {
+    problems.add('NO_STICKER_QTY');
   }
   const garments = order.printFabricTags ? totals.grandTotal : 0;
   const stickers = order.printStickers ? totals.stickerTotal : 0;
@@ -586,19 +613,20 @@ export function buildPrintPlan(
   }
 
   if (order.printFabricTags) {
-    for (const row of order.rows) {
-      for (const size of order.sizes) {
-        pushChunks(steps, cellQuantity(row, size.id), FABRIC_CHUNK, (quantity, index) => ({
-          kind: 'fabric',
-          id: `fabric:${row.id}:${size.id}:${index}`,
-          rowId: row.id,
-          sizeText: size.label.trim(),
-          composition,
-          careSymbols: order.careSymbols,
-          careText: order.careText.trim(),
-          quantity,
-        }));
-      }
+    // One run per size across every colour: the tag names the size and the
+    // composition, never the colour, so splitting it by colour only added
+    // tears between identical strips. `rowId` carries the size id here.
+    for (const size of order.sizes) {
+      pushChunks(steps, sizeQuantity(size), FABRIC_CHUNK, (quantity, index) => ({
+        kind: 'fabric',
+        id: `fabric:${size.id}:${index}`,
+        rowId: size.id,
+        sizeText: size.label.trim(),
+        composition,
+        careSymbols: order.careSymbols,
+        careText: order.careText.trim(),
+        quantity,
+      }));
     }
   }
 
@@ -623,11 +651,8 @@ export function buildSamplePlan(order: LabelPrintOrder): PrintStep[] {
   // means a first colour with no dormant sticker code still yields a sample.
   const oneOfEach: LabelPrintOrder = {
     ...order,
-    rows: order.rows.map((row) => ({
-      ...row,
-      quantities: Object.fromEntries(order.sizes.map((size) => [size.id, 1])),
-      stickerQuantity: 1,
-    })),
+    sizes: order.sizes.map((size) => ({ ...size, quantity: 1 })),
+    rows: order.rows.map((row) => ({ ...row, stickerQuantity: 1 })),
   };
 
   const full = buildPrintPlan(oneOfEach);

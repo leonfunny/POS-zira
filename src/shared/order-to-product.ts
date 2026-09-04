@@ -206,10 +206,14 @@ export function buildProductDraft(order: LabelPrintOrder): ProductDraft {
   const sizes = order.sizes.filter((size) => cleanText(size.label));
   const variants: ProductDraftVariant[] = [];
 
+  // Every colour in every size. The sheet counts garments per size across
+  // colours and bags per colour, so it does not know which colour comes in
+  // which size, nor how many of each; the stock is opened at zero and the
+  // web order is where the numbers per variant are written.
   for (const row of order.rows) {
     const colorName = cleanText(row.colorName) || null;
+    if (!colorName) continue;
     if (sizes.length === 0) {
-      if (!colorName) continue;
       variants.push({
         colorName,
         sizeName: null,
@@ -219,14 +223,12 @@ export function buildProductDraft(order: LabelPrintOrder): ProductDraft {
       continue;
     }
     for (const size of sizes) {
-      const quantity = Number(row.quantities[size.id]) || 0;
-      if (quantity <= 0) continue;
       const sizeName = cleanText(size.label);
       variants.push({
         colorName,
         sizeName,
         sku: buildSku(base, colorName, sizeName, taken),
-        initialStockQty: quantity,
+        initialStockQty: 0,
       });
     }
   }

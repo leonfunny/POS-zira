@@ -178,27 +178,33 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
   const fileResult = () =>
     container.querySelector('[data-testid="file-result"]')?.textContent?.trim() ?? '';
 
-  /** Two colours across two sizes, with one cell deliberately left empty. */
+  /** Adds a colour row and names it. */
+  async function addColour(name: string) {
+    await act(async () => buttonWithText(container, 'Add colour').click());
+    const colourInputs = Array.from(
+      container.querySelectorAll<HTMLInputElement>('input[placeholder="CZEKOLADA"]'),
+    );
+    await changeInput(colourInputs[colourInputs.length - 1], name);
+  }
+
+  /**
+   * Two colours across two sizes. The sheet counts garments per size on its
+   * top row and knows nothing about how many of each colour, so every colour
+   * becomes a variant in every size.
+   */
   async function fillGrid() {
     await changeInput(input(container, 'input[placeholder="MoonCollection"]'), 'MOON');
     await changeInput(input(container, 'input[placeholder="KURTKA"]'), 'KURTKA');
     await changeInput(input(container, 'input[placeholder="114"]'), 'LOT114');
     await act(async () => buttonWithText(container, '+ S').click());
     await act(async () => buttonWithText(container, '+ M').click());
-    await act(async () => buttonWithText(container, 'Add colour').click());
-    await changeInput(input(container, 'input[placeholder="CZEKOLADA"]'), 'BEŻOWY');
-    await changeInput(input(container, 'input[aria-label="BEŻOWY S"]'), '4');
-    await changeInput(input(container, 'input[aria-label="BEŻOWY M"]'), '6');
-    await act(async () => buttonWithText(container, 'Add colour').click());
-    const colourInputs = Array.from(
-      container.querySelectorAll<HTMLInputElement>('input[placeholder="CZEKOLADA"]'),
-    );
-    await changeInput(colourInputs[1], 'CZARNY');
-    await changeInput(input(container, 'input[aria-label="CZARNY S"]'), '3');
-    // "CZARNY M" stays empty on purpose.
+    await changeInput(input(container, 'input[aria-label="Fabric tags S"]'), '7');
+    await changeInput(input(container, 'input[aria-label="Fabric tags M"]'), '6');
+    await addColour('BEŻOWY');
+    await addColour('CZARNY');
   }
 
-  it('stays disabled until the sheet has a name and a quantity', async () => {
+  it('stays disabled until the sheet has a name and a colour', async () => {
     await render();
     expect(fileButton().disabled).toBe(true);
 
@@ -206,7 +212,7 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
     expect(fileButton().disabled).toBe(false);
   });
 
-  it('sends one variant per filled cell and nothing for the empty one', async () => {
+  it('sends every colour in every size, with the stock opened at zero', async () => {
     await render();
     await fillGrid();
     await act(async () => fileButton().click());
@@ -221,21 +227,28 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
         sizeName: 'S',
         sku: 'LOT114-BEZOWY-S',
         barcode: 'LOT114-BEZOWY-S',
-        initialStockQty: 4,
+        initialStockQty: 0,
       },
       {
         colorName: 'BEŻOWY',
         sizeName: 'M',
         sku: 'LOT114-BEZOWY-M',
         barcode: 'LOT114-BEZOWY-M',
-        initialStockQty: 6,
+        initialStockQty: 0,
       },
       {
         colorName: 'CZARNY',
         sizeName: 'S',
         sku: 'LOT114-CZARNY-S',
         barcode: 'LOT114-CZARNY-S',
-        initialStockQty: 3,
+        initialStockQty: 0,
+      },
+      {
+        colorName: 'CZARNY',
+        sizeName: 'M',
+        sku: 'LOT114-CZARNY-M',
+        barcode: 'LOT114-CZARNY-M',
+        initialStockQty: 0,
       },
     ]);
   });
@@ -550,7 +563,7 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
   });
 
   describe('after the sheet is a product', () => {
-    /** What the product tab holds for the filed style: the two rows created. */
+    /** What the product tab holds for the filed style: the four rows created. */
     const STYLE = {
       name: 'KURTKA',
       categoryId: 'cat-jackets',
@@ -558,6 +571,7 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
         { id: 'variant-0', color_name: 'BEŻOWY', size_name: 'S', sku: 'LOT114-BEZOWY-S' },
         { id: 'variant-1', color_name: 'BEŻOWY', size_name: 'M', sku: 'LOT114-BEZOWY-M' },
         { id: 'variant-2', color_name: 'CZARNY', size_name: 'S', sku: 'LOT114-CZARNY-S' },
+        { id: 'variant-3', color_name: 'CZARNY', size_name: 'M', sku: 'LOT114-CZARNY-M' },
       ],
     };
 
@@ -580,11 +594,11 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
       expect(container.querySelector('[data-testid="filed-hint"]')?.textContent).toContain('KURTKA');
     });
 
-    it('adds only the cells the product does not have yet', async () => {
+    it('adds only the colours and sizes the product does not have yet', async () => {
       await fileSheet();
-      // The empty CZARNY M cell gets a quantity; everything else is already there.
-      await changeInput(input(container, 'input[aria-label="CZARNY M"]'), '2');
-      createProduct.mockResolvedValue({ ok: true, data: { variants: [{ id: 'variant-3' }] } });
+      // A third colour comes in; the two sizes it needs are the only new rows.
+      await addColour('BIAŁY');
+      createProduct.mockResolvedValue({ ok: true, data: { variants: [{ id: 'variant-4' }, { id: 'variant-5' }] } });
       await act(async () => updateButton().click());
       await settle();
 
@@ -592,14 +606,15 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
       const payload = createProduct.mock.calls[0][0];
       expect(payload.productId).toBe('template-1');
       expect(payload.variants).toEqual([
-        { colorName: 'CZARNY', sizeName: 'M', sku: 'LOT114-CZARNY-M', barcode: 'LOT114-CZARNY-M', initialStockQty: 2 },
+        { colorName: 'BIAŁY', sizeName: 'S', sku: 'LOT114-BIALY-S', barcode: 'LOT114-BIALY-S', initialStockQty: 0 },
+        { colorName: 'BIAŁY', sizeName: 'M', sku: 'LOT114-BIALY-M', barcode: 'LOT114-BIALY-M', initialStockQty: 0 },
       ]);
       expect(saveFabricTagTemplate).toHaveBeenCalledTimes(2);
-      expect(fileResult()).toContain('1 new');
+      expect(fileResult()).toContain('2 new');
       expect(onProductFiled).toHaveBeenLastCalledWith({ categoryId: 'cat-jackets' });
     });
 
-    it('creates nothing when every cell is already on the product', async () => {
+    it('creates nothing when every colour and size is already on the product', async () => {
       await fileSheet();
       await act(async () => updateButton().click());
       await settle();
@@ -622,14 +637,14 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
 
     it('puts a photo added later on every row, old and new', async () => {
       await fileSheet();
-      await changeInput(input(container, 'input[aria-label="CZARNY M"]'), '2');
-      createProduct.mockResolvedValue({ ok: true, data: { variants: [{ id: 'variant-3' }] } });
+      await addColour('BIAŁY');
+      createProduct.mockResolvedValue({ ok: true, data: { variants: [{ id: 'variant-4' }, { id: 'variant-5' }] } });
       await pickPhoto();
       await act(async () => updateButton().click());
       await settle();
 
       expect(uploadMainImage.mock.calls.map((call) => call[0])).toEqual([
-        'variant-0', 'variant-1', 'variant-2', 'variant-3',
+        'variant-0', 'variant-1', 'variant-2', 'variant-3', 'variant-4', 'variant-5',
       ]);
     });
 
@@ -682,9 +697,12 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
         expect(attachButton()?.disabled).toBe(false);
       });
 
-      it('adds only the missing cells to that style and makes the sheet its sheet', async () => {
+      it('adds only the missing colours and sizes to that style and makes the sheet its sheet', async () => {
         await fillMatchingSheet();
-        createProduct.mockResolvedValue({ ok: true, data: { variants: [{ id: 'new-1' }, { id: 'new-2' }] } });
+        createProduct.mockResolvedValue({
+          ok: true,
+          data: { variants: [{ id: 'new-1' }, { id: 'new-2' }, { id: 'new-3' }] },
+        });
         await act(async () => attachButton()!.click());
         await settle();
 
@@ -692,7 +710,7 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
         const payload = createProduct.mock.calls[0][0];
         expect(payload.productId).toBe('template-9');
         expect(payload.variants.map((v: any) => `${v.colorName} ${v.sizeName}`)).toEqual([
-          'BEŻOWY M', 'CZARNY S',
+          'BEŻOWY M', 'CZARNY S', 'CZARNY M',
         ]);
         // The style keeps its category; the sheet takes it over.
         expect(updateVariant).not.toHaveBeenCalled();
@@ -701,7 +719,7 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
         expect(attachButton()).toBeNull();
         expect(container.querySelector('[data-testid="update-product"]')).not.toBeNull();
         expect(container.querySelector('[data-testid="filed-hint"]')?.textContent).toContain('KURTKA STARA');
-        expect(fileResult()).toContain('2 new');
+        expect(fileResult()).toContain('3 new');
         expect(saveFabricTagTemplate).toHaveBeenCalledTimes(1);
       });
 

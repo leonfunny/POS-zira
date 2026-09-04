@@ -56,8 +56,9 @@ describe('buildSelectionOrder', () => {
 
     expect(order.rows.map((row) => row.colorName)).toEqual(['CZARNY', 'BEŻOWY']);
     expect(order.sizes.map((size) => size.label)).toEqual(['S']);
-    expect(order.rows[0].quantities[order.sizes[0].id]).toBe(4);
-    expect(order.rows[1].quantities[order.sizes[0].id]).toBe(2);
+    // The sheet counts garments per size across colours: 4 + 2.
+    expect(order.sizes[0].quantity).toBe(6);
+    expect(order.rows.every((row) => Object.keys(row.quantities).length === 0)).toBe(true);
   });
 
   it('prints nothing for a style where every box is empty', () => {
@@ -92,7 +93,7 @@ describe('buildSelectionOrder', () => {
     );
 
     expect(order.rows).toHaveLength(1);
-    expect(order.rows[0].quantities[order.sizes[0].id]).toBe(5);
+    expect(order.sizes[0].quantity).toBe(5);
   });
 
   it('feeds the sheet lanes so a reprint prints what the order printed', () => {

@@ -53,18 +53,20 @@ const TWO_BY_TWO = sheet(
 );
 
 describe('buildProductDraft', () => {
-  it('makes one variant per filled cell', () => {
+  it('makes one variant per colour and size, with the stock opened at zero', () => {
+    // The sheet counts garments per size and bags per colour; it does not say
+    // how many of each colour × size, so the web order carries those numbers.
     const draft = buildProductDraft(TWO_BY_TWO);
 
     expect(draft.variants.map((v) => [v.colorName, v.sizeName, v.initialStockQty])).toEqual([
-      ['Beżowy', 'M', 4],
-      ['Beżowy', 'L', 2],
-      ['Czarny', 'M', 7],
-      ['Czarny', 'L', 3],
+      ['Beżowy', 'M', 0],
+      ['Beżowy', 'L', 0],
+      ['Czarny', 'M', 0],
+      ['Czarny', 'L', 0],
     ]);
   });
 
-  it('skips the cells nobody ordered', () => {
+  it('makes every colour in every size, whatever an old grid still holds', () => {
     const draft = buildProductDraft(
       sheet(
         [
@@ -77,17 +79,17 @@ describe('buildProductDraft', () => {
     );
 
     expect(draft.variants.map((v) => [v.colorName, v.sizeName])).toEqual([
-      ['Beżowy', 'M'],
-      ['Biały', 'L'],
+      ['Beżowy', 'M'], ['Beżowy', 'L'],
+      ['Czarny', 'M'], ['Czarny', 'L'],
+      ['Biały', 'M'], ['Biały', 'L'],
     ]);
   });
 
-  it('treats a negative quantity as an empty cell', () => {
+  it('skips a colour row left blank on a sheet with sizes', () => {
     const draft = buildProductDraft(
-      sheet([{ name: 'Beżowy', quantities: [-3, 2] }], ['M', 'L']),
+      sheet([{ name: '  ', quantities: [1, 1] }, { name: 'Czarny', quantities: [0, 0] }], ['M', 'L']),
     );
-
-    expect(draft.variants.map((v) => v.sizeName)).toEqual(['L']);
+    expect(draft.variants.map((v) => v.colorName)).toEqual(['Czarny', 'Czarny']);
   });
 
   it('makes one variant per colour when the sheet has no size columns', () => {
@@ -258,10 +260,12 @@ describe('validateProductDraft', () => {
     expect(validateProductDraft(order, buildProductDraft(order))).toContain('NO_NAME');
   });
 
-  it('refuses a sheet where every cell is empty', () => {
-    const order = sheet([{ name: 'Beżowy', quantities: [0] }], ['M']);
+  it('refuses a sheet with no colour, and takes one whose sizes carry no numbers', () => {
+    const empty = sheet([], ['M']);
+    expect(validateProductDraft(empty, buildProductDraft(empty))).toContain('NO_CELLS');
 
-    expect(validateProductDraft(order, buildProductDraft(order))).toContain('NO_CELLS');
+    const order = sheet([{ name: 'Beżowy', quantities: [0] }], ['M']);
+    expect(validateProductDraft(order, buildProductDraft(order))).not.toContain('NO_CELLS');
   });
 
   it('refuses a sheet already filed, so a second press cannot duplicate it', () => {
