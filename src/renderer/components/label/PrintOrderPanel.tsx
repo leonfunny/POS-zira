@@ -1297,9 +1297,31 @@ export default function PrintOrderPanel({
         </Field>
       </section>
 
-      {/* No `disabled` here: the sheet has always stayed editable during a run,
+      <section className="mb-4 rounded-md border border-slate-200 p-3">
+        <h3 className="mb-2 text-sm font-bold text-slate-700">{copy.whatToPrint}</h3>
+        <div className="flex flex-wrap gap-4">
+          <Check
+            label={copy.printFabric}
+            checked={order.printFabricTags}
+            onChange={(v) => patch({ printFabricTags: v })}
+          />
+          <Check
+            label={copy.printSticker}
+            checked={order.printStickers}
+            onChange={(v) => patch({ printStickers: v })}
+          />
+        </div>
+      </section>
+
+      {/* The fabric block only when a fabric tag is going to be printed: it is
+          the longest part of the sheet, and a sticker-only order has nothing to
+          say in it. What was typed there is kept, not cleared, so ticking the
+          lane back on shows it again.
+          No `disabled` here: the sheet has always stayed editable during a run,
           and the plan handed to the printer is a snapshot taken before it. */}
-      <FabricTagFields language={language} value={order} onChange={patch} />
+      {order.printFabricTags && (
+        <FabricTagFields language={language} value={order} onChange={patch} />
+      )}
 
       <section className="mb-4 rounded-md border border-slate-200 p-3">
         <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -1495,22 +1517,6 @@ export default function PrintOrderPanel({
           <Plus size={16} aria-hidden="true" />
           {copy.addRow}
         </button>
-      </section>
-
-      <section className="mb-4 rounded-md border border-slate-200 p-3">
-        <h3 className="mb-2 text-sm font-bold text-slate-700">{copy.whatToPrint}</h3>
-        <div className="flex flex-wrap gap-4">
-          <Check
-            label={copy.printFabric}
-            checked={order.printFabricTags}
-            onChange={(v) => patch({ printFabricTags: v })}
-          />
-          <Check
-            label={copy.printSticker}
-            checked={order.printStickers}
-            onChange={(v) => patch({ printStickers: v })}
-          />
-        </div>
       </section>
 
       {problems.length > 0 && (

@@ -435,6 +435,18 @@ describe('PrintOrderPanel', () => {
     expect(container.querySelector('[data-testid="order-warnings"]')).toBeNull();
   });
 
+  it('folds the fabric block away when no fabric tag is being printed', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    expect(container.querySelector('[data-testid="add-care-line"]')).not.toBeNull();
+
+    await act(async () => laneBoxes()[0].click());
+    expect(container.querySelector('[data-testid="add-care-line"]')).toBeNull();
+    // Nothing is forgotten by folding: the lane back on shows the same block.
+    await act(async () => laneBoxes()[0].click());
+    expect(container.querySelector('[data-testid="add-care-line"]')).not.toBeNull();
+  });
+
   it('dates a fresh sheet today', async () => {
     await render();
     const today = new Date();
