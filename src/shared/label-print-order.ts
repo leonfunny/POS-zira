@@ -411,6 +411,22 @@ function cellQuantity(row: OrderRow, sizeId: string): number {
   return Math.floor(raw);
 }
 
+/**
+ * The middle line of the bag sticker: what kind of garment, not which one.
+ *
+ * The product name is free text and can run to "Komplet Czarny barbi zaira
+ * phối ren czarny aone jf 9949 art:6591#14" — the sticker has room for forty
+ * characters and the packer only needs to know it is a tracksuit for customer
+ * X in code 114, colour Y. The category says that; the style name stands in
+ * when there is none, cut to what the sticker holds rather than refused at
+ * the printer. Capitals, like every other line on the sticker.
+ */
+export function stickerGarmentType(categoryName: string | null | undefined, styleName: string): string {
+  return ((categoryName ?? '').trim() || styleName.trim())
+    .toLocaleUpperCase('pl')
+    .slice(0, LABEL_PRINT_ORDER_LIMITS.textChars);
+}
+
 export type OrderWarning = 'NO_COMPOSITION';
 
 /**

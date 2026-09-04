@@ -81,10 +81,17 @@ describe('PrintOrderPanel', () => {
     vi.unstubAllGlobals();
   });
 
-  async function render(language = 'en') {
+  async function render(language = 'en', categories: { id: string; name: string }[] = []) {
     await act(async () => {
       root = createRoot(container);
-      root.render(<PrintOrderPanel language={language} active onPrintingChange={() => {}} />);
+      root.render(
+        <PrintOrderPanel
+          language={language}
+          active
+          onPrintingChange={() => {}}
+          categories={categories}
+        />,
+      );
     });
     await settle();
   }
@@ -460,6 +467,46 @@ describe('PrintOrderPanel', () => {
     const rowCells = container.querySelectorAll('tbody tr:first-child td').length;
     expect(totalCells).toBe(headerCells);
     expect(rowCells).toBe(headerCells);
+  });
+
+  it('prints the kind of garment on the bag sticker, not the style name', async () => {
+    await render('en', [{ id: 'cat-jackets', name: 'Kurtki' }]);
+    await fillMinimalOrder(40);
+    await act(async () => buttonWithText(container, 'Print').click());
+    await settle();
+
+    expect(printSticker.mock.calls[0][0]).toMatchObject({ styleName: 'KURTKI', styleCode: '114' });
+  });
+
+  const LONG_NAME = 'Komplet Dresowy czarny barbi zaira phối ren czarny aone jf 9949 art:6591#14';
+
+  it('still prints a sticker for a style whose name would never fit on one', async () => {
+    await render('en', [{ id: 'cat-tracksuits', name: 'Komplety dresowe' }]);
+    await fillMinimalOrder(40);
+    await changeInput(input(container, 'input[placeholder="KURTKA"]'), LONG_NAME);
+    const select = container.querySelector<HTMLSelectElement>('[data-testid="order-category"]')!;
+    await act(async () => {
+      select.value = 'cat-tracksuits';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    expect(buttonWithText(container, 'Print').disabled).toBe(false);
+    await act(async () => buttonWithText(container, 'Print').click());
+    await settle();
+    expect(printSticker).toHaveBeenCalledTimes(1);
+    expect(printSticker.mock.calls[0][0].styleName).toBe('KOMPLETY DRESOWE');
+  });
+
+  it('cuts a long style name to what the sticker holds when there is no category', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    await changeInput(input(container, 'input[placeholder="KURTKA"]'), LONG_NAME);
+    await act(async () => buttonWithText(container, 'Print').click());
+    await settle();
+
+    const printed = printSticker.mock.calls[0][0].styleName as string;
+    expect(printed).toHaveLength(40);
+    expect(LONG_NAME.toUpperCase().startsWith(printed)).toBe(true);
   });
 
   it('dates a fresh sheet today', async () => {

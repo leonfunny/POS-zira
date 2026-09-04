@@ -175,7 +175,8 @@ describe('StyleReprintPanel', () => {
     expect(printPackagingSticker).toHaveBeenCalledTimes(1);
     expect(printPackagingSticker.mock.calls[0][0]).toMatchObject({
       customerName: 'MoonCollection',
-      styleName: 'KOMPLET DRESOWY',
+      // The sticker says what kind of garment — the category — not the style.
+      styleName: 'KOMPLETY DRESOWE',
       styleCode: '115',
       colorName: 'CZARNY',
       quantity: 3,
@@ -636,5 +637,14 @@ describe('StyleReprintPanel', () => {
       expect(uploadMainImage).not.toHaveBeenCalled();
       expect(statusText()).toContain('JPG');
     });
+  });
+
+  it('falls back to the style name on the sticker when the style has no category', async () => {
+    await render({ categoryId: null });
+    await typeQuantity('CZARNY S', '1');
+    await act(async () => printButton().click());
+    await settle();
+
+    expect(printPackagingSticker.mock.calls[0][0].styleName).toBe('KOMPLET DRESOWY');
   });
 });

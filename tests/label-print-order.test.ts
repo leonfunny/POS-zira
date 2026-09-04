@@ -15,6 +15,7 @@ import {
   orderWarnings,
   randomStickerCode,
   todayIsoDate,
+  stickerGarmentType,
   CARE_TEXT_MAX_CHARS,
   CARE_TEXT_PRESETS,
   addCareTextLine,
@@ -595,5 +596,21 @@ describe('todayIsoDate', () => {
 
   it('is what a fresh sheet is dated', () => {
     expect(createEmptyOrder().orderDate).toBe(todayIsoDate());
+  });
+});
+
+describe('stickerGarmentType', () => {
+  it('is the category, in capitals, when there is one', () => {
+    expect(stickerGarmentType('Komplety dresowe', 'Komplet czarny barbi 9949')).toBe('KOMPLETY DRESOWE');
+  });
+
+  it('is the style name when there is no category', () => {
+    expect(stickerGarmentType(null, ' kurtka ')).toBe('KURTKA');
+    expect(stickerGarmentType('  ', 'kurtka')).toBe('KURTKA');
+  });
+
+  it('cuts the fallback to what the sticker holds, so the printer never refuses it', () => {
+    const long = 'Komplet czarny barbi zaira phối ren czarny aone jf 9949 art:6591#14';
+    expect(stickerGarmentType(null, long)).toHaveLength(LABEL_PRINT_ORDER_LIMITS.textChars);
   });
 });

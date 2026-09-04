@@ -11,6 +11,7 @@ import {
   OrderWarning,
   orderWarnings,
   randomStickerCode,
+  stickerGarmentType,
   SIZE_SUGGESTIONS,
   STYLE_SUGGESTIONS,
   PrintStep,
@@ -875,7 +876,9 @@ export default function PrintOrderPanel({
         steps,
         {
           customerName: order.customerName,
-          styleName: order.styleName,
+          // The sticker names the kind of garment, not the style: see
+          // `stickerGarmentType`.
+          styleName: stickerGarmentType(productCategory?.name, order.styleName),
           styleCode: order.styleCode,
         },
         {

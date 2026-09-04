@@ -16,6 +16,7 @@ import {
   buildPrintPlan,
   compositionText,
   parseCompositionText,
+  stickerGarmentType,
 } from '../../../shared/label-print-order';
 import {
   buildAddedVariant,
@@ -699,7 +700,10 @@ export default function StyleReprintPanel({
         plan,
         {
           customerName: order.customerName,
-          styleName: order.styleName,
+          styleName: stickerGarmentType(
+            categories.find((category) => category.id === categoryId)?.name,
+            order.styleName,
+          ),
           styleCode: order.styleCode,
         },
         {
