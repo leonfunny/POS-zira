@@ -897,67 +897,39 @@ export default function LabelModule({ language }: LabelModuleProps) {
           aria-hidden={labelMode !== 'ean'}
           className="h-full min-h-0"
         >
-      <div className="grid h-full min-h-0 gap-3 lg:grid-cols-[minmax(360px,400px),minmax(0,1fr)]">
-        <aside className="min-h-0 rounded-lg border border-slate-200 bg-white flex flex-col overflow-hidden">
-          <div className="border-b border-slate-200 px-4 py-3">
-            <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
-                <Tag size={22} />
-              </div>
-              <div className="min-w-0 flex-1">
-                <h1 className="text-lg font-extrabold leading-tight">{copy.title}</h1>
-                <p className="text-xs font-semibold text-slate-500 truncate">{copy.subtitle}</p>
+      {selectedGroup ? (
+        <div className="flex h-full min-h-0 flex-col gap-3" data-testid="style-sheet">
+          <div
+            className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2"
+            data-testid="selected-style"
+          >
+            <button
+              type="button"
+              data-testid="back-to-list"
+              onClick={() => {
+                if (!reprintingRef.current) setSelectedGroupKey('');
+              }}
+              disabled={reprinting}
+              className="min-h-11 shrink-0 rounded-md border border-slate-300 bg-white px-3 text-sm font-extrabold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              ← {copy.backToList}
+            </button>
+            {styleSheet?.imageUrl ? (
+              <img
+                src={styleSheet.imageUrl}
+                alt=""
+                className="h-11 w-11 shrink-0 rounded-md border border-slate-200 object-cover"
+              />
+            ) : null}
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-base font-black leading-tight text-slate-950">{selectedGroup.name}</div>
+              <div className="flex flex-wrap gap-x-3 text-xs font-bold text-slate-500">
+                {selectedGroup.styleCode ? <span>{selectedGroup.styleCode}</span> : null}
+                <span>{selectedCategory ? resolveName(selectedCategory, labelLanguage) : '-'}</span>
               </div>
             </div>
           </div>
-
-          <div className="min-h-0 flex-1 overflow-y-auto p-3 space-y-3">
-            {status.type === 'error' && (
-              <div
-                className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-800"
-                data-testid="label-status"
-              >
-                <AlertTriangle size={17} />
-                <span>{status.message}</span>
-              </div>
-            )}
-            {selectedGroup ? (
-              <>
-                <section className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2" data-testid="selected-style">
-                  <div className="text-sm font-black leading-tight text-slate-950">
-                    {selectedGroup.name}
-                  </div>
-                  <div className="mt-1 flex flex-wrap gap-x-3 text-xs font-bold text-slate-500">
-                    {selectedGroup.styleCode ? <span>{selectedGroup.styleCode}</span> : null}
-                    <span>
-                      {selectedCategory ? resolveName(selectedCategory, labelLanguage) : '-'}
-                    </span>
-                  </div>
-                </section>
-                <button
-                  type="button"
-                  data-testid="back-to-list"
-                  onClick={() => {
-                    if (!reprintingRef.current) setSelectedGroupKey('');
-                  }}
-                  disabled={reprinting}
-                  className="min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm font-extrabold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  ← {copy.backToList}
-                </button>
-              </>
-            ) : (
-              <div className="rounded-lg border border-dashed border-slate-200 px-4 py-6 text-center">
-                <Tag className="mx-auto mb-3 text-slate-300" size={36} />
-                <div className="text-sm font-extrabold text-slate-800">{copy.noSelection}</div>
-                <p className="mt-1 text-xs font-semibold text-slate-500">{copy.selectProductHint}</p>
-              </div>
-            )}
-          </div>
-        </aside>
-
-        {selectedGroup && (
-          <section className="min-h-0 h-full" data-testid="style-sheet">
+          <div className="min-h-0 flex-1">
             {styleSheet?.key === selectedGroup.key ? (
               <PrintOrderPanel
                 key={styleSheet.key}
@@ -983,12 +955,42 @@ export default function LabelModule({ language }: LabelModuleProps) {
                 {copy.sheetLoading}
               </div>
             )}
-          </section>
-        )}
-        <section
-          className="min-h-0 rounded-lg border border-slate-200 bg-white flex flex-col overflow-hidden"
-          hidden={!!selectedGroup}
-        >
+          </div>
+        </div>
+      ) : (
+      <div className="grid h-full min-h-0 gap-3 lg:grid-cols-[minmax(360px,400px),minmax(0,1fr)]">
+        <aside className="min-h-0 rounded-lg border border-slate-200 bg-white flex flex-col overflow-hidden">
+          <div className="border-b border-slate-200 px-4 py-3">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
+                <Tag size={22} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h1 className="text-lg font-extrabold leading-tight">{copy.title}</h1>
+                <p className="text-xs font-semibold text-slate-500 truncate">{copy.subtitle}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto p-3 space-y-3">
+            {status.type === 'error' && (
+              <div
+                className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-800"
+                data-testid="label-status"
+              >
+                <AlertTriangle size={17} />
+                <span>{status.message}</span>
+              </div>
+            )}
+            <div className="rounded-lg border border-dashed border-slate-200 px-4 py-6 text-center">
+              <Tag className="mx-auto mb-3 text-slate-300" size={36} />
+              <div className="text-sm font-extrabold text-slate-800">{copy.noSelection}</div>
+              <p className="mt-1 text-xs font-semibold text-slate-500">{copy.selectProductHint}</p>
+            </div>
+          </div>
+        </aside>
+
+        <section className="min-h-0 rounded-lg border border-slate-200 bg-white flex flex-col overflow-hidden">
           <div className="border-b border-slate-200 px-4 py-3 space-y-3">
             <div className="flex items-center gap-2">
               <div className="relative flex-1 min-w-0">
@@ -1361,6 +1363,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
           </div>
         </section>
       </div>
+      )}
         </div>
       </div>
     </div>

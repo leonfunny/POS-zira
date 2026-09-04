@@ -268,9 +268,29 @@ export function orderFromStyle(seed: StyleSeed): LabelPrintOrder {
     if (size && !sizes.includes(size)) sizes.push(size);
   }
   sizes.sort((a, b) => sizeRank(a) - sizeRank(b));
-  const prices = new Set(
-    seed.variants.map((row) => Math.max(0, Math.floor(Number(row.retail_price) || 0))),
-  );
+  // The sheet's price is the one most rows sell at; a colour whose rows all
+  // sell at another carries that as its own. Rows of one colour that disagree
+  // among themselves leave the colour on the sheet's price.
+  const priceOf = (row: StyleSeedRow) => Math.max(0, Math.floor(Number(row.retail_price) || 0));
+  const tally = new Map<number, number>();
+  for (const row of seed.variants) tally.set(priceOf(row), (tally.get(priceOf(row)) ?? 0) + 1);
+  let sheetPrice = 0;
+  let best = 0;
+  for (const [price, count] of tally) {
+    if (count > best) {
+      best = count;
+      sheetPrice = price;
+    }
+  }
+  const colourPrice = (colour: string): number | undefined => {
+    const own = new Set(
+      seed.variants
+        .filter((row) => cleanText(row.color_name).toLocaleUpperCase('pl') === colour)
+        .map(priceOf),
+    );
+    const only = own.size === 1 ? [...own][0] : undefined;
+    return only !== undefined && only >= 1 && only !== sheetPrice ? only : undefined;
+  };
   const styleCode = cleanText(seed.styleCode);
   const tag = seed.tag;
   const materials = tag?.materials?.length
@@ -285,17 +305,19 @@ export function orderFromStyle(seed: StyleSeed): LabelPrintOrder {
     careSymbols: [...(tag?.careSymbols ?? [])],
     careText: cleanText(tag?.careText),
     sizes: sizes.map((label, index) => ({ id: `size-${index}`, label })),
-    rows: colours.map((colorName, index) => ({
-      id: `row-${index}`,
-      colorName,
-      // The same code the sheet would fall back to, so a sticker printed from
-      // here reads like one printed from the order.
-      code: fallbackStickerCode(styleCode, colorName),
-      quantities: {},
-    })),
-    // One price the rows agree on; rows that differ leave it blank, and the
-    // sheet asks for one before it will write the style.
-    priceGrossGrosze: prices.size === 1 ? [...prices][0] : 0,
+    rows: colours.map((colorName, index) => {
+      const own = colourPrice(colorName);
+      return {
+        id: `row-${index}`,
+        colorName,
+        // The same code the sheet would fall back to, so a sticker printed from
+        // here reads like one printed from the order.
+        code: fallbackStickerCode(styleCode, colorName),
+        quantities: {},
+        ...(own === undefined ? {} : { priceGrossGrosze: own }),
+      };
+    }),
+    priceGrossGrosze: sheetPrice,
     productId: seed.templateId,
     categoryId: seed.categoryId,
   };

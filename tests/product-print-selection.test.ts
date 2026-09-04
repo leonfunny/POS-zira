@@ -278,13 +278,28 @@ describe('orderFromStyle', () => {
     expect(bare.materials).toEqual([]);
   });
 
-  it('carries the one price the rows agree on, and none when they differ', () => {
+  it('carries the price most rows sell at, and a colour sold apart keeps its own', () => {
     const agreed = orderFromStyle({ templateId: 't', name: 'X', styleCode: '1', categoryId: null, variants: rows, tag: null });
     expect(agreed.priceGrossGrosze).toBe(4000);
-    const mixed = orderFromStyle({
+    expect(agreed.rows.map((row) => row.priceGrossGrosze)).toEqual([undefined, undefined]);
+
+    // One old row at 1 zł among eleven at 40: the sheet says 40, and CZARNY —
+    // whose rows disagree among themselves — sits on the sheet's price.
+    const oneOff = orderFromStyle({
       templateId: 't', name: 'X', styleCode: '1', categoryId: null,
       variants: [...rows, { color_name: 'CZARNY', size_name: 'L', retail_price: 100 }], tag: null,
     });
-    expect(mixed.priceGrossGrosze).toBe(0);
+    expect(oneOff.priceGrossGrosze).toBe(4000);
+    expect(oneOff.rows.map((row) => row.priceGrossGrosze)).toEqual([undefined, undefined]);
+
+    // Three BORDO rows at 35 zł against two CZARNY at 40: the sheet says 35,
+    // and CZARNY — every row of it at 40 — carries 40 as its own.
+    const apart = orderFromStyle({
+      templateId: 't', name: 'X', styleCode: '1', categoryId: null,
+      variants: rows.map((row) => (row.color_name.trim().toUpperCase() === 'BORDO' ? { ...row, retail_price: 3500 } : row)),
+      tag: null,
+    });
+    expect(apart.priceGrossGrosze).toBe(3500);
+    expect(apart.rows.map((row) => [row.colorName, row.priceGrossGrosze])).toEqual([['CZARNY', 4000], ['BORDO', undefined]]);
   });
 });

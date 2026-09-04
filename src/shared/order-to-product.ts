@@ -14,6 +14,16 @@ export interface ProductDraftVariant {
   sizeName: string | null;
   sku: string | null;
   initialStockQty: number;
+  /** The colour's own price, when it has one; otherwise the row sells at the draft's. */
+  priceGrossGrosze?: number;
+}
+
+/** A colour's own price when the sheet gives it one, else the sheet's. Grosze. */
+export function priceForColour(order: LabelPrintOrder, colorName: string | null | undefined): number {
+  const wanted = cleanText(String(colorName ?? '')).toLocaleUpperCase('pl');
+  const row = order.rows.find((candidate) => cleanText(candidate.colorName).toLocaleUpperCase('pl') === wanted);
+  const own = Math.floor(Number(row?.priceGrossGrosze) || 0);
+  return own >= 1 ? own : Math.floor(Number(order.priceGrossGrosze) || 0);
 }
 
 export interface ProductDraft {
@@ -220,12 +230,15 @@ export function buildProductDraft(order: LabelPrintOrder): ProductDraft {
   for (const row of order.rows) {
     const colorName = cleanText(row.colorName) || null;
     if (!colorName) continue;
+    const ownPrice = Math.floor(Number(row.priceGrossGrosze) || 0);
+    const price = ownPrice >= 1 ? { priceGrossGrosze: ownPrice } : {};
     if (sizes.length === 0) {
       variants.push({
         colorName,
         sizeName: null,
         sku: buildSku(base, colorName, null, taken),
         initialStockQty: 0,
+        ...price,
       });
       continue;
     }
@@ -236,6 +249,7 @@ export function buildProductDraft(order: LabelPrintOrder): ProductDraft {
         sizeName,
         sku: buildSku(base, colorName, sizeName, taken),
         initialStockQty: 0,
+        ...price,
       });
     }
   }

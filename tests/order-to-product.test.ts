@@ -6,6 +6,7 @@ import {
   buildAddedVariant,
   buildMissingVariants,
   buildProductDraft,
+  priceForColour,
   rowBelongsToStyle,
   styleCodeOfRow,
   styleNameOfRow,
@@ -55,6 +56,34 @@ const TWO_BY_TWO = sheet(
   ],
   ['M', 'L'],
 );
+
+describe('a price per colour', () => {
+  // The shop sells a colour dearer than the rest; sizes never differ.
+  const order = {
+    ...sheet([], ['S', 'M']),
+    rows: [
+      { id: 'r1', colorName: 'BEŻOWY', code: '', quantities: {} },
+      { id: 'r2', colorName: 'CZARNY', code: '', quantities: {}, priceGrossGrosze: 3500 },
+      { id: 'r3', colorName: 'BORDO', code: '', quantities: {}, priceGrossGrosze: 0 },
+    ],
+  };
+
+  it('puts the colour price on every row of that colour, and none on the others', () => {
+    const draft = buildProductDraft(order);
+    const byColour = (colour: string) => draft.variants.filter((v) => v.colorName === colour).map((v) => v.priceGrossGrosze);
+    expect(byColour('CZARNY')).toEqual([3500, 3500]);
+    expect(byColour('BEŻOWY')).toEqual([undefined, undefined]);
+    // Zero is "not typed", not "free".
+    expect(byColour('BORDO')).toEqual([undefined, undefined]);
+  });
+
+  it('answers the price a colour sells at, the sheet\'s when it has none of its own', () => {
+    expect(priceForColour(order, 'czarny')).toBe(3500);
+    expect(priceForColour(order, 'BEŻOWY')).toBe(12900);
+    expect(priceForColour(order, 'BORDO')).toBe(12900);
+    expect(priceForColour(order, 'NIEBIESKI')).toBe(12900);
+  });
+});
 
 describe('styleCodeOfRow / rowBelongsToStyle', () => {
   // The server keeps no style code for a style filed from the sheet; the

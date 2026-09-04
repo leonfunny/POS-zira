@@ -233,6 +233,16 @@ describe('fabric-label operator feedback', () => {
     await chooseLabelMode('Tem mã sản phẩm / EAN');
     await settle();
 
+    // Three rows, one style: a chip promising three where one card appears is a
+    // fault the operator cannot act on. Both chips count the same thing.
+    const chipText = (label: string) =>
+      Array.from(container.querySelectorAll('button'))
+        .find((button) => button.textContent?.includes(label))
+        ?.textContent ?? '';
+    expect(chipText('Tất cả')).toContain('1');
+    expect(chipText('Bawełniane')).toContain('1');
+    expect(chipText('Bawełniane')).not.toContain('3');
+
     const card = container.querySelector<HTMLButtonElement>('[data-testid="style-card"]');
     await act(async () => card?.click());
     await settle();
@@ -248,16 +258,6 @@ describe('fabric-label operator feedback', () => {
       box.getAttribute('aria-label')?.replace('Mác vải ', ''),
     );
     expect(sizes).toEqual(['S', 'M']);
-
-    // Three rows, one style: a chip promising three where one card appears is a
-    // fault the operator cannot act on. Both chips count the same thing.
-    const chipText = (label: string) =>
-      Array.from(container.querySelectorAll('button'))
-        .find((button) => button.textContent?.includes(label))
-        ?.textContent ?? '';
-    expect(chipText('Tất cả')).toContain('1');
-    expect(chipText('Bawełniane')).toContain('1');
-    expect(chipText('Bawełniane')).not.toContain('3');
   });
 
   it('reads care content for the selected style only, never the whole template store', async () => {

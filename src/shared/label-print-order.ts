@@ -203,6 +203,11 @@ export interface OrderRow {
    * saved before the field existed, and treated as not yet typed.
    */
   stickerQuantity?: number;
+  /**
+   * The colour's own selling price, in grosze, when it differs from the
+   * sheet's. Blank means the sheet's price; sizes never differ in price here.
+   */
+  priceGrossGrosze?: number;
 }
 
 export interface LabelPrintOrder {

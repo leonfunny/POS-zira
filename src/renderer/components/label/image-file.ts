@@ -1,3 +1,4 @@
+import { latestRevision } from './product-revision';
 /**
  * A product photo picked on the label tab, and how it reaches the catalogue.
  *
@@ -113,6 +114,9 @@ export interface ImageUploadOutcome {
   failed: string[];
 }
 
+/** A row to put the photo on: its id, and the revision the mirror holds if known. */
+export type ImageTarget = string | { id: string; updated_at?: string | null };
+
 /**
  * Put one picture on every row of a style, one upload each — the catalogue
  * keeps images per row, and the label tab reads the picture off whichever row
@@ -121,18 +125,26 @@ export interface ImageUploadOutcome {
  * A failure on one row does not stop the rest; the caller hears about both.
  */
 export async function uploadImageToVariants(
-  variantIds: readonly string[],
+  targets: readonly ImageTarget[],
   image: PickedImage,
 ): Promise<ImageUploadOutcome> {
   const outcome: ImageUploadOutcome = { uploaded: [], failed: [] };
   const bridge = (window as any).electronAPI?.pos?.productAdmin;
-  for (const variantId of variantIds) {
+  for (const target of targets) {
+    const variantId = typeof target === 'string' ? target : target.id;
     try {
+      // The upload is a write like any other: it names the row's current
+      // revision, and the row before may have moved this one's.
+      const expectedUpdatedAt = await latestRevision(
+        variantId,
+        typeof target === 'string' ? null : target.updated_at,
+      );
       const result = await Promise.resolve().then(() =>
         bridge?.uploadMainImage?.(variantId, {
           dataUrl: image.dataUrl,
           fileName: image.fileName,
           mimeType: image.mimeType,
+          expectedUpdatedAt,
         }),
       );
       (result?.ok ? outcome.uploaded : outcome.failed).push(variantId);

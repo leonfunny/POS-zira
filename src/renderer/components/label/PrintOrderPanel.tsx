@@ -45,6 +45,7 @@ import {
   buildMissingVariants,
   type ExistingVariant,
   groszeToText,
+  priceForColour,
   textToGrosze,
   validateProductDraft,
 } from '../../../shared/order-to-product';
@@ -117,6 +118,7 @@ interface Copy {
   codeHint: string;
   rowTotal: string;
   stickerQty: string;
+  colourPrice: string;
   fabricRow: string;
   addRow: string;
   total: string;
@@ -223,6 +225,7 @@ const COPY: Record<string, Copy> = {
     codeHint: 'Để trống thì màu này không in tem dán',
     rowTotal: 'Tổng',
     stickerQty: 'Tem túi',
+    colourPrice: 'Giá riêng (zł)',
     fabricRow: 'Mác vải',
     addRow: 'Thêm màu',
     total: 'Tổng cộng',
@@ -357,6 +360,7 @@ const COPY: Record<string, Copy> = {
     codeHint: 'Puste = bez naklejki dla tego koloru',
     rowTotal: 'Razem',
     stickerQty: 'Naklejki',
+    colourPrice: 'Cena koloru (zł)',
     fabricRow: 'Metki',
     addRow: 'Dodaj kolor',
     total: 'Razem',
@@ -491,6 +495,7 @@ const COPY: Record<string, Copy> = {
     codeHint: 'Blank means no packaging sticker for this colour',
     rowTotal: 'Total',
     stickerQty: 'Bag stickers',
+    colourPrice: 'Colour price (zł)',
     fabricRow: 'Fabric tags',
     addRow: 'Add colour',
     total: 'Grand total',
@@ -1133,6 +1138,7 @@ export default function PrintOrderPanel({
             sku: variant.sku,
             barcode: variant.sku,
             initialStockQty: variant.initialStockQty,
+            ...(variant.priceGrossGrosze ? { priceGrossGrosze: variant.priceGrossGrosze } : {}),
           })),
         });
         const created = result?.data?.variants ?? (result?.data?.variant ? [result.data.variant] : []);
@@ -1164,7 +1170,7 @@ export default function PrintOrderPanel({
       const tagSaved = await saveFabricTagContent(templateId, order);
       let imageNote = '';
       if (order.imageDataUrl) {
-        const targets = [...style.variants.map((variant) => variant.id), ...createdIds];
+        const targets = [...style.variants, ...createdIds];
         const outcome = await uploadImageToVariants(targets, {
           dataUrl: order.imageDataUrl,
           fileName: 'sheet.jpg',
@@ -1176,20 +1182,20 @@ export default function PrintOrderPanel({
         setLearnedCategories(rememberStyleCategory(styleCategoryKey(order.styleName), categoryId));
         onProductFiled?.({ categoryId });
       }
-      // One price for the whole style, the one on the sheet: rows the style
-      // already had are brought to it, so a colour added today does not ring
-      // up at a different number from the colour filed last week. Each write
-      // carries the row's current revision; the category move above may have
-      // moved every row's.
+      // Every row to the price on the sheet — the sheet's, or its colour's
+      // own: rows the style already had are brought to it, so a colour added
+      // today does not ring up at a different number from the colour filed
+      // last week. Each write carries the row's current revision; the
+      // category move above may have moved every row's.
       let priceNote = '';
       const sheetPrice = productDraft.priceGrossGrosze;
       if (sheetPrice >= 1) {
-        const stale = style.variants.filter(
-          (variant) => Math.floor(Number(variant.retail_price) || 0) !== sheetPrice,
-        );
-        for (const variant of stale) {
+        const stale = style.variants
+          .map((variant) => ({ variant, price: priceForColour(order, variant.color_name) }))
+          .filter(({ variant, price }) => Math.floor(Number(variant.retail_price) || 0) !== price);
+        for (const { variant, price } of stale) {
           const priced = await window.electronAPI.pos.productAdmin.updateVariant(variant.id, {
-            priceGrossGrosze: sheetPrice,
+            priceGrossGrosze: price,
             expectedUpdatedAt: await latestRevision(variant.id, variant.updated_at),
           });
           if (!priced?.ok) {
@@ -1309,6 +1315,7 @@ export default function PrintOrderPanel({
           // rather than a second, meaningless number to keep in step.
           barcode: variant.sku,
           initialStockQty: variant.initialStockQty,
+          ...(variant.priceGrossGrosze ? { priceGrossGrosze: variant.priceGrossGrosze } : {}),
         })),
       });
       const created = result?.data?.variants ?? (result?.data?.variant ? [result.data.variant] : []);
@@ -1766,6 +1773,7 @@ export default function PrintOrderPanel({
                 ))}
                 <th className="w-20 border-b border-slate-200 p-2 text-center font-bold">{copy.rowTotal}</th>
                 <th className="w-24 border-b border-slate-200 p-2 text-center font-bold text-sky-800">{copy.stickerQty}</th>
+                <th className="w-28 border-b border-slate-200 p-2 text-center font-bold">{copy.colourPrice}</th>
                 <th className="border-b border-slate-200 p-2" />
               </tr>
             </thead>
@@ -1791,6 +1799,7 @@ export default function PrintOrderPanel({
                 <td className="border-b border-slate-100 p-2 text-center font-extrabold" data-testid="fabric-total">
                   {totals.grandTotal}
                 </td>
+                <td className="border-b border-slate-100 p-2" />
                 <td className="border-b border-slate-100 p-2" />
                 <td className="border-b border-slate-100 p-2" />
               </tr>
@@ -1826,6 +1835,22 @@ export default function PrintOrderPanel({
                       aria-label={`${copy.stickerQty} ${row.colorName || copy.color}`}
                     />
                   </td>
+                  <td className="border-b border-slate-100 p-1 text-center">
+                    <ColourPriceInput
+                      value={row.priceGrossGrosze}
+                      placeholder={order.priceGrossGrosze ? groszeToText(order.priceGrossGrosze) : ''}
+                      ariaLabel={`${copy.colourPrice} ${row.colorName || copy.color}`}
+                      onChange={(priceGrossGrosze) =>
+                        patch({
+                          rows: order.rows.map((r) => {
+                            if (r.id !== row.id) return r;
+                            const { priceGrossGrosze: _dropped, ...rest } = r;
+                            return priceGrossGrosze === undefined ? rest : { ...rest, priceGrossGrosze };
+                          }),
+                        })
+                      }
+                    />
+                  </td>
                   <td className="border-b border-slate-100 p-2">
                     <button
                       type="button"
@@ -1851,6 +1876,7 @@ export default function PrintOrderPanel({
                 <td className="p-2 text-center text-base font-extrabold text-sky-800" data-testid="sticker-total">
                   {totals.stickerTotal}
                 </td>
+                <td />
                 <td />
               </tr>
             </tfoot>
@@ -2153,6 +2179,46 @@ export default function PrintOrderPanel({
 
 const INPUT =
   'h-10 w-full rounded-md border border-slate-300 px-2 text-sm focus:border-emerald-500 focus:outline-none';
+
+/**
+ * A colour's own price. Typed as text so "12," does not snap under the
+ * cursor; blank means the sheet's price, which the box shows as its hint.
+ */
+function ColourPriceInput({
+  value,
+  placeholder,
+  ariaLabel,
+  onChange,
+}: {
+  value: number | undefined;
+  placeholder: string;
+  ariaLabel: string;
+  onChange: (grosze: number | undefined) => void;
+}) {
+  const [text, setText] = useState(() => (value ? groszeToText(value) : ''));
+  useEffect(() => {
+    setText((current) => {
+      const typed = textToGrosze(current);
+      const shown = typed >= 1 ? typed : undefined;
+      return shown === value ? current : value ? groszeToText(value) : '';
+    });
+  }, [value]);
+  return (
+    <input
+      inputMode="decimal"
+      className="h-10 w-24 rounded-md border border-slate-300 px-2 text-center text-sm"
+      value={text}
+      placeholder={placeholder}
+      aria-label={ariaLabel}
+      onChange={(e) => {
+        setText(e.target.value);
+        const grosze = textToGrosze(e.target.value);
+        onChange(grosze >= 1 ? grosze : undefined);
+      }}
+      onBlur={() => setText(value ? groszeToText(value) : '')}
+    />
+  );
+}
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (

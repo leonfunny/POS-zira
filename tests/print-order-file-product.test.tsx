@@ -416,6 +416,25 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
     await settle();
   }
 
+  it('files a colour at its own price when one is typed, the rest at the sheet\'s', async () => {
+    await render();
+    await fillGrid();
+    await changeInput(input(container, 'input[aria-label="Colour price (zł) CZARNY"]'), '35,50');
+    await act(async () => fileButton().click());
+    await settle();
+
+    const payload = createProduct.mock.calls[0][0];
+    expect(payload.priceGrossGrosze).toBe(12900);
+    expect(payload.variants.map((v: any) => [v.colorName, v.priceGrossGrosze])).toEqual([
+      ['BEŻOWY', undefined], ['BEŻOWY', undefined], ['CZARNY', 3550], ['CZARNY', 3550],
+    ]);
+    // The box shows the sheet's price as its hint, and clears back to it.
+    const box = input(container, 'input[aria-label="Colour price (zł) CZARNY"]');
+    expect(box.placeholder).toBe('129,00');
+    await changeInput(box, '');
+    expect(box.value).toBe('');
+  });
+
   it('keeps a picked photo on the sheet and puts it on every row it files', async () => {
     await render();
     await fillGrid();
@@ -427,9 +446,11 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
 
     expect(uploadMainImage).toHaveBeenCalledTimes(2);
     expect(uploadMainImage.mock.calls.map((call) => call[0])).toEqual(['variant-0', 'variant-1']);
+    // The upload is a write like any other, and names the row's revision.
     expect(uploadMainImage.mock.calls[0][1]).toMatchObject({
       dataUrl: 'data:image/jpeg;base64,YWJj',
       mimeType: 'image/jpeg',
+      expectedUpdatedAt: 'rev:variant-0',
     });
     expect(fileResult()).toContain('photo attached');
   });
@@ -752,6 +773,26 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
 
       expect(uploadMainImage.mock.calls.map((call) => call[0])).toEqual([
         'variant-0', 'variant-1', 'variant-2', 'variant-3', 'variant-4', 'variant-5',
+      ]);
+      expect(uploadMainImage.mock.calls.map((call) => call[1].expectedUpdatedAt)).toEqual([
+        'rev:variant-0', 'rev:variant-1', 'rev:variant-2', 'rev:variant-3', 'rev:variant-4', 'rev:variant-5',
+      ]);
+    });
+
+    it('brings each old row to its colour\'s own price when the sheet gives it one', async () => {
+      await fileSheet();
+      styleById.mockReturnValue({
+        ...STYLE,
+        variants: STYLE.variants.map((row) => ({ ...row, retail_price: 12900 })),
+      });
+      await changeInput(input(container, 'input[aria-label="Colour price (zł) CZARNY"]'), '35');
+      await act(async () => updateButton().click());
+      await settle();
+
+      // BEŻOWY already sells at the sheet's price; CZARNY moves to its own.
+      expect(updateVariant.mock.calls).toEqual([
+        ['variant-2', { priceGrossGrosze: 3500, expectedUpdatedAt: 'rev:variant-2' }],
+        ['variant-3', { priceGrossGrosze: 3500, expectedUpdatedAt: 'rev:variant-3' }],
       ]);
     });
 
