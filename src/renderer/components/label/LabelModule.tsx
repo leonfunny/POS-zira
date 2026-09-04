@@ -797,6 +797,9 @@ export default function LabelModule({ language }: LabelModuleProps) {
                   styleCode={selectedGroup.styleCode}
                   variants={selectedGroup.variants}
                   onPrintingChange={handleReprintingChange}
+                  // A colour added on the server reaches this list through a
+                  // sync; without one the operator adds it and sees nothing.
+                  onVariantsAdded={syncProducts}
                 />
               </>
             ) : (

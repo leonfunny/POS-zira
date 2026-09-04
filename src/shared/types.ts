@@ -3492,6 +3492,12 @@ export interface ProductAdminCreateProductInput {
   trackInventory?: boolean;
   idempotencyKey?: string;
   /**
+   * Attach the rows to this existing product instead of creating one. Requires
+   * `variants`; the product keeps its own name, price and category. Used to add
+   * a colour or size to a style that already exists.
+   */
+  productId?: string;
+  /**
    * Physical rows to create under one template. Omitted for every existing
    * caller, which keeps creating exactly one variant.
    */

@@ -18,6 +18,11 @@ import {
   parseCompositionText,
 } from '../../../shared/label-print-order';
 import {
+  buildAddedVariant,
+  validateAddedCell,
+  type AddedCellProblem,
+} from '../../../shared/order-to-product';
+import {
   SelectionInput,
   SelectionProblem,
   buildSelectionOrder,
@@ -37,6 +42,8 @@ export interface StyleVariant {
   sku?: string | null;
   color_name?: string | null;
   size_name?: string | null;
+  /** Grosze, as the local catalogue stores it. A new row of the style copies it. */
+  retail_price?: number | null;
 }
 
 interface Props {
@@ -47,6 +54,12 @@ interface Props {
   styleCode: string;
   variants: readonly StyleVariant[];
   onPrintingChange?: (printing: boolean) => void;
+  /**
+   * Pull the catalogue again after a colour is added. The rows on screen come
+   * from the local mirror, and a row written on the server is not one of them
+   * until the next sync.
+   */
+  onVariantsAdded?: () => void | Promise<unknown>;
 }
 
 interface Copy {
@@ -77,6 +90,14 @@ interface Copy {
   tagSaved: string;
   tagSaveFailed: string;
   tagCompositionKept: (line: string) => string;
+  addTitle: string;
+  addColor: string;
+  addSize: string;
+  addButton: string;
+  addSaving: string;
+  addDone: (colorName: string, sizeName: string) => string;
+  addFailed: (reason: string) => string;
+  addProblem: Record<AddedCellProblem, string>;
   problem: Record<SelectionProblem, string>;
 }
 
@@ -110,6 +131,18 @@ const COPY: Record<string, Copy> = {
     tagSaved: 'Đã lưu nội dung tem vải',
     tagSaveFailed: 'Không lưu được nội dung tem vải',
     tagCompositionKept: (line) => `Giữ nguyên dòng chất liệu đã lưu: ${line}`,
+    addTitle: 'Thêm màu / size',
+    addColor: 'Màu',
+    addSize: 'Size',
+    addButton: 'Thêm vào mẫu này',
+    addSaving: 'Đang thêm…',
+    addDone: (colorName, sizeName) =>
+      `Đã thêm ${[colorName, sizeName].filter(Boolean).join(' / ')}`,
+    addFailed: (reason) => `Không thêm được: ${reason}`,
+    addProblem: {
+      NO_COLOR_OR_SIZE: 'Gõ màu hoặc size trước đã',
+      ALREADY_EXISTS: 'Mẫu này đã có màu và size đó',
+    },
     problem: {
       NOTHING_SELECTED: 'Chưa gõ số lượng cho dòng nào',
       NO_LANE: 'Chưa chọn in tem đóng gói hay tem vải',
@@ -145,6 +178,18 @@ const COPY: Record<string, Copy> = {
     tagSaved: 'Treść metki zapisana',
     tagSaveFailed: 'Nie udało się zapisać treści metki',
     tagCompositionKept: (line) => `Zapisany skład pozostaje bez zmian: ${line}`,
+    addTitle: 'Dodaj kolor / rozmiar',
+    addColor: 'Kolor',
+    addSize: 'Rozmiar',
+    addButton: 'Dodaj do tego modelu',
+    addSaving: 'Dodawanie…',
+    addDone: (colorName, sizeName) =>
+      `Dodano ${[colorName, sizeName].filter(Boolean).join(' / ')}`,
+    addFailed: (reason) => `Nie udało się dodać: ${reason}`,
+    addProblem: {
+      NO_COLOR_OR_SIZE: 'Najpierw wpisz kolor albo rozmiar',
+      ALREADY_EXISTS: 'Ten model ma już taki kolor i rozmiar',
+    },
     problem: {
       NOTHING_SELECTED: 'Żaden wiersz nie ma ilości',
       NO_LANE: 'Nie wybrano etykiet ani metek',
@@ -180,6 +225,18 @@ const COPY: Record<string, Copy> = {
     tagSaved: 'Fabric tag content saved',
     tagSaveFailed: 'Could not save the fabric tag content',
     tagCompositionKept: (line) => `Keeping the stored composition line: ${line}`,
+    addTitle: 'Add a colour or size',
+    addColor: 'Colour',
+    addSize: 'Size',
+    addButton: 'Add to this style',
+    addSaving: 'Adding…',
+    addDone: (colorName, sizeName) =>
+      `Added ${[colorName, sizeName].filter(Boolean).join(' / ')}`,
+    addFailed: (reason) => `Could not add it: ${reason}`,
+    addProblem: {
+      NO_COLOR_OR_SIZE: 'Type a colour or a size first',
+      ALREADY_EXISTS: 'This style already has that colour and size',
+    },
     problem: {
       NOTHING_SELECTED: 'No row has a quantity',
       NO_LANE: 'Neither bag labels nor fabric tags are selected',
@@ -199,6 +256,20 @@ const CONFIRM_THRESHOLD = 50;
 
 const INPUT =
   'h-10 w-20 rounded-md border border-slate-200 text-center text-base font-extrabold outline-none focus:ring-2 focus:ring-emerald-200';
+
+/**
+ * One idempotency key per cell per attempt.
+ *
+ * Held across retries of the same cell so an answer lost on the way back adds
+ * the colour once, and rebuilt for a different cell so two adds never look like
+ * one replay to the server.
+ */
+function nextAddKey(templateId: string, cell: { colorName: string; sizeName: string }): string {
+  return `add-${templateId}-${cell.colorName}-${cell.sizeName}-${Date.now().toString(36)}`.slice(
+    0,
+    100,
+  );
+}
 
 /** Sizes in the order the shop says them, not the order the alphabet does. */
 function sizeRank(label: string): number {
@@ -233,6 +304,7 @@ export default function StyleReprintPanel({
   styleCode,
   variants,
   onPrintingChange,
+  onVariantsAdded,
 }: Props) {
   const copy = COPY[language] || COPY.vi;
   const [quantities, setQuantities] = useState<Record<string, number>>({});
@@ -300,6 +372,22 @@ export default function StyleReprintPanel({
   });
   const [saving, setSaving] = useState(false);
 
+  // Adding a colour or size to this style.
+  const [colorDraft, setColorDraft] = useState('');
+  const [sizeDraft, setSizeDraft] = useState('');
+  const [adding, setAdding] = useState(false);
+  const addKeyRef = useRef<string | null>(null);
+
+  /**
+   * The price a new row takes. Sibling rows of one style cost the same, and the
+   * workshop's styles all sit at 0, so reading it off the rows on screen is
+   * both correct for a shop that sells and correct for one that does not.
+   */
+  const siblingPriceGrosze = useMemo(
+    () => Math.max(0, Math.floor(Number(rows[0]?.retail_price) || 0)),
+    [rows],
+  );
+
   /**
    * The composition line a row was saved with, when its parts could not be
    * recovered from it. Shown as-is and kept on save: a line someone wrote by
@@ -332,6 +420,9 @@ export default function StyleReprintPanel({
   useEffect(() => {
     setEditing(false);
     setSaving(false);
+    setColorDraft('');
+    setSizeDraft('');
+    addKeyRef.current = null;
   }, [templateId]);
 
   const hasTagContent = !!tag;
@@ -467,6 +558,65 @@ export default function StyleReprintPanel({
     if (!running) return;
     stopRef.current = true;
     setStopping(true);
+  };
+
+  const addProblems = validateAddedCell(
+    { colorName: colorDraft, sizeName: sizeDraft },
+    rows.map((row) => ({ colorName: row.color_name, sizeName: row.size_name })),
+  );
+  const canAdd = addProblems.length === 0 && !adding && !running;
+
+  const handleAddCell = async () => {
+    if (!canAdd) return;
+    setAdding(true);
+    const cell = { colorName: colorDraft.trim(), sizeName: sizeDraft.trim() };
+    const variant = buildAddedVariant(styleCode, cell, rows.map((row) => row.sku));
+    try {
+      const bridge = (window as any).electronAPI?.pos?.productAdmin;
+      const result = await Promise.resolve().then(() =>
+        bridge?.createProduct?.({
+          productId: templateId,
+          name: styleName,
+          sku: styleCode || null,
+          // The rows the style already has set the price; a new colour of a
+          // style the till sells must not ring up at a different number.
+          priceGrossGrosze: siblingPriceGrosze,
+          vatRate: 23,
+          // One key per attempt, kept across retries of the same cell: a
+          // network answer lost on the way back must not add the colour twice.
+          idempotencyKey: (addKeyRef.current ??= nextAddKey(templateId, cell)),
+          variants: [
+            {
+              colorName: variant.colorName,
+              sizeName: variant.sizeName,
+              sku: variant.sku,
+              // Same rule the sheet uses: the SKU reads as the goods and is
+              // already unique per cell, so it is the barcode too.
+              barcode: variant.sku,
+              initialStockQty: 0,
+            },
+          ],
+        }),
+      );
+      if (!result?.ok) {
+        setStatus({
+          type: 'error',
+          message: copy.addFailed(result?.error || result?.code || '?'),
+        });
+        return;
+      }
+      addKeyRef.current = null;
+      setColorDraft('');
+      setSizeDraft('');
+      setStatus({ type: 'success', message: copy.addDone(cell.colorName, cell.sizeName) });
+      // The row exists on the server now; it reaches this list through a sync.
+      await onVariantsAdded?.();
+    } catch (err) {
+      rlog.error('[StyleReprintPanel] Failed to add a colour or size:', err);
+      setStatus({ type: 'error', message: copy.addFailed(String(err)) });
+    } finally {
+      setAdding(false);
+    }
   };
 
   const openEditor = () => {
@@ -689,6 +839,58 @@ export default function StyleReprintPanel({
               ))}
             </tbody>
           </table>
+        </div>
+
+        <div
+          className="rounded-lg border border-dashed border-slate-300 p-3"
+          data-testid="add-variant"
+        >
+          <div className="mb-2 text-xs font-extrabold uppercase tracking-wide text-slate-400">
+            {copy.addTitle}
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="min-w-0 flex-1">
+              <span className="mb-1 block text-[11px] font-bold uppercase text-slate-500">
+                {copy.addColor}
+              </span>
+              <input
+                className="h-10 w-full rounded-md border border-slate-300 px-2.5 text-sm"
+                data-testid="add-color"
+                aria-label={copy.addColor}
+                value={colorDraft}
+                disabled={adding || running}
+                onChange={(e) => setColorDraft(e.target.value.toUpperCase())}
+              />
+            </label>
+            <label className="w-28">
+              <span className="mb-1 block text-[11px] font-bold uppercase text-slate-500">
+                {copy.addSize}
+              </span>
+              <input
+                className="h-10 w-full rounded-md border border-slate-300 px-2.5 text-sm"
+                data-testid="add-size"
+                aria-label={copy.addSize}
+                value={sizeDraft}
+                disabled={adding || running}
+                onChange={(e) => setSizeDraft(e.target.value.toUpperCase())}
+              />
+            </label>
+            <button
+              type="button"
+              data-testid="add-submit"
+              onClick={handleAddCell}
+              disabled={!canAdd}
+              title={addProblems.length > 0 ? copy.addProblem[addProblems[0]] : undefined}
+              className="h-10 rounded-md border border-slate-300 px-3 text-sm font-extrabold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {adding ? copy.addSaving : copy.addButton}
+            </button>
+          </div>
+          {addProblems.length > 0 && (colorDraft || sizeDraft) && (
+            <p className="mt-1.5 text-xs font-bold text-amber-700" data-testid="add-problem">
+              {copy.addProblem[addProblems[0]]}
+            </p>
+          )}
         </div>
       </section>
 

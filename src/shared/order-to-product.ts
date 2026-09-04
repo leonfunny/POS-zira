@@ -207,6 +207,69 @@ export function buildProductDraft(order: LabelPrintOrder): ProductDraft {
   };
 }
 
+/** A colour and size the shop wants to add to a style that already exists. */
+export interface AddedCell {
+  colorName: string;
+  sizeName: string;
+}
+
+export type AddedCellProblem =
+  | 'NO_COLOR_OR_SIZE'
+  | 'ALREADY_EXISTS';
+
+/**
+ * One new row under an existing style.
+ *
+ * The SKU is built the way the print order sheet builds one, from the style's
+ * own code plus the colour and size, and is checked against the SKUs the style
+ * already carries rather than only against the rows in this request — the
+ * server refuses a collision, and finding that out after the operator has typed
+ * is worse than not offering the number in the first place.
+ */
+export function buildAddedVariant(
+  styleCode: string,
+  cell: AddedCell,
+  existingSkus: readonly (string | null | undefined)[],
+): ProductDraftVariant {
+  const colorName = cleanText(cell.colorName) || null;
+  const sizeName = cleanText(cell.sizeName) || null;
+  const taken = new Set(
+    existingSkus
+      .map((sku) => cleanText(String(sku ?? '')))
+      .filter(Boolean),
+  );
+  return {
+    colorName,
+    sizeName,
+    sku: buildSku(skuToken(cleanText(styleCode), 16), colorName, sizeName, taken),
+    // Stock for a new colour arrives through the warehouse screens; a row
+    // created here is a label to print, not a bundle that exists yet.
+    initialStockQty: 0,
+  };
+}
+
+/** What stops a cell from being added. Empty means the button is live. */
+export function validateAddedCell(
+  cell: AddedCell,
+  existing: readonly { colorName?: string | null; sizeName?: string | null }[],
+): AddedCellProblem[] {
+  const colorName = cleanText(cell.colorName);
+  const sizeName = cleanText(cell.sizeName);
+  if (!colorName && !sizeName) return ['NO_COLOR_OR_SIZE'];
+  // Compared without case, which is stricter than the server: it would accept
+  // "czarny" beside "CZARNY", and a till showing both cannot tell them apart.
+  const fold = (value: string) => value.toLocaleUpperCase('pl');
+  const clash = existing.some(
+    (row) =>
+      fold(cleanText(String(row.colorName ?? ''))) === fold(colorName)
+      && fold(cleanText(String(row.sizeName ?? ''))) === fold(sizeName),
+  );
+  // Refused here as well as by the server: the operator finds out before the
+  // request, and two rows for one cell would leave the till unable to say
+  // which one it just sold.
+  return clash ? ['ALREADY_EXISTS'] : [];
+}
+
 /** What stops this sheet from being filed. Empty means the button is live. */
 export function validateProductDraft(
   order: LabelPrintOrder,

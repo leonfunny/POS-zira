@@ -14,9 +14,9 @@ import StyleReprintPanel from '../src/renderer/components/label/StyleReprintPane
  */
 
 const VARIANTS = [
-  { id: 'v1', name: 'KOMPLET DRESOWY - CZARNY / M', color_name: 'CZARNY', size_name: 'M' },
-  { id: 'v2', name: 'KOMPLET DRESOWY - CZARNY / S', color_name: 'CZARNY', size_name: 'S' },
-  { id: 'v3', name: 'KOMPLET DRESOWY - BEŻOWY / S', color_name: 'BEŻOWY', size_name: 'S' },
+  { id: 'v1', name: 'KOMPLET DRESOWY - CZARNY / M', color_name: 'CZARNY', size_name: 'M', sku: '115-CZARNY-M', retail_price: 12900 },
+  { id: 'v2', name: 'KOMPLET DRESOWY - CZARNY / S', color_name: 'CZARNY', size_name: 'S', sku: '115-CZARNY-S', retail_price: 12900 },
+  { id: 'v3', name: 'KOMPLET DRESOWY - BEŻOWY / S', color_name: 'BEŻOWY', size_name: 'S', sku: '115-BEZOWY-S', retail_price: 12900 },
 ];
 
 const TAG = {
@@ -49,6 +49,8 @@ describe('StyleReprintPanel', () => {
   let printFabricTag: ReturnType<typeof vi.fn>;
   let getTemplate: ReturnType<typeof vi.fn>;
   let saveTemplate: ReturnType<typeof vi.fn>;
+  let createProduct: ReturnType<typeof vi.fn>;
+  let onVariantsAdded: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     container = document.createElement('div');
@@ -57,13 +59,18 @@ describe('StyleReprintPanel', () => {
     printFabricTag = vi.fn(async () => ({ success: true }));
     getTemplate = vi.fn(async () => TAG);
     saveTemplate = vi.fn(async (template: any) => template);
+    createProduct = vi.fn(async () => ({ ok: true, data: { variants: [{ id: 'v-new' }] } }));
+    onVariantsAdded = vi.fn(async () => undefined);
     Object.defineProperty(window, 'electronAPI', {
       configurable: true,
       writable: true,
       value: {
         printPackagingSticker,
         printFabricTag,
-        pos: { fabricTagTemplates: { get: getTemplate, save: saveTemplate } },
+        pos: {
+          fabricTagTemplates: { get: getTemplate, save: saveTemplate },
+          productAdmin: { createProduct },
+        },
       },
     });
   });
@@ -88,6 +95,7 @@ describe('StyleReprintPanel', () => {
           styleName="KOMPLET DRESOWY"
           styleCode="115"
           variants={VARIANTS}
+          onVariantsAdded={onVariantsAdded}
         />,
       );
     });
@@ -351,6 +359,85 @@ describe('StyleReprintPanel', () => {
     // Still open, still holding what was typed — a failed write must not throw
     // the correction away.
     expect(container.querySelector('[data-testid="tag-brand"]')).not.toBeNull();
+  });
+
+  const typeCell = async (colour: string, size: string) => {
+    await typeQuantity('Colour', colour);
+    await typeQuantity('Size', size);
+  };
+
+  const addButton = () =>
+    container.querySelector<HTMLButtonElement>('[data-testid="add-submit"]')!;
+
+  it('adds a colour to the style that is open, under its existing product', async () => {
+    await render();
+    await typeCell('ZIELONY', 'L');
+    await act(async () => addButton().click());
+    await settle();
+
+    expect(createProduct).toHaveBeenCalledTimes(1);
+    const payload = createProduct.mock.calls[0][0];
+    expect(payload).toMatchObject({
+      productId: 'template-1',
+      name: 'KOMPLET DRESOWY',
+      // Sibling rows set the price: a new colour of a style the till sells
+      // must not ring up at a different number.
+      priceGrossGrosze: 12900,
+    });
+    expect(payload.variants).toEqual([
+      {
+        colorName: 'ZIELONY',
+        sizeName: 'L',
+        sku: '115-ZIELONY-L',
+        barcode: '115-ZIELONY-L',
+        initialStockQty: 0,
+      },
+    ]);
+
+    // The row exists on the server; it reaches the list on screen through a sync.
+    expect(onVariantsAdded).toHaveBeenCalledTimes(1);
+    expect(statusText()).toContain('Added ZIELONY / L');
+  });
+
+  it('will not add a colour and size the style already has', async () => {
+    await render();
+    await typeCell('CZARNY', 'S');
+
+    expect(addButton().disabled).toBe(true);
+    expect(container.querySelector('[data-testid="add-problem"]')?.textContent)
+      .toContain('already has');
+
+    await act(async () => addButton().click());
+    await settle();
+    expect(createProduct).not.toHaveBeenCalled();
+  });
+
+  it('keeps the typed cell and does not claim success when the server refuses', async () => {
+    createProduct.mockResolvedValue({ ok: false, error: 'VARIANT_COMBINATION_EXISTS' });
+    await render();
+    await typeCell('ZIELONY', 'L');
+    await act(async () => addButton().click());
+    await settle();
+
+    expect(statusText()).toContain('VARIANT_COMBINATION_EXISTS');
+    expect(onVariantsAdded).not.toHaveBeenCalled();
+    expect(
+      container.querySelector<HTMLInputElement>('[data-testid="add-color"]')!.value,
+    ).toBe('ZIELONY');
+  });
+
+  it('retries a failed add under the same key so a lost answer adds it once', async () => {
+    createProduct.mockResolvedValueOnce({ ok: false, error: 'timeout' });
+    await render();
+    await typeCell('ZIELONY', 'L');
+    await act(async () => addButton().click());
+    await settle();
+    await act(async () => addButton().click());
+    await settle();
+
+    const [first, second] = createProduct.mock.calls.map((call) => call[0].idempotencyKey);
+    expect(first).toBeTruthy();
+    expect(second).toBe(first);
   });
 
   it('survives a machine whose fabric tag store is not wired up', async () => {

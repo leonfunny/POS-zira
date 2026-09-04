@@ -3,11 +3,13 @@ import { describe, it, expect } from 'vitest';
 import { createEmptyOrder, LabelPrintOrder } from '../src/shared/label-print-order';
 import {
   MAX_PRODUCT_VARIANTS,
+  buildAddedVariant,
   buildProductDraft,
   groszeToText,
   resolveCategoryForStyle,
   skuToken,
   textToGrosze,
+  validateAddedCell,
   validateProductDraft,
 } from '../src/shared/order-to-product';
 
@@ -294,5 +296,61 @@ describe('resolveCategoryForStyle', () => {
 
   it('returns null when the salon has no category by that name', () => {
     expect(resolveCategoryForStyle('KURTKA', [{ id: 'c', name: 'Spodnie' }])).toBeNull();
+  });
+});
+
+describe('adding a colour or size to a style that already exists', () => {
+  const EXISTING = [
+    { colorName: 'CZARNY', sizeName: 'S' },
+    { colorName: 'CZARNY', sizeName: 'M' },
+  ];
+
+  it('builds the SKU the print order sheet would have built', () => {
+    expect(
+      buildAddedVariant('115', { colorName: 'ZIELONY', sizeName: 'L' }, []),
+    ).toEqual({
+      colorName: 'ZIELONY',
+      sizeName: 'L',
+      sku: '115-ZIELONY-L',
+      // Stock arrives through the warehouse screens; this row is a label to
+      // print, not a bundle that exists yet.
+      initialStockQty: 0,
+    });
+  });
+
+  it('steps around a SKU the style already carries', () => {
+    // The server refuses a collision, and finding that out after the operator
+    // has typed is worse than not offering the number.
+    expect(
+      buildAddedVariant('115', { colorName: 'ZIELONY', sizeName: 'L' }, [
+        '115-ZIELONY-L',
+      ]).sku,
+    ).toBe('115-ZIELONY-L-2');
+  });
+
+  it('folds Polish spelling out of the SKU but keeps it on the label', () => {
+    const added = buildAddedVariant('115', { colorName: 'BEŻOWY', sizeName: '' }, []);
+    expect(added.sku).toBe('115-BEZOWY');
+    expect(added.colorName).toBe('BEŻOWY');
+    expect(added.sizeName).toBeNull();
+  });
+
+  it('needs a colour or a size', () => {
+    expect(validateAddedCell({ colorName: '  ', sizeName: '' }, EXISTING)).toEqual([
+      'NO_COLOR_OR_SIZE',
+    ]);
+    expect(validateAddedCell({ colorName: '', sizeName: 'XL' }, EXISTING)).toEqual([]);
+  });
+
+  it('refuses a cell the style already has, whatever case it is typed in', () => {
+    expect(validateAddedCell({ colorName: 'CZARNY', sizeName: 'S' }, EXISTING)).toEqual([
+      'ALREADY_EXISTS',
+    ]);
+    // The server compares exactly and would accept this; a till showing
+    // "czarny" beside "CZARNY" cannot tell the two rows apart.
+    expect(validateAddedCell({ colorName: 'czarny', sizeName: 's' }, EXISTING)).toEqual([
+      'ALREADY_EXISTS',
+    ]);
+    expect(validateAddedCell({ colorName: 'CZARNY', sizeName: 'L' }, EXISTING)).toEqual([]);
   });
 });
