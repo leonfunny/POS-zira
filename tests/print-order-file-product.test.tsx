@@ -202,6 +202,7 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
     await changeInput(input(container, 'input[aria-label="Fabric tags M"]'), '6');
     await addColour('BEŻOWY');
     await addColour('CZARNY');
+    await changeInput(input(container, '[data-testid="order-price"]'), '129');
   }
 
   it('stays disabled until the sheet has a name and a colour', async () => {
@@ -370,17 +371,31 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
     expect(categorySelect().value).toBe('');
   });
 
-  it('files a sheet with no price, because the sheet no longer asks for one', async () => {
+  it('files the whole style at the one price typed on the sheet', async () => {
     await render();
     await fillGrid();
     await act(async () => fileButton().click());
     await settle();
 
-    // The workshop sews to order and does not sell these over a counter. The
-    // field is gone from the sheet; the product still needs a number, and 0 is
-    // the honest one rather than something inferred.
-    expect(container.querySelector('[data-testid="order-price"]')).toBeNull();
-    expect(createProduct.mock.calls[0][0].priceGrossGrosze).toBe(0);
+    expect(createProduct.mock.calls[0][0].priceGrossGrosze).toBe(12900);
+  });
+
+  it('will not file a sheet without a price, and says so', async () => {
+    await render();
+    await fillGrid();
+    await changeInput(input(container, '[data-testid="order-price"]'), '');
+    expect(fileButton().disabled).toBe(true);
+    expect(fileButton().title).toContain('No price yet');
+  });
+
+  it('keeps "12," under the cursor and reads it as 12 zł', async () => {
+    await render();
+    await fillGrid();
+    const price = () => input(container, '[data-testid="order-price"]');
+    await changeInput(price(), '12,');
+    expect(price().value).toBe('12,');
+    await act(async () => { price().dispatchEvent(new FocusEvent('focusout', { bubbles: true })); });
+    expect(price().value).toBe('12,00');
   });
 
   async function pickPhoto(name = 'moon.jpg', type = 'image/jpeg') {

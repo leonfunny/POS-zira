@@ -44,6 +44,8 @@ import {
   styleCategoryKey,
   buildMissingVariants,
   type ExistingVariant,
+  groszeToText,
+  textToGrosze,
   validateProductDraft,
 } from '../../../shared/order-to-product';
 import {
@@ -156,6 +158,7 @@ interface Copy {
   warning: Record<OrderWarning, string>;
   orderDate: string;
   category: string;
+  price: string;
   categoryNone: string;
   image: string;
   imagePick: string;
@@ -276,6 +279,7 @@ const COPY: Record<string, Copy> = {
     },
     orderDate: 'Ngày đơn',
     category: 'Danh mục',
+    price: 'Giá bán (zł)',
     image: 'Ảnh hàng',
     imagePick: 'Chọn ảnh',
     imageChange: 'Đổi ảnh',
@@ -310,6 +314,7 @@ const COPY: Record<string, Copy> = {
       NO_CATEGORY: 'Chưa chọn nhóm hàng',
       NO_CELLS: 'Chưa có màu nào — mỗi màu × size thành một biến thể',
       ALREADY_FILED: 'Tờ này đã lưu thành sản phẩm rồi',
+      NO_PRICE: 'Chưa nhập giá bán — một giá cho cả kiểu',
       TOO_MANY_VARIANTS: 'Quá 100 biến thể — tách làm nhiều đơn',
     },
   },
@@ -403,6 +408,7 @@ const COPY: Record<string, Copy> = {
     },
     orderDate: 'Data zlecenia',
     category: 'Kategoria',
+    price: 'Cena brutto (zł)',
     image: 'Zdjęcie',
     imagePick: 'Wybierz zdjęcie',
     imageChange: 'Zmień zdjęcie',
@@ -437,6 +443,7 @@ const COPY: Record<string, Copy> = {
       NO_CATEGORY: 'Nie wybrano kategorii',
       NO_CELLS: 'Brak kolorów — każdy kolor × rozmiar to jeden wariant',
       ALREADY_FILED: 'To zlecenie jest już zapisane jako produkt',
+      NO_PRICE: 'Brak ceny — jedna cena dla całego fasonu',
       TOO_MANY_VARIANTS: 'Ponad 100 wariantów — podziel zlecenie',
     },
   },
@@ -530,6 +537,7 @@ const COPY: Record<string, Copy> = {
     },
     orderDate: 'Order date',
     category: 'Category',
+    price: 'Gross price (zł)',
     image: 'Photo',
     imagePick: 'Pick a photo',
     imageChange: 'Change photo',
@@ -564,6 +572,7 @@ const COPY: Record<string, Copy> = {
       NO_CATEGORY: 'No category picked',
       NO_CELLS: 'No colour yet — every colour × size becomes one variant',
       ALREADY_FILED: 'This sheet is already saved as a product',
+      NO_PRICE: 'No price yet — one price for the whole style',
       TOO_MANY_VARIANTS: 'More than 100 variants — split the order',
     },
   },
@@ -647,6 +656,15 @@ export default function PrintOrderPanel({
   // Loading a draft goes through the same gate as typing, so an order saved
   // before this rule opens in capitals like every other one.
   const [order, setStoredOrder] = useState<LabelPrintOrder>(() => upperCaseOrder(loadDraft()));
+  // What the price box shows while it is being typed: "12," must not snap to
+  // "12,00" under the cursor. It follows the order whenever the order changes
+  // underneath it (a saved sheet opened, a new one started).
+  const [priceText, setPriceText] = useState(() => groszeToText(order.priceGrossGrosze));
+  useEffect(() => {
+    setPriceText((text) =>
+      textToGrosze(text) === (Number(order.priceGrossGrosze) || 0) ? text : groszeToText(order.priceGrossGrosze),
+    );
+  }, [order.priceGrossGrosze]);
   // One gate for every write, so no field — including one added later — can
   // slip through in lower case.
   const setOrder = useCallback(
@@ -1399,11 +1417,25 @@ export default function PrintOrderPanel({
       {/* Printing ignores these. They exist so the sheet can be filed as a
           product, which is why they sit apart from the label fields above.
           There is no supplier field: this workshop sews to order, so the
-          customer on the sheet above IS the counterparty. There is no price
-          field either — the workshop is not selling these over a counter, so a
-          sheet files at 0 and `priceGrossGrosze` stays on the order for the day
-          that changes. */}
-      <section className="mb-4 grid gap-3 sm:grid-cols-3">
+          customer on the sheet above IS the counterparty. One price for the
+          whole style: the owner wants every colour and size at the same number
+          for now, and a colour that costs more is changed on the style
+          afterwards. */}
+      <section className="mb-4 grid gap-3 sm:grid-cols-4">
+        <Field label={copy.price}>
+          <input
+            className={INPUT}
+            data-testid="order-price"
+            inputMode="decimal"
+            value={priceText}
+            onChange={(e) => {
+              setPriceText(e.target.value);
+              patch({ priceGrossGrosze: textToGrosze(e.target.value) });
+            }}
+            onBlur={() => setPriceText(groszeToText(order.priceGrossGrosze))}
+            placeholder="129,00"
+          />
+        </Field>
         <Field label={copy.image}>
           <div className="flex items-center gap-2">
             {order.imageDataUrl && (

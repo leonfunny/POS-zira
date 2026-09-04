@@ -162,6 +162,7 @@ describe('LabelModule — a filed sheet reaches the product tab', () => {
     await act(async () => buttonWithText(container, 'Add colour').click());
     await changeInput(input(container, 'input[placeholder="CZEKOLADA"]'), 'CZARNY');
     await changeInput(input(container, 'input[aria-label="Fabric tags S"]'), '2');
+    await changeInput(input(container, '[data-testid="order-price"]'), '99');
   }
 
   const fileButton = () =>

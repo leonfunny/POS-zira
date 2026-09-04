@@ -34,6 +34,7 @@ export type ProductDraftProblem =
   | 'NO_CUSTOMER'
   | 'NO_CATEGORY'
   | 'NO_CELLS'
+  | 'NO_PRICE'
   | 'ALREADY_FILED'
   | 'TOO_MANY_VARIANTS';
 
@@ -378,6 +379,9 @@ export function validateProductDraft(
   if (!order.customerName.trim()) problems.push('NO_CUSTOMER');
   if (category === null) problems.push('NO_CATEGORY');
   if (draft.variants.length === 0) problems.push('NO_CELLS');
+  // One price for the whole style; the owner asked for it on the sheet, and a
+  // style filed at 0 rings up at 0 on the till and on the web order.
+  if (draft.priceGrossGrosze < 1) problems.push('NO_PRICE');
   if (draft.variants.length > MAX_PRODUCT_VARIANTS) {
     problems.push('TOO_MANY_VARIANTS');
   }

@@ -31,6 +31,7 @@ function sheet(
     customerName: 'MOON',
     styleName: 'Kurtka LOTUS',
     styleCode: 'LOT114',
+    priceGrossGrosze: 12900,
     sizes,
     rows: colours.map((colour, index) => ({
       id: `r${index}`,
@@ -258,6 +259,13 @@ describe('validateProductDraft', () => {
     const order = sheet([{ name: 'Beżowy', quantities: [1] }], ['M'], { styleName: '  ' });
 
     expect(validateProductDraft(order, buildProductDraft(order))).toContain('NO_NAME');
+  });
+
+  it('refuses a sheet without a price, since the whole style rings up at it', () => {
+    const order = { ...TWO_BY_TWO, priceGrossGrosze: 0 };
+    expect(validateProductDraft(order, buildProductDraft(order))).toContain('NO_PRICE');
+    const priced = { ...TWO_BY_TWO, priceGrossGrosze: 1 };
+    expect(validateProductDraft(priced, buildProductDraft(priced))).not.toContain('NO_PRICE');
   });
 
   it('refuses a sheet with no colour, and takes one whose sizes carry no numbers', () => {
