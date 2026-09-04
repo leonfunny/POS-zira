@@ -1574,22 +1574,6 @@ export default function PrintOrderPanel({
         </Field>
       </section>
 
-      <section className="mb-4 rounded-md border border-slate-200 p-3">
-        <h3 className="mb-2 text-sm font-bold text-slate-700">{copy.whatToPrint}</h3>
-        <div className="flex flex-wrap gap-4">
-          <Check
-            label={copy.printFabric}
-            checked={order.printFabricTags}
-            onChange={(v) => patch({ printFabricTags: v })}
-          />
-          <Check
-            label={copy.printSticker}
-            checked={order.printStickers}
-            onChange={(v) => patch({ printStickers: v })}
-          />
-        </div>
-      </section>
-
       {/* The fabric block only when a fabric tag is going to be printed: it is
           the longest part of the sheet, and a sticker-only order has nothing to
           say in it. What was typed there is kept, not cleared, so ticking the
@@ -1889,6 +1873,26 @@ export default function PrintOrderPanel({
           </div>
         </div>
       )}
+
+      {/* The lanes sit here, against the Print button, rather than at the head
+          of the sheet: they are the last thing decided, not the first. The
+          fabric block still appears where it belongs — up with the tag it is
+          about — so ticking that lane on grows the sheet above this box. */}
+      <section className="mb-4 rounded-md border border-slate-200 p-3">
+        <h3 className="mb-2 text-sm font-bold text-slate-700">{copy.whatToPrint}</h3>
+        <div className="flex flex-wrap gap-4">
+          <Check
+            label={copy.printFabric}
+            checked={order.printFabricTags}
+            onChange={(v) => patch({ printFabricTags: v })}
+          />
+          <Check
+            label={copy.printSticker}
+            checked={order.printStickers}
+            onChange={(v) => patch({ printStickers: v })}
+          />
+        </div>
+      </section>
 
       <div className="flex flex-wrap items-center gap-2">
         <button

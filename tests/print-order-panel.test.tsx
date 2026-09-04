@@ -780,6 +780,23 @@ describe('PrintOrderPanel', () => {
     expect(text('[data-testid="grand-total"]')).toBe('55');
   });
 
+  it('asks what to print against the Print button, not at the head of the sheet', async () => {
+    // Which lanes to run is the last thing decided, so it is read where it is
+    // acted on. Pinned because it is a layout, and layouts drift.
+    await render();
+    await fillMinimalOrder(40);
+    const lanes = Array.from(container.querySelectorAll('section')).find(
+      (section) => section.querySelector('h3')?.textContent?.trim() === 'What to print',
+    )!;
+    const order = Array.from(container.querySelectorAll('*'));
+    const at = (element: Element) => order.indexOf(element);
+
+    expect(at(lanes)).toBeGreaterThan(at(container.querySelector('table')!));
+    expect(at(lanes)).toBeLessThan(at(buttonWithText(container, 'Print')));
+    // Nothing wedged in between: the box and the button read as one step.
+    expect(lanes.nextElementSibling!.contains(buttonWithText(container, 'Print'))).toBe(true);
+  });
+
   it('dates each row of the saved list with the date typed on the sheet', async () => {
     // Two orders for the same customer differ by their date long before they
     // differ by name, and the list is what the operator picks from.
