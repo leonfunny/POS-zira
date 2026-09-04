@@ -56,6 +56,7 @@ import {
   FABRIC_TAG_EXCLUSIVE_CARE_SYMBOL_GROUPS,
 } from '../../../shared/types';
 import { careSymbolLabel, careSymbolSvg } from '../../../shared/care-symbols';
+import { formatIsoDate } from '../../../shared/calendar';
 import { PrintProgress, runPrintPlan } from './print-order-runner';
 import {
   IMAGE_ACCEPT,
@@ -2010,6 +2011,17 @@ export default function PrintOrderPanel({
                   saved.id === orderId ? 'bg-emerald-50 font-bold text-emerald-900' : ''
                 }`}
               >
+                {/* The date the sheet carries, not the moment it was filed:
+                    two orders for the same customer differ by that date long
+                    before they differ by name. Fixed width and always
+                    rendered, so the names below each other still line up when
+                    a sheet from an older build has no date at all. */}
+                <span
+                  data-saved-order-date=""
+                  className="w-24 shrink-0 tabular-nums text-xs font-bold text-slate-500"
+                >
+                  {formatIsoDate(saved.order.orderDate, language)}
+                </span>
                 <span className="flex-1 truncate">{describeOrder(saved.order)}</span>
                 <button
                   type="button"

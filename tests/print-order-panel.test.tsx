@@ -780,6 +780,62 @@ describe('PrintOrderPanel', () => {
     expect(text('[data-testid="grand-total"]')).toBe('55');
   });
 
+  it('dates each row of the saved list with the date typed on the sheet', async () => {
+    // Two orders for the same customer differ by their date long before they
+    // differ by name, and the list is what the operator picks from.
+    await render();
+    await fillMinimalOrder(40);
+    // A day that is not today, so the row cannot be showing the moment it was
+    // filed and pass by accident.
+    const today = new Date();
+    const pad = (value: number) => String(value).padStart(2, '0');
+    const day = today.getDate() === 15 ? 16 : 15;
+    const iso = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(day)}`;
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="order-date"]')!.click());
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>(`[data-testid="order-date-day"][data-iso="${iso}"]`)!.click(),
+    );
+    await act(async () => buttonWithText(container, 'Save order').click());
+
+    const row = container.querySelector('[data-saved-order]')!;
+    expect(row.querySelector('[data-saved-order-date]')?.textContent?.trim()).toBe(
+      `${pad(day)}/${pad(today.getMonth() + 1)}/${today.getFullYear()}`,
+    );
+    // Still the sheet it names; the date is added to the row, not instead of it.
+    expect(row.textContent).toContain('MOONCOLLECTION · KURTKA 114');
+  });
+
+  it('reads the saved date the way the app language writes dates', async () => {
+    // A bare sheet is enough here: it is dated today the moment it opens, and
+    // the filling helpers speak English.
+    await render('pl');
+    await act(async () => buttonWithText(container, 'Zapisz').click());
+
+    const today = new Date();
+    const pad = (value: number) => String(value).padStart(2, '0');
+    expect(
+      container.querySelector('[data-saved-order-date]')?.textContent?.trim(),
+    ).toBe(`${pad(today.getDate())}.${pad(today.getMonth() + 1)}.${today.getFullYear()}`);
+  });
+
+  it('leaves the date off a sheet saved before the sheet had one', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => buttonWithText(container, 'Save order').click());
+    // A row stored by an older build: no date on it at all.
+    const stored = JSON.parse(localStorage.getItem('zira.labelPrintOrder.saved')!);
+    delete stored[0].order.orderDate;
+    localStorage.setItem('zira.labelPrintOrder.saved', JSON.stringify(stored));
+
+    const first = root!;
+    await act(async () => first.unmount());
+    root = null;
+    await render();
+
+    expect(container.querySelector('[data-saved-order-date]')?.textContent?.trim()).toBe('');
+    expect(container.textContent).toContain('MOONCOLLECTION · KURTKA 114');
+  });
+
   it('prints an order opened from the list back into that same order', async () => {
     // Last month's sheet, reopened, changed and sent to the printer: the run
     // writes the edit back into the row it came from rather than filing a twin
