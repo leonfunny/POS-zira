@@ -79,6 +79,7 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
   let uploadMainImage: ReturnType<typeof vi.fn>;
   let updateVariant: ReturnType<typeof vi.fn>;
   let styleById: ReturnType<typeof vi.fn>;
+  let styleByCode: ReturnType<typeof vi.fn>;
   let saveFabricTagTemplate: ReturnType<typeof vi.fn>;
   let onCategoriesChanged: ReturnType<typeof vi.fn>;
   let onProductFiled: ReturnType<typeof vi.fn>;
@@ -96,6 +97,7 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
     uploadMainImage = vi.fn(async () => ({ ok: true, data: {} }));
     updateVariant = vi.fn(async () => ({ ok: true, data: {} }));
     styleById = vi.fn(() => null);
+    styleByCode = vi.fn(() => null);
     // No decoder in the harness: the picture is sent as it was picked.
     vi.stubGlobal('Image', class {
       onerror: (() => void) | null = null;
@@ -152,6 +154,7 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
           onCategoriesChanged={onCategoriesChanged}
           onProductFiled={onProductFiled}
           styleById={styleById}
+          styleByCode={styleByCode}
         />,
       );
     });
@@ -646,6 +649,79 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
       await settle();
       expect(createProduct).not.toHaveBeenCalled();
       expect(fileButton()).toBeNull();
+    });
+
+    describe('when the code typed is already a style on the product tab', () => {
+      /** The style the tab holds under LOT114: one colour, one size. */
+      const EXISTING = {
+        id: 'template-9',
+        name: 'KURTKA STARA',
+        categoryId: 'cat-tracksuits',
+        variants: [{ id: 'old-0', color_name: 'BEŻOWY', size_name: 'S', sku: 'LOT114-BEZOWY-S' }],
+      };
+
+      const attachButton = () =>
+        container.querySelector<HTMLButtonElement>('[data-testid="attach-product"]');
+
+      async function fillMatchingSheet(categories = CATEGORIES) {
+        styleByCode.mockImplementation((code: string) => (code === 'LOT114' ? EXISTING : null));
+        styleById.mockImplementation((id: string) => (id === 'template-9' ? EXISTING : null));
+        await render(categories);
+        await fillGrid();
+      }
+
+      it('offers to attach to that style, by name, instead of saving a twin', async () => {
+        await fillMatchingSheet();
+        expect(fileButton()).toBeNull();
+        expect(attachButton()?.textContent).toContain('KURTKA STARA');
+        expect(attachButton()?.disabled).toBe(false);
+      });
+
+      it('needs no category of its own: the style already has one', async () => {
+        await fillMatchingSheet([]);
+        expect(attachButton()?.disabled).toBe(false);
+      });
+
+      it('adds only the missing cells to that style and makes the sheet its sheet', async () => {
+        await fillMatchingSheet();
+        createProduct.mockResolvedValue({ ok: true, data: { variants: [{ id: 'new-1' }, { id: 'new-2' }] } });
+        await act(async () => attachButton()!.click());
+        await settle();
+
+        expect(createProduct).toHaveBeenCalledTimes(1);
+        const payload = createProduct.mock.calls[0][0];
+        expect(payload.productId).toBe('template-9');
+        expect(payload.variants.map((v: any) => `${v.colorName} ${v.sizeName}`)).toEqual([
+          'BEŻOWY M', 'CZARNY S',
+        ]);
+        // The style keeps its category; the sheet takes it over.
+        expect(updateVariant).not.toHaveBeenCalled();
+        expect(onProductFiled).toHaveBeenLastCalledWith({ categoryId: 'cat-tracksuits' });
+        expect(categorySelect().value).toBe('cat-tracksuits');
+        expect(attachButton()).toBeNull();
+        expect(container.querySelector('[data-testid="update-product"]')).not.toBeNull();
+        expect(container.querySelector('[data-testid="filed-hint"]')?.textContent).toContain('KURTKA STARA');
+        expect(fileResult()).toContain('2 new');
+        expect(saveFabricTagTemplate).toHaveBeenCalledTimes(1);
+      });
+
+      it('stays a fresh sheet when the server refuses the rows', async () => {
+        await fillMatchingSheet();
+        createProduct.mockResolvedValue({ ok: false, error: 'boom' });
+        await act(async () => attachButton()!.click());
+        await settle();
+
+        expect(attachButton()).not.toBeNull();
+        expect(container.querySelector('[data-testid="update-product"]')).toBeNull();
+        expect(fileResult()).toContain('boom');
+      });
+
+      it('goes back to Save as product once the code no longer matches', async () => {
+        await fillMatchingSheet();
+        await changeInput(input(container, 'input[placeholder="114"]'), 'LOT115');
+        expect(attachButton()).toBeNull();
+        expect(fileButton()).not.toBeNull();
+      });
     });
 
     it('lets a duplicate become a new product, keeping the photo', async () => {

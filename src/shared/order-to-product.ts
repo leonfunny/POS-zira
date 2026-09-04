@@ -306,6 +306,16 @@ export function validateAddedCell(
 }
 
 /** A row the catalogue already holds for the style, as the label tab has it. */
+/**
+ * Whether a code typed on a sheet is the code of a style already on the
+ * product tab. Without case and without stray blanks, the way the sheet folds
+ * the code before it becomes the style's SKU; two blanks are not a match.
+ */
+export function sameStyleCode(a: string, b: string): boolean {
+  const left = a.trim().toLocaleUpperCase('pl');
+  return left.length > 0 && left === b.trim().toLocaleUpperCase('pl');
+}
+
 export interface ExistingVariant {
   id: string;
   color_name?: string | null;

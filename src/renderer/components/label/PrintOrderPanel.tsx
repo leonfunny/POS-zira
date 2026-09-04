@@ -174,6 +174,10 @@ interface Copy {
   updated: (added: number) => string;
   filedHint: (name: string) => string;
   styleUnknown: string;
+  attachProduct: (name: string) => string;
+  attaching: string;
+  attachHint: (name: string) => string;
+  attached: (name: string, added: number) => string;
   filedWithoutTag: (variants: number) => string;
 }
 
@@ -286,6 +290,11 @@ const COPY: Record<string, Copy> = {
     updating: 'Đang cập nhật…',
     updated: (added) => (added > 0 ? `Đã cập nhật — thêm ${added} màu/size mới` : 'Đã cập nhật sản phẩm'),
     filedHint: (name) => `Đã là sản phẩm “${name}” — mở ở tab Tem mã sản phẩm`,
+    attachProduct: (name) => `Gắn vào kiểu “${name}” đã có`,
+    attaching: 'Đang gắn…',
+    attachHint: (name) => `Mã hàng này đã là kiểu “${name}” — bấm để thêm màu/size còn thiếu vào kiểu đó, không tạo kiểu mới`,
+    attached: (name, added) =>
+      added > 0 ? `Đã gắn vào “${name}” — thêm ${added} màu/size mới` : `Đã gắn vào “${name}”`,
     styleUnknown: 'Chưa thấy kiểu này trong catalogue của máy — bấm Sync ở tab Tem rồi thử lại',
     fileFailed: (reason) => `Không lưu được: ${reason}`,
     fileProblem: {
@@ -405,6 +414,11 @@ const COPY: Record<string, Copy> = {
     updating: 'Aktualizowanie…',
     updated: (added) => (added > 0 ? `Zaktualizowano — dodano ${added} nowych kolorów/rozmiarów` : 'Produkt zaktualizowany'),
     filedHint: (name) => `To już produkt „${name}” — otwórz w zakładce etykiet`,
+    attachProduct: (name) => `Dołącz do modelu „${name}”`,
+    attaching: 'Dołączanie…',
+    attachHint: (name) => `Ten kod to już model „${name}” — kliknij, aby dodać brakujące kolory/rozmiary do niego zamiast tworzyć nowy`,
+    attached: (name, added) =>
+      added > 0 ? `Dołączono do „${name}” — dodano ${added} nowych kolorów/rozmiarów` : `Dołączono do „${name}”`,
     styleUnknown: 'Tego modelu nie ma jeszcze w katalogu na tej maszynie — kliknij Sync w zakładce etykiet i spróbuj ponownie',
     fileFailed: (reason) => `Nie zapisano: ${reason}`,
     fileProblem: {
@@ -524,6 +538,11 @@ const COPY: Record<string, Copy> = {
     updating: 'Updating…',
     updated: (added) => (added > 0 ? `Updated — ${added} new colours/sizes added` : 'Product updated'),
     filedHint: (name) => `Already product “${name}” — open it on the product label tab`,
+    attachProduct: (name) => `Attach to existing “${name}”`,
+    attaching: 'Attaching…',
+    attachHint: (name) => `This code is already style “${name}” — press to add the missing colours and sizes to it instead of making a new style`,
+    attached: (name, added) =>
+      added > 0 ? `Attached to “${name}” — ${added} new colours/sizes` : `Attached to “${name}”`,
     styleUnknown: 'This style is not in the catalogue on this machine yet — press Sync on the product tab and try again',
     fileFailed: (reason) => `Not saved: ${reason}`,
     fileProblem: {
@@ -560,6 +579,12 @@ interface Props {
    * machine has not caught up with the server.
    */
   styleById?: (templateId: string) => FiledStyle | null;
+  /**
+   * The style on the product tab whose code is the one typed on a fresh sheet,
+   * so the sheet joins it instead of asking the server for a twin it would
+   * refuse. Null when no style carries that code.
+   */
+  styleByCode?: (styleCode: string) => (FiledStyle & { id: string }) | null;
 }
 
 export interface FiledStyle {
@@ -602,6 +627,7 @@ export default function PrintOrderPanel({
   onCategoriesChanged,
   onProductFiled,
   styleById,
+  styleByCode,
 }: Props) {
   const copy = COPY[language] || COPY.vi;
   const dateLocale = language === 'pl' ? 'pl-PL' : language === 'en' ? 'en-GB' : 'vi-VN';
@@ -948,21 +974,24 @@ export default function PrintOrderPanel({
   /** Everything but "already filed": those are the rules for pushing an edit. */
   const updateProblems = productProblems.filter((problem) => problem !== 'ALREADY_FILED');
   const filedStyle = order.productId ? styleById?.(order.productId) ?? null : null;
+  // A fresh sheet whose code is already a style on the tab: the server would
+  // refuse a second style with that SKU, so the sheet joins the one there.
+  const matchingStyle =
+    !order.productId && order.styleCode.trim() ? styleByCode?.(order.styleCode.trim()) ?? null : null;
+  // Joining needs no category of its own: the style already has one.
+  const attachProblems = updateProblems.filter((problem) => problem !== 'NO_CATEGORY');
 
   /**
-   * Push an edited sheet back onto the product it made: the colours and sizes
-   * it does not have yet, the tag content, the photo, the category. Not the
-   * name — the server cannot rename a style with colours from here — and not
-   * the quantities, which were only ever the opening stock.
+   * Push the sheet onto a style: the colours and sizes it does not have yet,
+   * the tag content, the photo, and — for a sheet that made the style — the
+   * category. Not the name — the server cannot rename a style with colours from
+   * here — and not the quantities, which were only ever the opening stock.
+   *
+   * `attach` is a fresh sheet joining a style that carries its code. It takes
+   * the style's category rather than moving the style to its own guess, and
+   * it is stamped with the product id only once the server has taken the rows.
    */
-  const handleUpdateProduct = async () => {
-    const templateId = order.productId;
-    if (!templateId || updateProblems.length > 0 || filing) return;
-    const style = styleById?.(templateId) ?? null;
-    if (!style) {
-      setFileError(copy.styleUnknown);
-      return;
-    }
+  const pushOntoStyle = async (templateId: string, style: FiledStyle, mode: 'update' | 'attach') => {
     setFiling(true);
     setFileError(null);
     setFileNotice(null);
@@ -994,7 +1023,7 @@ export default function PrintOrderPanel({
         fileKeyRef.current = null;
         createdIds = created.map((variant: { id: string }) => variant.id);
       }
-      if (productCategory && productCategory.id !== style.categoryId && style.variants[0]) {
+      if (mode === 'update' && productCategory && productCategory.id !== style.categoryId && style.variants[0]) {
         const moved = await window.electronAPI.pos.productAdmin.updateVariant(style.variants[0].id, {
           categoryId: productCategory.id,
         });
@@ -1002,6 +1031,12 @@ export default function PrintOrderPanel({
           setFileError(copy.fileFailed(moved?.error || moved?.code || '?'));
           return;
         }
+      }
+      const categoryId = mode === 'attach' ? style.categoryId ?? productCategory?.id ?? null : productCategory?.id ?? null;
+      if (mode === 'attach') {
+        // The rows are on the style now; from here the sheet is that product,
+        // and its stickers say what the style's category says.
+        patch({ productId: templateId, categoryId });
       }
       const tagSaved = await saveFabricTagContent(templateId, order);
       let imageNote = '';
@@ -1014,20 +1049,33 @@ export default function PrintOrderPanel({
         });
         imageNote = copy.imageUploaded(outcome.uploaded.length, targets.length);
       }
-      if (productCategory) {
-        setLearnedCategories(
-          rememberStyleCategory(styleCategoryKey(order.styleName), productCategory.id),
-        );
-        onProductFiled?.({ categoryId: productCategory.id });
+      if (categoryId) {
+        setLearnedCategories(rememberStyleCategory(styleCategoryKey(order.styleName), categoryId));
+        onProductFiled?.({ categoryId });
       }
-      setFileNotice(
-        (tagSaved ? copy.updated(createdIds.length) : copy.filedWithoutTag(createdIds.length)) + imageNote,
-      );
+      const done = mode === 'attach' ? copy.attached(style.name, createdIds.length) : copy.updated(createdIds.length);
+      setFileNotice((tagSaved ? done : copy.filedWithoutTag(createdIds.length)) + imageNote);
     } catch (err) {
       setFileError(copy.fileFailed(err instanceof Error ? err.message : String(err)));
     } finally {
       setFiling(false);
     }
+  };
+
+  const handleUpdateProduct = async () => {
+    const templateId = order.productId;
+    if (!templateId || updateProblems.length > 0 || filing) return;
+    const style = styleById?.(templateId) ?? null;
+    if (!style) {
+      setFileError(copy.styleUnknown);
+      return;
+    }
+    await pushOntoStyle(templateId, style, 'update');
+  };
+
+  const handleAttachProduct = async () => {
+    if (!matchingStyle || attachProblems.length > 0 || filing) return;
+    await pushOntoStyle(matchingStyle.id, matchingStyle, 'attach');
   };
 
   /**
@@ -1752,6 +1800,18 @@ export default function PrintOrderPanel({
           >
             <Package size={18} aria-hidden="true" />
             {filing ? copy.updating : copy.updateProduct}
+          </button>
+        ) : matchingStyle ? (
+          <button
+            type="button"
+            data-testid="attach-product"
+            onClick={handleAttachProduct}
+            disabled={attachProblems.length > 0 || filing}
+            title={attachProblems.length > 0 ? copy.fileProblem[attachProblems[0]] : copy.attachHint(matchingStyle.name)}
+            className="inline-flex min-h-11 items-center gap-2 rounded-md border border-sky-300 px-4 text-sm font-bold text-sky-800 hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Package size={18} aria-hidden="true" />
+            {filing ? copy.attaching : copy.attachProduct(matchingStyle.name)}
           </button>
         ) : (
           <button

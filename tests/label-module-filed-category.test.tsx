@@ -192,6 +192,33 @@ describe('LabelModule — a filed sheet reaches the product tab', () => {
     expect(harness.saveConfig).not.toHaveBeenCalled();
   });
 
+  it('offers to attach a sheet whose code is a style the tab already shows', async () => {
+    harness.products = [
+      {
+        id: 'old-0', template_id: 'template-old', name: 'KURTKA STARA - BEŻOWY / S',
+        sku: 'LOT114-BEZOWY-S', barcode: 'LOT114-BEZOWY-S', category_id: 'cat-old',
+        color_name: 'BEŻOWY', size_name: 'S',
+      },
+    ];
+    (window as any).electronAPI.pos.products.getByIds = vi.fn(async () => [
+      // A SKU typed in lower case on the server side, before the sheet existed.
+      { id: 'template-old', name: 'KURTKA STARA', sku: 'lot114', category_id: 'cat-old' },
+    ]);
+    await renderModule();
+    await fillSheet('KURTKA');
+    await changeInput(input(container, 'input[placeholder="114"]'), 'LOT114');
+
+    const attach = container.querySelector<HTMLButtonElement>('[data-testid="attach-product"]');
+    expect(attach?.textContent).toContain('KURTKA STARA');
+    expect(container.querySelector('[data-testid="file-product"]')).toBeNull();
+
+    await act(async () => attach!.click());
+    await settle();
+    expect(createProduct).toHaveBeenCalledTimes(1);
+    expect(createProduct.mock.calls[0][0].productId).toBe('template-old');
+    expect(createProduct.mock.calls[0][0].variants.map((v: any) => v.colorName)).toEqual(['CZARNY']);
+  });
+
   it('reloads the category list after one is created from the sheet', async () => {
     await renderModule();
     await fillSheet('SPODNIE');

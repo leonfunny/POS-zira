@@ -15,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import { PRODUCT_LABEL_NAME_LOCALE, resolveName } from '../../../shared/catalog-names';
+import { sameStyleCode } from '../../../shared/order-to-product';
 import type { AgentConfig } from '../../../shared/types';
 import { useConfig } from '../../hooks/useConfig';
 import { useProducts } from '../../hooks/useProducts';
@@ -756,6 +757,12 @@ export default function LabelModule({ language }: LabelModuleProps) {
               const group = styleGroups.find((candidate) => candidate.key === templateId);
               return group
                 ? { name: group.name, categoryId: group.categoryId, variants: group.variants }
+                : null;
+            }}
+            styleByCode={(styleCode) => {
+              const group = styleGroups.find((candidate) => sameStyleCode(candidate.styleCode, styleCode));
+              return group
+                ? { id: group.key, name: group.name, categoryId: group.categoryId, variants: group.variants }
                 : null;
             }}
           />

@@ -9,6 +9,7 @@ import {
   groszeToText,
   resolveCategoryForStyle,
   resolveOrderCategory,
+  sameStyleCode,
   skuToken,
   textToGrosze,
   validateAddedCell,
@@ -181,6 +182,18 @@ describe('buildProductDraft', () => {
     const draft = buildProductDraft(legacy);
 
     expect(draft.priceGrossGrosze).toBe(0);
+  });
+});
+
+describe('sameStyleCode', () => {
+  it('matches without case and without stray blanks', () => {
+    expect(sameStyleCode('moon-ve114', ' MOON-VE114 ')).toBe(true);
+    expect(sameStyleCode('114', '115')).toBe(false);
+  });
+
+  it('never matches two blanks', () => {
+    expect(sameStyleCode('', '')).toBe(false);
+    expect(sameStyleCode('  ', '')).toBe(false);
   });
 });
 
