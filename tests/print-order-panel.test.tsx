@@ -780,6 +780,48 @@ describe('PrintOrderPanel', () => {
     expect(text('[data-testid="grand-total"]')).toBe('55');
   });
 
+  it('prints an order opened from the list back into that same order', async () => {
+    // Last month's sheet, reopened, changed and sent to the printer: the run
+    // writes the edit back into the row it came from rather than filing a twin
+    // with the same name beside it.
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => buttonWithText(container, 'Save order').click());
+    await act(async () => buttonWithText(container, 'New order').click());
+    await act(async () => buttonWithText(container, 'Open').click());
+
+    await changeInput(input(container, 'input[aria-label="Fabric tags S"]'), '55');
+    await act(async () => buttonWithText(container, 'Print').click());
+    await settle();
+
+    expect(container.querySelectorAll('[data-saved-order]')).toHaveLength(1);
+    await act(async () => buttonWithText(container, 'New order').click());
+    await act(async () => buttonWithText(container, 'Open').click());
+    expect(text('[data-testid="grand-total"]')).toBe('55');
+  });
+
+  it('prints an order reopened after a restart back into that same order', async () => {
+    // The morning-after case: the app was closed in between, so the panel is
+    // relying on the id it wrote down, not on anything held in memory.
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => buttonWithText(container, 'Save order').click());
+
+    const first = root!;
+    await act(async () => first.unmount());
+    root = null;
+    await render();
+
+    await changeInput(input(container, 'input[aria-label="Fabric tags S"]'), '55');
+    await act(async () => buttonWithText(container, 'Print').click());
+    await settle();
+
+    expect(container.querySelectorAll('[data-saved-order]')).toHaveLength(1);
+    await act(async () => buttonWithText(container, 'New order').click());
+    await act(async () => buttonWithText(container, 'Open').click());
+    expect(text('[data-testid="grand-total"]')).toBe('55');
+  });
+
   it('stops claiming "Saved" as soon as the sheet is edited again', async () => {
     await render();
     await fillMinimalOrder(40);
