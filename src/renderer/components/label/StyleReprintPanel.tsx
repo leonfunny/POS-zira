@@ -28,6 +28,7 @@ import {
   SelectionInput,
   SelectionProblem,
   buildSelectionOrder,
+  selectionColours,
   selectionProblems,
   selectionQuantity,
   selectionTotals,
@@ -84,6 +85,7 @@ interface Copy {
   quantity: string;
   lanes: string;
   stickers: string;
+  stickerCounts: string;
   fabricTags: string;
   noTagContent: string;
   totals: (stickers: number, fabricTags: number) => string;
@@ -144,6 +146,7 @@ const COPY: Record<string, Copy> = {
     quantity: 'Số lượng',
     lanes: 'In gì',
     stickers: 'Tem đóng gói',
+    stickerCounts: 'Số tem đóng gói theo màu (theo chồng đóng túi)',
     fabricTags: 'Tem vải',
     noTagContent:
       'Mẫu này chưa có nội dung tem vải trên máy — chỉ in được tem đóng gói. Bấm “Sửa nội dung tem” ở dưới để điền.',
@@ -201,6 +204,7 @@ const COPY: Record<string, Copy> = {
     problem: {
       NOTHING_SELECTED: 'Chưa gõ số lượng cho dòng nào',
       NO_LANE: 'Chưa chọn in tem đóng gói hay tem vải',
+      NO_STICKER_QTY: 'Chưa nhập số tem đóng gói cho màu đã chọn',
       TOO_MANY: 'Quá nhiều tem cho một lần in',
     },
   },
@@ -211,6 +215,7 @@ const COPY: Record<string, Copy> = {
     quantity: 'Ilość',
     lanes: 'Co drukować',
     stickers: 'Etykiety na worek',
+    stickerCounts: 'Etykiety na worek wg koloru (po jednej na paczkę)',
     fabricTags: 'Metki',
     noTagContent:
       'Ten model nie ma zapisanej treści metki — można wydrukować tylko etykietę na worek. Kliknij „Edytuj treść metki” poniżej.',
@@ -268,6 +273,7 @@ const COPY: Record<string, Copy> = {
     problem: {
       NOTHING_SELECTED: 'Żaden wiersz nie ma ilości',
       NO_LANE: 'Nie wybrano etykiet ani metek',
+      NO_STICKER_QTY: 'Brak liczby etykiet na worek dla wybranego koloru',
       TOO_MANY: 'Za dużo sztuk na jeden druk',
     },
   },
@@ -278,6 +284,7 @@ const COPY: Record<string, Copy> = {
     quantity: 'Quantity',
     lanes: 'What to print',
     stickers: 'Bag labels',
+    stickerCounts: 'Bag labels per colour (one per stack packed)',
     fabricTags: 'Fabric tags',
     noTagContent:
       'This style has no care content on the machine — only bag labels can print. Use “Edit tag content” below to fill it in.',
@@ -335,6 +342,7 @@ const COPY: Record<string, Copy> = {
     problem: {
       NOTHING_SELECTED: 'No row has a quantity',
       NO_LANE: 'Neither bag labels nor fabric tags are selected',
+      NO_STICKER_QTY: 'A chosen colour has no bag label count',
       TOO_MANY: 'Too many labels for one run',
     },
   },
@@ -407,6 +415,11 @@ export default function StyleReprintPanel({
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [printStickers, setPrintStickers] = useState(true);
   const [printFabricTags, setPrintFabricTags] = useState(true);
+  const [stickerQuantities, setStickerQuantities] = useState<Record<string, number>>({});
+  const clearQuantities = () => {
+    setQuantities({});
+    setStickerQuantities({});
+  };
   const [tag, setTag] = useState<FabricTagTemplate | null>(null);
   const [tagLoaded, setTagLoaded] = useState(false);
   const [status, setStatus] = useState<Status>({ type: 'idle' });
@@ -420,7 +433,7 @@ export default function StyleReprintPanel({
   // A style change must not carry the previous one's numbers: the boxes are the
   // only record of what is about to come out of the printer.
   useEffect(() => {
-    setQuantities({});
+    clearQuantities();
     setStatus({ type: 'idle' });
     setConfirming(false);
   }, [templateId]);
@@ -649,10 +662,11 @@ export default function StyleReprintPanel({
         sizeName: variant.size_name ?? null,
       })),
       quantities,
+      stickerQuantities,
       printStickers,
       printFabricTags: fabricLaneOn,
     }),
-    [fabricLaneOn, printStickers, quantities, rows, styleCode, styleName, tag],
+    [fabricLaneOn, printStickers, quantities, rows, stickerQuantities, styleCode, styleName, tag],
   );
 
   const totals = selectionTotals(selection);
@@ -664,6 +678,18 @@ export default function StyleReprintPanel({
     // second press must mean the new total, not the one already asked about.
     setConfirming(false);
   }, [totals.total]);
+
+  const setStickerQuantity = (colour: string, raw: string) => {
+    const next = selectionQuantity(raw);
+    setStickerQuantities((current) => {
+      if (next <= 0) {
+        if (!(colour in current)) return current;
+        const { [colour]: _dropped, ...rest } = current;
+        return rest;
+      }
+      return { ...current, [colour]: next };
+    });
+  };
 
   const setQuantity = (variantId: string, raw: string) => {
     const next = selectionQuantity(raw);
@@ -725,7 +751,7 @@ export default function StyleReprintPanel({
         setStatus({ type: 'success', message: copy.done(result.printedCopies) });
         // The numbers are cleared only on a clean finish: after a stop or a jam
         // the operator needs to see what was asked for to work out what is left.
-        setQuantities({});
+        clearQuantities();
         return;
       }
       if (result.type === 'stopped') {
@@ -1066,7 +1092,7 @@ export default function StyleReprintPanel({
           {totals.total > 0 && !running && (
             <button
               type="button"
-              onClick={() => setQuantities({})}
+              onClick={() => clearQuantities()}
               className="rounded-md border border-slate-200 px-2 py-1 text-[11px] font-extrabold text-slate-600 hover:bg-slate-50"
             >
               {copy.clear}
@@ -1197,6 +1223,33 @@ export default function StyleReprintPanel({
           )}
         </div>
       </section>
+
+      {printStickers && selectionColours(selection).length > 0 && (
+        <section className="space-y-2" data-testid="sticker-counts">
+          <div className="text-xs font-extrabold uppercase tracking-wide text-slate-400">
+            {copy.stickerCounts}
+          </div>
+          <div className="flex flex-wrap gap-3">
+            {selectionColours(selection).map((colour) => (
+              <label
+                key={colour || '-'}
+                className="inline-flex items-center gap-2 rounded-md border border-sky-200 px-3 py-2 text-sm font-bold text-slate-700"
+              >
+                {colour || '—'}
+                <input
+                  className={`${INPUT} w-20 text-center`}
+                  inputMode="numeric"
+                  aria-label={`${copy.stickers} ${colour}`.trim()}
+                  value={stickerQuantities[colour] ?? ''}
+                  onChange={(e) => setStickerQuantity(colour, e.target.value)}
+                  disabled={running}
+                  placeholder="0"
+                />
+              </label>
+            ))}
+          </div>
+        </section>
+      )}
 
       <div className="flex gap-2">
         <button

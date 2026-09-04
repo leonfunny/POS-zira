@@ -111,6 +111,7 @@ interface Copy {
   code: string;
   codeHint: string;
   rowTotal: string;
+  stickerQty: string;
   addRow: string;
   total: string;
   whatToPrint: string;
@@ -209,6 +210,7 @@ const COPY: Record<string, Copy> = {
     code: 'Mã tem',
     codeHint: 'Để trống thì màu này không in tem dán',
     rowTotal: 'Tổng',
+    stickerQty: 'Tem túi',
     addRow: 'Thêm màu',
     total: 'Tổng cộng',
     whatToPrint: 'In gì',
@@ -259,6 +261,7 @@ const COPY: Record<string, Copy> = {
       NOTHING_SELECTED: 'Chưa chọn in loại nhãn nào',
       NO_CUSTOMER: 'Chưa có tên khách',
       NO_STYLE_CODE: 'Chưa có mã hàng — tem túi cần mã',
+      NO_STICKER_QTY: 'Chưa nhập số tem túi cho màu có số lượng — mỗi màu một số, tính theo chồng đóng túi',
       DUPLICATE_SIZE: 'Có hai cột size trùng tên',
       EMPTY_SIZE: 'Có cột size chưa đặt tên',
       BAD_CODE: 'Mã tem có ký tự máy in không đọc được',
@@ -333,6 +336,7 @@ const COPY: Record<string, Copy> = {
     code: 'Kod etykiety',
     codeHint: 'Puste = bez naklejki dla tego koloru',
     rowTotal: 'Razem',
+    stickerQty: 'Naklejki',
     addRow: 'Dodaj kolor',
     total: 'Razem',
     whatToPrint: 'Co drukować',
@@ -383,6 +387,7 @@ const COPY: Record<string, Copy> = {
       NOTHING_SELECTED: 'Nie wybrano rodzaju etykiety',
       NO_CUSTOMER: 'Brak nazwy klienta',
       NO_STYLE_CODE: 'Brak kodu modelu — naklejka go wymaga',
+      NO_STICKER_QTY: 'Brak liczby naklejek na worek dla koloru z ilością — po jednej na kolor, według paczek',
       DUPLICATE_SIZE: 'Dwie kolumny mają ten sam rozmiar',
       EMPTY_SIZE: 'Kolumna rozmiaru bez nazwy',
       BAD_CODE: 'Kod zawiera znaki, których drukarka nie odczyta',
@@ -457,6 +462,7 @@ const COPY: Record<string, Copy> = {
     code: 'Sticker code',
     codeHint: 'Blank means no packaging sticker for this colour',
     rowTotal: 'Total',
+    stickerQty: 'Bag stickers',
     addRow: 'Add colour',
     total: 'Grand total',
     whatToPrint: 'What to print',
@@ -507,6 +513,7 @@ const COPY: Record<string, Copy> = {
       NOTHING_SELECTED: 'No label kind selected',
       NO_CUSTOMER: 'No customer name',
       NO_STYLE_CODE: 'No style code — the bag sticker needs one',
+      NO_STICKER_QTY: 'A colour with garments has no bag sticker count — one per colour, by stacks packed',
       DUPLICATE_SIZE: 'Two size columns share a name',
       EMPTY_SIZE: 'A size column has no name',
       BAD_CODE: 'A sticker code has characters the printer cannot encode',
@@ -756,6 +763,14 @@ export default function PrintOrderPanel({
     if (!canAddCareLine) return;
     patch({ careText: addCareTextLine(order.careText, trimmedDraft) });
     setCareLineDraft('');
+  };
+
+  const setStickerQuantity = (rowId: string, value: string) => {
+    const quantity = value === '' ? undefined : Math.max(0, Math.floor(Number(value) || 0));
+    setOrder((current) => ({
+      ...current,
+      rows: current.rows.map((row) => (row.id === rowId ? { ...row, stickerQuantity: quantity } : row)),
+    }));
   };
 
   const setCell = (rowId: string, sizeId: string, value: string) => {
@@ -1618,6 +1633,7 @@ export default function PrintOrderPanel({
                   </th>
                 ))}
                 <th className="w-20 border-b border-slate-200 p-2 text-center font-bold">{copy.rowTotal}</th>
+                <th className="w-24 border-b border-slate-200 p-2 text-center font-bold text-sky-800">{copy.stickerQty}</th>
                 <th className="border-b border-slate-200 p-2" />
               </tr>
             </thead>
@@ -1654,6 +1670,17 @@ export default function PrintOrderPanel({
                   <td className="border-b border-slate-100 p-2 text-center font-extrabold">
                     {totals.rowTotals[row.id] || 0}
                   </td>
+                  <td className="border-b border-slate-100 p-1 text-center">
+                    <input
+                      type="number"
+                      min={0}
+                      className="h-10 w-20 rounded-md border border-sky-300 px-2 text-center text-sm"
+                      value={row.stickerQuantity ?? ''}
+                      onChange={(e) => setStickerQuantity(row.id, e.target.value)}
+                      disabled={!order.printStickers}
+                      aria-label={`${copy.stickerQty} ${row.colorName || copy.color}`}
+                    />
+                  </td>
                   <td className="border-b border-slate-100 p-2">
                     <button
                       type="button"
@@ -1677,6 +1704,9 @@ export default function PrintOrderPanel({
                 ))}
                 <td className="p-2 text-center text-base font-extrabold" data-testid="grand-total">
                   {totals.grandTotal}
+                </td>
+                <td className="p-2 text-center text-base font-extrabold text-sky-800" data-testid="sticker-total">
+                  {totals.stickerTotal}
                 </td>
                 <td />
               </tr>

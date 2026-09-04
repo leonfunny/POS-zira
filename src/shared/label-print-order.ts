@@ -179,9 +179,15 @@ export interface OrderSize {
 export interface OrderRow {
   id: string;
   colorName: string;
-  /** Retained customer packaging code; currently hidden on the printed sticker. */
+  /** The bag code under the barcode; generated, never typed. */
   code: string;
   quantities: Record<string, number>;
+  /**
+   * Bag stickers for this colour, typed by hand: one per stack packed, which
+   * only the packer knows — 100 garments may be 24 bags. Undefined on sheets
+   * saved before the field existed, and treated as not yet typed.
+   */
+  stickerQuantity?: number;
 }
 
 export interface LabelPrintOrder {
@@ -231,6 +237,7 @@ export type OrderProblem =
   | 'NOTHING_SELECTED'
   | 'NO_CUSTOMER'
   | 'NO_STYLE_CODE'
+  | 'NO_STICKER_QTY'
   | 'DUPLICATE_SIZE'
   | 'EMPTY_SIZE'
   | 'BAD_CODE'
@@ -399,7 +406,16 @@ export function percentFix(materials: OrderMaterial[]): PercentFix | null {
 export interface OrderTotals {
   rowTotals: Record<string, number>;
   sizeTotals: Record<string, number>;
+  /** Garments, which is what the fabric lane prints. */
   grandTotal: number;
+  /** Bag stickers, typed per colour; what the sticker lane prints. */
+  stickerTotal: number;
+}
+
+/** The bag stickers typed for a row, or 0 when the box is still empty. */
+export function rowStickerQuantity(row: OrderRow): number {
+  const raw = row.stickerQuantity;
+  return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0;
 }
 
 export function orderTotals(order: LabelPrintOrder): OrderTotals {
@@ -418,7 +434,8 @@ export function orderTotals(order: LabelPrintOrder): OrderTotals {
     grandTotal += rowTotal;
   }
 
-  return { rowTotals, sizeTotals, grandTotal };
+  const stickerTotal = order.rows.reduce((sum, row) => sum + rowStickerQuantity(row), 0);
+  return { rowTotals, sizeTotals, grandTotal, stickerTotal };
 }
 
 function cellQuantity(row: OrderRow, sizeId: string): number {
@@ -501,8 +518,21 @@ export function validateOrder(order: LabelPrintOrder): OrderProblem[] {
   }
 
   const totals = orderTotals(order);
-  if (totals.grandTotal <= 0) problems.add('EMPTY_ORDER');
-  if (totals.grandTotal >= LABEL_PRINT_ORDER_LIMITS.maxOrderQuantity) {
+  // Stickers are counted by the packer, not derived from the garments: a
+  // colour with garments and no sticker count is a sheet half filled in, and
+  // printing zero stickers for it silently would be the worse outcome.
+  if (order.printStickers) {
+    for (const row of order.rows) {
+      if (totals.rowTotals[row.id] > 0 && rowStickerQuantity(row) === 0) {
+        problems.add('NO_STICKER_QTY');
+        break;
+      }
+    }
+  }
+  const garments = order.printFabricTags ? totals.grandTotal : 0;
+  const stickers = order.printStickers ? totals.stickerTotal : 0;
+  if (garments + stickers <= 0) problems.add('EMPTY_ORDER');
+  if (garments + stickers >= LABEL_PRINT_ORDER_LIMITS.maxOrderQuantity) {
     problems.add('ORDER_TOO_LARGE');
   }
 
@@ -541,11 +571,10 @@ export function buildPrintPlan(
     for (const row of order.rows) {
       const code = row.code.trim() || fallbackStickerCode(order.styleCode, row.colorName);
 
-      // One sticker per colour, covering every size in that row. The sticker
-      // goes on the bag, and a bag holds mixed sizes — a size printed on it
-      // would be wrong for most of what is inside.
-      const total = order.sizes.reduce((sum, size) => sum + cellQuantity(row, size.id), 0);
-      pushChunks(steps, total, STICKER_CHUNK, (quantity, index) => ({
+      // One sticker run per colour, as many as the packer typed: a sticker
+      // goes on a bag of mixed sizes, so neither the size nor the garment
+      // count has any say in it.
+      pushChunks(steps, rowStickerQuantity(row), STICKER_CHUNK, (quantity, index) => ({
         kind: 'sticker',
         id: `sticker:${row.id}:${index}`,
         rowId: row.id,
@@ -586,6 +615,8 @@ export function buildPrintPlan(
  * of the real order that has already been sent.
  */
 export function buildSamplePlan(order: LabelPrintOrder): PrintStep[] {
+  // No colour or no size: there is no label to look at yet.
+  if (order.rows.length === 0 || order.sizes.length === 0) return [];
   // Built from an order with one of everything rather than from the quantities
   // typed so far: what a label says does not depend on how many are wanted, and
   // the operator wants to look at a tag before filling the grid in. It also
@@ -595,6 +626,7 @@ export function buildSamplePlan(order: LabelPrintOrder): PrintStep[] {
     rows: order.rows.map((row) => ({
       ...row,
       quantities: Object.fromEntries(order.sizes.map((size) => [size.id, 1])),
+      stickerQuantity: 1,
     })),
   };
 

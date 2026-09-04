@@ -96,8 +96,8 @@ describe('PrintOrderPanel', () => {
     await settle();
   }
 
-  /** Header, one size column, one colour row, one quantity. */
-  async function fillMinimalOrder(quantity = 40) {
+  /** Header, one size column, one colour row, one quantity, and the bags it packs into. */
+  async function fillMinimalOrder(quantity = 40, stickers = 10) {
     await changeInput(input(container, 'input[placeholder="MoonCollection"]'), 'MoonCollection');
     await changeInput(input(container, 'input[placeholder="KURTKA"]'), 'KURTKA');
     await changeInput(input(container, 'input[placeholder="114"]'), '114');
@@ -105,6 +105,7 @@ describe('PrintOrderPanel', () => {
     await act(async () => buttonWithText(container, 'Add colour').click());
     await changeInput(input(container, 'input[placeholder="CZEKOLADA"]'), 'CZEKOLADA');
     await changeInput(input(container, 'input[aria-label="CZEKOLADA S"]'), String(quantity));
+    await changeInput(input(container, 'input[aria-label="Bag stickers CZEKOLADA"]'), String(stickers));
   }
 
   /** The two lane boxes, fabric tags first, as they sit on the sheet. */
@@ -402,6 +403,7 @@ describe('PrintOrderPanel', () => {
     );
     await changeInput(colours[1], 'BORDO');
     await changeInput(input(container, 'input[aria-label="BORDO S"]'), '5');
+    await changeInput(input(container, 'input[aria-label="Bag stickers BORDO"]'), '1');
 
     // No code column on the sheet any more — the sticker does not print it.
     expect(container.querySelector('input[placeholder="SP006290"]')).toBeNull();
@@ -457,6 +459,27 @@ describe('PrintOrderPanel', () => {
     // Nothing is forgotten by folding: the lane back on shows the same block.
     await act(async () => laneBoxes()[0].click());
     expect(container.querySelector('[data-testid="add-care-line"]')).not.toBeNull();
+  });
+
+  it('asks for the bag count of a colour with garments, and totals bags apart', async () => {
+    await render();
+    await fillMinimalOrder(40, 0);
+    expect(buttonWithText(container, 'Print').disabled).toBe(true);
+    expect(container.textContent).toContain('bag sticker count');
+    expect(text('[data-testid="sticker-total"]')).toBe('0');
+
+    await changeInput(input(container, 'input[aria-label="Bag stickers CZEKOLADA"]'), '12');
+    expect(buttonWithText(container, 'Print').disabled).toBe(false);
+    expect(text('[data-testid="sticker-total"]')).toBe('12');
+    expect(text('[data-testid="grand-total"]')).toBe('40');
+  });
+
+  it('does not ask for bag counts when only fabric tags are printed', async () => {
+    await render();
+    await fillMinimalOrder(40, 0);
+    await act(async () => laneBoxes()[1].click()); // stickers off
+    expect(buttonWithText(container, 'Print').disabled).toBe(false);
+    expect(input(container, 'input[aria-label="Bag stickers CZEKOLADA"]').disabled).toBe(true);
   });
 
   it('keeps the totals row under the same columns as the header', async () => {
@@ -539,12 +562,13 @@ describe('PrintOrderPanel', () => {
       colorName: 'CZEKOLADA',
       // Nobody typed a code: the row got one when it was added.
       code: expect.stringMatching(/^SP\d{6}$/),
-      quantity: 40,
+      // Ten bags, typed by hand; not the forty garments.
+      quantity: 10,
     });
     // No Continue button, and the fabric lane ran without one being pressed.
     expect(printFabricTag).toHaveBeenCalledTimes(1);
     expect(printFabricTag.mock.calls[0][0]).toMatchObject({ size: 'S', quantity: 40 });
-    expect(text('[data-testid="print-result"]')).toContain('Printed 80 labels');
+    expect(text('[data-testid="print-result"]')).toContain('Printed 50 labels');
     expect(
       Array.from(container.querySelectorAll('button')).map((b) => b.textContent?.trim()),
     ).not.toContain('Continue');
@@ -783,7 +807,7 @@ describe('PrintOrderPanel', () => {
       await stopAfterTheStickers();
 
       expect(text('[data-testid="resume-sent"]')).toBe(
-        'Last time 1/2 batches went out (40/80 labels).',
+        'Last time 1/2 batches went out (10/50 labels).',
       );
       expect(container.textContent).toContain('Count the labels, then choose');
     });
@@ -1120,7 +1144,11 @@ describe('PrintOrderPanel', () => {
       expect(container.querySelector('[data-testid="paste-box"]')).toBeNull();
       expect(input(container, 'input[placeholder="CZEKOLADA"]').value).toBe('CZEKOLADA');
       // The old single column is gone, not added to.
-      expect(container.querySelectorAll('input[type=number][aria-label]')).toHaveLength(4);
+      expect(
+        container.querySelectorAll('input[type=number][aria-label]:not([aria-label^="Bag stickers"])'),
+      ).toHaveLength(4);
+      // The pasted sheet carries garments, not bags: the packer types those.
+      expect(buttonWithText(container, 'Print').disabled).toBe(true);
     });
 
     it('leaves the sheet alone when the paste is dropped', async () => {
@@ -1152,6 +1180,7 @@ describe('PrintOrderPanel', () => {
       await paste('KOLOR\tKOD\tS\nczekolada\tsp006290\t40');
       await act(async () => container.querySelector<HTMLButtonElement>(
         '[data-testid="paste-accept"]')!.click());
+      await changeInput(input(container, 'input[aria-label="Bag stickers CZEKOLADA"]'), '1');
       await act(async () => buttonWithText(container, 'Print').click());
       await settle();
 
@@ -1165,6 +1194,7 @@ describe('PrintOrderPanel', () => {
       await paste('KOLOR\tS\nczekolada\t40');
       await act(async () => container.querySelector<HTMLButtonElement>(
         '[data-testid="paste-accept"]')!.click());
+      await changeInput(input(container, 'input[aria-label="Bag stickers CZEKOLADA"]'), '1');
       await act(async () => buttonWithText(container, 'Print').click());
       await settle();
 

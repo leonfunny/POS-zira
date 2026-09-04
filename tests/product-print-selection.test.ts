@@ -5,6 +5,7 @@ import {
   buildSelectionOrder,
   orderToFabricTagTemplate,
   selectionProblems,
+  selectionColours,
   selectionQuantity,
   selectionTotals,
 } from '../src/shared/product-print-selection';
@@ -25,6 +26,7 @@ function selection(overrides: Partial<SelectionInput> = {}): SelectionInput {
     composition: '70% BAWEŁNA 30% POLIESTER',
     variants: VARIANTS,
     quantities: {},
+    stickerQuantities: { CZARNY: 1, 'BEŻOWY': 1 },
     printStickers: true,
     printFabricTags: true,
     ...overrides,
@@ -101,9 +103,9 @@ describe('buildSelectionOrder', () => {
 
     const stickers = plan.filter((step) => step.kind === 'sticker');
     const fabric = plan.filter((step) => step.kind === 'fabric');
-    // One bag per colour covering its sizes, one tag per garment.
+    // As many bag labels as typed for the colour, one tag per garment.
     expect(stickers).toHaveLength(1);
-    expect(stickers[0]).toMatchObject({ colorName: 'CZARNY', quantity: 3 });
+    expect(stickers[0]).toMatchObject({ colorName: 'CZARNY', quantity: 1 });
     expect(fabric.map((step) => step.quantity)).toEqual([2, 1]);
     expect(fabric.every((step) => step.composition === '70% BAWEŁNA')).toBe(true);
   });
@@ -122,14 +124,22 @@ describe('buildSelectionOrder', () => {
 });
 
 describe('selectionTotals and selectionProblems', () => {
-  it('counts each lane separately', () => {
-    const input = selection({ quantities: { v1: 2, v2: 3 } });
-    expect(selectionTotals(input)).toEqual({ stickers: 5, fabricTags: 5, total: 10 });
+  it('counts each lane separately: garments for tags, typed bags for stickers', () => {
+    const input = selection({ quantities: { v1: 2, v2: 3 }, stickerQuantities: { CZARNY: 2 } });
+    expect(selectionTotals(input)).toEqual({ stickers: 2, fabricTags: 5, total: 7 });
     expect(selectionTotals({ ...input, printFabricTags: false })).toEqual({
-      stickers: 5,
+      stickers: 2,
       fabricTags: 0,
-      total: 5,
+      total: 2,
     });
+    // A bag count for a colour nobody asked garments for counts nothing.
+    expect(selectionTotals(selection({ quantities: { v1: 2 }, stickerQuantities: { 'BEŻOWY': 4 } })))
+      .toEqual({ stickers: 0, fabricTags: 2, total: 2 });
+  });
+
+  it('lists the colours with garments, once each, in row order', () => {
+    expect(selectionColours(selection({ quantities: { v3: 1, v1: 2, v2: 1 } }))).toEqual(['CZARNY', 'BEŻOWY']);
+    expect(selectionColours(selection())).toEqual([]);
   });
 
   it('names what stops the run', () => {
@@ -140,6 +150,12 @@ describe('selectionTotals and selectionProblems', () => {
       ),
     ).toEqual(['NO_LANE']);
     expect(selectionProblems(selection({ quantities: { v1: 1 } }))).toEqual([]);
+    expect(
+      selectionProblems(selection({ quantities: { v1: 1 }, stickerQuantities: {} })),
+    ).toEqual(['NO_STICKER_QTY']);
+    expect(
+      selectionProblems(selection({ quantities: { v1: 1 }, stickerQuantities: {}, printStickers: false })),
+    ).toEqual([]);
   });
 
   it('refuses a run past the whole-order ceiling', () => {

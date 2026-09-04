@@ -52,8 +52,9 @@ function sampleOrder(): LabelPrintOrder {
       { id: 'm', label: 'M' },
     ],
     rows: [
-      { id: 'r1', colorName: 'CZEKOLADA', code: 'SP006290', quantities: { s: 40, m: 60 } },
-      { id: 'r2', colorName: 'BORDO', code: 'SP006291', quantities: { s: 20, m: 0 } },
+      // 100 garments packed in 24 bags; 20 garments in 5.
+      { id: 'r1', colorName: 'CZEKOLADA', code: 'SP006290', quantities: { s: 40, m: 60 }, stickerQuantity: 24 },
+      { id: 'r2', colorName: 'BORDO', code: 'SP006291', quantities: { s: 20, m: 0 }, stickerQuantity: 5 },
     ],
     printFabricTags: true,
     printStickers: true,
@@ -135,7 +136,7 @@ describe('validateOrder', () => {
 
   it('reports an order with nothing to print', () => {
     const order = sampleOrder();
-    order.rows = order.rows.map((row) => ({ ...row, quantities: {} }));
+    order.rows = order.rows.map((row) => ({ ...row, quantities: {}, stickerQuantity: undefined }));
     expect(validateOrder(order)).toContain('EMPTY_ORDER');
   });
 
@@ -192,11 +193,11 @@ describe('buildPrintPlan', () => {
     expect(kinds.indexOf('sticker')).toBeLessThan(kinds.indexOf('fabric'));
   });
 
-  it('sends one sticker run per colour, counted over every size', () => {
+  it('sends one sticker run per colour, as many as the packer typed', () => {
     const stickers = buildPrintPlan(sampleOrder()).filter((s) => s.kind === 'sticker');
     expect(stickers).toHaveLength(2);
-    expect(stickers[0]).toMatchObject({ colorName: 'CZEKOLADA', code: 'SP006290', quantity: 100 });
-    expect(stickers[1]).toMatchObject({ colorName: 'BORDO', code: 'SP006291', quantity: 20 });
+    expect(stickers[0]).toMatchObject({ colorName: 'CZEKOLADA', code: 'SP006290', quantity: 24 });
+    expect(stickers[1]).toMatchObject({ colorName: 'BORDO', code: 'SP006291', quantity: 5 });
     expect(stickers[0].sizeText).toBeUndefined();
   });
 
@@ -206,7 +207,24 @@ describe('buildPrintPlan', () => {
     const stickers = buildPrintPlan(sampleOrder()).filter((s) => s.kind === 'sticker');
     expect(stickers).toHaveLength(2); // one per colour, not per colour+size
     expect(stickers.every((s) => !('sizeText' in s))).toBe(true);
-    expect(stickers[0]).toMatchObject({ quantity: 100 }); // 40 S + 60 M
+    // 24 bags, whatever 40 S + 60 M add up to.
+    expect(stickers[0]).toMatchObject({ quantity: 24 });
+  });
+
+  it('prints no sticker for a colour whose bag count is empty, and every garment tag', () => {
+    const order = sampleOrder();
+    order.rows[1].stickerQuantity = undefined;
+    const plan = buildPrintPlan(order);
+    expect(plan.filter((s) => s.kind === 'sticker').map((s) => s.rowId)).toEqual(['r1']);
+    expect(plan.filter((s) => s.kind === 'fabric' && s.rowId === 'r2')).toHaveLength(1);
+  });
+
+  it('prints stickers alone for a sheet with bag counts and no garment quantities', () => {
+    const order = { ...sampleOrder(), printFabricTags: false };
+    order.rows[0].quantities = {};
+    order.rows[1].quantities = {};
+    expect(validateOrder(order)).toEqual([]);
+    expect(buildPrintPlan(order).map((s) => s.quantity)).toEqual([24, 5]);
   });
 
   it('prints a colour with no bag code under a code made from style and colour', () => {
@@ -218,7 +236,7 @@ describe('buildPrintPlan', () => {
     expect(stickers[1]).toMatchObject({
       colorName: 'BORDO',
       code: fallbackStickerCode(order.styleCode, 'BORDO'),
-      quantity: 20,
+      quantity: 5,
     });
     expect(plan.filter((s) => s.kind === 'fabric' && s.rowId === 'r2')).toHaveLength(1);
   });
@@ -235,7 +253,7 @@ describe('buildPrintPlan', () => {
 
   it('never chunks stickers — the paper printer runs unattended', () => {
     const order = sampleOrder();
-    order.rows[0].quantities.s = 300;
+    order.rows[0].stickerQuantity = 360;
     const stickers = buildPrintPlan(order).filter((s) => s.kind === 'sticker');
     expect(stickers[0].quantity).toBe(360);
   });
@@ -425,7 +443,7 @@ describe('one of each, to look at before the ribbon is committed', () => {
 
   it('works before any quantity is typed — a tag reads the same either way', () => {
     const order = sampleOrder();
-    order.rows = order.rows.map((row) => ({ ...row, quantities: {} }));
+    order.rows = order.rows.map((row) => ({ ...row, quantities: {}, stickerQuantity: undefined }));
     expect(buildPrintPlan(order)).toHaveLength(0);
     expect(buildSamplePlan(order)).toHaveLength(2);
   });
@@ -589,6 +607,22 @@ describe('validateOrder — what the labels cannot go without', () => {
 });
 
 describe('orderWarnings', () => {
+  it('wants a bag count for every colour with garments while the sticker lane is on', () => {
+    const order = sampleOrder();
+    order.rows[1].stickerQuantity = undefined;
+    expect(validateOrder(order)).toContain('NO_STICKER_QTY');
+    expect(validateOrder({ ...order, printStickers: false })).not.toContain('NO_STICKER_QTY');
+    // A colour with no garments at all is not asked for bags.
+    order.rows[1].quantities = {};
+    expect(validateOrder(order)).not.toContain('NO_STICKER_QTY');
+  });
+
+  it('counts bags and garments apart', () => {
+    const totals = orderTotals(sampleOrder());
+    expect(totals.grandTotal).toBe(120);
+    expect(totals.stickerTotal).toBe(29);
+  });
+
   it('points out a fabric tag with no composition', () => {
     const order = { ...sampleOrder(), materials: [] };
     expect(orderWarnings(order)).toEqual(['NO_COMPOSITION']);

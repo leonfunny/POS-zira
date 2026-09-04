@@ -156,22 +156,31 @@ describe('StyleReprintPanel', () => {
     ]);
   });
 
-  it('stays disabled until a row has a quantity', async () => {
+  it('stays disabled until a row has a quantity and its colour a bag count', async () => {
     await render();
     expect(printButton().disabled).toBe(true);
+    expect(container.querySelector('[data-testid="sticker-counts"]')).toBeNull();
 
     await typeQuantity('CZARNY S', '2');
+    // The colour now has garments, so it asks how many bags.
+    expect(container.querySelector('[data-testid="sticker-counts"]')).not.toBeNull();
+    expect(printButton().disabled).toBe(true);
+    expect(statusText()).toContain('bag label count');
+
+    await typeQuantity('Bag labels CZARNY', '1');
     expect(printButton().disabled).toBe(false);
   });
 
   it('sends the quantities typed to both printers', async () => {
     await render();
     await typeQuantity('CZARNY S', '2');
+    await typeQuantity('Bag labels CZARNY', '1');
     await typeQuantity('CZARNY M', '1');
+    await typeQuantity('Bag labels CZARNY', '1');
     await act(async () => printButton().click());
     await settle();
 
-    // One bag label per colour, covering both sizes; one fabric tag per cell.
+    // As many bag labels as typed for the colour; one fabric tag per cell.
     expect(printPackagingSticker).toHaveBeenCalledTimes(1);
     expect(printPackagingSticker.mock.calls[0][0]).toMatchObject({
       customerName: 'MoonCollection',
@@ -179,7 +188,7 @@ describe('StyleReprintPanel', () => {
       styleName: 'KOMPLETY DRESOWE',
       styleCode: '115',
       colorName: 'CZARNY',
-      quantity: 3,
+      quantity: 1,
     });
     expect(printFabricTag).toHaveBeenCalledTimes(2);
     expect(printFabricTag.mock.calls.map((call) => call[0].size)).toEqual(['S', 'M']);
@@ -189,13 +198,14 @@ describe('StyleReprintPanel', () => {
       careText: 'PRAĆ NA LEWEJ STRONIE',
       quantity: 2,
     });
-    // Three bag labels for the colour plus one tag per garment.
-    expect(statusText()).toContain('Printed 6 labels');
+    // One bag label for the colour plus one tag per garment.
+    expect(statusText()).toContain('Printed 4 labels');
   });
 
   it('prints only the lane that is switched on', async () => {
     await render();
     await typeQuantity('CZARNY S', '2');
+    await typeQuantity('Bag labels CZARNY', '1');
     const fabricLane = container.querySelector<HTMLInputElement>('[data-testid="lane-fabric"]')!;
     await act(async () => fabricLane.click());
     await act(async () => printButton().click());
@@ -209,6 +219,7 @@ describe('StyleReprintPanel', () => {
     getTemplate.mockResolvedValue(null);
     await render();
     await typeQuantity('CZARNY S', '2');
+    await typeQuantity('Bag labels CZARNY', '1');
 
     expect(container.querySelector('[data-testid="reprint-no-tag"]')).not.toBeNull();
     const fabricLane = container.querySelector<HTMLInputElement>('[data-testid="lane-fabric"]')!;
@@ -227,11 +238,12 @@ describe('StyleReprintPanel', () => {
   it('asks a second time before a large run', async () => {
     await render();
     await typeQuantity('CZARNY S', '40');
+    await typeQuantity('Bag labels CZARNY', '20');
 
     await act(async () => printButton().click());
     await settle();
     expect(printPackagingSticker).not.toHaveBeenCalled();
-    expect(printButton().textContent).toContain('Press again to print 80 labels');
+    expect(printButton().textContent).toContain('Press again to print 60 labels');
 
     await act(async () => printButton().click());
     await settle();
@@ -241,28 +253,31 @@ describe('StyleReprintPanel', () => {
   it('drops the confirmation when the quantity changes underneath it', async () => {
     await render();
     await typeQuantity('CZARNY S', '40');
+    await typeQuantity('Bag labels CZARNY', '20');
     await act(async () => printButton().click());
     await settle();
     expect(printButton().textContent).toContain('Press again');
 
     // Still a large run, but no longer the one that was warned about: the
-    // operator agreed to 80 labels, not to whatever is typed next.
+    // operator agreed to 60 labels, not to whatever is typed next.
     await typeQuantity('CZARNY S', '60');
+    await typeQuantity('Bag labels CZARNY', '20');
     await act(async () => printButton().click());
     await settle();
 
     expect(printPackagingSticker).not.toHaveBeenCalled();
-    expect(printButton().textContent).toContain('Press again to print 120 labels');
+    expect(printButton().textContent).toContain('Press again to print 80 labels');
 
     await act(async () => printButton().click());
     await settle();
-    expect(printPackagingSticker.mock.calls[0][0].quantity).toBe(60);
+    expect(printPackagingSticker.mock.calls[0][0].quantity).toBe(20);
   });
 
   it('stops at the first printer failure and keeps the typed numbers', async () => {
     printFabricTag.mockResolvedValue({ success: false, error: 'out of ribbon' });
     await render();
     await typeQuantity('CZARNY S', '2');
+    await typeQuantity('Bag labels CZARNY', '1');
     await act(async () => printButton().click());
     await settle();
 
@@ -322,6 +337,7 @@ describe('StyleReprintPanel', () => {
     // The saved row is what the panel prints from, without a reload: a
     // correction the operator just made must reach the next tag.
     await typeQuantity('CZARNY S', '1');
+    await typeQuantity('Bag labels CZARNY', '1');
     await act(async () => printButton().click());
     await settle();
     expect(printFabricTag.mock.calls[0][0].composition).toBe('100% BAWEŁNA');
@@ -642,6 +658,7 @@ describe('StyleReprintPanel', () => {
   it('falls back to the style name on the sticker when the style has no category', async () => {
     await render({ categoryId: null });
     await typeQuantity('CZARNY S', '1');
+    await typeQuantity('Bag labels CZARNY', '1');
     await act(async () => printButton().click());
     await settle();
 

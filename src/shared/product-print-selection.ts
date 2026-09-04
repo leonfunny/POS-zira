@@ -43,11 +43,16 @@ export interface SelectionInput {
   variants: readonly SelectionVariant[];
   /** How many to print, per variant id. Missing or 0 means "not this one". */
   quantities: Readonly<Record<string, number>>;
+  /**
+   * Bag stickers per colour, keyed by the colour as `selectionColours` spells
+   * it. Typed by the packer: one per bag, not one per garment.
+   */
+  stickerQuantities?: Readonly<Record<string, number>>;
   printStickers: boolean;
   printFabricTags: boolean;
 }
 
-export type SelectionProblem = 'NOTHING_SELECTED' | 'NO_LANE' | 'TOO_MANY';
+export type SelectionProblem = 'NOTHING_SELECTED' | 'NO_LANE' | 'TOO_MANY' | 'NO_STICKER_QTY';
 
 function cleanText(value: string | null | undefined): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -75,11 +80,25 @@ export function selectionTotals(input: SelectionInput): {
   for (const variant of input.variants) {
     cells += selectionQuantity(input.quantities[variant.id]);
   }
-  // One sticker per bag and one tag per garment: both lanes count the same
-  // cells, which is why the sheet's own totals work out the same way.
-  const stickers = input.printStickers ? cells : 0;
+  // One tag per garment; stickers as many as the packer typed per colour.
+  const bags = selectionColours(input).reduce(
+    (sum, colour) => sum + selectionQuantity(input.stickerQuantities?.[colour]),
+    0,
+  );
+  const stickers = input.printStickers ? bags : 0;
   const fabricTags = input.printFabricTags ? cells : 0;
   return { stickers, fabricTags, total: stickers + fabricTags };
+}
+
+/** The colours with at least one garment asked for, in the order the rows list them. */
+export function selectionColours(input: SelectionInput): string[] {
+  const colours: string[] = [];
+  for (const variant of input.variants) {
+    if (selectionQuantity(input.quantities[variant.id]) <= 0) continue;
+    const colour = cleanText(variant.colorName);
+    if (!colours.includes(colour)) colours.push(colour);
+  }
+  return colours;
 }
 
 /** What stops this selection from printing. Empty means the button is live. */
@@ -87,6 +106,12 @@ export function selectionProblems(input: SelectionInput): SelectionProblem[] {
   const problems: SelectionProblem[] = [];
   const { total } = selectionTotals(input);
   if (!input.printStickers && !input.printFabricTags) problems.push('NO_LANE');
+  if (
+    input.printStickers
+    && selectionColours(input).some((colour) => selectionQuantity(input.stickerQuantities?.[colour]) <= 0)
+  ) {
+    problems.push('NO_STICKER_QTY');
+  }
   if (total === 0 && problems.length === 0) problems.push('NOTHING_SELECTED');
   if (total > LABEL_PRINT_ORDER_LIMITS.maxOrderQuantity) problems.push('TOO_MANY');
   return problems;
@@ -123,6 +148,7 @@ export function buildSelectionOrder(input: SelectionInput): LabelPrintOrder {
         // a blank one from the style code and colour, the same way every time.
         code: '',
         quantities: {},
+        stickerQuantity: selectionQuantity(input.stickerQuantities?.[colorName]),
       };
       rowByColor.set(colorName, row);
       rows.push(row);
