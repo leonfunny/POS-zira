@@ -97,9 +97,12 @@ describe('PrintOrderPanel', () => {
     await act(async () => buttonWithText(container, '+ S').click());
     await act(async () => buttonWithText(container, 'Add colour').click());
     await changeInput(input(container, 'input[placeholder="CZEKOLADA"]'), 'CZEKOLADA');
-    await changeInput(input(container, 'input[placeholder="SP006290"]'), 'SP006290');
     await changeInput(input(container, 'input[aria-label="CZEKOLADA S"]'), String(quantity));
   }
+
+  /** The two lane boxes, fabric tags first, as they sit on the sheet. */
+  const laneBoxes = () =>
+    Array.from(container.querySelectorAll<HTMLInputElement>('input[type=checkbox]'));
 
   function text(selector: string): string {
     return container.querySelector(selector)?.textContent?.trim() ?? '';
@@ -378,16 +381,67 @@ describe('PrintOrderPanel', () => {
     expect(headers).toHaveLength(1);
   });
 
-  it('prints a sticker without asking for the dormant barcode code', async () => {
+  it('gives each colour row a sticker code nobody has to type', async () => {
     await render();
     await fillMinimalOrder(40);
-    await changeInput(input(container, 'input[placeholder="SP006290"]'), '');
+    await act(async () => buttonWithText(container, 'Add colour').click());
+    const colours = Array.from(
+      container.querySelectorAll<HTMLInputElement>('input[placeholder="CZEKOLADA"]'),
+    );
+    await changeInput(colours[1], 'BORDO');
+    await changeInput(input(container, 'input[aria-label="BORDO S"]'), '5');
 
-    expect(container.textContent).not.toContain('fabric tags only');
+    // No code column on the sheet any more — the sticker does not print it.
+    expect(container.querySelector('input[placeholder="SP006290"]')).toBeNull();
     expect(buttonWithText(container, 'Print').disabled).toBe(false);
     await act(async () => buttonWithText(container, 'Print').click());
     await settle();
-    expect(printSticker).toHaveBeenCalledTimes(1);
+    expect(printSticker).toHaveBeenCalledTimes(2);
+    const codes = printSticker.mock.calls.map((call) => call[0].code);
+    expect(codes.every((code) => /^SP\d{6}$/.test(code))).toBe(true);
+    expect(new Set(codes).size).toBe(2);
+  });
+
+  it('refuses to print without a customer name, and says so', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    await changeInput(input(container, 'input[placeholder="MoonCollection"]'), '  ');
+
+    expect(buttonWithText(container, 'Print').disabled).toBe(true);
+    expect(text('[data-testid="order-problems"]')).toContain('No customer name');
+  });
+
+  it('needs a style code for the bag sticker but not for a fabric-tag-only run', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    await changeInput(input(container, 'input[placeholder="114"]'), '');
+
+    expect(buttonWithText(container, 'Print').disabled).toBe(true);
+    expect(text('[data-testid="order-problems"]')).toContain('No style code');
+
+    await act(async () => laneBoxes()[1].click());
+    expect(container.querySelector('[data-testid="order-problems"]')).toBeNull();
+    expect(buttonWithText(container, 'Print').disabled).toBe(false);
+  });
+
+  it('points out a fabric tag with no composition without blocking the run', async () => {
+    await render();
+    await fillMinimalOrder(40);
+
+    expect(text('[data-testid="order-warnings"]')).toContain('no composition');
+    expect(buttonWithText(container, 'Print').disabled).toBe(false);
+
+    await act(async () => laneBoxes()[0].click());
+    expect(container.querySelector('[data-testid="order-warnings"]')).toBeNull();
+  });
+
+  it('dates a fresh sheet today', async () => {
+    await render();
+    const today = new Date();
+    const pad = (value: number) => String(value).padStart(2, '0');
+    expect(input(container, '[data-testid="order-date"]').value).toBe(
+      `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`,
+    );
   });
 
   it('prints the stickers and the fabric tags in one run, asking nothing', async () => {
@@ -402,7 +456,8 @@ describe('PrintOrderPanel', () => {
       styleName: 'KURTKA',
       styleCode: '114',
       colorName: 'CZEKOLADA',
-      code: 'SP006290',
+      // Nobody typed a code: the row got one when it was added.
+      code: expect.stringMatching(/^SP\d{6}$/),
       quantity: 40,
     });
     // No Continue button, and the fabric lane ran without one being pressed.
@@ -1011,11 +1066,28 @@ describe('PrintOrderPanel', () => {
 
     it('takes the sticker code from the sheet when it carries one', async () => {
       await render();
+      await changeInput(input(container, 'input[placeholder="MoonCollection"]'), 'MOON');
+      await changeInput(input(container, 'input[placeholder="114"]'), '114');
       await paste('KOLOR\tKOD\tS\nczekolada\tsp006290\t40');
       await act(async () => container.querySelector<HTMLButtonElement>(
         '[data-testid="paste-accept"]')!.click());
+      await act(async () => buttonWithText(container, 'Print').click());
+      await settle();
 
-      expect(input(container, 'input[placeholder="SP006290"]').value).toBe('SP006290');
+      expect(printSticker.mock.calls[0][0].code).toBe('SP006290');
+    });
+
+    it('makes up a sticker code for a pasted sheet that has none', async () => {
+      await render();
+      await changeInput(input(container, 'input[placeholder="MoonCollection"]'), 'MOON');
+      await changeInput(input(container, 'input[placeholder="114"]'), '114');
+      await paste('KOLOR\tS\nczekolada\t40');
+      await act(async () => container.querySelector<HTMLButtonElement>(
+        '[data-testid="paste-accept"]')!.click());
+      await act(async () => buttonWithText(container, 'Print').click());
+      await settle();
+
+      expect(printSticker.mock.calls[0][0].code).toMatch(/^SP\d{6}$/);
     });
 
     it('does not carry an interrupted run over to the pasted sheet', async () => {
@@ -1074,10 +1146,11 @@ describe('PrintOrderPanel', () => {
 
   it('lets a sample print before any quantity is typed', async () => {
     await render();
+    await changeInput(input(container, 'input[placeholder="MoonCollection"]'), 'MOON');
+    await changeInput(input(container, 'input[placeholder="114"]'), '114');
     await act(async () => buttonWithText(container, '+ S').click());
     await act(async () => buttonWithText(container, 'Add colour').click());
     await changeInput(input(container, 'input[placeholder="CZEKOLADA"]'), 'CZEKOLADA');
-    await changeInput(input(container, 'input[placeholder="SP006290"]'), 'SP006290');
 
     // The real Print button is blocked with nothing in the grid; the sample is not.
     expect(buttonWithText(container, 'Print').disabled).toBe(true);
@@ -1087,15 +1160,6 @@ describe('PrintOrderPanel', () => {
     await act(async () => sample.click());
     await settle();
     expect(printFabricTag).toHaveBeenCalledTimes(1);
-  });
-
-  it('ignores dormant barcode symbology when deciding whether a sample can print', async () => {
-    await render();
-    await fillMinimalOrder(40);
-    await changeInput(input(container, 'input[placeholder="SP006290"]'), 'SP-Ł290');
-
-    expect(container.querySelector<HTMLButtonElement>('[data-testid="print-sample"]')!.disabled)
-      .toBe(false);
   });
 
   it('refuses a sample while the real order is still going out', async () => {
@@ -1290,11 +1354,9 @@ describe('PrintOrderPanel', () => {
     await act(async () => buttonWithText(container, '+ S').click());
     await act(async () => buttonWithText(container, 'Add colour').click());
     await changeInput(input(container, 'input[placeholder="CZEKOLADA"]'), 'czekolada');
-    await changeInput(input(container, 'input[placeholder="SP006290"]'), 'sp006290');
 
     expect(input(container, 'input[placeholder="MoonCollection"]').value).toBe('MOON COLLECTION');
     expect(input(container, 'input[placeholder="CZEKOLADA"]').value).toBe('CZEKOLADA');
-    expect(input(container, 'input[placeholder="SP006290"]').value).toBe('SP006290');
   });
 
   it('capitalises a free-text size column as it is added', async () => {

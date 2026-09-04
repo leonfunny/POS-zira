@@ -154,6 +154,7 @@ describe('LabelModule — a filed sheet reaches the product tab', () => {
   }
 
   async function fillSheet(styleName: string) {
+    await changeInput(input(container, 'input[placeholder="MoonCollection"]'), 'MOON');
     await changeInput(input(container, 'input[placeholder="KURTKA"]'), styleName);
     await changeInput(input(container, 'input[placeholder="114"]'), '114');
     await act(async () => buttonWithText(container, '+ S').click());

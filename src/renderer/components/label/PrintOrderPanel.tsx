@@ -8,6 +8,9 @@ import {
   LabelPrintOrder,
   MAX_SIZE_LABEL_CHARS,
   OrderProblem,
+  OrderWarning,
+  orderWarnings,
+  randomStickerCode,
   SIZE_SUGGESTIONS,
   STYLE_SUGGESTIONS,
   PrintStep,
@@ -46,7 +49,6 @@ import {
   FABRIC_TAG_EXCLUSIVE_CARE_SYMBOL_GROUPS,
 } from '../../../shared/types';
 import { careSymbolLabel, careSymbolSvg } from '../../../shared/care-symbols';
-import { PACKAGING_STICKER_BARCODE_ENABLED } from '../../../shared/packaging-sticker';
 import { PrintProgress, runPrintPlan } from './print-order-runner';
 import {
   PrintProgressRecord,
@@ -132,13 +134,13 @@ interface Copy {
   resumeContinue: (batch: number) => string;
   resumeRestart: string;
   resumeForget: string;
-  missingCode: string;
   percentSum: (sum: number) => string;
   percentFix: (name: string, percent: number) => string;
   progress: (done: number, total: number, copies: number, all: number) => string;
   finished: (copies: number) => string;
   stopped: (done: number, total: number) => string;
   problem: Record<OrderProblem, string>;
+  warning: Record<OrderWarning, string>;
   orderDate: string;
   category: string;
   categoryNone: string;
@@ -222,7 +224,6 @@ const COPY: Record<string, Copy> = {
     resumeContinue: (batch) => `In tiếp từ lô ${batch}`,
     resumeRestart: 'In lại từ đầu',
     resumeForget: 'Bỏ tiến độ',
-    missingCode: 'Thiếu mã tem — màu này chỉ in mác vải',
     percentSum: (sum) => `Tổng phần trăm đang là ${sum}%`,
     percentFix: (name, percent) => `Đặt ${name} = ${percent}%`,
     progress: (done, total, copies, all) => `Đã in ${done}/${total} lô · ${copies}/${all} tem`,
@@ -231,11 +232,16 @@ const COPY: Record<string, Copy> = {
     problem: {
       EMPTY_ORDER: 'Chưa có số lượng nào',
       NOTHING_SELECTED: 'Chưa chọn in loại nhãn nào',
+      NO_CUSTOMER: 'Chưa có tên khách',
+      NO_STYLE_CODE: 'Chưa có mã hàng — tem túi cần mã',
       DUPLICATE_SIZE: 'Có hai cột size trùng tên',
       EMPTY_SIZE: 'Có cột size chưa đặt tên',
       BAD_CODE: 'Mã tem có ký tự máy in không đọc được',
       PERCENT_NOT_100: 'Tổng phần trăm chất liệu phải bằng 100%',
       ORDER_TOO_LARGE: 'Số lượng quá lớn — kiểm tra lại',
+    },
+    warning: {
+      NO_COMPOSITION: 'Mác vải chưa có thành phần — sẽ in mác trống chỗ đó',
     },
     orderDate: 'Ngày đơn',
     category: 'Danh mục',
@@ -253,6 +259,7 @@ const COPY: Record<string, Copy> = {
     fileFailed: (reason) => `Không lưu được: ${reason}`,
     fileProblem: {
       NO_NAME: 'Chưa có tên hàng',
+      NO_CUSTOMER: 'Chưa có tên khách',
       NO_CATEGORY: 'Chưa chọn nhóm hàng',
       NO_CELLS: 'Chưa ô nào có số lượng',
       ALREADY_FILED: 'Tờ này đã lưu thành sản phẩm rồi',
@@ -325,7 +332,6 @@ const COPY: Record<string, Copy> = {
     resumeContinue: (batch) => `Wznów od partii ${batch}`,
     resumeRestart: 'Drukuj od nowa',
     resumeForget: 'Odrzuć postęp',
-    missingCode: 'Brak kodu — ten kolor dostanie tylko metki',
     percentSum: (sum) => `Suma procentów: ${sum}%`,
     percentFix: (name, percent) => `Ustaw ${name} = ${percent}%`,
     progress: (done, total, copies, all) => `${done}/${total} partii · ${copies}/${all} sztuk`,
@@ -334,11 +340,16 @@ const COPY: Record<string, Copy> = {
     problem: {
       EMPTY_ORDER: 'Brak ilości',
       NOTHING_SELECTED: 'Nie wybrano rodzaju etykiety',
+      NO_CUSTOMER: 'Brak nazwy klienta',
+      NO_STYLE_CODE: 'Brak kodu modelu — naklejka go wymaga',
       DUPLICATE_SIZE: 'Dwie kolumny mają ten sam rozmiar',
       EMPTY_SIZE: 'Kolumna rozmiaru bez nazwy',
       BAD_CODE: 'Kod zawiera znaki, których drukarka nie odczyta',
       PERCENT_NOT_100: 'Skład musi sumować się do 100%',
       ORDER_TOO_LARGE: 'Zbyt duża ilość — sprawdź',
+    },
+    warning: {
+      NO_COMPOSITION: 'Metka bez składu — to miejsce zostanie puste',
     },
     orderDate: 'Data zlecenia',
     category: 'Kategoria',
@@ -356,6 +367,7 @@ const COPY: Record<string, Copy> = {
     fileFailed: (reason) => `Nie zapisano: ${reason}`,
     fileProblem: {
       NO_NAME: 'Brak nazwy modelu',
+      NO_CUSTOMER: 'Brak nazwy klienta',
       NO_CATEGORY: 'Nie wybrano kategorii',
       NO_CELLS: 'Żadna komórka nie ma ilości',
       ALREADY_FILED: 'To zlecenie jest już zapisane jako produkt',
@@ -428,7 +440,6 @@ const COPY: Record<string, Copy> = {
     resumeContinue: (batch) => `Carry on from batch ${batch}`,
     resumeRestart: 'Print from the start',
     resumeForget: 'Forget the progress',
-    missingCode: 'No sticker code — this colour gets fabric tags only',
     percentSum: (sum) => `Percentages add up to ${sum}%`,
     percentFix: (name, percent) => `Set ${name} to ${percent}%`,
     progress: (done, total, copies, all) => `${done}/${total} batches · ${copies}/${all} labels`,
@@ -437,11 +448,16 @@ const COPY: Record<string, Copy> = {
     problem: {
       EMPTY_ORDER: 'No quantities entered',
       NOTHING_SELECTED: 'No label kind selected',
+      NO_CUSTOMER: 'No customer name',
+      NO_STYLE_CODE: 'No style code — the bag sticker needs one',
       DUPLICATE_SIZE: 'Two size columns share a name',
       EMPTY_SIZE: 'A size column has no name',
       BAD_CODE: 'A sticker code has characters the printer cannot encode',
       PERCENT_NOT_100: 'The composition must add up to 100%',
       ORDER_TOO_LARGE: 'Quantity is implausibly large — check the sheet',
+    },
+    warning: {
+      NO_COMPOSITION: 'The fabric tag has no composition — that line will print empty',
     },
     orderDate: 'Order date',
     category: 'Category',
@@ -459,6 +475,7 @@ const COPY: Record<string, Copy> = {
     fileFailed: (reason) => `Not saved: ${reason}`,
     fileProblem: {
       NO_NAME: 'The style has no name',
+      NO_CUSTOMER: 'No customer name',
       NO_CATEGORY: 'No category picked',
       NO_CELLS: 'No cell has a quantity',
       ALREADY_FILED: 'This sheet is already saved as a product',
@@ -606,6 +623,7 @@ export default function PrintOrderPanel({
 
   const totals = useMemo(() => orderTotals(order), [order]);
   const problems = useMemo(() => validateOrder(order), [order]);
+  const warnings = useMemo(() => orderWarnings(order), [order]);
   const productDraft = useMemo(() => buildProductDraft(order), [order]);
   const allCategories = useMemo(() => {
     const known = new Set(categories.map((category) => category.id));
@@ -724,7 +742,10 @@ export default function PrintOrderPanel({
 
   const addRow = () =>
     patch({
-      rows: [...order.rows, { id: nextId('row'), colorName: '', code: '', quantities: {} }],
+      rows: [
+        ...order.rows,
+        { id: nextId('row'), colorName: '', code: randomStickerCode(), quantities: {} },
+      ],
     });
 
   const removeRow = (rowId: string) => patch({ rows: order.rows.filter((r) => r.id !== rowId) });
@@ -747,7 +768,11 @@ export default function PrintOrderPanel({
     if (!pasted) return;
     // Fresh ids all round, so nothing is inherited from the sheet being
     // replaced — including an interrupted run's batches.
-    patch({ sizes: pasted.sizes, rows: pasted.rows });
+    // A pasted sheet without a code column gets codes like a typed one does.
+    patch({
+      sizes: pasted.sizes,
+      rows: pasted.rows.map((row) => (row.code.trim() ? row : { ...row, code: randomStickerCode() })),
+    });
     setPasteText(null);
   };
 
@@ -1277,7 +1302,6 @@ export default function PrintOrderPanel({
             <thead>
               <tr>
                 <th className="border-b border-slate-200 p-2 text-left font-bold">{copy.color}</th>
-                <th className="border-b border-slate-200 p-2 text-left font-bold">{copy.code}</th>
                 {order.sizes.map((size) => (
                   <th key={size.id} className="border-b border-slate-200 p-2 font-bold">
                     <span className="inline-flex items-center gap-1">
@@ -1314,28 +1338,6 @@ export default function PrintOrderPanel({
                       placeholder="CZEKOLADA"
                       aria-label={copy.color}
                     />
-                  </td>
-                  <td className="border-b border-slate-100 p-1">
-                    <input
-                      className={INPUT}
-                      value={row.code}
-                      onChange={(e) =>
-                        patch({
-                          rows: order.rows.map((r) =>
-                            r.id === row.id ? { ...r, code: e.target.value } : r,
-                          ),
-                        })
-                      }
-                      placeholder="SP006290"
-                      aria-label={copy.code}
-                    />
-                    {PACKAGING_STICKER_BARCODE_ENABLED
-                      && order.printStickers
-                      && !row.code.trim() && (
-                      <p className="mt-0.5 text-[11px] font-bold text-amber-700">
-                        {copy.missingCode}
-                      </p>
-                    )}
                   </td>
                   {order.sizes.map((size) => (
                     <td key={size.id} className="border-b border-slate-100 p-1">
@@ -1415,6 +1417,15 @@ export default function PrintOrderPanel({
           {problems.map((problem) => (
             <li key={problem} className="text-sm font-bold text-red-700">
               {copy.problem[problem]}
+            </li>
+          ))}
+        </ul>
+      )}
+      {warnings.length > 0 && (
+        <ul className="mb-3 space-y-1" data-testid="order-warnings">
+          {warnings.map((warning) => (
+            <li key={warning} className="text-sm font-bold text-amber-700">
+              {copy.warning[warning]}
             </li>
           ))}
         </ul>

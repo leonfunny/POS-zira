@@ -163,6 +163,7 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
 
   /** Two colours across two sizes, with one cell deliberately left empty. */
   async function fillGrid() {
+    await changeInput(input(container, 'input[placeholder="MoonCollection"]'), 'MOON');
     await changeInput(input(container, 'input[placeholder="KURTKA"]'), 'KURTKA');
     await changeInput(input(container, 'input[placeholder="114"]'), 'LOT114');
     await act(async () => buttonWithText(container, '+ S').click());

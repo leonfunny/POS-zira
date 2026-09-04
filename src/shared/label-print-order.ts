@@ -224,6 +224,8 @@ export interface LabelPrintOrder {
 export type OrderProblem =
   | 'EMPTY_ORDER'
   | 'NOTHING_SELECTED'
+  | 'NO_CUSTOMER'
+  | 'NO_STYLE_CODE'
   | 'DUPLICATE_SIZE'
   | 'EMPTY_SIZE'
   | 'BAD_CODE'
@@ -253,6 +255,23 @@ export interface FabricStep extends PrintStepBase {
 
 export type PrintStep = StickerStep | FabricStep;
 
+/** Today, as the date input wants it: `yyyy-mm-dd` in local time. */
+export function todayIsoDate(now: Date = new Date()): string {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+/**
+ * A code for a colour row nobody has to type. The bag sticker does not print
+ * it today, so its only job is to stand in the slot the customer's own code
+ * would fill — six digits behind the prefix the photographed sheets used, and
+ * inside what Code 128 can carry should the barcode layout come back.
+ */
+export function randomStickerCode(random: () => number = Math.random): string {
+  const digits = Math.floor(random() * 1_000_000);
+  return `SP${String(digits).padStart(6, '0')}`;
+}
+
 export function createEmptyOrder(): LabelPrintOrder {
   return {
     customerName: '',
@@ -266,7 +285,9 @@ export function createEmptyOrder(): LabelPrintOrder {
     printFabricTags: true,
     printStickers: true,
     priceGrossGrosze: 0,
-    orderDate: '',
+    // The day the order was taken is nearly always today; the sheet is typed
+    // while the customer is still in the shop.
+    orderDate: todayIsoDate(),
     productId: null,
     categoryId: null,
   };
@@ -384,6 +405,22 @@ function cellQuantity(row: OrderRow, sizeId: string): number {
   return Math.floor(raw);
 }
 
+export type OrderWarning = 'NO_COMPOSITION';
+
+/**
+ * Things worth a look before printing that do not stop the run. A fabric tag
+ * with no composition is legal and customers do order it, so the sheet only
+ * points it out — a run of two hundred blank tags is usually a forgotten
+ * field, not a decision.
+ */
+export function orderWarnings(order: LabelPrintOrder): OrderWarning[] {
+  const warnings: OrderWarning[] = [];
+  if (order.printFabricTags && !order.materials.some((m) => m.name.trim())) {
+    warnings.push('NO_COMPOSITION');
+  }
+  return warnings;
+}
+
 /**
  * Problems that must be fixed before printing.
  *
@@ -394,6 +431,11 @@ export function validateOrder(order: LabelPrintOrder): OrderProblem[] {
   const problems = new Set<OrderProblem>();
 
   if (!order.printFabricTags && !order.printStickers) problems.add('NOTHING_SELECTED');
+  // The customer heads the bag sticker and is the brand line on the fabric
+  // tag; a sheet without one prints labels nobody can tell apart. The style
+  // code is on the bag sticker only, so a fabric-tag-only run may go without.
+  if (!order.customerName.trim()) problems.add('NO_CUSTOMER');
+  if (order.printStickers && !order.styleCode.trim()) problems.add('NO_STYLE_CODE');
 
   const labels = order.sizes.map((size) => size.label.trim());
   if (labels.some((label) => !label)) problems.add('EMPTY_SIZE');

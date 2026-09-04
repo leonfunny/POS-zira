@@ -25,6 +25,7 @@ export interface ProductDraft {
 
 export type ProductDraftProblem =
   | 'NO_NAME'
+  | 'NO_CUSTOMER'
   | 'NO_CATEGORY'
   | 'NO_CELLS'
   | 'ALREADY_FILED'
@@ -318,6 +319,9 @@ export function validateProductDraft(
   const problems: ProductDraftProblem[] = [];
   if (order.productId) problems.push('ALREADY_FILED');
   if (!draft.name) problems.push('NO_NAME');
+  // The customer becomes the brand line of the style's fabric tag, and the
+  // product tab has no field to add one later.
+  if (!order.customerName.trim()) problems.push('NO_CUSTOMER');
   if (category === null) problems.push('NO_CATEGORY');
   if (draft.variants.length === 0) problems.push('NO_CELLS');
   if (draft.variants.length > MAX_PRODUCT_VARIANTS) {

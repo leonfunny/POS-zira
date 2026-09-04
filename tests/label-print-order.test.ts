@@ -12,6 +12,9 @@ import {
   percentFix,
   materialPercentSum,
   validateOrder,
+  orderWarnings,
+  randomStickerCode,
+  todayIsoDate,
   CARE_TEXT_MAX_CHARS,
   CARE_TEXT_PRESETS,
   addCareTextLine,
@@ -23,6 +26,7 @@ import {
   toggleCareTextPreset,
   upperCaseOrder,
 } from '../src/shared/label-print-order';
+import { encodeCode128 } from '../src/shared/code128';
 
 /**
  * Modelled on the A4 order sheet the factory works from: one customer, one
@@ -542,5 +546,54 @@ describe('the one press that lands the composition on 100', () => {
     const materials = [{ name: 'LEN', percent: 70 }, { name: 'AKRYL', percent: 0 }];
     percentFix(materials);
     expect(materials[1].percent).toBe(0);
+  });
+});
+
+describe('validateOrder — what the labels cannot go without', () => {
+  it('refuses a sheet with no customer, which heads both labels', () => {
+    const order = { ...sampleOrder(), customerName: '  ' };
+    expect(validateOrder(order)).toContain('NO_CUSTOMER');
+  });
+
+  it('needs a style code for the bag sticker only', () => {
+    const order = { ...sampleOrder(), styleCode: '' };
+    expect(validateOrder(order)).toContain('NO_STYLE_CODE');
+    expect(validateOrder({ ...order, printStickers: false })).not.toContain('NO_STYLE_CODE');
+  });
+});
+
+describe('orderWarnings', () => {
+  it('points out a fabric tag with no composition', () => {
+    const order = { ...sampleOrder(), materials: [] };
+    expect(orderWarnings(order)).toEqual(['NO_COMPOSITION']);
+    expect(validateOrder(order)).toEqual([]);
+  });
+
+  it('says nothing when the fabric lane is off or a material is named', () => {
+    expect(orderWarnings({ ...sampleOrder(), materials: [], printFabricTags: false })).toEqual([]);
+    expect(orderWarnings(sampleOrder())).toEqual([]);
+  });
+});
+
+describe('randomStickerCode', () => {
+  it('is the prefix the sheets used plus six digits, zero-padded', () => {
+    expect(randomStickerCode(() => 0)).toBe('SP000000');
+    expect(randomStickerCode(() => 0.999999)).toBe('SP999999');
+    expect(randomStickerCode()).toMatch(/^SP\d{6}$/);
+  });
+
+  it('is something Code 128 can carry, should the barcode come back', () => {
+    expect(() => encodeCode128(randomStickerCode())).not.toThrow();
+  });
+});
+
+describe('todayIsoDate', () => {
+  it('writes the local day the way the date input wants it', () => {
+    expect(todayIsoDate(new Date(2026, 8, 4, 23, 30))).toBe('2026-09-04');
+    expect(todayIsoDate(new Date(2026, 0, 9))).toBe('2026-01-09');
+  });
+
+  it('is what a fresh sheet is dated', () => {
+    expect(createEmptyOrder().orderDate).toBe(todayIsoDate());
   });
 });

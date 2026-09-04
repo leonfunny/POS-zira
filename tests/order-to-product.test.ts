@@ -26,6 +26,7 @@ function sheet(
   const sizes = sizeLabels.map((label, index) => ({ id: `s${index}`, label }));
   return {
     ...createEmptyOrder(),
+    customerName: 'MOON',
     styleName: 'Kurtka LOTUS',
     styleCode: 'LOT114',
     sizes,
