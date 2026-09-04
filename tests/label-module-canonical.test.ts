@@ -11,7 +11,7 @@ const ROOT = path.resolve(__dirname, '..');
 const APP = fs.readFileSync(path.join(ROOT, 'src/renderer/App.tsx'), 'utf8');
 const SETTINGS = fs.readFileSync(path.join(ROOT, 'src/renderer/components/Settings.tsx'), 'utf8');
 const LABEL_MODULE = fs.readFileSync(path.join(ROOT, 'src/renderer/components/label/LabelModule.tsx'), 'utf8');
-const REPRINT_PANEL = fs.readFileSync(path.join(ROOT, 'src/renderer/components/label/StyleReprintPanel.tsx'), 'utf8');
+const API_CLIENT = fs.readFileSync(path.join(ROOT, 'src/main/network/api-client.ts'), 'utf8');
 const CONFIG_STORE = fs.readFileSync(path.join(ROOT, 'src/main/config/store.ts'), 'utf8');
 const SHARED_TYPES = fs.readFileSync(path.join(ROOT, 'src/shared/types.ts'), 'utf8');
 
@@ -118,23 +118,20 @@ describe('canonical Label tab workflow', () => {
     expect(LABEL_MODULE).toContain('const template = templateRows[group.key];');
   });
 
-  it('prints through the order-sheet lanes, not the shelf-label printer', () => {
-    // One style, one panel, and the same plan builder the print order uses: a
-    // second renderer for "the same" label is how two lanes drift apart.
-    expect(LABEL_MODULE).toContain('<StyleReprintPanel');
+  it('opens a catalogue style as the order sheet itself, not a second panel', () => {
+    // One sheet for both tabs: a second renderer for "the same" label is how
+    // two lanes drift apart, and the shop could not tell the two screens apart.
+    expect(fs.existsSync(path.join(ROOT, 'src/renderer/components/label/StyleReprintPanel.tsx'))).toBe(false);
+    expect(LABEL_MODULE).not.toContain('StyleReprintPanel');
+    expect(LABEL_MODULE).toContain('catalogue={{ templateId: styleSheet.key');
     expect(LABEL_MODULE).not.toContain('window.electronAPI.printLabel');
-    expect(REPRINT_PANEL).toContain("from './print-order-runner'");
-    expect(REPRINT_PANEL).toContain('buildPrintPlan(order, { composition:');
-    expect(REPRINT_PANEL).toContain('api.printPackagingSticker(request)');
-    expect(REPRINT_PANEL).toContain('api.printFabricTag(request)');
   });
 
-  it('never prints a fabric tag with no saved care content', () => {
-    // Without the sheet's composition and washing symbols there is nothing to
-    // put on the tag, and a blank one is worse than none: it is sewn in.
-    expect(REPRINT_PANEL).toContain('const fabricLaneOn = printFabricTags && hasTagContent;');
-    expect(REPRINT_PANEL).toContain('disabled={!hasTagContent}');
-    expect(REPRINT_PANEL).toContain('data-testid="reprint-no-tag"');
+  it('lets the renderer see that the server can rename a style', () => {
+    // Capabilities pass through an explicit map in the API client; a field
+    // left out of it is silently false, and the rename button then blames
+    // the server for what the till dropped.
+    expect(API_CLIENT).toContain('supportsStyleRename: raw?.supportsStyleRename === true');
   });
 
   it('keeps the pinned-product settings search above the shared touch keyboard', () => {

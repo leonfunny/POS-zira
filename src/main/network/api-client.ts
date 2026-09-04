@@ -1910,6 +1910,7 @@ export class ApiClient {
       // renderer never sees it (supportsItemType was silently dropped once —
       // the item-kind picker stayed hidden despite the backend advertising it).
       supportsItemType: raw?.supportsItemType === true,
+      supportsStyleRename: raw?.supportsStyleRename === true,
       canChangeInventoryMode: raw?.canChangeInventoryMode === true,
       supportsProductSyncV2: raw?.supportsProductSyncV2 === true
         || Number(raw?.productSyncVersion) >= 2,

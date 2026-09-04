@@ -252,6 +252,57 @@ describe('LabelModule — a filed sheet reaches the product tab', () => {
     expect(container.querySelector('[data-testid="file-product"]')).not.toBeNull();
   });
 
+  it('opens a picked style as a sheet filled from its rows, and comes back to the list', async () => {
+    harness.products = [
+      {
+        id: 'row-0', template_id: 'template-115', name: 'KOMPLET DRESOWY - CZARNY / S',
+        sku: '115-CZARNY-S', barcode: '115-CZARNY-S', category_id: 'cat-old',
+        color_name: 'CZARNY', size_name: 'S', retail_price: 4000, image_url: 'https://cdn/115.jpg',
+      },
+      {
+        id: 'row-1', template_id: 'template-115', name: 'KOMPLET DRESOWY - BORDO / M',
+        sku: '115-BORDO-M', barcode: '115-BORDO-M', category_id: 'cat-old',
+        color_name: 'BORDO', size_name: 'M', retail_price: 4000,
+      },
+    ];
+    (window as any).electronAPI.pos.fabricTagTemplates.get = vi.fn(async () => ({
+      templateId: 'template-115', brandName: 'MOON', logoDataUrl: null, composition: '100% BAWEŁNA',
+      careSymbols: [], careText: null, materials: [], fabric: null, layout: 'default',
+    }));
+    await renderModule();
+    const ean = container.querySelector<HTMLElement>('[data-label-mode-panel="ean"]')!;
+    // Nothing is opened by itself: the list is the tab until a style is picked.
+    expect(ean.querySelector('[data-testid="style-sheet"]')).toBeNull();
+
+    const card = Array.from(ean.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('KOMPLET DRESOWY'),
+    );
+    expect(card).toBeTruthy();
+    await act(async () => card!.click());
+    await settle();
+
+    const sheet = ean.querySelector<HTMLElement>('[data-testid="style-sheet"] [data-testid="print-order-panel"]');
+    expect(sheet).not.toBeNull();
+    expect(input(sheet!, 'input[placeholder="114"]').value).toBe('115');
+    expect(input(sheet!, 'input[placeholder="KURTKA"]').value).toBe('KOMPLET DRESOWY');
+    expect(input(sheet!, 'input[placeholder="MoonCollection"]').value).toBe('MOON');
+    expect(sheet!.querySelector('input[aria-label="Fabric tags S"]')).not.toBeNull();
+    expect(sheet!.querySelector('input[aria-label="Fabric tags M"]')).not.toBeNull();
+    expect(Array.from(sheet!.querySelectorAll<HTMLInputElement>('input[aria-label^="Fabric tags"]')).every((box) => box.value === '')).toBe(true);
+    expect(sheet!.querySelector<HTMLImageElement>('[data-testid="order-image-preview"]')?.getAttribute('src')).toBe('https://cdn/115.jpg');
+    // A style's sheet is not an order: no order date, no saved-sheet list, and
+    // the style is already a product, so the button updates it.
+    expect(sheet!.querySelector('[data-testid="order-date"]')).toBeNull();
+    expect(sheet!.querySelector('[data-testid="update-product"]')).not.toBeNull();
+    // Nor did opening it touch the order tab's own draft: the sheet the other
+    // tab keeps is still its own empty one, not this style.
+    expect(localStorage.getItem('zira.labelPrintOrder.draft') ?? '').not.toContain('"styleCode":"115"');
+
+    await act(async () => ean.querySelector<HTMLButtonElement>('[data-testid="back-to-list"]')!.click());
+    await settle();
+    expect(ean.querySelector('[data-testid="style-sheet"]')).toBeNull();
+  });
+
   it('reloads the category list after one is created from the sheet', async () => {
     await renderModule();
     await fillSheet('SPODNIE');

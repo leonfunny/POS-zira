@@ -8,6 +8,7 @@ import {
   buildProductDraft,
   rowBelongsToStyle,
   styleCodeOfRow,
+  styleNameOfRow,
   groszeToText,
   resolveCategoryForStyle,
   resolveOrderCategory,
@@ -65,6 +66,16 @@ describe('styleCodeOfRow / rowBelongsToStyle', () => {
     expect(styleCodeOfRow('MOON-VE114-BEZ', 'beżowy', 'UNI')).toBe('MOON-VE114-BEZ');
     expect(styleCodeOfRow('115-M', null, 'M')).toBe('115');
     expect(styleCodeOfRow(null, 'CZARNY', 'S')).toBe('');
+  });
+
+  it('takes the style name back off a row name the server built', () => {
+    expect(styleNameOfRow('KOMPLET DRESOWY - CZARNY / S', 'CZARNY', 'S')).toBe('KOMPLET DRESOWY');
+    expect(styleNameOfRow('Komplet - Bordo / M', 'BORDO', 'm')).toBe('Komplet');
+    expect(styleNameOfRow('KURTKA - CZARNY', 'CZARNY', null)).toBe('KURTKA');
+    expect(styleNameOfRow('KURTKA - UNI', '', 'UNI')).toBe('KURTKA');
+    expect(styleNameOfRow('KURTKA ZIMOWA', 'CZARNY', 'S')).toBe('KURTKA ZIMOWA');
+    expect(styleNameOfRow(' - CZARNY / S', 'CZARNY', 'S')).toBe('- CZARNY / S');
+    expect(styleNameOfRow(null, 'CZARNY', 'S')).toBe('');
   });
 
   it('knows which rows were built from a style code, and which merely start alike', () => {

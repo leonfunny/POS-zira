@@ -170,6 +170,9 @@ interface Copy {
   imageUploaded: (done: number, total: number) => string;
   priceSynced: (rows: number) => string;
   priceSyncFailed: (reason: string) => string;
+  nameSynced: string;
+  nameSyncUnsupported: string;
+  nameSyncFailed: (reason: string) => string;
   categoryPick: string;
   createCategory: (name: string) => string;
   creatingCategory: string;
@@ -292,6 +295,9 @@ const COPY: Record<string, Copy> = {
     imageUploaded: (done, total) => (done === total ? ' · đã gắn ảnh' : ` · ảnh gắn được ${done}/${total} dòng`),
     priceSynced: (rows) => ` · đổi giá ${rows} dòng cũ theo tờ`,
     priceSyncFailed: (reason) => `Đã thêm dòng nhưng chưa đổi được giá dòng cũ: ${reason}`,
+    nameSynced: ' · đã đổi tên kiểu',
+    nameSyncUnsupported: ' · tên kiểu chưa đổi: máy chủ chưa hỗ trợ',
+    nameSyncFailed: (reason) => `Chưa đổi được tên kiểu: ${reason}`,
     categoryNone: 'Chưa có nhóm — chọn ở trên hoặc tạo nhóm mới, không thì hàng sẽ không hiện ở tab tem',
     categoryPick: '— Chọn nhóm —',
     createCategory: (name) => `Tạo nhóm “${name}”`,
@@ -423,6 +429,9 @@ const COPY: Record<string, Copy> = {
     imageUploaded: (done, total) => (done === total ? ' · zdjęcie dodane' : ` · zdjęcie dodano do ${done}/${total} wierszy`),
     priceSynced: (rows) => ` · cena ${rows} starych wierszy zmieniona wg arkusza`,
     priceSyncFailed: (reason) => `Wiersze dodane, ale cena starych nie zmieniona: ${reason}`,
+    nameSynced: ' · nazwa fasonu zmieniona',
+    nameSyncUnsupported: ' · nazwa fasonu bez zmian: serwer tego nie obsługuje',
+    nameSyncFailed: (reason) => `Nie udało się zmienić nazwy fasonu: ${reason}`,
     categoryNone: 'Brak kategorii — wybierz powyżej lub utwórz nową, inaczej model nie pojawi się w zakładce etykiet',
     categoryPick: '— Wybierz kategorię —',
     createCategory: (name) => `Utwórz kategorię „${name}”`,
@@ -554,6 +563,9 @@ const COPY: Record<string, Copy> = {
     imageUploaded: (done, total) => (done === total ? ' · photo attached' : ` · photo attached to ${done}/${total} rows`),
     priceSynced: (rows) => ` · price of ${rows} existing rows set from the sheet`,
     priceSyncFailed: (reason) => `Rows added, but the existing rows kept their price: ${reason}`,
+    nameSynced: ' · style renamed',
+    nameSyncUnsupported: ' · style name unchanged: the server cannot rename a style',
+    nameSyncFailed: (reason) => `Could not rename the style: ${reason}`,
     categoryNone: 'No category — pick one above or create it, or the style will not show in the label tab',
     categoryPick: '— Pick a category —',
     createCategory: (name) => `Create category “${name}”`,
@@ -617,6 +629,19 @@ interface Props {
    * refuse. Null when no style carries that code.
    */
   styleByCode?: (styleCode: string) => (FiledStyle & { id: string }) | null;
+  /**
+   * The sheet opened for a style already in the catalogue, from the label
+   * tab, rather than for an order. Seeded from the style; nothing about it is
+   * stored, so it opens fresh — quantities blank — every time, and the order
+   * date, the saved-sheet list and the new/duplicate controls stay away. The
+   * caller keys the panel by the style, so another style is another panel.
+   */
+  catalogue?: {
+    templateId: string;
+    seed: LabelPrintOrder;
+    /** The photo the catalogue holds, shown until the sheet picks another. */
+    imageUrl: string | null;
+  };
 }
 
 export interface FiledStyle {
@@ -660,12 +685,15 @@ export default function PrintOrderPanel({
   onProductFiled,
   styleById,
   styleByCode,
+  catalogue,
 }: Props) {
   const copy = COPY[language] || COPY.vi;
 
   // Loading a draft goes through the same gate as typing, so an order saved
   // before this rule opens in capitals like every other one.
-  const [order, setStoredOrder] = useState<LabelPrintOrder>(() => upperCaseOrder(loadDraft()));
+  const [order, setStoredOrder] = useState<LabelPrintOrder>(() =>
+    upperCaseOrder(catalogue ? catalogue.seed : loadDraft()),
+  );
   // What the price box shows while it is being typed: "12," must not snap to
   // "12,00" under the cursor. It follows the order whenever the order changes
   // underneath it (a saved sheet opened, a new one started).
@@ -687,7 +715,9 @@ export default function PrintOrderPanel({
   const [savedOrders, setSavedOrders] = useState<SavedPrintOrder[]>(() => listSavedOrders());
   // Which saved order is on screen. Restored from storage so that editing an
   // order the next morning updates it instead of filing a twin beside it.
-  const [orderId, setOrderId] = useState<string>(() => loadDraftId() ?? nextId('order'));
+  const [orderId, setOrderId] = useState<string>(() =>
+    catalogue ? `style-${catalogue.templateId}` : loadDraftId() ?? nextId('order'),
+  );
   const [progress, setProgress] = useState<PrintProgress | null>(null);
   const [result, setResult] = useState<{ type: string; message: string } | null>(null);
   const [savedNotice, setSavedNotice] = useState(false);
@@ -706,7 +736,7 @@ export default function PrintOrderPanel({
    * printer" is not "came out on the ribbon".
    */
   const [resume, setResume] = useState<PrintProgressRecord | null>(() =>
-    loadProgress(loadDraftId() ?? ''),
+    loadProgress(catalogue ? `style-${catalogue.templateId}` : loadDraftId() ?? ''),
   );
   /** The line being typed, before it is added. Not part of the order yet. */
   const [careLineDraft, setCareLineDraft] = useState('');
@@ -733,18 +763,20 @@ export default function PrintOrderPanel({
   const stopRequested = useRef(false);
 
   useEffect(() => {
-    saveDraft(order);
+    // A style's sheet is not a draft: it is rebuilt from the catalogue each
+    // time, and must not replace the order the other tab has open.
+    if (!catalogue) saveDraft(order);
     // Any change to the sheet un-says "Saved". Hung off the order itself rather
     // than off each handler: typing in the grid, picking a symbol or adding a
     // size all went through setOrder directly, so the button kept claiming the
     // edit was filed when it was not. Saving does not touch `order`, so this
     // does not fight the notice it just set.
     setSavedNotice(false);
-  }, [order]);
+  }, [catalogue, order]);
 
   useEffect(() => {
-    saveDraftId(orderId);
-  }, [orderId]);
+    if (!catalogue) saveDraftId(orderId);
+  }, [catalogue, orderId]);
 
   useEffect(
     () => () => {
@@ -763,13 +795,16 @@ export default function PrintOrderPanel({
     const known = new Set(categories.map((category) => category.id));
     return [...categories, ...createdCategories.filter((category) => !known.has(category.id))];
   }, [categories, createdCategories]);
+  const filedStyle = order.productId ? styleById?.(order.productId) ?? null : null;
   // Filed without a category the product never reaches the label tab, so the
   // sheet resolves one up front — picked, learned or guessed — and refuses to
-  // file until it has one.
-  const productCategory = useMemo(
-    () => resolveOrderCategory(order, allCategories, learnedCategories),
-    [allCategories, learnedCategories, order],
-  );
+  // file until it has one. A sheet that is already a product falls back to
+  // the category the style sits in: renaming the style must not lose it.
+  const productCategory = useMemo(() => {
+    const resolved = resolveOrderCategory(order, allCategories, learnedCategories);
+    if (resolved || !filedStyle?.categoryId) return resolved;
+    return allCategories.find((category) => category.id === filedStyle.categoryId) ?? null;
+  }, [allCategories, filedStyle, learnedCategories, order]);
   const productProblems = useMemo(
     () => validateProductDraft(order, productDraft, productCategory),
     [order, productCategory, productDraft],
@@ -1034,7 +1069,6 @@ export default function PrintOrderPanel({
 
   /** Everything but "already filed": those are the rules for pushing an edit. */
   const updateProblems = productProblems.filter((problem) => problem !== 'ALREADY_FILED');
-  const filedStyle = order.productId ? styleById?.(order.productId) ?? null : null;
   // A fresh sheet whose code is already a style on the tab: the server would
   // refuse a second style with that SKU, so the sheet joins the one there.
   const matchingStyle =
@@ -1043,10 +1077,10 @@ export default function PrintOrderPanel({
   const attachProblems = updateProblems.filter((problem) => problem !== 'NO_CATEGORY');
 
   /**
-   * Push the sheet onto a style: the colours and sizes it does not have yet,
-   * the tag content, the photo, and — for a sheet that made the style — the
-   * category. Not the name — the server cannot rename a style with colours from
-   * here — and not the quantities, which were only ever the opening stock.
+   * Push the sheet onto a style: the name, the colours and sizes it does not
+   * have yet, the price, the tag content, the photo, and — for a sheet that
+   * made the style — the category. Not the code, which is every row's SKU and
+   * barcode, and not the quantities, which are what is printed, not stock.
    *
    * `attach` is a fresh sheet joining a style that carries its code. It takes
    * the style's category rather than moving the style to its own guess, and
@@ -1057,6 +1091,30 @@ export default function PrintOrderPanel({
     setFileError(null);
     setFileNotice(null);
     try {
+      // The sheet is the whole product: whatever differs from the style is
+      // written back. The name goes first, so the rows added below carry it,
+      // and through the server's style rename — `name` alone would rename one
+      // row and leave the style split in two. Refused, it stops the run;
+      // unsupported by an older server, it is said and the rest goes on.
+      let nameNote = '';
+      const anchor = style.variants[0];
+      const nextName = order.styleName.trim();
+      if (mode === 'update' && anchor && nextName && nextName !== style.name.trim()) {
+        const caps = await window.electronAPI.pos.productAdmin.getCapabilities();
+        if (caps?.ok && caps.capabilities?.supportsStyleRename === true) {
+          const renamed = await window.electronAPI.pos.productAdmin.updateVariant(anchor.id, {
+            styleName: nextName,
+            expectedUpdatedAt: await latestRevision(anchor.id, anchor.updated_at),
+          });
+          if (!renamed?.ok) {
+            setFileError(copy.nameSyncFailed(renamed?.error || renamed?.code || '?'));
+            return;
+          }
+          nameNote = copy.nameSynced;
+        } else {
+          nameNote = copy.nameSyncUnsupported;
+        }
+      }
       const missing = buildMissingVariants(order, style.variants);
       let createdIds: string[] = [];
       if (missing.length > 0) {
@@ -1085,7 +1143,6 @@ export default function PrintOrderPanel({
         fileKeyRef.current = null;
         createdIds = created.map((variant: { id: string }) => variant.id);
       }
-      const anchor = style.variants[0];
       if (mode === 'update' && productCategory && productCategory.id !== style.categoryId && anchor) {
         const moved = await window.electronAPI.pos.productAdmin.updateVariant(anchor.id, {
           categoryId: productCategory.id,
@@ -1143,7 +1200,7 @@ export default function PrintOrderPanel({
         if (stale.length > 0) priceNote = copy.priceSynced(stale.length);
       }
       const done = mode === 'attach' ? copy.attached(style.name, createdIds.length) : copy.updated(createdIds.length);
-      setFileNotice((tagSaved ? done : copy.filedWithoutTag(createdIds.length)) + priceNote + imageNote);
+      setFileNotice((tagSaved ? done : copy.filedWithoutTag(createdIds.length)) + nameNote + priceNote + imageNote);
     } catch (err) {
       setFileError(copy.fileFailed(err instanceof Error ? err.message : String(err)));
     } finally {
@@ -1485,9 +1542,9 @@ export default function PrintOrderPanel({
         </Field>
         <Field label={copy.image}>
           <div className="flex items-center gap-2">
-            {order.imageDataUrl && (
+            {(order.imageDataUrl || catalogue?.imageUrl) && (
               <img
-                src={order.imageDataUrl}
+                src={order.imageDataUrl || catalogue?.imageUrl || ''}
                 alt=""
                 data-testid="order-image-preview"
                 className="h-10 w-10 rounded-md border border-slate-200 object-cover"
@@ -1529,15 +1586,17 @@ export default function PrintOrderPanel({
             </p>
           )}
         </Field>
-        <Field label={copy.orderDate}>
-          <DateField
-            testId="order-date"
-            label={copy.orderDate}
-            language={language}
-            value={order.orderDate}
-            onChange={(orderDate) => patch({ orderDate })}
-          />
-        </Field>
+        {!catalogue && (
+          <Field label={copy.orderDate}>
+            <DateField
+              testId="order-date"
+              label={copy.orderDate}
+              language={language}
+              value={order.orderDate}
+              onChange={(orderDate) => patch({ orderDate })}
+            />
+          </Field>
+        )}
         <Field label={copy.category}>
           <select
             className={INPUT}
@@ -1914,14 +1973,16 @@ export default function PrintOrderPanel({
         >
           {copy.samplePrint}
         </button>
-        <button
-          type="button"
-          onClick={handleSave}
-          className="inline-flex min-h-11 items-center gap-2 rounded-md border border-slate-300 px-4 text-sm font-bold text-slate-700 hover:bg-slate-50"
-        >
-          <Save size={18} aria-hidden="true" />
-          {savedNotice ? copy.saved : copy.save}
-        </button>
+        {!catalogue && (
+          <button
+            type="button"
+            onClick={handleSave}
+            className="inline-flex min-h-11 items-center gap-2 rounded-md border border-slate-300 px-4 text-sm font-bold text-slate-700 hover:bg-slate-50"
+          >
+            <Save size={18} aria-hidden="true" />
+            {savedNotice ? copy.saved : copy.save}
+          </button>
+        )}
         {order.productId ? (
           <button
             type="button"
@@ -1961,7 +2022,7 @@ export default function PrintOrderPanel({
             {filing ? copy.filing : copy.fileProduct}
           </button>
         )}
-        {openOrderIsFiled && (
+        {!catalogue && openOrderIsFiled && (
           <button
             type="button"
             data-testid="duplicate-order"
@@ -1973,13 +2034,15 @@ export default function PrintOrderPanel({
             {copy.duplicate}
           </button>
         )}
-        <button
-          type="button"
-          onClick={handleNew}
-          className="inline-flex min-h-11 items-center rounded-md border border-slate-300 px-4 text-sm font-bold text-slate-700 hover:bg-slate-50"
-        >
-          {copy.newOrder}
-        </button>
+        {!catalogue && (
+          <button
+            type="button"
+            onClick={handleNew}
+            className="inline-flex min-h-11 items-center rounded-md border border-slate-300 px-4 text-sm font-bold text-slate-700 hover:bg-slate-50"
+          >
+            {copy.newOrder}
+          </button>
+        )}
         {isPrinting && (
           <button
             type="button"
@@ -2036,6 +2099,7 @@ export default function PrintOrderPanel({
         </p>
       )}
 
+      {!catalogue && (
       <section className="mt-6 border-t border-slate-200 pt-3">
         <h3 className="mb-2 text-sm font-bold text-slate-700">{copy.savedOrders}</h3>
         {savedOrders.length === 0 ? (
@@ -2082,6 +2146,7 @@ export default function PrintOrderPanel({
           </ul>
         )}
       </section>
+      )}
     </div>
   );
 }

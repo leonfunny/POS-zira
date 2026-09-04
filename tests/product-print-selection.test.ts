@@ -3,6 +3,7 @@ import { buildPrintPlan, createEmptyOrder } from '../src/shared/label-print-orde
 import {
   SelectionInput,
   buildSelectionOrder,
+  orderFromStyle,
   orderToFabricTagTemplate,
   selectionProblems,
   selectionColours,
@@ -208,5 +209,82 @@ describe('orderToFabricTagTemplate', () => {
     expect(template.composition).toBeNull();
     expect(template.brandName).toBeNull();
     expect(template.careText).toBeNull();
+  });
+});
+
+describe('orderFromStyle', () => {
+  // The label tab opens a style as the same sheet the order tab uses, filled
+  // from what the till holds about it and with the quantities blank.
+  const rows = [
+    { color_name: 'CZARNY', size_name: 'M', retail_price: 4000 },
+    { color_name: 'CZARNY', size_name: 'S', retail_price: 4000 },
+    { color_name: 'BORDO', size_name: 'XL', retail_price: 4000 },
+    { color_name: 'BORDO', size_name: '44/46', retail_price: 4000 },
+    { color_name: 'bordo ', size_name: ' S', retail_price: 4000 },
+  ];
+  const tag = {
+    templateId: 'template-115',
+    brandName: 'MOON',
+    logoDataUrl: null,
+    composition: '70% POLIESTER 30% AKRYL',
+    careSymbols: ['WASH_30'] as any,
+    careText: 'NIE PRAĆ',
+    materials: [],
+    fabric: null,
+    layout: 'default' as const,
+  };
+
+  it('lays out every colour and size once, sizes in the order the shop uses', () => {
+    const order = orderFromStyle({
+      templateId: 'template-115', name: 'KOMPLET DRESOWY', styleCode: '115', categoryId: 'cat-1', variants: rows, tag,
+    });
+    expect(order.rows.map((row) => row.colorName)).toEqual(['CZARNY', 'BORDO']);
+    expect(order.sizes.map((size) => size.label)).toEqual(['S', 'M', 'XL', '44/46']);
+    expect(order.rows.every((row) => Object.keys(row.quantities).length === 0 && row.stickerQuantity === undefined)).toBe(true);
+    expect(order.sizes.every((size) => size.quantity === undefined)).toBe(true);
+    expect(order.productId).toBe('template-115');
+    expect(order.categoryId).toBe('cat-1');
+    expect(order.styleName).toBe('KOMPLET DRESOWY');
+    expect(order.styleCode).toBe('115');
+  });
+
+  it('prints the same bag code the order sheet would fall back to', () => {
+    const order = orderFromStyle({
+      templateId: 't', name: 'X', styleCode: '115', categoryId: null, variants: rows, tag: null,
+    });
+    const plan = buildPrintPlan({ ...order, customerName: 'MOON', rows: order.rows.map((row) => ({ ...row, stickerQuantity: 1 })), printFabricTags: false });
+    const printed = plan.filter((step) => step.kind === 'sticker').map((step: any) => step.code);
+    expect(printed).toEqual(order.rows.map((row) => row.code));
+    expect(order.rows[0].code).not.toBe('');
+  });
+
+  it('takes the customer, composition and care from the saved tag', () => {
+    const order = orderFromStyle({
+      templateId: 't', name: 'X', styleCode: '115', categoryId: null, variants: rows, tag,
+    });
+    expect(order.customerName).toBe('MOON');
+    expect(order.materials).toEqual([{ name: 'POLIESTER', percent: 70 }, { name: 'AKRYL', percent: 30 }]);
+    expect(order.careSymbols).toEqual(['WASH_30']);
+    expect(order.careText).toBe('NIE PRAĆ');
+    // Saved parts win over the finished line when the tag carries them.
+    const parts = orderFromStyle({
+      templateId: 't', name: 'X', styleCode: '115', categoryId: null, variants: rows,
+      tag: { ...tag, materials: [{ name: 'BAWEŁNA', percent: 100 }] },
+    });
+    expect(parts.materials).toEqual([{ name: 'BAWEŁNA', percent: 100 }]);
+    // No tag yet: the sheet opens with the care fields blank, not broken.
+    const bare = orderFromStyle({ templateId: 't', name: 'X', styleCode: '115', categoryId: null, variants: rows, tag: null });
+    expect(bare.customerName).toBe('');
+    expect(bare.materials).toEqual([]);
+  });
+
+  it('carries the one price the rows agree on, and none when they differ', () => {
+    const agreed = orderFromStyle({ templateId: 't', name: 'X', styleCode: '1', categoryId: null, variants: rows, tag: null });
+    expect(agreed.priceGrossGrosze).toBe(4000);
+    const mixed = orderFromStyle({
+      templateId: 't', name: 'X', styleCode: '1', categoryId: null,
+      variants: [...rows, { color_name: 'CZARNY', size_name: 'L', retail_price: 100 }], tag: null,
+    });
+    expect(mixed.priceGrossGrosze).toBe(0);
   });
 });

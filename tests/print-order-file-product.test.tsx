@@ -79,6 +79,7 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
   let uploadMainImage: ReturnType<typeof vi.fn>;
   let updateVariant: ReturnType<typeof vi.fn>;
   let getVariant: ReturnType<typeof vi.fn>;
+  let getCapabilities: ReturnType<typeof vi.fn>;
   let styleById: ReturnType<typeof vi.fn>;
   let styleByCode: ReturnType<typeof vi.fn>;
   let saveFabricTagTemplate: ReturnType<typeof vi.fn>;
@@ -98,6 +99,7 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
     uploadMainImage = vi.fn(async () => ({ ok: true, data: {} }));
     updateVariant = vi.fn(async () => ({ ok: true, data: {} }));
     getVariant = vi.fn(async (id: string) => ({ ok: true, data: { variant: { id, updatedAt: `rev:${id}` } } }));
+    getCapabilities = vi.fn(async () => ({ ok: true, capabilities: {} }));
     styleById = vi.fn(() => null);
     styleByCode = vi.fn(() => null);
     // No decoder in the harness: the picture is sent as it was picked.
@@ -116,7 +118,7 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
         printPackagingSticker: vi.fn(async () => ({ success: true })),
         printFabricTag: vi.fn(async () => ({ success: true })),
         pos: {
-          productAdmin: { createProduct, createCategory, uploadMainImage, updateVariant, getVariant },
+          productAdmin: { createProduct, createCategory, uploadMainImage, updateVariant, getVariant, getCapabilities },
           fabricTagTemplates: { save: saveFabricTagTemplate },
         },
       },
@@ -631,6 +633,43 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
       expect(saveFabricTagTemplate).toHaveBeenCalledTimes(2);
       expect(fileResult()).toContain('2 new');
       expect(onProductFiled).toHaveBeenLastCalledWith({ categoryId: 'cat-jackets' });
+    });
+
+    it('renames the style first when the sheet carries another name, through styleName', async () => {
+      await fileSheet();
+      getCapabilities.mockResolvedValue({ ok: true, capabilities: { supportsStyleRename: true } });
+      await changeInput(container.querySelector<HTMLInputElement>('input[placeholder="KURTKA"]')!, 'KURTKA ZIMOWA');
+      await act(async () => updateButton().click());
+      await settle();
+
+      expect(updateVariant.mock.calls[0]).toEqual(['variant-0', { styleName: 'KURTKA ZIMOWA', expectedUpdatedAt: 'rev:variant-0' }]);
+      expect(fileResult()).toContain('Product updated');
+      expect(fileResult()).toContain('renamed');
+    });
+
+    it('says so, and goes on, when the server cannot rename a style', async () => {
+      await fileSheet();
+      getCapabilities.mockResolvedValue({ ok: true, capabilities: {} });
+      await changeInput(container.querySelector<HTMLInputElement>('input[placeholder="KURTKA"]')!, 'KURTKA ZIMOWA');
+      await act(async () => updateButton().click());
+      await settle();
+
+      expect(updateVariant.mock.calls.some((call) => 'styleName' in call[1])).toBe(false);
+      expect(fileResult()).toContain('cannot rename');
+      expect(saveFabricTagTemplate).toHaveBeenCalledTimes(2);
+    });
+
+    it('stops when the rename is refused, before touching the rows', async () => {
+      await fileSheet();
+      getCapabilities.mockResolvedValue({ ok: true, capabilities: { supportsStyleRename: true } });
+      updateVariant.mockResolvedValueOnce({ ok: false, error: 'stale' });
+      await changeInput(container.querySelector<HTMLInputElement>('input[placeholder="KURTKA"]')!, 'KURTKA ZIMOWA');
+      await act(async () => updateButton().click());
+      await settle();
+
+      expect(updateVariant).toHaveBeenCalledTimes(1);
+      expect(fileResult()).toContain('stale');
+      expect(saveFabricTagTemplate).toHaveBeenCalledTimes(1);
     });
 
     it('creates nothing when every colour and size is already on the product', async () => {

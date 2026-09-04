@@ -18,9 +18,12 @@ import {
   LabelPrintOrder,
   OrderRow,
   OrderSize,
+  SIZE_SUGGESTIONS,
   compositionText,
   createEmptyOrder,
+  fallbackStickerCode,
   foldGridIntoSizes,
+  parseCompositionText,
 } from './label-print-order';
 
 /** One physical catalogue row: a colour, a size, and the codes on it. */
@@ -218,5 +221,82 @@ export function orderToFabricTagTemplate(
     })),
     fabric: null,
     layout: 'default',
+  };
+}
+
+/** What the label tab knows about one row of a style. */
+export interface StyleSeedRow {
+  color_name?: string | null;
+  size_name?: string | null;
+  /** Grosze, as the local catalogue stores it. */
+  retail_price?: number | null;
+}
+
+export interface StyleSeed {
+  templateId: string;
+  name: string;
+  styleCode: string;
+  categoryId: string | null;
+  variants: readonly StyleSeedRow[];
+  /** The care content saved for the style on this till, when there is one. */
+  tag: FabricTagTemplate | null;
+}
+
+/** Sizes the shop uses, in the order they go on the sheet; others follow as met. */
+function sizeRank(label: string): number {
+  const index = (SIZE_SUGGESTIONS as readonly string[]).indexOf(label);
+  return index === -1 ? SIZE_SUGGESTIONS.length : index;
+}
+
+/**
+ * The sheet for a style already in the catalogue: the same sheet the order
+ * tab uses, filled from what the till holds about the style — every colour,
+ * every size, the tag content, the price the rows agree on — with the
+ * quantities blank. The operator types what is needed now and prints; Update
+ * writes whatever was changed back to the style. Nothing here is stored: the
+ * sheet opens fresh each time.
+ */
+export function orderFromStyle(seed: StyleSeed): LabelPrintOrder {
+  const colours: string[] = [];
+  const sizes: string[] = [];
+  // Spelt the way the sheet spells everything: in capitals, so "bordo" and
+  // "BORDO" from two fillings are one row.
+  for (const row of seed.variants) {
+    const colour = cleanText(row.color_name).toLocaleUpperCase('pl');
+    if (colour && !colours.includes(colour)) colours.push(colour);
+    const size = cleanText(row.size_name).toLocaleUpperCase('pl');
+    if (size && !sizes.includes(size)) sizes.push(size);
+  }
+  sizes.sort((a, b) => sizeRank(a) - sizeRank(b));
+  const prices = new Set(
+    seed.variants.map((row) => Math.max(0, Math.floor(Number(row.retail_price) || 0))),
+  );
+  const styleCode = cleanText(seed.styleCode);
+  const tag = seed.tag;
+  const materials = tag?.materials?.length
+    ? tag.materials.map((material) => ({ name: material.name, percent: material.percent }))
+    : parseCompositionText(tag?.composition);
+  return {
+    ...createEmptyOrder(),
+    customerName: cleanText(tag?.brandName),
+    styleName: cleanText(seed.name),
+    styleCode,
+    materials,
+    careSymbols: [...(tag?.careSymbols ?? [])],
+    careText: cleanText(tag?.careText),
+    sizes: sizes.map((label, index) => ({ id: `size-${index}`, label })),
+    rows: colours.map((colorName, index) => ({
+      id: `row-${index}`,
+      colorName,
+      // The same code the sheet would fall back to, so a sticker printed from
+      // here reads like one printed from the order.
+      code: fallbackStickerCode(styleCode, colorName),
+      quantities: {},
+    })),
+    // One price the rows agree on; rows that differ leave it blank, and the
+    // sheet asks for one before it will write the style.
+    priceGrossGrosze: prices.size === 1 ? [...prices][0] : 0,
+    productId: seed.templateId,
+    categoryId: seed.categoryId,
   };
 }

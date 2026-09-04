@@ -237,12 +237,17 @@ describe('fabric-label operator feedback', () => {
     await act(async () => card?.click());
     await settle();
 
-    // The print-order sheet on the same screen has a garment-count row of its own.
-    const rows = Array.from(container.querySelectorAll('tbody tr:not([data-testid="fabric-row"])')).map((row) =>
-      Array.from(row.querySelectorAll('td')).slice(0, 2).map((cell) => cell.textContent?.trim()),
+    // The style opens as a sheet: one colour row, the two sizes across the
+    // top. Printing the parent would put a tag naming no garment into the
+    // bundle, so it is not a row.
+    const sheet = container.querySelector<HTMLElement>('[data-testid="style-sheet"] [data-testid="print-order-panel"]');
+    expect(sheet).not.toBeNull();
+    const colours = Array.from(sheet!.querySelectorAll<HTMLInputElement>('input[placeholder="CZEKOLADA"]')).map((box) => box.value);
+    expect(colours).toEqual(['CZARNY']);
+    const sizes = Array.from(sheet!.querySelectorAll<HTMLInputElement>('input[aria-label^="Mác vải "]')).map((box) =>
+      box.getAttribute('aria-label')?.replace('Mác vải ', ''),
     );
-    // Printing the parent would put a tag naming no garment into the bundle.
-    expect(rows).toEqual([['CZARNY', 'S'], ['CZARNY', 'M']]);
+    expect(sizes).toEqual(['S', 'M']);
 
     // Three rows, one style: a chip promising three where one card appears is a
     // fault the operator cannot act on. Both chips count the same thing.
@@ -260,17 +265,23 @@ describe('fabric-label operator feedback', () => {
 
     await expect(renderLabelModule()).resolves.toBeUndefined();
 
-    // The reprint lane needs the composition and washing symbols of the style
-    // in front of the operator; it has never needed every style on the machine,
-    // and asking for all of them was what made the old loader a liability.
+    // The sheet needs the composition and washing symbols of the style in
+    // front of the operator, and only once it is opened; it has never needed
+    // every style on the machine, and asking for all of them was what made the
+    // old loader a liability.
     expect(harness.listTemplateIds).not.toHaveBeenCalled();
-    expect(harness.getTemplate).toHaveBeenCalledWith('LOTUS');
+    expect(harness.getTemplate).not.toHaveBeenCalled();
     expect(container.textContent).toContain('Fabric run remains visible');
     expect(container.querySelector<HTMLElement>('[data-label-mode-panel="ean"]')?.hidden).toBe(true);
 
     await chooseLabelMode('Tem mã sản phẩm / EAN');
-
     expect(container.textContent).toContain('First EAN product');
+
+    const card = container.querySelector<HTMLButtonElement>('[data-testid="style-card"]');
+    await act(async () => card?.click());
+    await settle();
+    expect(harness.getTemplate).toHaveBeenCalledTimes(1);
+    expect(harness.getTemplate).toHaveBeenCalledWith('LOTUS');
     expect(harness.loggerError).not.toHaveBeenCalled();
   });
 
@@ -288,12 +299,19 @@ describe('fabric-label operator feedback', () => {
 
     expect(harness.listTemplateIds).not.toHaveBeenCalled();
     await chooseLabelMode('Tem mã sản phẩm / EAN');
-    // Both rows belong to one style, so the tab shows the style once. Without a
-    // fabric bridge there is no care content, and the lane says so rather than
-    // going blank.
+    // Both rows belong to one style, so the tab shows the style once.
     expect(container.textContent).toContain('First EAN product');
     expect(container.textContent).not.toContain('Second EAN product');
-    expect(container.textContent).toContain('chưa có nội dung tem vải');
+
+    // Without a fabric bridge there is no care content: the style still opens
+    // as a sheet, with the composition blank and the sheet saying so, rather
+    // than the tab going blank.
+    const card = container.querySelector<HTMLButtonElement>('[data-testid="style-card"]');
+    await act(async () => card?.click());
+    await settle();
+    const sheet = container.querySelector<HTMLElement>('[data-testid="style-sheet"] [data-testid="print-order-panel"]');
+    expect(sheet).not.toBeNull();
+    expect(sheet!.textContent).toContain('Mác vải chưa có thành phần');
     expect(harness.loggerWarn).not.toHaveBeenCalled();
   });
 

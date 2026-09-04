@@ -16,14 +16,15 @@ import {
   X,
 } from 'lucide-react';
 import { PRODUCT_LABEL_NAME_LOCALE, resolveName } from '../../../shared/catalog-names';
-import { rowBelongsToStyle, sameStyleCode, styleCodeOfRow } from '../../../shared/order-to-product';
-import type { AgentConfig, ProductAdminCapabilities } from '../../../shared/types';
+import { rowBelongsToStyle, sameStyleCode, styleCodeOfRow, styleNameOfRow } from '../../../shared/order-to-product';
+import type { AgentConfig, FabricTagTemplate, ProductAdminCapabilities } from '../../../shared/types';
 import { useConfig } from '../../hooks/useConfig';
 import { useProducts } from '../../hooks/useProducts';
 import FabricArtworkPanel from './FabricArtworkPanel';
 import PrintOrderPanel from './PrintOrderPanel';
 import CategoryManagerDialog from '../products/CategoryManagerDialog';
-import StyleReprintPanel from './StyleReprintPanel';
+import { orderFromStyle } from '../../../shared/product-print-selection';
+import type { LabelPrintOrder } from '../../../shared/label-print-order';
 import type { ProductListItem } from '../../hooks/useProducts';
 import type { Category } from '../../hooks/usePosDb';
 import { getTranslation, type Language } from '../../i18n/translations';
@@ -85,6 +86,8 @@ interface LabelCopy {
   openSettings: string;
   noMatch: string;
   noSelection: string;
+  backToList: string;
+  sheetLoading: string;
   loading: string;
   loadError: string;
   selectProductHint: string;
@@ -126,9 +129,11 @@ const COPY: Record<string, LabelCopy> = {
     openSettings: 'Open settings',
     noMatch: 'No matching label products',
     noSelection: 'No style selected',
+    backToList: 'Back to the list',
+    sheetLoading: 'Opening the sheet…',
     loading: 'Loading products...',
     loadError: 'Could not load products',
-    selectProductHint: 'Pick a style to print its colours and sizes.',
+    selectProductHint: 'Pick a style: its sheet opens with every colour and size, ready to print or change.',
     category: 'Category',
     missingEan: 'Missing EAN',
     categories: 'Categories',
@@ -165,9 +170,11 @@ const COPY: Record<string, LabelCopy> = {
     openSettings: 'Mở cài đặt',
     noMatch: 'Không tìm thấy sản phẩm tem',
     noSelection: 'Chưa chọn mẫu nào',
+    backToList: 'Về danh sách',
+    sheetLoading: 'Đang mở tờ…',
     loading: 'Đang tải sản phẩm...',
     loadError: 'Không tải được sản phẩm',
-    selectProductHint: 'Chọn một mẫu để in màu và size của nó.',
+    selectProductHint: 'Chọn một mẫu: tờ của nó mở ra với đủ màu và size, gõ số cần in hoặc sửa rồi Cập nhật.',
     category: 'Danh mục',
     missingEan: 'Thiếu EAN',
     categories: 'Danh mục',
@@ -202,9 +209,11 @@ const COPY: Record<string, LabelCopy> = {
     openSettings: 'Otwórz ustawienia',
     noMatch: 'Brak pasujących produktów',
     noSelection: 'Nie wybrano modelu',
+    backToList: 'Wróć do listy',
+    sheetLoading: 'Otwieranie arkusza…',
     loading: 'Ładowanie produktów...',
     loadError: 'Nie udało się załadować produktów',
-    selectProductHint: 'Wybierz model, aby wydrukować jego kolory i rozmiary.',
+    selectProductHint: 'Wybierz model: otworzy się jego arkusz ze wszystkimi kolorami i rozmiarami.',
     category: 'Kategoria',
     missingEan: 'Brak EAN',
     categories: 'Kategorie',
@@ -500,11 +509,12 @@ export default function LabelModule({ language }: LabelModuleProps) {
       );
       if (described.length > 0) group.variants = described;
       const template = templateRows[group.key];
-      // Falling back to the shortest variant name rather than the first: the
-      // rows read "KOMPLET DRESOWY - CZARNY / S", so the shortest is the one
-      // closest to the style itself while the template row is still loading.
+      // Falling back to the style's name taken back off a row's: the rows read
+      // "KOMPLET DRESOWY - CZARNY / S", and a style filed from the sheet has no
+      // template row on the till to read the name from. The shortest result
+      // wins, for rows the server named some other way.
       const fallback = group.variants
-        .map((variant) => variant.name)
+        .map((variant) => styleNameOfRow(variant.name, variant.color_name, variant.size_name))
         .reduce((shortest, name) => (name.length < shortest.length ? name : shortest), group.variants[0].name);
       // Polish first, like every other customer-facing name in the app: the bag
       // label leaves the workshop, and the style is written the way the buyer
@@ -535,13 +545,12 @@ export default function LabelModule({ language }: LabelModuleProps) {
       );
   }, [activeCategoryId, categoryById, labelLanguage, query, styleGroups]);
 
+  // A style that left the list (hidden, or filtered out by a category change)
+  // closes its sheet; none is opened by itself — the list is the tab until
+  // the operator picks one.
   useEffect(() => {
-    if (styleGroups.length === 0) {
-      if (selectedGroupKey) setSelectedGroupKey('');
-      return;
-    }
-    if (!selectedGroupKey || !styleGroups.some((group) => group.key === selectedGroupKey)) {
-      setSelectedGroupKey(styleGroups[0].key);
+    if (selectedGroupKey && !styleGroups.some((group) => group.key === selectedGroupKey)) {
+      setSelectedGroupKey('');
     }
   }, [selectedGroupKey, styleGroups]);
 
@@ -668,6 +677,51 @@ export default function LabelModule({ language }: LabelModuleProps) {
     setSelectedGroupKey(group.key);
     setStatus({ type: 'idle', message: '' });
   };
+
+  /**
+   * The sheet a picked style opens with. Built once per pick from the rows
+   * the tab holds and the care content saved for the style on this till; a
+   * pull that lands afterwards does not rebuild it under the operator's
+   * typing — the sheet is keyed by the style, so another pick is another sheet.
+   */
+  const [styleSheet, setStyleSheet] = useState<{
+    key: string;
+    seed: LabelPrintOrder;
+    imageUrl: string | null;
+  } | null>(null);
+  useEffect(() => {
+    if (!selectedGroup) {
+      setStyleSheet(null);
+      return;
+    }
+    if (styleSheet?.key === selectedGroup.key) return;
+    let cancelled = false;
+    const group = selectedGroup;
+    (async () => {
+      let tag: FabricTagTemplate | null = null;
+      try {
+        tag = (await (window as any).electronAPI?.pos?.fabricTagTemplates?.get?.(group.key)) ?? null;
+      } catch {
+        tag = null;
+      }
+      if (cancelled) return;
+      setStyleSheet({
+        key: group.key,
+        seed: orderFromStyle({
+          templateId: group.key,
+          name: group.name,
+          styleCode: group.styleCode,
+          categoryId: group.categoryId,
+          variants: group.variants,
+          tag,
+        }),
+        imageUrl: group.variants.map(productImage).find(Boolean) ?? null,
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedGroup, styleSheet?.key]);
 
   /**
    * A run inside the reprint panel pins the operator to this tab, the same way
@@ -869,7 +923,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
             )}
             {selectedGroup ? (
               <>
-                <section className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                <section className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2" data-testid="selected-style">
                   <div className="text-sm font-black leading-tight text-slate-950">
                     {selectedGroup.name}
                   </div>
@@ -880,21 +934,17 @@ export default function LabelModule({ language }: LabelModuleProps) {
                     </span>
                   </div>
                 </section>
-
-                <StyleReprintPanel
-                  key={selectedGroup.key}
-                  language={language}
-                  templateId={selectedGroup.key}
-                  styleName={selectedGroup.name}
-                  styleCode={selectedGroup.styleCode}
-                  variants={selectedGroup.variants}
-                  onPrintingChange={handleReprintingChange}
-                  // A colour added on the server reaches this list through a
-                  // sync; without one the operator adds it and sees nothing.
-                  categoryId={selectedGroup.categoryId}
-                  categories={categories}
-                  onCatalogChanged={syncProducts}
-                />
+                <button
+                  type="button"
+                  data-testid="back-to-list"
+                  onClick={() => {
+                    if (!reprintingRef.current) setSelectedGroupKey('');
+                  }}
+                  disabled={reprinting}
+                  className="min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-sm font-extrabold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  ← {copy.backToList}
+                </button>
               </>
             ) : (
               <div className="rounded-lg border border-dashed border-slate-200 px-4 py-6 text-center">
@@ -906,7 +956,39 @@ export default function LabelModule({ language }: LabelModuleProps) {
           </div>
         </aside>
 
-        <section className="min-h-0 rounded-lg border border-slate-200 bg-white flex flex-col overflow-hidden">
+        {selectedGroup && (
+          <section className="min-h-0 h-full" data-testid="style-sheet">
+            {styleSheet?.key === selectedGroup.key ? (
+              <PrintOrderPanel
+                key={styleSheet.key}
+                language={language}
+                active={labelMode === 'ean'}
+                onPrintingChange={handleReprintingChange}
+                categories={categories}
+                onCategoriesChanged={refresh}
+                onProductFiled={({ categoryId }) => {
+                  ensureCategoryShown(categoryId);
+                  void syncProducts();
+                }}
+                styleById={(templateId) => {
+                  const group = styleGroups.find((candidate) => candidate.key === templateId);
+                  return group
+                    ? { name: group.name, categoryId: group.categoryId, variants: group.variants }
+                    : null;
+                }}
+                catalogue={{ templateId: styleSheet.key, seed: styleSheet.seed, imageUrl: styleSheet.imageUrl }}
+              />
+            ) : (
+              <div className="flex h-full items-center justify-center rounded-lg border border-slate-200 bg-white text-sm font-bold text-slate-500">
+                {copy.sheetLoading}
+              </div>
+            )}
+          </section>
+        )}
+        <section
+          className="min-h-0 rounded-lg border border-slate-200 bg-white flex flex-col overflow-hidden"
+          hidden={!!selectedGroup}
+        >
           <div className="border-b border-slate-200 px-4 py-3 space-y-3">
             <div className="flex items-center gap-2">
               <div className="relative flex-1 min-w-0">

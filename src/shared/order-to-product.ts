@@ -360,6 +360,35 @@ export function styleCodeOfRow(
 }
 
 /**
+ * The style's own name back off a row's: the server names a row
+ * "STYLE - COLOUR / SIZE" (one of the two when the other is blank), and a
+ * style filed from the sheet has no template row on the till to read the
+ * style's name from. A name in any other shape is returned as it is.
+ */
+export function styleNameOfRow(
+  name: string | null | undefined,
+  colorName: string | null | undefined,
+  sizeName: string | null | undefined,
+): string {
+  const full = cleanText(name);
+  const colour = cleanText(colorName);
+  const size = cleanText(sizeName);
+  const tails = [
+    colour && size ? `${colour} / ${size}` : '',
+    colour,
+    size,
+  ].filter(Boolean);
+  const upper = full.toUpperCase();
+  for (const tail of tails) {
+    const suffix = ` - ${tail.toUpperCase()}`;
+    if (upper.endsWith(suffix) && full.length > suffix.length) {
+      return full.slice(0, full.length - suffix.length).trim();
+    }
+  }
+  return full;
+}
+
+/**
  * Whether a row's SKU was built from this style code: "115-CZARNY-S" belongs
  * to "115" and to "115 " typed with a space, not to "11" or "1150".
  */
