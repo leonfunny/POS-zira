@@ -48,6 +48,7 @@ import {
   textToGrosze,
   validateProductDraft,
 } from '../../../shared/order-to-product';
+import { latestRevision } from './product-revision';
 import {
   CARE_SYMBOLS,
   CARE_SYMBOL_FAMILIES,
@@ -1084,9 +1085,11 @@ export default function PrintOrderPanel({
         fileKeyRef.current = null;
         createdIds = created.map((variant: { id: string }) => variant.id);
       }
-      if (mode === 'update' && productCategory && productCategory.id !== style.categoryId && style.variants[0]) {
-        const moved = await window.electronAPI.pos.productAdmin.updateVariant(style.variants[0].id, {
+      const anchor = style.variants[0];
+      if (mode === 'update' && productCategory && productCategory.id !== style.categoryId && anchor) {
+        const moved = await window.electronAPI.pos.productAdmin.updateVariant(anchor.id, {
           categoryId: productCategory.id,
+          expectedUpdatedAt: await latestRevision(anchor.id, anchor.updated_at),
         });
         if (!moved?.ok) {
           setFileError(copy.fileFailed(moved?.error || moved?.code || '?'));
@@ -1099,26 +1102,8 @@ export default function PrintOrderPanel({
         // and its stickers say what the style's category says.
         patch({ productId: templateId, categoryId });
       }
-      // One price for the whole style, the one on the sheet: rows the style
-      // already had are brought to it, so a colour added today does not ring
-      // up at a different number from the colour filed last week.
-      let priceNote = '';
-      const sheetPrice = productDraft.priceGrossGrosze;
-      if (sheetPrice >= 1) {
-        const stale = style.variants.filter(
-          (variant) => Math.floor(Number(variant.retail_price) || 0) !== sheetPrice,
-        );
-        for (const variant of stale) {
-          const priced = await window.electronAPI.pos.productAdmin.updateVariant(variant.id, {
-            priceGrossGrosze: sheetPrice,
-          });
-          if (!priced?.ok) {
-            setFileError(copy.priceSyncFailed(priced?.error || priced?.code || '?'));
-            return;
-          }
-        }
-        if (stale.length > 0) priceNote = copy.priceSynced(stale.length);
-      }
+      // The sheet's tag content and photo go on before the price: a price the
+      // server refuses must not leave the style without a tag to print from.
       const tagSaved = await saveFabricTagContent(templateId, order);
       let imageNote = '';
       if (order.imageDataUrl) {
@@ -1133,6 +1118,29 @@ export default function PrintOrderPanel({
       if (categoryId) {
         setLearnedCategories(rememberStyleCategory(styleCategoryKey(order.styleName), categoryId));
         onProductFiled?.({ categoryId });
+      }
+      // One price for the whole style, the one on the sheet: rows the style
+      // already had are brought to it, so a colour added today does not ring
+      // up at a different number from the colour filed last week. Each write
+      // carries the row's current revision; the category move above may have
+      // moved every row's.
+      let priceNote = '';
+      const sheetPrice = productDraft.priceGrossGrosze;
+      if (sheetPrice >= 1) {
+        const stale = style.variants.filter(
+          (variant) => Math.floor(Number(variant.retail_price) || 0) !== sheetPrice,
+        );
+        for (const variant of stale) {
+          const priced = await window.electronAPI.pos.productAdmin.updateVariant(variant.id, {
+            priceGrossGrosze: sheetPrice,
+            expectedUpdatedAt: await latestRevision(variant.id, variant.updated_at),
+          });
+          if (!priced?.ok) {
+            setFileError(copy.priceSyncFailed(priced?.error || priced?.code || '?'));
+            return;
+          }
+        }
+        if (stale.length > 0) priceNote = copy.priceSynced(stale.length);
       }
       const done = mode === 'attach' ? copy.attached(style.name, createdIds.length) : copy.updated(createdIds.length);
       setFileNotice((tagSaved ? done : copy.filedWithoutTag(createdIds.length)) + priceNote + imageNote);

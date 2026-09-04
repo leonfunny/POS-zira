@@ -35,6 +35,7 @@ import {
 } from '../../../shared/product-print-selection';
 import type { FabricTagTemplate } from '../../../shared/types';
 import { PrintProgress, runPrintPlan } from './print-order-runner';
+import { latestRevision } from './product-revision';
 import FabricTagFields, { type FabricTagContent } from './FabricTagFields';
 import rlog from '../../utils/logger';
 import {
@@ -56,6 +57,8 @@ export interface StyleVariant {
   retail_price?: number | null;
   image_url?: string | null;
   thumbnail_url?: string | null;
+  /** The revision the local mirror holds; a write asks the server for a fresher one first. */
+  updated_at?: string | null;
 }
 
 interface Props {
@@ -597,8 +600,9 @@ export default function StyleReprintPanel({
     setMovingCategory(true);
     try {
       const bridge = (window as any).electronAPI?.pos?.productAdmin;
+      const expectedUpdatedAt = await latestRevision(anchor.id, anchor.updated_at);
       const result = await Promise.resolve().then(() =>
-        bridge?.updateVariant?.(anchor.id, { categoryId: target.id }),
+        bridge?.updateVariant?.(anchor.id, { categoryId: target.id, expectedUpdatedAt }),
       );
       if (!result?.ok) {
         setStatus({
@@ -657,8 +661,9 @@ export default function StyleReprintPanel({
     setRenaming(true);
     try {
       const bridge = (window as any).electronAPI?.pos?.productAdmin;
+      const expectedUpdatedAt = await latestRevision(anchor.id, anchor.updated_at);
       const result = await Promise.resolve().then(() =>
-        bridge?.updateVariant?.(anchor.id, { styleName: next }),
+        bridge?.updateVariant?.(anchor.id, { styleName: next, expectedUpdatedAt }),
       );
       if (!result?.ok) {
         setStatus({ type: 'error', message: copy.renameFailed(result?.error || result?.code || '?') });
@@ -700,8 +705,10 @@ export default function StyleReprintPanel({
     try {
       const bridge = (window as any).electronAPI?.pos?.productAdmin;
       for (const row of targets) {
+        // Asked per row: the row before may have moved this one's revision.
+        const expectedUpdatedAt = await latestRevision(row.id, row.updated_at);
         const result = await Promise.resolve().then(() =>
-          bridge?.updateVariant?.(row.id, { priceGrossGrosze: grosze }),
+          bridge?.updateVariant?.(row.id, { priceGrossGrosze: grosze, expectedUpdatedAt }),
         );
         if (!result?.ok) {
           setStatus({
@@ -733,8 +740,9 @@ export default function StyleReprintPanel({
     setHiding(true);
     try {
       const bridge = (window as any).electronAPI?.pos?.productAdmin;
+      const expectedUpdatedAt = await latestRevision(variant.id, variant.updated_at);
       const result = await Promise.resolve().then(() =>
-        bridge?.deactivateVariant?.(variant.id, { reason: 'Hidden from the label tab' }),
+        bridge?.deactivateVariant?.(variant.id, { reason: 'Hidden from the label tab', expectedUpdatedAt }),
       );
       if (!result?.ok) {
         setStatus({ type: 'error', message: copy.hideFailed(result?.error || result?.code || '?') });

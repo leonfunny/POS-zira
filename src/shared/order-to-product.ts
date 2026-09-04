@@ -333,6 +333,8 @@ export interface ExistingVariant {
   sku?: string | null;
   /** Grosze, as the local catalogue stores it. */
   retail_price?: number | null;
+  /** The revision the local mirror holds; a write asks the server for a fresher one first. */
+  updated_at?: string | null;
 }
 
 /**

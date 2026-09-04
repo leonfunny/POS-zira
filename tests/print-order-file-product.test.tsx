@@ -78,6 +78,7 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
   let createCategory: ReturnType<typeof vi.fn>;
   let uploadMainImage: ReturnType<typeof vi.fn>;
   let updateVariant: ReturnType<typeof vi.fn>;
+  let getVariant: ReturnType<typeof vi.fn>;
   let styleById: ReturnType<typeof vi.fn>;
   let styleByCode: ReturnType<typeof vi.fn>;
   let saveFabricTagTemplate: ReturnType<typeof vi.fn>;
@@ -96,6 +97,7 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
     saveFabricTagTemplate = vi.fn(async (template: any) => template);
     uploadMainImage = vi.fn(async () => ({ ok: true, data: {} }));
     updateVariant = vi.fn(async () => ({ ok: true, data: {} }));
+    getVariant = vi.fn(async (id: string) => ({ ok: true, data: { variant: { id, updatedAt: `rev:${id}` } } }));
     styleById = vi.fn(() => null);
     styleByCode = vi.fn(() => null);
     // No decoder in the harness: the picture is sent as it was picked.
@@ -114,7 +116,7 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
         printPackagingSticker: vi.fn(async () => ({ success: true })),
         printFabricTag: vi.fn(async () => ({ success: true })),
         pos: {
-          productAdmin: { createProduct, createCategory, uploadMainImage, updateVariant },
+          productAdmin: { createProduct, createCategory, uploadMainImage, updateVariant, getVariant },
           fabricTagTemplates: { save: saveFabricTagTemplate },
         },
       },
@@ -651,9 +653,9 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
       await settle();
 
       expect(updateVariant.mock.calls).toEqual([
-        ['variant-1', { priceGrossGrosze: 12900 }],
-        ['variant-2', { priceGrossGrosze: 12900 }],
-        ['variant-3', { priceGrossGrosze: 12900 }],
+        ['variant-1', { priceGrossGrosze: 12900, expectedUpdatedAt: 'rev:variant-1' }],
+        ['variant-2', { priceGrossGrosze: 12900, expectedUpdatedAt: 'rev:variant-2' }],
+        ['variant-3', { priceGrossGrosze: 12900, expectedUpdatedAt: 'rev:variant-3' }],
       ]);
       expect(fileResult()).toContain('3 existing rows');
     });
@@ -670,7 +672,24 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
 
       expect(updateVariant).toHaveBeenCalledTimes(1);
       expect(fileResult()).toContain('stale');
-      expect(uploadMainImage).not.toHaveBeenCalled();
+      // The tag content went on before the price was tried: the other tab can
+      // still print the fabric tag for this style.
+      expect(saveFabricTagTemplate).toHaveBeenCalledTimes(2);
+    });
+
+    it('uses the revision the mirror holds when the server cannot say', async () => {
+      await fileSheet();
+      getVariant.mockRejectedValue(new Error('offline'));
+      styleById.mockReturnValue({
+        ...STYLE,
+        variants: STYLE.variants.map((row) => ({ ...row, retail_price: 9900, updated_at: `mirror:${row.id}` })),
+      });
+      await act(async () => updateButton().click());
+      await settle();
+
+      expect(updateVariant.mock.calls.map((call) => call[1].expectedUpdatedAt)).toEqual([
+        'mirror:variant-0', 'mirror:variant-1', 'mirror:variant-2', 'mirror:variant-3',
+      ]);
     });
 
     it('moves the product when the sheet picked another category', async () => {
@@ -681,7 +700,7 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
 
       expect(updateVariant).toHaveBeenCalledTimes(1);
       expect(updateVariant.mock.calls[0][0]).toBe('variant-0');
-      expect(updateVariant.mock.calls[0][1]).toEqual({ categoryId: 'cat-tracksuits' });
+      expect(updateVariant.mock.calls[0][1]).toEqual({ categoryId: 'cat-tracksuits', expectedUpdatedAt: 'rev:variant-0' });
     });
 
     it('puts a photo added later on every row, old and new', async () => {
@@ -764,7 +783,7 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
         ]);
         // The style keeps its category; the sheet takes it over. Its one old
         // row, filed at 1 zł, is brought to the sheet's price.
-        expect(updateVariant.mock.calls).toEqual([['old-0', { priceGrossGrosze: 12900 }]]);
+        expect(updateVariant.mock.calls).toEqual([['old-0', { priceGrossGrosze: 12900, expectedUpdatedAt: 'rev:old-0' }]]);
         expect(onProductFiled).toHaveBeenLastCalledWith({ categoryId: 'cat-tracksuits' });
         expect(categorySelect().value).toBe('cat-tracksuits');
         expect(attachButton()).toBeNull();

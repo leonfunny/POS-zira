@@ -52,6 +52,7 @@ describe('StyleReprintPanel', () => {
   let createProduct: ReturnType<typeof vi.fn>;
   let updateVariant: ReturnType<typeof vi.fn>;
   let getCapabilities: ReturnType<typeof vi.fn>;
+  let getVariant: ReturnType<typeof vi.fn>;
   let deactivateVariant: ReturnType<typeof vi.fn>;
   let uploadMainImage: ReturnType<typeof vi.fn>;
   let onCatalogChanged: ReturnType<typeof vi.fn>;
@@ -68,6 +69,7 @@ describe('StyleReprintPanel', () => {
     getCapabilities = vi.fn(async () => ({ ok: true, capabilities: { supportsStyleRename: true } }));
     deactivateVariant = vi.fn(async () => ({ ok: true, data: { variant: { id: 'v1' } } }));
     uploadMainImage = vi.fn(async () => ({ ok: true, data: {} }));
+    getVariant = vi.fn(async (id: string) => ({ ok: true, data: { variant: { id, updatedAt: `rev:${id}` } } }));
     vi.stubGlobal('Image', class {
       onerror: (() => void) | null = null;
       set src(_value: string) {
@@ -83,7 +85,7 @@ describe('StyleReprintPanel', () => {
         printFabricTag,
         pos: {
           fabricTagTemplates: { get: getTemplate, save: saveTemplate },
-          productAdmin: { createProduct, updateVariant, deactivateVariant, uploadMainImage, getCapabilities },
+          productAdmin: { createProduct, updateVariant, deactivateVariant, uploadMainImage, getCapabilities, getVariant },
         },
       },
     });
@@ -519,7 +521,7 @@ describe('StyleReprintPanel', () => {
 
       expect(updateVariant).toHaveBeenCalledTimes(1);
       expect(updateVariant.mock.calls[0][0]).toBe('v3'); // the first row as sorted
-      expect(updateVariant.mock.calls[0][1]).toEqual({ categoryId: 'cat-jackets' });
+      expect(updateVariant.mock.calls[0][1]).toEqual({ categoryId: 'cat-jackets', expectedUpdatedAt: 'rev:v3' });
       expect(onCatalogChanged).toHaveBeenCalledTimes(1);
       expect(statusText()).toContain('Kurtki');
     });
@@ -569,7 +571,7 @@ describe('StyleReprintPanel', () => {
 
       expect(updateVariant).toHaveBeenCalledTimes(1);
       expect(updateVariant.mock.calls[0][0]).toBe('v3');
-      expect(updateVariant.mock.calls[0][1]).toEqual({ styleName: 'KOMPLET DRESOWY LOTUS' });
+      expect(updateVariant.mock.calls[0][1]).toEqual({ styleName: 'KOMPLET DRESOWY LOTUS', expectedUpdatedAt: 'rev:v3' });
       expect(onCatalogChanged).toHaveBeenCalledTimes(1);
       expect(statusText()).toContain('KOMPLET DRESOWY LOTUS');
       expect(nameBox()).toBeNull();
@@ -634,13 +636,30 @@ describe('StyleReprintPanel', () => {
       await act(async () => applyButton().click());
       await settle();
 
+      // Each write carries the revision the server holds at that moment, asked
+      // per row: the row before may have moved this one's.
       expect(updateVariant.mock.calls.map((call) => [call[0], call[1]])).toEqual([
-        ['v3', { priceGrossGrosze: 14900 }],
-        ['v2', { priceGrossGrosze: 14900 }],
-        ['v1', { priceGrossGrosze: 14900 }],
+        ['v3', { priceGrossGrosze: 14900, expectedUpdatedAt: 'rev:v3' }],
+        ['v2', { priceGrossGrosze: 14900, expectedUpdatedAt: 'rev:v2' }],
+        ['v1', { priceGrossGrosze: 14900, expectedUpdatedAt: 'rev:v1' }],
       ]);
+      expect(getVariant.mock.calls.map((call) => call[0])).toEqual(['v3', 'v2', 'v1']);
       expect(onCatalogChanged).toHaveBeenCalledTimes(1);
       expect(statusText()).toContain('3 rows');
+    });
+
+    it('falls back to the revision the mirror holds when the server cannot be asked', async () => {
+      getVariant.mockRejectedValue(new Error('offline'));
+      await render({
+        variants: VARIANTS.map((row) => ({ ...row, updated_at: `mirror:${row.id}` })),
+      });
+      await typePrice('149');
+      await act(async () => applyButton().click());
+      await settle();
+
+      expect(updateVariant.mock.calls.map((call) => call[1].expectedUpdatedAt)).toEqual([
+        'mirror:v3', 'mirror:v2', 'mirror:v1',
+      ]);
     });
 
     it('skips the rows already at that price and says the rows differ', async () => {
@@ -712,7 +731,7 @@ describe('StyleReprintPanel', () => {
 
       expect(deactivateVariant).toHaveBeenCalledTimes(1);
       expect(deactivateVariant.mock.calls[0][0]).toBe('v2');
-      expect(deactivateVariant.mock.calls[0][1]).toMatchObject({ reason: expect.any(String) });
+      expect(deactivateVariant.mock.calls[0][1]).toMatchObject({ reason: expect.any(String), expectedUpdatedAt: 'rev:v2' });
       expect(onCatalogChanged).toHaveBeenCalledTimes(1);
       expect(statusText()).toContain('CZARNY / S');
     });
