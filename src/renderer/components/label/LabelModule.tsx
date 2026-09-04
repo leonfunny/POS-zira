@@ -12,15 +12,17 @@ import {
   Settings,
   Table2,
   Tag,
+  Tags,
   X,
 } from 'lucide-react';
 import { PRODUCT_LABEL_NAME_LOCALE, resolveName } from '../../../shared/catalog-names';
 import { sameStyleCode } from '../../../shared/order-to-product';
-import type { AgentConfig } from '../../../shared/types';
+import type { AgentConfig, ProductAdminCapabilities } from '../../../shared/types';
 import { useConfig } from '../../hooks/useConfig';
 import { useProducts } from '../../hooks/useProducts';
 import FabricArtworkPanel from './FabricArtworkPanel';
 import PrintOrderPanel from './PrintOrderPanel';
+import CategoryManagerDialog from '../products/CategoryManagerDialog';
 import StyleReprintPanel from './StyleReprintPanel';
 import type { ProductListItem } from '../../hooks/useProducts';
 import type { Category } from '../../hooks/usePosDb';
@@ -71,6 +73,8 @@ interface LabelCopy {
   settings: string;
   close: string;
   sync: string;
+  manageCategories: string;
+  manageCategoriesUnavailable: string;
   syncing: string;
   search: string;
   allCategories: string;
@@ -110,6 +114,8 @@ const COPY: Record<string, LabelCopy> = {
     settings: 'Settings',
     close: 'Close',
     sync: 'Sync',
+    manageCategories: 'Categories',
+    manageCategoriesUnavailable: 'Categories cannot be managed from this till right now',
     syncing: 'Syncing',
     search: 'Search name, SKU, EAN, category',
     allCategories: 'All label products',
@@ -147,6 +153,8 @@ const COPY: Record<string, LabelCopy> = {
     settings: 'Cài đặt',
     close: 'Đóng',
     sync: 'Đồng bộ',
+    manageCategories: 'Nhóm hàng',
+    manageCategoriesUnavailable: 'Máy này hiện chưa sửa được nhóm hàng — kiểm tra mạng rồi thử lại',
     syncing: 'Đang đồng bộ',
     search: 'Tìm tên, SKU, EAN, danh mục',
     allCategories: 'Tất cả sản phẩm tem',
@@ -182,6 +190,8 @@ const COPY: Record<string, LabelCopy> = {
     settings: 'Ustawienia',
     close: 'Zamknij',
     sync: 'Synchronizuj',
+    manageCategories: 'Kategorie',
+    manageCategoriesUnavailable: 'Z tej kasy nie da się teraz edytować kategorii — sprawdź sieć i spróbuj ponownie',
     syncing: 'Synchronizacja',
     search: 'Szukaj nazwy, SKU, EAN, kategorii',
     allCategories: 'Wszystkie produkty etykiet',
@@ -284,6 +294,42 @@ export default function LabelModule({ language }: LabelModuleProps) {
   const [settingsQuery, setSettingsQuery] = useState('');
   const [activeCategoryId, setActiveCategoryId] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // The same category manager the product tab has, opened from here so the
+  // workshop never has to leave the label tab to add, rename or delete a
+  // group. Its rights are read when the button is pressed, not on mount: the
+  // tab must open offline, and the manager is useless offline anyway.
+  const [categoryManager, setCategoryManager] = useState<ProductAdminCapabilities | null>(null);
+  const [categoryManagerOpening, setCategoryManagerOpening] = useState(false);
+  const [categoryManagerError, setCategoryManagerError] = useState<string | null>(null);
+  const openCategoryManager = async () => {
+    if (categoryManagerOpening) return;
+    setCategoryManagerOpening(true);
+    setCategoryManagerError(null);
+    try {
+      const response = await window.electronAPI.pos.productAdmin.getCapabilities();
+      const capabilities = response?.ok ? response.capabilities : null;
+      const usable = capabilities?.canCreateCategory === true
+        || capabilities?.canUpdateCategory === true
+        || capabilities?.canDeleteCategory === true;
+      if (!capabilities || !usable) {
+        setCategoryManagerError(copy.manageCategoriesUnavailable);
+        return;
+      }
+      setCategoryManager(capabilities);
+    } catch {
+      setCategoryManagerError(copy.manageCategoriesUnavailable);
+    } finally {
+      setCategoryManagerOpening(false);
+    }
+  };
+  const localProductCountsByCategory = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const product of allProducts) {
+      if (!product.category_id) continue;
+      counts[product.category_id] = (counts[product.category_id] || 0) + 1;
+    }
+    return counts;
+  }, [allProducts]);
   const [selectedGroupKey, setSelectedGroupKey] = useState('');
   const [status, setStatus] = useState<LabelStatus>({ type: 'idle', message: '' });
   const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
@@ -884,6 +930,17 @@ export default function LabelModule({ language }: LabelModuleProps) {
               </button>
               <button
                 type="button"
+                data-testid="manage-categories"
+                onClick={() => void openCategoryManager()}
+                disabled={categoryManagerOpening}
+                className="h-11 px-3 rounded-lg border border-slate-200 bg-white text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60 inline-flex items-center gap-2"
+                title={categoryManagerError ?? copy.manageCategories}
+              >
+                <Tags size={17} />
+                {copy.manageCategories}
+              </button>
+              <button
+                type="button"
                 onClick={() => setSettingsOpen((value) => !value)}
                 className={`h-11 px-3 rounded-lg text-sm font-extrabold inline-flex items-center gap-2 ${
                   settingsOpen
@@ -1213,6 +1270,27 @@ export default function LabelModule({ language }: LabelModuleProps) {
         </div>
       </div>
     </div>
+    {categoryManagerError && (
+      <p role="alert" data-testid="manage-categories-error" className="sr-only">
+        {categoryManagerError}
+      </p>
+    )}
+    {categoryManager && (
+      <CategoryManagerDialog
+        language={language}
+        t={t}
+        canCreateCategory={categoryManager.canCreateCategory === true}
+        canUpdateCategory={categoryManager.canUpdateCategory === true}
+        canReorderCategory={categoryManager.canReorderCategory === true && categoryManager.supportsCategoryBatchUpdate === true}
+        canDeleteCategory={categoryManager.canDeleteCategory === true}
+        canReplaceCategoryImage={categoryManager.canReplaceCategoryImage === true}
+        supportsCategoryImageUpload={categoryManager.supportsCategoryImageUpload === true}
+        localCategoryCount={categories.length}
+        localProductCounts={localProductCountsByCategory}
+        onClose={() => setCategoryManager(null)}
+        onChanged={refresh}
+      />
+    )}
     </>
   );
 }

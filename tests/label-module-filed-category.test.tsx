@@ -92,6 +92,8 @@ describe('LabelModule — a filed sheet reaches the product tab', () => {
   let root: Root | null;
   let createProduct: ReturnType<typeof vi.fn>;
   let createCategory: ReturnType<typeof vi.fn>;
+  let getCapabilities: ReturnType<typeof vi.fn>;
+  let listCategories: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -113,6 +115,11 @@ describe('LabelModule — a filed sheet reaches the product tab', () => {
         variants: [{ id: 'variant-1', templateId: 'template-1' }],
       },
     }));
+    getCapabilities = vi.fn(async () => ({
+      ok: true,
+      capabilities: { canCreateCategory: true, canUpdateCategory: true, canDeleteCategory: true },
+    }));
+    listCategories = vi.fn(async () => ({ ok: true, data: { categories: [] } }));
     createCategory = vi.fn(async ({ name }: { name: string }) => ({
       ok: true,
       data: { category: { id: 'cat-new', name, isActive: true } },
@@ -126,7 +133,7 @@ describe('LabelModule — a filed sheet reaches the product tab', () => {
         printFabricTag: vi.fn(async () => ({ success: true })),
         pos: {
           products: { getByIds: vi.fn(async () => []) },
-          productAdmin: { createProduct, createCategory },
+          productAdmin: { createProduct, createCategory, getCapabilities, listCategories },
           fabricTagTemplates: {
             listIds: vi.fn(async () => []),
             get: vi.fn(async () => null),
@@ -230,5 +237,37 @@ describe('LabelModule — a filed sheet reaches the product tab', () => {
 
     expect(createCategory).toHaveBeenCalledTimes(1);
     expect(harness.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  describe('managing categories from the label tab', () => {
+    // The workshop lives in this tab; adding, renaming or deleting a group
+    // must not mean finding the product tab.
+    it('opens the product tab\'s category manager with the rights the server grants', async () => {
+      await renderModule();
+      expect(container.textContent).not.toContain('Manage categories');
+
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-testid="manage-categories"]')!.click();
+      });
+      await settle();
+
+      expect(getCapabilities).toHaveBeenCalledTimes(1);
+      expect(listCategories).toHaveBeenCalledTimes(1);
+      expect(container.textContent).toContain('Manage categories');
+    });
+
+    it('says so, and opens nothing, when the till cannot manage categories', async () => {
+      getCapabilities.mockResolvedValue({ ok: false, capabilities: null, error: 'offline' });
+      await renderModule();
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-testid="manage-categories"]')!.click();
+      });
+      await settle();
+
+      expect(listCategories).not.toHaveBeenCalled();
+      expect(container.textContent).not.toContain('Manage categories');
+      expect(container.querySelector('[data-testid="manage-categories-error"]')?.textContent)
+        .toContain('cannot be managed');
+    });
   });
 });
