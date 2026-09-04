@@ -3367,6 +3367,8 @@ export interface ProductAdminCapabilities {
   supportsLotReceiving?: boolean;
   /** Server understands itemType/trackInventory on variants (create/update/response). */
   supportsItemType?: boolean;
+  /** PATCH variants/:id takes `styleName`: renames the template and every colour/size row of the style. */
+  supportsStyleRename?: boolean;
   /** Server allows guarded tracked-to-untracked transitions on existing products. */
   canChangeInventoryMode?: boolean;
   /** Opaque snapshot/keyset product-sync cursor contract. */
@@ -3506,6 +3508,12 @@ export interface ProductAdminCreateProductInput {
 
 export interface ProductAdminUpdateVariantInput {
   name?: string;
+  /**
+   * Rename the whole style this row belongs to — template and every
+   * colour/size row — rather than this row alone. Exclusive with `name`;
+   * only when capabilities.supportsStyleRename.
+   */
+  styleName?: string;
   nameTranslations?: Record<string, string | null>;
   barcode?: string | null;
   sku?: string | null;

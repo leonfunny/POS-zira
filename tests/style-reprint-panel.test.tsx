@@ -51,6 +51,7 @@ describe('StyleReprintPanel', () => {
   let saveTemplate: ReturnType<typeof vi.fn>;
   let createProduct: ReturnType<typeof vi.fn>;
   let updateVariant: ReturnType<typeof vi.fn>;
+  let getCapabilities: ReturnType<typeof vi.fn>;
   let deactivateVariant: ReturnType<typeof vi.fn>;
   let uploadMainImage: ReturnType<typeof vi.fn>;
   let onCatalogChanged: ReturnType<typeof vi.fn>;
@@ -64,6 +65,7 @@ describe('StyleReprintPanel', () => {
     saveTemplate = vi.fn(async (template: any) => template);
     createProduct = vi.fn(async () => ({ ok: true, data: { variants: [{ id: 'v-new' }] } }));
     updateVariant = vi.fn(async () => ({ ok: true, data: { variant: { id: 'v1' } } }));
+    getCapabilities = vi.fn(async () => ({ ok: true, capabilities: { supportsStyleRename: true } }));
     deactivateVariant = vi.fn(async () => ({ ok: true, data: { variant: { id: 'v1' } } }));
     uploadMainImage = vi.fn(async () => ({ ok: true, data: {} }));
     vi.stubGlobal('Image', class {
@@ -81,7 +83,7 @@ describe('StyleReprintPanel', () => {
         printFabricTag,
         pos: {
           fabricTagTemplates: { get: getTemplate, save: saveTemplate },
-          productAdmin: { createProduct, updateVariant, deactivateVariant, uploadMainImage },
+          productAdmin: { createProduct, updateVariant, deactivateVariant, uploadMainImage, getCapabilities },
         },
       },
     });
@@ -537,6 +539,73 @@ describe('StyleReprintPanel', () => {
       expect(onCatalogChanged).not.toHaveBeenCalled();
       // Controlled by the catalogue, so the select shows what is still true.
       expect(categorySelect().value).toBe('cat-tracksuits');
+    });
+  });
+
+  describe('renaming the style', () => {
+    const renameButton = () => container.querySelector<HTMLButtonElement>('[data-testid="style-rename"]')!;
+    const nameBox = () => container.querySelector<HTMLInputElement>('[data-testid="style-rename-input"]');
+    const saveButton = () => container.querySelector<HTMLButtonElement>('[data-testid="style-rename-save"]')!;
+    async function typeName(value: string) {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+        setter.call(nameBox()!, value);
+        nameBox()!.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    }
+
+    it('renames the whole style through one row with styleName, never name', async () => {
+      await render();
+      await act(async () => renameButton().click());
+      await settle();
+      expect(getCapabilities).toHaveBeenCalledTimes(1);
+      expect(nameBox()?.value).toBe('KOMPLET DRESOWY');
+      expect(saveButton().disabled).toBe(true);
+
+      await typeName('KOMPLET DRESOWY LOTUS');
+      expect(saveButton().disabled).toBe(false);
+      await act(async () => saveButton().click());
+      await settle();
+
+      expect(updateVariant).toHaveBeenCalledTimes(1);
+      expect(updateVariant.mock.calls[0][0]).toBe('v3');
+      expect(updateVariant.mock.calls[0][1]).toEqual({ styleName: 'KOMPLET DRESOWY LOTUS' });
+      expect(onCatalogChanged).toHaveBeenCalledTimes(1);
+      expect(statusText()).toContain('KOMPLET DRESOWY LOTUS');
+      expect(nameBox()).toBeNull();
+    });
+
+    it('will not open the box on a server that cannot rename a style, and says where to', async () => {
+      getCapabilities.mockResolvedValue({ ok: true, capabilities: { supportsStyleRename: false } });
+      await render();
+      await act(async () => renameButton().click());
+      await settle();
+
+      expect(nameBox()).toBeNull();
+      expect(updateVariant).not.toHaveBeenCalled();
+      expect(statusText()).toContain('web dashboard');
+    });
+
+    it('keeps the box open with the old name still on the catalogue when the server refuses', async () => {
+      updateVariant.mockResolvedValue({ ok: false, error: 'stale' });
+      await render();
+      await act(async () => renameButton().click());
+      await settle();
+      await typeName('NOWA');
+      await act(async () => saveButton().click());
+      await settle();
+
+      expect(statusText()).toContain('stale');
+      expect(nameBox()?.value).toBe('NOWA');
+      expect(onCatalogChanged).not.toHaveBeenCalled();
+    });
+
+    it('refuses a blank name', async () => {
+      await render();
+      await act(async () => renameButton().click());
+      await settle();
+      await typeName('   ');
+      expect(saveButton().disabled).toBe(true);
     });
   });
 

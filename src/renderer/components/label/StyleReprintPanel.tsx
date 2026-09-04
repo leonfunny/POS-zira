@@ -119,6 +119,13 @@ interface Copy {
   imageFailed: string;
   profileName: string;
   profileNameHint: string;
+  rename: string;
+  renameSave: string;
+  renameCancel: string;
+  renaming: string;
+  renamed: (name: string) => string;
+  renameFailed: (reason: string) => string;
+  renameUnsupported: string;
   profileCode: string;
   profileCategory: string;
   profileCategoryNone: string;
@@ -186,7 +193,14 @@ const COPY: Record<string, Copy> = {
     imageDone: (done, total) => (done === total ? 'Đã gắn ảnh cho kiểu' : `Ảnh gắn được ${done}/${total} dòng`),
     imageFailed: 'Không gắn được ảnh',
     profileName: 'Tên hàng',
-    profileNameHint: 'Đổi tên trên bảng điều khiển web — tên các dòng màu đi theo tên kiểu',
+    profileNameHint: 'Đổi tên ở đây là đổi cả tên các dòng màu/size',
+    rename: 'Đổi tên',
+    renameSave: 'Lưu tên',
+    renameCancel: 'Huỷ',
+    renaming: 'Đang đổi tên…',
+    renamed: (name) => `Đã đổi tên kiểu thành “${name}” — mọi dòng màu/size đi theo`,
+    renameFailed: (reason) => `Không đổi được tên: ${reason}`,
+    renameUnsupported: 'Máy chủ chưa hỗ trợ đổi tên kiểu từ máy này — đổi trên bảng điều khiển web',
     profileCode: 'Mã hàng',
     profileCategory: 'Nhóm',
     profileCategoryNone: '— Chưa có nhóm —',
@@ -261,7 +275,14 @@ const COPY: Record<string, Copy> = {
     imageDone: (done, total) => (done === total ? 'Zdjęcie dodane do modelu' : `Zdjęcie dodano do ${done}/${total} wierszy`),
     imageFailed: 'Nie udało się dodać zdjęcia',
     profileName: 'Nazwa modelu',
-    profileNameHint: 'Nazwę zmienia się w panelu web — nazwy kolorów idą za nazwą modelu',
+    profileNameHint: 'Zmiana nazwy tutaj zmienia też nazwy wierszy kolor/rozmiar',
+    rename: 'Zmień nazwę',
+    renameSave: 'Zapisz nazwę',
+    renameCancel: 'Anuluj',
+    renaming: 'Zmiana nazwy…',
+    renamed: (name) => `Zmieniono nazwę fasonu na „${name}” — wiersze kolor/rozmiar idą za nią`,
+    renameFailed: (reason) => `Nie udało się zmienić nazwy: ${reason}`,
+    renameUnsupported: 'Serwer nie obsługuje jeszcze zmiany nazwy fasonu z tej kasy — zmień w panelu web',
     profileCode: 'Kod modelu',
     profileCategory: 'Kategoria',
     profileCategoryNone: '— Brak kategorii —',
@@ -336,7 +357,14 @@ const COPY: Record<string, Copy> = {
     imageDone: (done, total) => (done === total ? 'Photo set on the style' : `Photo attached to ${done}/${total} rows`),
     imageFailed: 'Could not attach the photo',
     profileName: 'Style name',
-    profileNameHint: 'Rename on the web dashboard — the colour rows follow the style name',
+    profileNameHint: 'Renaming here renames every colour/size row too',
+    rename: 'Rename',
+    renameSave: 'Save name',
+    renameCancel: 'Cancel',
+    renaming: 'Renaming…',
+    renamed: (name) => `Style renamed to “${name}” — every colour/size row follows`,
+    renameFailed: (reason) => `Could not rename: ${reason}`,
+    renameUnsupported: 'The server does not support renaming a style from this till yet — rename on the web dashboard',
     profileCode: 'Style code',
     profileCategory: 'Category',
     profileCategoryNone: '— No category —',
@@ -513,6 +541,8 @@ export default function StyleReprintPanel({
   const [adding, setAdding] = useState(false);
   const [movingCategory, setMovingCategory] = useState(false);
   const [priceText, setPriceText] = useState('');
+  const [renameText, setRenameText] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState(false);
   const [applyingPrice, setApplyingPrice] = useState(false);
   /** The row whose Hide button was pressed once; the second press is the act. */
   const [hideArmedId, setHideArmedId] = useState<string | null>(null);
@@ -584,6 +614,64 @@ export default function StyleReprintPanel({
       setStatus({ type: 'error', message: copy.categoryMoveFailed(String(err)) });
     } finally {
       setMovingCategory(false);
+    }
+  };
+
+  useEffect(() => {
+    setRenameText(null);
+  }, [templateId]);
+
+  /**
+   * Open the rename box, once the server says it can rename a style. Asked at
+   * the press rather than on mount: the tab must open offline, and an old
+   * server would rename one row alone and leave the style split in two.
+   */
+  const handleStartRename = async () => {
+    if (renaming || running || rows.length === 0) return;
+    setRenaming(true);
+    try {
+      const bridge = (window as any).electronAPI?.pos?.productAdmin;
+      const response = await Promise.resolve().then(() => bridge?.getCapabilities?.());
+      if (!response?.ok || response.capabilities?.supportsStyleRename !== true) {
+        setStatus({ type: 'error', message: copy.renameUnsupported });
+        return;
+      }
+      setRenameText(styleName);
+    } catch (err) {
+      rlog.error('[StyleReprintPanel] Could not read product-admin capabilities:', err);
+      setStatus({ type: 'error', message: copy.renameUnsupported });
+    } finally {
+      setRenaming(false);
+    }
+  };
+
+  /**
+   * Rename the style: the template and every colour/size row, in one server
+   * write through any one of its rows. `styleName`, not `name` — `name` would
+   * rename that single row and nothing else.
+   */
+  const handleRename = async () => {
+    const next = (renameText ?? '').trim();
+    const anchor = rows[0];
+    if (!next || !anchor || renaming || running || next === styleName.trim()) return;
+    setRenaming(true);
+    try {
+      const bridge = (window as any).electronAPI?.pos?.productAdmin;
+      const result = await Promise.resolve().then(() =>
+        bridge?.updateVariant?.(anchor.id, { styleName: next }),
+      );
+      if (!result?.ok) {
+        setStatus({ type: 'error', message: copy.renameFailed(result?.error || result?.code || '?') });
+        return;
+      }
+      setRenameText(null);
+      setStatus({ type: 'success', message: copy.renamed(next) });
+      await onCatalogChanged?.();
+    } catch (err) {
+      rlog.error('[StyleReprintPanel] Failed to rename the style:', err);
+      setStatus({ type: 'error', message: copy.renameFailed(String(err)) });
+    } finally {
+      setRenaming(false);
     }
   };
 
@@ -1046,8 +1134,53 @@ export default function StyleReprintPanel({
           </dd>
           <dt className="font-bold text-slate-500">{copy.profileName}</dt>
           <dd className="font-bold text-slate-800">
-            <span data-testid="profile-name">{styleName}</span>
-            <span className="ml-2 text-[11px] font-semibold text-slate-400">{copy.profileNameHint}</span>
+            {renameText === null ? (
+              <>
+                <span data-testid="profile-name">{styleName}</span>
+                <button
+                  type="button"
+                  data-testid="style-rename"
+                  disabled={renaming || running || rows.length === 0}
+                  onClick={() => void handleStartRename()}
+                  className="ml-2 rounded-md border border-slate-200 px-2 py-1 text-[11px] font-extrabold text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+                >
+                  {copy.rename}
+                </button>
+              </>
+            ) : (
+              <form
+                className="flex flex-wrap items-center gap-2"
+                onSubmit={(e) => { e.preventDefault(); void handleRename(); }}
+              >
+                <input
+                  className="h-9 min-w-[16rem] flex-1 rounded-md border border-slate-300 px-2 text-sm font-bold text-slate-800"
+                  data-testid="style-rename-input"
+                  aria-label={copy.profileName}
+                  value={renameText}
+                  autoFocus
+                  disabled={renaming}
+                  onChange={(e) => setRenameText(e.target.value)}
+                />
+                <button
+                  type="submit"
+                  data-testid="style-rename-save"
+                  disabled={renaming || !renameText.trim() || renameText.trim() === styleName.trim()}
+                  className="rounded-md bg-emerald-600 px-2 py-1 text-[11px] font-extrabold text-white hover:bg-emerald-700 disabled:opacity-40"
+                >
+                  {renaming ? copy.renaming : copy.renameSave}
+                </button>
+                <button
+                  type="button"
+                  data-testid="style-rename-cancel"
+                  disabled={renaming}
+                  onClick={() => setRenameText(null)}
+                  className="rounded-md border border-slate-200 px-2 py-1 text-[11px] font-extrabold text-slate-600 hover:bg-slate-50"
+                >
+                  {copy.renameCancel}
+                </button>
+                <span className="basis-full text-[11px] font-semibold text-slate-400">{copy.profileNameHint}</span>
+              </form>
+            )}
           </dd>
           <dt className="font-bold text-slate-500">{copy.profileCode}</dt>
           <dd className="font-bold text-slate-800" data-testid="profile-code">{styleCode || '—'}</dd>
