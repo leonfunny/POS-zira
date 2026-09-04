@@ -213,6 +213,12 @@ export interface LabelPrintOrder {
    * stops a second press from creating a duplicate catalogue entry.
    */
   productId?: string | null;
+  /**
+   * The category picked on the sheet, when the operator chose one by hand.
+   * Absent, the panel falls back to what the machine learned for the style
+   * name and then to the built-in guess — see `resolveOrderCategory`.
+   */
+  categoryId?: string | null;
 }
 
 export type OrderProblem =
@@ -262,6 +268,7 @@ export function createEmptyOrder(): LabelPrintOrder {
     priceGrossGrosze: 0,
     orderDate: '',
     productId: null,
+    categoryId: null,
   };
 }
 

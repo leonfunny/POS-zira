@@ -20,6 +20,9 @@ import {
   saveProgress,
   loadProgress,
   clearProgress,
+  STYLE_CATEGORY_LIMIT,
+  loadStyleCategories,
+  rememberStyleCategory,
 } from '../src/renderer/components/label/print-order-storage';
 import {
   MAX_SIZE_LABEL_CHARS,
@@ -390,5 +393,48 @@ describe('how far the interrupted run got', () => {
     saveProgress('order-1', ['sticker:r1']);
     // Same storage, new module state: nothing is held in memory.
     expect(loadProgress('order-1')!.completedIds).toEqual(['sticker:r1']);
+  });
+});
+
+describe('the machine remembers which category a style name files into', () => {
+  beforeEach(() => {
+    vi.stubGlobal('localStorage', memoryStorage());
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('starts empty and gives back what was taught', () => {
+    expect(loadStyleCategories()).toEqual({});
+    expect(rememberStyleCategory('SPODNIE', 'cat-trousers')).toEqual({ SPODNIE: 'cat-trousers' });
+    expect(loadStyleCategories()).toEqual({ SPODNIE: 'cat-trousers' });
+  });
+
+  it('replaces the category when the same style is filed elsewhere', () => {
+    rememberStyleCategory('SPODNIE', 'cat-trousers');
+    rememberStyleCategory('SPODNIE', 'cat-other');
+    expect(loadStyleCategories()).toEqual({ SPODNIE: 'cat-other' });
+  });
+
+  it('ignores an empty key or id rather than storing a hole', () => {
+    expect(rememberStyleCategory('  ', 'cat-x')).toEqual({});
+    expect(rememberStyleCategory('X', ' ')).toEqual({});
+  });
+
+  it('drops the oldest style when full', () => {
+    for (let index = 0; index < STYLE_CATEGORY_LIMIT + 1; index += 1) {
+      rememberStyleCategory(`STYLE-${index}`, `cat-${index}`);
+    }
+    const learned = loadStyleCategories();
+    expect(Object.keys(learned)).toHaveLength(STYLE_CATEGORY_LIMIT);
+    expect(learned['STYLE-0']).toBeUndefined();
+    expect(learned[`STYLE-${STYLE_CATEGORY_LIMIT}`]).toBe(`cat-${STYLE_CATEGORY_LIMIT}`);
+  });
+
+  it('survives a hand-edited store that is not an object of strings', () => {
+    localStorage.setItem('zira.labelPrintOrder.styleCategories', '["nope"]');
+    expect(loadStyleCategories()).toEqual({});
+    localStorage.setItem('zira.labelPrintOrder.styleCategories', '{"A":1,"B":"cat-b","":"cat-c"}');
+    expect(loadStyleCategories()).toEqual({ B: 'cat-b' });
   });
 });

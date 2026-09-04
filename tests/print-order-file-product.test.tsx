@@ -75,14 +75,23 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
   let container: HTMLDivElement;
   let root: Root | null = null;
   let createProduct: ReturnType<typeof vi.fn>;
+  let createCategory: ReturnType<typeof vi.fn>;
   let saveFabricTagTemplate: ReturnType<typeof vi.fn>;
+  let onCategoriesChanged: ReturnType<typeof vi.fn>;
+  let onProductFiled: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.stubGlobal('localStorage', memoryStorage());
     container = document.createElement('div');
     document.body.appendChild(container);
     createProduct = vi.fn(async () => created(2));
+    createCategory = vi.fn(async ({ name }: { name: string }) => ({
+      ok: true,
+      data: { category: { id: 'cat-new', name, isActive: true } },
+    }));
     saveFabricTagTemplate = vi.fn(async (template: any) => template);
+    onCategoriesChanged = vi.fn(async () => {});
+    onProductFiled = vi.fn();
     Object.defineProperty(window, 'electronAPI', {
       configurable: true,
       writable: true,
@@ -90,7 +99,7 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
         printPackagingSticker: vi.fn(async () => ({ success: true })),
         printFabricTag: vi.fn(async () => ({ success: true })),
         pos: {
-          productAdmin: { createProduct },
+          productAdmin: { createProduct, createCategory },
           fabricTagTemplates: { save: saveFabricTagTemplate },
         },
       },
@@ -113,7 +122,12 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
     { id: 'cat-tracksuits', name: 'KOMPLETY DRESOWE' },
   ];
 
-  async function render(categories: { id: string; name: string }[] = []) {
+  /**
+   * Every test mounts with the jackets category present: filing is refused
+   * without one, and most of what is pinned down here is the grid, not the
+   * category.
+   */
+  async function render(categories: { id: string; name: string }[] = CATEGORIES) {
     await act(async () => {
       root = createRoot(container);
       root.render(
@@ -122,10 +136,23 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
           active
           onPrintingChange={() => {}}
           categories={categories}
+          onCategoriesChanged={onCategoriesChanged}
+          onProductFiled={onProductFiled}
         />,
       );
     });
     await settle();
+  }
+
+  const categorySelect = () =>
+    container.querySelector<HTMLSelectElement>('[data-testid="order-category"]')!;
+
+  async function pickCategory(id: string) {
+    const select = categorySelect();
+    await act(async () => {
+      select.value = id;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
   }
 
   const fileButton = () =>
@@ -211,21 +238,103 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
     await render(CATEGORIES);
     await fillGrid();
 
-    expect(
-      container.querySelector('[data-testid="order-category"]')?.textContent,
-    ).toBe('Kurtki');
+    expect(categorySelect().value).toBe('cat-jackets');
+    expect(categorySelect().selectedOptions[0]?.textContent).toBe('Kurtki');
   });
 
-  it('warns instead of guessing when no category carries the style name', async () => {
+  it('refuses to file when no category carries the style name', async () => {
     await render([{ id: 'cat-other', name: 'Spodnie' }]);
     await fillGrid();
+
+    expect(categorySelect().value).toBe('');
+    expect(
+      container.querySelector('[data-testid="order-category-none"]')?.textContent,
+    ).toContain('No category');
+    expect(fileButton().disabled).toBe(true);
+    await act(async () => fileButton().click());
+    await settle();
+    expect(createProduct).not.toHaveBeenCalled();
+  });
+
+  it('files into the category picked by hand, over the guess', async () => {
+    await render([...CATEGORIES, { id: 'cat-other', name: 'Spodnie' }]);
+    await fillGrid();
+    await pickCategory('cat-other');
     await act(async () => fileButton().click());
     await settle();
 
-    expect(
-      container.querySelector('[data-testid="order-category"]')?.textContent,
-    ).toContain('No category matches');
-    expect(createProduct.mock.calls[0][0].categoryId).toBeNull();
+    expect(createProduct.mock.calls[0][0].categoryId).toBe('cat-other');
+    expect(onProductFiled).toHaveBeenCalledWith({ categoryId: 'cat-other' });
+  });
+
+  it('creates a category named after the style and files into it', async () => {
+    await render([{ id: 'cat-other', name: 'Kurtki' }]);
+    await fillGrid();
+    await changeInput(input(container, 'input[placeholder="KURTKA"]'), 'SPODNIE');
+
+    const create = container.querySelector<HTMLButtonElement>('[data-testid="create-category"]')!;
+    expect(create.textContent).toContain('SPODNIE');
+    await act(async () => create.click());
+    await settle();
+
+    // Named like the categories the shop already has, not shouted.
+    expect(createCategory.mock.calls[0][0].name).toBe('Spodnie');
+    expect(onCategoriesChanged).toHaveBeenCalledTimes(1);
+    expect(categorySelect().value).toBe('cat-new');
+    expect(categorySelect().selectedOptions[0]?.textContent).toBe('Spodnie');
+    expect(fileButton().disabled).toBe(false);
+
+    await act(async () => fileButton().click());
+    await settle();
+    expect(createProduct.mock.calls[0][0].categoryId).toBe('cat-new');
+  });
+
+  it('keeps the sheet unfiled and says why when the category cannot be created', async () => {
+    createCategory.mockResolvedValue({ ok: false, error: 'offline' });
+    await render([]);
+    await fillGrid();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="create-category"]')!.click();
+    });
+    await settle();
+
+    expect(fileResult()).toContain('offline');
+    expect(fileButton().disabled).toBe(true);
+    expect(onCategoriesChanged).not.toHaveBeenCalled();
+  });
+
+  it('remembers the category for the style name once the sheet is filed', async () => {
+    const categories = [...CATEGORIES, { id: 'cat-other', name: 'Spodnie' }];
+    await render(categories);
+    await fillGrid();
+    await changeInput(input(container, 'input[placeholder="KURTKA"]'), 'SPODNIE');
+    await pickCategory('cat-other');
+    await act(async () => fileButton().click());
+    await settle();
+
+    // A fresh sheet with the same style name: nothing picked, yet it lands
+    // where the last one went.
+    await act(async () => root!.unmount());
+    root = null;
+    localStorage.removeItem('zira.labelPrintOrder.draft');
+    await render(categories);
+    await changeInput(input(container, 'input[placeholder="KURTKA"]'), 'spodnie');
+    expect(categorySelect().value).toBe('cat-other');
+  });
+
+  it('does not remember a category that was only picked, never filed', async () => {
+    const categories = [...CATEGORIES, { id: 'cat-other', name: 'Spodnie' }];
+    await render(categories);
+    await fillGrid();
+    await changeInput(input(container, 'input[placeholder="KURTKA"]'), 'SPODNIE');
+    await pickCategory('cat-other');
+
+    await act(async () => root!.unmount());
+    root = null;
+    localStorage.removeItem('zira.labelPrintOrder.draft');
+    await render(categories);
+    await changeInput(input(container, 'input[placeholder="KURTKA"]'), 'SPODNIE');
+    expect(categorySelect().value).toBe('');
   });
 
   it('files a sheet with no price, because the sheet no longer asks for one', async () => {

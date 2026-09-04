@@ -7,6 +7,7 @@ import {
   buildProductDraft,
   groszeToText,
   resolveCategoryForStyle,
+  resolveOrderCategory,
   skuToken,
   textToGrosze,
   validateAddedCell,
@@ -352,5 +353,59 @@ describe('adding a colour or size to a style that already exists', () => {
       'ALREADY_EXISTS',
     ]);
     expect(validateAddedCell({ colorName: 'CZARNY', sizeName: 'L' }, EXISTING)).toEqual([]);
+  });
+});
+
+describe('resolveOrderCategory', () => {
+  const CATEGORIES = [
+    { id: 'cat-jackets', name: 'Kurtki' },
+    { id: 'cat-trousers', name: 'Spodnie' },
+  ];
+
+  it('takes the category picked on the sheet over every guess', () => {
+    const order = { styleName: 'KURTKA', categoryId: 'cat-trousers' };
+    expect(resolveOrderCategory(order, CATEGORIES, { KURTKA: 'cat-jackets' })?.id).toBe(
+      'cat-trousers',
+    );
+  });
+
+  it('falls back to the category the machine learned for the style name', () => {
+    const order = { styleName: ' spodnie ', categoryId: null };
+    expect(resolveOrderCategory(order, CATEGORIES, { SPODNIE: 'cat-trousers' })?.id).toBe(
+      'cat-trousers',
+    );
+  });
+
+  it('falls back to the built-in guess when nothing was learned', () => {
+    const order = { styleName: 'KURTKA', categoryId: null };
+    expect(resolveOrderCategory(order, CATEGORIES)?.id).toBe('cat-jackets');
+  });
+
+  it('ignores a picked or learned category that no longer exists', () => {
+    const order = { styleName: 'KURTKA', categoryId: 'cat-gone' };
+    expect(resolveOrderCategory(order, CATEGORIES, { KURTKA: 'cat-also-gone' })?.id).toBe(
+      'cat-jackets',
+    );
+  });
+
+  it('is null for a style nobody has filed yet', () => {
+    expect(resolveOrderCategory({ styleName: 'SUKIENKA', categoryId: null }, CATEGORIES)).toBeNull();
+  });
+});
+
+describe('validateProductDraft — category', () => {
+  it('refuses a sheet that resolved to no category', () => {
+    expect(validateProductDraft(TWO_BY_TWO, buildProductDraft(TWO_BY_TWO), null)).toContain(
+      'NO_CATEGORY',
+    );
+  });
+
+  it('passes once a category is resolved', () => {
+    const category = { id: 'cat-jackets', name: 'Kurtki' };
+    expect(validateProductDraft(TWO_BY_TWO, buildProductDraft(TWO_BY_TWO), category)).toEqual([]);
+  });
+
+  it('does not check the category when the caller did not pass one', () => {
+    expect(validateProductDraft(TWO_BY_TWO, buildProductDraft(TWO_BY_TWO))).toEqual([]);
   });
 });

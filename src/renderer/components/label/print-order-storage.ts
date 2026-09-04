@@ -233,6 +233,43 @@ export const loadLearnedStyles = styles.load;
 export const rememberStyle = styles.remember;
 export const forgetStyle = styles.forget;
 
+/**
+ * Which category each style name was last filed into, keyed the way
+ * `resolveOrderCategory` reads it. Learned when a sheet is filed, not when a
+ * category is picked: the pick may be a slip, the filing is the decision.
+ * Bounded like the other learned lists — oldest key out when full.
+ */
+const STYLE_CATEGORY_KEY = 'zira.labelPrintOrder.styleCategories';
+export const STYLE_CATEGORY_LIMIT = 48;
+
+export function loadStyleCategories(): Record<string, string> {
+  const stored = read<unknown>(STYLE_CATEGORY_KEY, {});
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return {};
+  const entries = Object.entries(stored as Record<string, unknown>).filter(
+    (entry): entry is [string, string] =>
+      typeof entry[1] === 'string' && entry[1].trim().length > 0 && entry[0].trim().length > 0,
+  );
+  return Object.fromEntries(entries.slice(-STYLE_CATEGORY_LIMIT));
+}
+
+export function rememberStyleCategory(
+  styleKey: string,
+  categoryId: string,
+): Record<string, string> {
+  const key = styleKey.trim();
+  const id = categoryId.trim();
+  const current = loadStyleCategories();
+  if (!key || !id) return current;
+  // Re-inserted at the end so a style filed again counts as recent.
+  const { [key]: _previous, ...rest } = current;
+  const entries = [...Object.entries(rest), [key, id] as [string, string]].slice(
+    -STYLE_CATEGORY_LIMIT,
+  );
+  const next = Object.fromEntries(entries);
+  write(STYLE_CATEGORY_KEY, next);
+  return next;
+}
+
 
 export function listSavedOrders(): SavedPrintOrder[] {
   const stored = read<SavedPrintOrder[]>(SAVED_KEY, []);

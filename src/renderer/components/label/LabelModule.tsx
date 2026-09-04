@@ -260,7 +260,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
     const value = t(key);
     return value && value !== key ? value : fallback;
   };
-  const { allProducts, categories, loading, error, syncProducts, syncing } = useProducts(labelLanguage);
+  const { allProducts, categories, loading, error, refresh, syncProducts, syncing } = useProducts(labelLanguage);
   const products = allProducts as LabelProduct[];
   // The order sheet is what staff reach for daily; the other two lanes are for
   // customer artwork files and for catalog EAN labels.
@@ -590,6 +590,20 @@ export default function LabelModule({ language }: LabelModuleProps) {
     void persistLabelConfig({ labelModuleCategoryIds: [] });
   };
 
+  /**
+   * A sheet was just filed into this category. Show it here from now on, so a
+   * style the workshop invented today is on the tab today — not after someone
+   * works out that it is hiding behind the settings gear.
+   */
+  const ensureCategoryShown = (categoryId: string) => {
+    setOptimisticCategoryIds((current) => {
+      if (current.includes(categoryId)) return current;
+      const next = [...current, categoryId];
+      void persistLabelConfig({ labelModuleCategoryIds: next });
+      return next;
+    });
+  };
+
   const togglePinnedProduct = (productId: string) => {
     setOptimisticProductIds((current) => {
       const next = toggleLabelSelectionId(current, productId);
@@ -731,6 +745,8 @@ export default function LabelModule({ language }: LabelModuleProps) {
             active={labelMode === 'order'}
             onPrintingChange={handleOrderPrintingChange}
             categories={categories}
+            onCategoriesChanged={refresh}
+            onProductFiled={({ categoryId }) => ensureCategoryShown(categoryId)}
           />
         </div>
         <div

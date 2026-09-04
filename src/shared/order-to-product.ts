@@ -25,6 +25,7 @@ export interface ProductDraft {
 
 export type ProductDraftProblem =
   | 'NO_NAME'
+  | 'NO_CATEGORY'
   | 'NO_CELLS'
   | 'ALREADY_FILED'
   | 'TOO_MANY_VARIANTS';
@@ -73,6 +74,36 @@ export function resolveCategoryForStyle(
   if (!wanted) return null;
   const folded = foldName(wanted);
   return categories.find((category) => foldName(category.name) === folded) ?? null;
+}
+
+/** How a style name is keyed when a category is remembered for it. */
+export function styleCategoryKey(styleName: string): string {
+  return cleanText(styleName).toLocaleUpperCase('pl');
+}
+
+/**
+ * The category this sheet files into, in the order the operator would expect:
+ *
+ * 1. the one picked on the sheet itself, when it still exists;
+ * 2. the one this machine learned for the style name the last time a sheet
+ *    with that name was filed — so "SPODNIE" only has to be taught once;
+ * 3. the built-in guess for the three styles the shop named first.
+ *
+ * Null when none of those lands on a real category. The sheet then asks for
+ * one rather than filing a product the label tab will never show.
+ */
+export function resolveOrderCategory(
+  order: Pick<LabelPrintOrder, 'styleName' | 'categoryId'>,
+  categories: readonly CategoryChoice[],
+  learned: Readonly<Record<string, string>> = {},
+): CategoryChoice | null {
+  const byId = (id: string | null | undefined) =>
+    (id ? categories.find((category) => category.id === id) : null) ?? null;
+  return (
+    byId(order.categoryId)
+    ?? byId(learned[styleCategoryKey(order.styleName)])
+    ?? resolveCategoryForStyle(order.styleName, categories)
+  );
 }
 
 /** Matches the server's own ceiling for one create. */
@@ -270,14 +301,24 @@ export function validateAddedCell(
   return clash ? ['ALREADY_EXISTS'] : [];
 }
 
-/** What stops this sheet from being filed. Empty means the button is live. */
+/**
+ * What stops this sheet from being filed. Empty means the button is live.
+ *
+ * `category` is the one the sheet resolved to: `null` means none, and the
+ * sheet is refused — filed without one the product never reaches the label
+ * tab, which is how the first free-text style went in and came out invisible.
+ * Left out entirely, the category is not checked, for callers that only
+ * validate the grid.
+ */
 export function validateProductDraft(
   order: LabelPrintOrder,
   draft: ProductDraft,
+  category?: CategoryChoice | null,
 ): ProductDraftProblem[] {
   const problems: ProductDraftProblem[] = [];
   if (order.productId) problems.push('ALREADY_FILED');
   if (!draft.name) problems.push('NO_NAME');
+  if (category === null) problems.push('NO_CATEGORY');
   if (draft.variants.length === 0) problems.push('NO_CELLS');
   if (draft.variants.length > MAX_PRODUCT_VARIANTS) {
     problems.push('TOO_MANY_VARIANTS');

@@ -34,7 +34,8 @@ import {
   CategoryChoice,
   ProductDraftProblem,
   buildProductDraft,
-  resolveCategoryForStyle,
+  resolveOrderCategory,
+  styleCategoryKey,
   validateProductDraft,
 } from '../../../shared/order-to-product';
 import {
@@ -59,12 +60,14 @@ import {
   listSavedOrders,
   loadLearnedSizes,
   loadLearnedStyles,
+  loadStyleCategories,
   loadDraft,
   loadDraftId,
   loadProgress,
   saveDraft,
   rememberSize,
   rememberStyle,
+  rememberStyleCategory,
   saveDraftId,
   saveOrder,
   saveProgress,
@@ -139,6 +142,10 @@ interface Copy {
   orderDate: string;
   category: string;
   categoryNone: string;
+  categoryPick: string;
+  createCategory: (name: string) => string;
+  creatingCategory: string;
+  categoryCreateFailed: (reason: string) => string;
   fileProduct: string;
   filing: string;
   filed: (variants: number) => string;
@@ -232,7 +239,11 @@ const COPY: Record<string, Copy> = {
     },
     orderDate: 'Ngày đơn',
     category: 'Danh mục',
-    categoryNone: 'Không khớp danh mục nào — sẽ không hiện ở tab tem',
+    categoryNone: 'Chưa có nhóm — chọn ở trên hoặc tạo nhóm mới, không thì hàng sẽ không hiện ở tab tem',
+    categoryPick: '— Chọn nhóm —',
+    createCategory: (name) => `Tạo nhóm “${name}”`,
+    creatingCategory: 'Đang tạo nhóm…',
+    categoryCreateFailed: (reason) => `Không tạo được nhóm: ${reason}`,
     fileProduct: 'Lưu thành sản phẩm',
     filing: 'Đang lưu…',
     filed: (variants) => `Đã lưu — ${variants} biến thể`,
@@ -242,6 +253,7 @@ const COPY: Record<string, Copy> = {
     fileFailed: (reason) => `Không lưu được: ${reason}`,
     fileProblem: {
       NO_NAME: 'Chưa có tên hàng',
+      NO_CATEGORY: 'Chưa chọn nhóm hàng',
       NO_CELLS: 'Chưa ô nào có số lượng',
       ALREADY_FILED: 'Tờ này đã lưu thành sản phẩm rồi',
       TOO_MANY_VARIANTS: 'Quá 100 biến thể — tách làm nhiều đơn',
@@ -330,7 +342,11 @@ const COPY: Record<string, Copy> = {
     },
     orderDate: 'Data zlecenia',
     category: 'Kategoria',
-    categoryNone: 'Brak pasującej kategorii — nie pojawi się w zakładce etykiet',
+    categoryNone: 'Brak kategorii — wybierz powyżej lub utwórz nową, inaczej model nie pojawi się w zakładce etykiet',
+    categoryPick: '— Wybierz kategorię —',
+    createCategory: (name) => `Utwórz kategorię „${name}”`,
+    creatingCategory: 'Tworzenie kategorii…',
+    categoryCreateFailed: (reason) => `Nie udało się utworzyć kategorii: ${reason}`,
     fileProduct: 'Zapisz jako produkt',
     filing: 'Zapisywanie…',
     filed: (variants) => `Zapisano — ${variants} wariantów`,
@@ -340,6 +356,7 @@ const COPY: Record<string, Copy> = {
     fileFailed: (reason) => `Nie zapisano: ${reason}`,
     fileProblem: {
       NO_NAME: 'Brak nazwy modelu',
+      NO_CATEGORY: 'Nie wybrano kategorii',
       NO_CELLS: 'Żadna komórka nie ma ilości',
       ALREADY_FILED: 'To zlecenie jest już zapisane jako produkt',
       TOO_MANY_VARIANTS: 'Ponad 100 wariantów — podziel zlecenie',
@@ -428,7 +445,11 @@ const COPY: Record<string, Copy> = {
     },
     orderDate: 'Order date',
     category: 'Category',
-    categoryNone: 'No category matches — it will not show in the label tab',
+    categoryNone: 'No category — pick one above or create it, or the style will not show in the label tab',
+    categoryPick: '— Pick a category —',
+    createCategory: (name) => `Create category “${name}”`,
+    creatingCategory: 'Creating category…',
+    categoryCreateFailed: (reason) => `Could not create the category: ${reason}`,
     fileProduct: 'Save as product',
     filing: 'Saving…',
     filed: (variants) => `Saved — ${variants} variants`,
@@ -438,6 +459,7 @@ const COPY: Record<string, Copy> = {
     fileFailed: (reason) => `Not saved: ${reason}`,
     fileProblem: {
       NO_NAME: 'The style has no name',
+      NO_CATEGORY: 'No category picked',
       NO_CELLS: 'No cell has a quantity',
       ALREADY_FILED: 'This sheet is already saved as a product',
       TOO_MANY_VARIANTS: 'More than 100 variants — split the order',
@@ -454,6 +476,14 @@ interface Props {
    * Passed in rather than fetched again so both tabs read the same rows.
    */
   categories?: readonly CategoryChoice[];
+  /** A category was created from the sheet; the parent reloads its list. */
+  onCategoriesChanged?: () => void | Promise<unknown>;
+  /**
+   * A product was filed into `categoryId`. The parent makes sure the label tab
+   * shows that category, so the style appears there without a trip through
+   * settings.
+   */
+  onProductFiled?: (info: { categoryId: string }) => void;
 }
 
 let idCounter = 0;
@@ -487,6 +517,8 @@ export default function PrintOrderPanel({
   active,
   onPrintingChange,
   categories = [],
+  onCategoriesChanged,
+  onProductFiled,
 }: Props) {
   const copy = COPY[language] || COPY.vi;
   const dateLocale = language === 'pl' ? 'pl-PL' : language === 'en' ? 'en-GB' : 'vi-VN';
@@ -533,6 +565,17 @@ export default function PrintOrderPanel({
   const [learnedSizes, setLearnedSizes] = useState<string[]>(() => loadLearnedSizes());
   /** Style names this machine has been taught, on top of the built-in ones. */
   const [learnedStyles, setLearnedStyles] = useState<string[]>(() => loadLearnedStyles());
+  /** Which category each style name was last filed into, on this machine. */
+  const [learnedCategories, setLearnedCategories] = useState<Record<string, string>>(() =>
+    loadStyleCategories(),
+  );
+  /**
+   * Categories created from this sheet, kept until the parent's list catches
+   * up: the select must show the one just made, and the parent reloads on its
+   * own clock.
+   */
+  const [createdCategories, setCreatedCategories] = useState<CategoryChoice[]>([]);
+  const [creatingCategory, setCreatingCategory] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const printInFlight = useRef(false);
@@ -564,16 +607,20 @@ export default function PrintOrderPanel({
   const totals = useMemo(() => orderTotals(order), [order]);
   const problems = useMemo(() => validateOrder(order), [order]);
   const productDraft = useMemo(() => buildProductDraft(order), [order]);
-  const productProblems = useMemo(
-    () => validateProductDraft(order, productDraft),
-    [order, productDraft],
-  );
+  const allCategories = useMemo(() => {
+    const known = new Set(categories.map((category) => category.id));
+    return [...categories, ...createdCategories.filter((category) => !known.has(category.id))];
+  }, [categories, createdCategories]);
   // Filed without a category the product never reaches the label tab, so the
-  // resolved one is shown next to the button rather than left to be discovered
-  // as an empty list days later.
+  // sheet resolves one up front — picked, learned or guessed — and refuses to
+  // file until it has one.
   const productCategory = useMemo(
-    () => resolveCategoryForStyle(order.styleName, categories),
-    [categories, order.styleName],
+    () => resolveOrderCategory(order, allCategories, learnedCategories),
+    [allCategories, learnedCategories, order],
+  );
+  const productProblems = useMemo(
+    () => validateProductDraft(order, productDraft, productCategory),
+    [order, productCategory, productDraft],
   );
   const plan = useMemo(() => buildPrintPlan(order), [order]);
   const composition = compositionText(order.materials);
@@ -810,6 +857,35 @@ export default function PrintOrderPanel({
    */
   const learnStyle = () => setLearnedStyles(rememberStyle(order.styleName));
 
+  /**
+   * Make a category named after the style, on the server, and pick it. Named
+   * like the ones the shop already has — "Spodnie", not "SPODNIE" — because the
+   * sheet capitalises everything and the category list does not.
+   */
+  const handleCreateCategory = async () => {
+    const styleName = order.styleName.trim();
+    if (!styleName || creatingCategory) return;
+    const name = styleName.charAt(0) + styleName.slice(1).toLocaleLowerCase('pl');
+    setCreatingCategory(true);
+    setFileError(null);
+    try {
+      const bridge = (window as any).electronAPI?.pos?.productAdmin;
+      const result = await bridge?.createCategory?.({ name, idempotencyKey: nextId('category') });
+      const category = result?.ok ? result.data?.category : null;
+      if (!category?.id) {
+        setFileError(copy.categoryCreateFailed(result?.error || result?.code || '?'));
+        return;
+      }
+      setCreatedCategories((current) => [...current, { id: category.id, name: category.name || name }]);
+      patch({ categoryId: category.id });
+      await onCategoriesChanged?.();
+    } catch (err) {
+      setFileError(copy.categoryCreateFailed(err instanceof Error ? err.message : String(err)));
+    } finally {
+      setCreatingCategory(false);
+    }
+  };
+
   const handleSave = () => {
     setSavedOrders(saveOrder(orderId, order));
     learnStyle();
@@ -835,7 +911,7 @@ export default function PrintOrderPanel({
         sku: productDraft.sku,
         priceGrossGrosze: productDraft.priceGrossGrosze,
         vatRate: 23,
-        categoryId: productCategory?.id ?? null,
+        categoryId: productCategory!.id,
         idempotencyKey: fileKeyRef.current,
         variants: productDraft.variants.map((variant) => ({
           colorName: variant.colorName,
@@ -859,6 +935,12 @@ export default function PrintOrderPanel({
       const templateId = result.data!.product?.id ?? created[0].id;
       patch({ productId: templateId });
       fileKeyRef.current = null;
+      // The filing is the decision: from now on a sheet with this style name
+      // lands in the same category without asking, and the label tab shows it.
+      setLearnedCategories(
+        rememberStyleCategory(styleCategoryKey(order.styleName), productCategory!.id),
+      );
+      onProductFiled?.({ categoryId: productCategory!.id });
       // The care content lives on the sheet and nowhere else in the catalogue,
       // so it is copied to the machine now. Without it the product tab can
       // print a bag label but never a fabric tag, which is what happened to the
@@ -1054,12 +1136,38 @@ export default function PrintOrderPanel({
           />
         </Field>
         <Field label={copy.category}>
-          <p
-            className={`text-sm ${productCategory ? 'font-semibold text-slate-700' : 'text-amber-700'}`}
+          <select
+            className={INPUT}
             data-testid="order-category"
+            aria-label={copy.category}
+            value={productCategory?.id ?? ''}
+            onChange={(e) => patch({ categoryId: e.target.value || null })}
           >
-            {productCategory ? productCategory.name : copy.categoryNone}
-          </p>
+            <option value="">{copy.categoryPick}</option>
+            {allCategories.map((category) => (
+              <option key={category.id} value={category.id}>{category.name}</option>
+            ))}
+          </select>
+          {!productCategory && (
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <p className="text-[11px] font-bold text-amber-700" data-testid="order-category-none">
+                {copy.categoryNone}
+              </p>
+              {order.styleName.trim() && (
+                <button
+                  type="button"
+                  data-testid="create-category"
+                  disabled={creatingCategory}
+                  onClick={handleCreateCategory}
+                  className="min-h-8 rounded border border-slate-300 px-2 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {creatingCategory
+                    ? copy.creatingCategory
+                    : copy.createCategory(order.styleName.trim())}
+                </button>
+              )}
+            </div>
+          )}
         </Field>
       </section>
 
