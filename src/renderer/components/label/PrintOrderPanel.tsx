@@ -39,6 +39,8 @@ import {
   buildProductDraft,
   resolveOrderCategory,
   styleCategoryKey,
+  buildMissingVariants,
+  type ExistingVariant,
   validateProductDraft,
 } from '../../../shared/order-to-product';
 import {
@@ -166,6 +168,11 @@ interface Copy {
   fileHint: string;
   fileFailed: (reason: string) => string;
   fileProblem: Record<ProductDraftProblem, string>;
+  updateProduct: string;
+  updating: string;
+  updated: (added: number) => string;
+  filedHint: (name: string) => string;
+  styleUnknown: string;
   filedWithoutTag: (variants: number) => string;
 }
 
@@ -274,6 +281,11 @@ const COPY: Record<string, Copy> = {
     filedWithoutTag: (variants) =>
       `Đã lưu ${variants} biến thể, nhưng chưa lưu được nội dung tem vải — tab tem sẽ không in được vải`,
     fileHint: 'Mỗi ô có số lượng thành một biến thể màu × size',
+    updateProduct: 'Cập nhật sản phẩm',
+    updating: 'Đang cập nhật…',
+    updated: (added) => (added > 0 ? `Đã cập nhật — thêm ${added} màu/size mới` : 'Đã cập nhật sản phẩm'),
+    filedHint: (name) => `Đã là sản phẩm “${name}” — mở ở tab Tem mã sản phẩm`,
+    styleUnknown: 'Chưa thấy kiểu này trong catalogue của máy — bấm Sync ở tab Tem rồi thử lại',
     fileFailed: (reason) => `Không lưu được: ${reason}`,
     fileProblem: {
       NO_NAME: 'Chưa có tên hàng',
@@ -388,6 +400,11 @@ const COPY: Record<string, Copy> = {
     filedWithoutTag: (variants) =>
       `Zapisano ${variants} wariantów, ale treść metki nie zapisała się — zakładka etykiet nie wydrukuje metki`,
     fileHint: 'Każda wypełniona komórka to jeden wariant koloru i rozmiaru',
+    updateProduct: 'Aktualizuj produkt',
+    updating: 'Aktualizowanie…',
+    updated: (added) => (added > 0 ? `Zaktualizowano — dodano ${added} nowych kolorów/rozmiarów` : 'Produkt zaktualizowany'),
+    filedHint: (name) => `To już produkt „${name}” — otwórz w zakładce etykiet`,
+    styleUnknown: 'Tego modelu nie ma jeszcze w katalogu na tej maszynie — kliknij Sync w zakładce etykiet i spróbuj ponownie',
     fileFailed: (reason) => `Nie zapisano: ${reason}`,
     fileProblem: {
       NO_NAME: 'Brak nazwy modelu',
@@ -502,6 +519,11 @@ const COPY: Record<string, Copy> = {
     filedWithoutTag: (variants) =>
       `Saved ${variants} variants, but the care content did not save — the label tab cannot print a fabric tag`,
     fileHint: 'Every filled cell becomes one colour and size variant',
+    updateProduct: 'Update product',
+    updating: 'Updating…',
+    updated: (added) => (added > 0 ? `Updated — ${added} new colours/sizes added` : 'Product updated'),
+    filedHint: (name) => `Already product “${name}” — open it on the product label tab`,
+    styleUnknown: 'This style is not in the catalogue on this machine yet — press Sync on the product tab and try again',
     fileFailed: (reason) => `Not saved: ${reason}`,
     fileProblem: {
       NO_NAME: 'The style has no name',
@@ -531,6 +553,18 @@ interface Props {
    * settings.
    */
   onProductFiled?: (info: { categoryId: string }) => void;
+  /**
+   * The style a filed sheet belongs to, as the product tab holds it, so an
+   * edited sheet can be pushed back onto it. Null while the catalogue on this
+   * machine has not caught up with the server.
+   */
+  styleById?: (templateId: string) => FiledStyle | null;
+}
+
+export interface FiledStyle {
+  name: string;
+  categoryId: string | null;
+  variants: readonly ExistingVariant[];
 }
 
 let idCounter = 0;
@@ -566,6 +600,7 @@ export default function PrintOrderPanel({
   categories = [],
   onCategoriesChanged,
   onProductFiled,
+  styleById,
 }: Props) {
   const copy = COPY[language] || COPY.vi;
   const dateLocale = language === 'pl' ? 'pl-PL' : language === 'en' ? 'en-GB' : 'vi-VN';
@@ -907,6 +942,91 @@ export default function PrintOrderPanel({
   // showed a repeated check was unreachable — dead code that reads like safety.
   const handleSamplePrint = () => runPlan(samplePlan, { track: false });
 
+  /** Everything but "already filed": those are the rules for pushing an edit. */
+  const updateProblems = productProblems.filter((problem) => problem !== 'ALREADY_FILED');
+  const filedStyle = order.productId ? styleById?.(order.productId) ?? null : null;
+
+  /**
+   * Push an edited sheet back onto the product it made: the colours and sizes
+   * it does not have yet, the tag content, the photo, the category. Not the
+   * name — the server cannot rename a style with colours from here — and not
+   * the quantities, which were only ever the opening stock.
+   */
+  const handleUpdateProduct = async () => {
+    const templateId = order.productId;
+    if (!templateId || updateProblems.length > 0 || filing) return;
+    const style = styleById?.(templateId) ?? null;
+    if (!style) {
+      setFileError(copy.styleUnknown);
+      return;
+    }
+    setFiling(true);
+    setFileError(null);
+    setFileNotice(null);
+    try {
+      const missing = buildMissingVariants(order, style.variants);
+      let createdIds: string[] = [];
+      if (missing.length > 0) {
+        fileKeyRef.current ??= nextId('update');
+        const result = await window.electronAPI.pos.productAdmin.createProduct({
+          productId: templateId,
+          name: productDraft.name,
+          sku: productDraft.sku,
+          priceGrossGrosze: productDraft.priceGrossGrosze,
+          vatRate: 23,
+          idempotencyKey: fileKeyRef.current,
+          variants: missing.map((variant) => ({
+            colorName: variant.colorName,
+            sizeName: variant.sizeName,
+            sku: variant.sku,
+            barcode: variant.sku,
+            initialStockQty: variant.initialStockQty,
+          })),
+        });
+        const created = result?.data?.variants ?? (result?.data?.variant ? [result.data.variant] : []);
+        if (!result?.ok) {
+          setFileError(copy.fileFailed(result?.error || result?.code || '?'));
+          return;
+        }
+        fileKeyRef.current = null;
+        createdIds = created.map((variant: { id: string }) => variant.id);
+      }
+      if (productCategory && productCategory.id !== style.categoryId && style.variants[0]) {
+        const moved = await window.electronAPI.pos.productAdmin.updateVariant(style.variants[0].id, {
+          categoryId: productCategory.id,
+        });
+        if (!moved?.ok) {
+          setFileError(copy.fileFailed(moved?.error || moved?.code || '?'));
+          return;
+        }
+      }
+      const tagSaved = await saveFabricTagContent(templateId, order);
+      let imageNote = '';
+      if (order.imageDataUrl) {
+        const targets = [...style.variants.map((variant) => variant.id), ...createdIds];
+        const outcome = await uploadImageToVariants(targets, {
+          dataUrl: order.imageDataUrl,
+          fileName: 'sheet.jpg',
+          mimeType: 'image/jpeg',
+        });
+        imageNote = copy.imageUploaded(outcome.uploaded.length, targets.length);
+      }
+      if (productCategory) {
+        setLearnedCategories(
+          rememberStyleCategory(styleCategoryKey(order.styleName), productCategory.id),
+        );
+        onProductFiled?.({ categoryId: productCategory.id });
+      }
+      setFileNotice(
+        (tagSaved ? copy.updated(createdIds.length) : copy.filedWithoutTag(createdIds.length)) + imageNote,
+      );
+    } catch (err) {
+      setFileError(copy.fileFailed(err instanceof Error ? err.message : String(err)));
+    } finally {
+      setFiling(false);
+    }
+  };
+
   /**
    * A style name is learned when the order is filed or sent to the printer, not
    * while it is typed: a free-text field has no "done" moment, and learning on
@@ -1047,6 +1167,9 @@ export default function PrintOrderPanel({
    */
   const handleDuplicate = () => {
     setOrderId(nextId('order'));
+    // The copy is a new sheet, so it may become a new product; the photo is
+    // usually the same garment and stays.
+    patch({ productId: null });
     setSavedNotice(false);
     // The interrupted run belongs to the order it was started from; the copy has
     // printed nothing. The record stays put, so reopening the original still
@@ -1615,19 +1738,33 @@ export default function PrintOrderPanel({
           <Save size={18} aria-hidden="true" />
           {savedNotice ? copy.saved : copy.save}
         </button>
-        <button
-          type="button"
-          data-testid="file-product"
-          onClick={handleFileProduct}
-          disabled={productProblems.length > 0 || filing}
-          title={productProblems.length > 0
-            ? copy.fileProblem[productProblems[0]]
-            : copy.fileHint}
-          className="inline-flex min-h-11 items-center gap-2 rounded-md border border-sky-300 px-4 text-sm font-bold text-sky-800 hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <Package size={18} aria-hidden="true" />
-          {filing ? copy.filing : copy.fileProduct}
-        </button>
+        {order.productId ? (
+          <button
+            type="button"
+            data-testid="update-product"
+            onClick={handleUpdateProduct}
+            disabled={updateProblems.length > 0 || filing}
+            title={updateProblems.length > 0 ? copy.fileProblem[updateProblems[0]] : copy.fileHint}
+            className="inline-flex min-h-11 items-center gap-2 rounded-md border border-sky-300 px-4 text-sm font-bold text-sky-800 hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Package size={18} aria-hidden="true" />
+            {filing ? copy.updating : copy.updateProduct}
+          </button>
+        ) : (
+          <button
+            type="button"
+            data-testid="file-product"
+            onClick={handleFileProduct}
+            disabled={productProblems.length > 0 || filing}
+            title={productProblems.length > 0
+              ? copy.fileProblem[productProblems[0]]
+              : copy.fileHint}
+            className="inline-flex min-h-11 items-center gap-2 rounded-md border border-sky-300 px-4 text-sm font-bold text-sky-800 hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Package size={18} aria-hidden="true" />
+            {filing ? copy.filing : copy.fileProduct}
+          </button>
+        )}
         {openOrderIsFiled && (
           <button
             type="button"
@@ -1689,6 +1826,11 @@ export default function PrintOrderPanel({
         </p>
       )}
 
+      {order.productId && (
+        <p className="mt-1 text-xs font-bold text-slate-500" data-testid="filed-hint">
+          {copy.filedHint(filedStyle?.name || order.styleName.trim() || '?')}
+        </p>
+      )}
       {(fileNotice || fileError) && (
         <p
           className={`mt-1 text-sm font-bold ${fileError ? 'text-red-700' : 'text-sky-700'}`}

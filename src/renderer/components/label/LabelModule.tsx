@@ -746,7 +746,18 @@ export default function LabelModule({ language }: LabelModuleProps) {
             onPrintingChange={handleOrderPrintingChange}
             categories={categories}
             onCategoriesChanged={refresh}
-            onProductFiled={({ categoryId }) => ensureCategoryShown(categoryId)}
+            onProductFiled={({ categoryId }) => {
+              ensureCategoryShown(categoryId);
+              // The style exists on the server now; the tab lists it after a
+              // pull, the same way an added colour arrives.
+              void syncProducts();
+            }}
+            styleById={(templateId) => {
+              const group = styleGroups.find((candidate) => candidate.key === templateId);
+              return group
+                ? { name: group.name, categoryId: group.categoryId, variants: group.variants }
+                : null;
+            }}
           />
         </div>
         <div

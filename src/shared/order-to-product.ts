@@ -233,7 +233,10 @@ export function buildProductDraft(order: LabelPrintOrder): ProductDraft {
 
   return {
     name: cleanText(order.styleName),
-    sku: base || null,
+    // The style's own SKU is the code as typed — "MOON-VE114", not "MOONVE114".
+    // The product tab prints it on the bag sticker as the style code, and a
+    // reprint must read the same as the first run. Only the row SKUs fold it.
+    sku: cleanText(order.styleCode).toUpperCase() || null,
     priceGrossGrosze: Number(order.priceGrossGrosze) || 0,
     variants,
   };
@@ -300,6 +303,38 @@ export function validateAddedCell(
   // request, and two rows for one cell would leave the till unable to say
   // which one it just sold.
   return clash ? ['ALREADY_EXISTS'] : [];
+}
+
+/** A row the catalogue already holds for the style, as the label tab has it. */
+export interface ExistingVariant {
+  id: string;
+  color_name?: string | null;
+  size_name?: string | null;
+  sku?: string | null;
+}
+
+/**
+ * The cells on the sheet the style does not have yet, as rows to add. A cell
+ * is matched by colour and size without case, the way the reprint panel
+ * refuses a duplicate; SKUs step around the ones already on the style.
+ */
+export function buildMissingVariants(
+  order: LabelPrintOrder,
+  existing: readonly ExistingVariant[],
+): ProductDraftVariant[] {
+  const fold = (value: string | null | undefined) => cleanText(String(value ?? '')).toLocaleUpperCase('pl');
+  const have = new Set(existing.map((row) => `${fold(row.color_name)}\u0000${fold(row.size_name)}`));
+  const taken = new Set(existing.map((row) => cleanText(String(row.sku ?? ''))).filter(Boolean));
+  const base = skuToken(cleanText(order.styleCode), 16);
+  const missing: ProductDraftVariant[] = [];
+  for (const variant of buildProductDraft(order).variants) {
+    if (have.has(`${fold(variant.colorName)}\u0000${fold(variant.sizeName)}`)) continue;
+    missing.push({
+      ...variant,
+      sku: buildSku(base, variant.colorName, variant.sizeName, taken),
+    });
+  }
+  return missing;
 }
 
 /**

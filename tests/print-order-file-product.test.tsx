@@ -77,6 +77,8 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
   let createProduct: ReturnType<typeof vi.fn>;
   let createCategory: ReturnType<typeof vi.fn>;
   let uploadMainImage: ReturnType<typeof vi.fn>;
+  let updateVariant: ReturnType<typeof vi.fn>;
+  let styleById: ReturnType<typeof vi.fn>;
   let saveFabricTagTemplate: ReturnType<typeof vi.fn>;
   let onCategoriesChanged: ReturnType<typeof vi.fn>;
   let onProductFiled: ReturnType<typeof vi.fn>;
@@ -92,6 +94,8 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
     }));
     saveFabricTagTemplate = vi.fn(async (template: any) => template);
     uploadMainImage = vi.fn(async () => ({ ok: true, data: {} }));
+    updateVariant = vi.fn(async () => ({ ok: true, data: {} }));
+    styleById = vi.fn(() => null);
     // No decoder in the harness: the picture is sent as it was picked.
     vi.stubGlobal('Image', class {
       onerror: (() => void) | null = null;
@@ -108,7 +112,7 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
         printPackagingSticker: vi.fn(async () => ({ success: true })),
         printFabricTag: vi.fn(async () => ({ success: true })),
         pos: {
-          productAdmin: { createProduct, createCategory, uploadMainImage },
+          productAdmin: { createProduct, createCategory, uploadMainImage, updateVariant },
           fabricTagTemplates: { save: saveFabricTagTemplate },
         },
       },
@@ -147,6 +151,7 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
           categories={categories}
           onCategoriesChanged={onCategoriesChanged}
           onProductFiled={onProductFiled}
+          styleById={styleById}
         />,
       );
     });
@@ -482,8 +487,12 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
     await act(async () => fileButton().click());
     await settle();
 
-    expect(fileButton().disabled).toBe(true);
-    await act(async () => fileButton().click());
+    // The Save button is gone: the sheet now offers Update, which never creates
+    // a second product for the same sheet.
+    expect(fileButton()).toBeNull();
+    const update = container.querySelector<HTMLButtonElement>('[data-testid="update-product"]')!;
+    expect(update).not.toBeNull();
+    await act(async () => update.click());
     await settle();
     expect(createProduct).toHaveBeenCalledTimes(1);
   });
@@ -535,5 +544,130 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
 
     expect(fileButton().disabled).toBe(false);
     expect(fileResult()).toContain('Not saved');
+  });
+
+  describe('after the sheet is a product', () => {
+    /** What the product tab holds for the filed style: the two rows created. */
+    const STYLE = {
+      name: 'KURTKA',
+      categoryId: 'cat-jackets',
+      variants: [
+        { id: 'variant-0', color_name: 'BEŻOWY', size_name: 'S', sku: 'LOT114-BEZOWY-S' },
+        { id: 'variant-1', color_name: 'BEŻOWY', size_name: 'M', sku: 'LOT114-BEZOWY-M' },
+        { id: 'variant-2', color_name: 'CZARNY', size_name: 'S', sku: 'LOT114-CZARNY-S' },
+      ],
+    };
+
+    const updateButton = () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="update-product"]')!;
+
+    async function fileSheet() {
+      await render();
+      await fillGrid();
+      await act(async () => fileButton().click());
+      await settle();
+      createProduct.mockClear();
+      styleById.mockReturnValue(STYLE);
+    }
+
+    it('offers Update instead of Save, and says which product the sheet is', async () => {
+      await fileSheet();
+      expect(fileButton()).toBeNull();
+      expect(updateButton().disabled).toBe(false);
+      expect(container.querySelector('[data-testid="filed-hint"]')?.textContent).toContain('KURTKA');
+    });
+
+    it('adds only the cells the product does not have yet', async () => {
+      await fileSheet();
+      // The empty CZARNY M cell gets a quantity; everything else is already there.
+      await changeInput(input(container, 'input[aria-label="CZARNY M"]'), '2');
+      createProduct.mockResolvedValue({ ok: true, data: { variants: [{ id: 'variant-3' }] } });
+      await act(async () => updateButton().click());
+      await settle();
+
+      expect(createProduct).toHaveBeenCalledTimes(1);
+      const payload = createProduct.mock.calls[0][0];
+      expect(payload.productId).toBe('template-1');
+      expect(payload.variants).toEqual([
+        { colorName: 'CZARNY', sizeName: 'M', sku: 'LOT114-CZARNY-M', barcode: 'LOT114-CZARNY-M', initialStockQty: 2 },
+      ]);
+      expect(saveFabricTagTemplate).toHaveBeenCalledTimes(2);
+      expect(fileResult()).toContain('1 new');
+      expect(onProductFiled).toHaveBeenLastCalledWith({ categoryId: 'cat-jackets' });
+    });
+
+    it('creates nothing when every cell is already on the product', async () => {
+      await fileSheet();
+      await act(async () => updateButton().click());
+      await settle();
+
+      expect(createProduct).not.toHaveBeenCalled();
+      expect(updateVariant).not.toHaveBeenCalled();
+      expect(fileResult()).toContain('Product updated');
+    });
+
+    it('moves the product when the sheet picked another category', async () => {
+      await fileSheet();
+      await pickCategory('cat-tracksuits');
+      await act(async () => updateButton().click());
+      await settle();
+
+      expect(updateVariant).toHaveBeenCalledTimes(1);
+      expect(updateVariant.mock.calls[0][0]).toBe('variant-0');
+      expect(updateVariant.mock.calls[0][1]).toEqual({ categoryId: 'cat-tracksuits' });
+    });
+
+    it('puts a photo added later on every row, old and new', async () => {
+      await fileSheet();
+      await changeInput(input(container, 'input[aria-label="CZARNY M"]'), '2');
+      createProduct.mockResolvedValue({ ok: true, data: { variants: [{ id: 'variant-3' }] } });
+      await pickPhoto();
+      await act(async () => updateButton().click());
+      await settle();
+
+      expect(uploadMainImage.mock.calls.map((call) => call[0])).toEqual([
+        'variant-0', 'variant-1', 'variant-2', 'variant-3',
+      ]);
+    });
+
+    it('refuses to push when the catalogue on this machine has not caught up', async () => {
+      await fileSheet();
+      styleById.mockReturnValue(null);
+      await act(async () => updateButton().click());
+      await settle();
+
+      expect(createProduct).not.toHaveBeenCalled();
+      expect(fileResult()).toContain('Sync');
+    });
+
+    it('keeps the sheet editable but never files it twice', async () => {
+      await fileSheet();
+      await act(async () => updateButton().click());
+      await settle();
+      expect(createProduct).not.toHaveBeenCalled();
+      expect(fileButton()).toBeNull();
+    });
+
+    it('lets a duplicate become a new product, keeping the photo', async () => {
+      await render();
+      await fillGrid();
+      await pickPhoto();
+      await act(async () => fileButton().click());
+      await settle();
+      await act(async () => buttonWithText(container, 'Save order').click());
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-testid="duplicate-order"]')!.click();
+      });
+
+      expect(container.querySelector('[data-testid="update-product"]')).toBeNull();
+      expect(fileButton().disabled).toBe(false);
+      expect(container.querySelector('[data-testid="order-image-preview"]')).not.toBeNull();
+      await act(async () => fileButton().click());
+      await settle();
+      expect(createProduct).toHaveBeenCalledTimes(2);
+      expect(createProduct.mock.calls[1][0].idempotencyKey).not.toBe(
+        createProduct.mock.calls[0][0].idempotencyKey,
+      );
+    });
   });
 });

@@ -14,6 +14,7 @@ const harness = vi.hoisted(() => ({
   categories: [] as any[],
   saveConfig: vi.fn(),
   refresh: vi.fn(),
+  syncProducts: vi.fn(),
 }));
 
 vi.mock('../src/renderer/hooks/useConfig', () => ({
@@ -27,7 +28,7 @@ vi.mock('../src/renderer/hooks/useProducts', () => ({
     loading: false,
     error: null,
     refresh: harness.refresh,
-    syncProducts: vi.fn(),
+    syncProducts: harness.syncProducts,
     syncing: false,
   }),
 }));
@@ -176,6 +177,8 @@ describe('LabelModule — a filed sheet reaches the product tab', () => {
     expect(harness.saveConfig).toHaveBeenCalledWith({
       labelModuleCategoryIds: ['cat-old', 'cat-jackets'],
     });
+    // And pulls the catalogue, so the style is on the tab without a trip to Sync.
+    expect(harness.syncProducts).toHaveBeenCalledTimes(1);
   });
 
   it('leaves the settings alone when the category is already shown', async () => {

@@ -4,6 +4,7 @@ import { createEmptyOrder, LabelPrintOrder } from '../src/shared/label-print-ord
 import {
   MAX_PRODUCT_VARIANTS,
   buildAddedVariant,
+  buildMissingVariants,
   buildProductDraft,
   groszeToText,
   resolveCategoryForStyle,
@@ -123,6 +124,15 @@ describe('buildProductDraft', () => {
       'LOT114-CZARNY-M',
       'LOT114-CZARNY-L',
     ]);
+  });
+
+  it('keeps the style code as typed for the style itself, folding only the rows', () => {
+    const draft = buildProductDraft(sheet([{ name: 'Czarny', quantities: [1] }], ['S'], {
+      styleCode: ' moon-ve114 ',
+    }));
+
+    expect(draft.sku).toBe('MOON-VE114');
+    expect(draft.variants[0].sku).toBe('MOONVE114-CZARNY-S');
   });
 
   it('leaves the SKU to the server when the sheet has no style code', () => {
@@ -408,5 +418,37 @@ describe('validateProductDraft — category', () => {
 
   it('does not check the category when the caller did not pass one', () => {
     expect(validateProductDraft(TWO_BY_TWO, buildProductDraft(TWO_BY_TWO))).toEqual([]);
+  });
+});
+
+describe('buildMissingVariants', () => {
+  const EXISTING = [
+    { id: 'v1', color_name: 'BEŻOWY', size_name: 'M', sku: 'LOT114-BEZOWY-M' },
+    { id: 'v2', color_name: 'czarny', size_name: 'm', sku: 'LOT114-CZARNY-M' },
+  ];
+
+  it('returns only the cells the style does not have, matched without case', () => {
+    const missing = buildMissingVariants(TWO_BY_TWO, EXISTING);
+    expect(missing.map((v) => [v.colorName, v.sizeName])).toEqual([
+      ['Beżowy', 'L'],
+      ['Czarny', 'L'],
+    ]);
+  });
+
+  it('steps around a SKU the style already carries', () => {
+    const existing = [{ id: 'v9', color_name: 'Other', size_name: 'X', sku: 'LOT114-BEZOWY-L' }];
+    const missing = buildMissingVariants(TWO_BY_TWO, existing);
+    expect(missing.find((v) => v.colorName === 'Beżowy' && v.sizeName === 'L')?.sku).toBe(
+      'LOT114-BEZOWY-L-2',
+    );
+  });
+
+  it('is empty when every cell is already there', () => {
+    const all = [
+      ...EXISTING,
+      { id: 'v3', color_name: 'BEŻOWY', size_name: 'L', sku: 'x' },
+      { id: 'v4', color_name: 'CZARNY', size_name: 'L', sku: 'y' },
+    ];
+    expect(buildMissingVariants(TWO_BY_TWO, all)).toEqual([]);
   });
 });
