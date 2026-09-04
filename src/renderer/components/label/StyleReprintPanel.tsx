@@ -43,6 +43,7 @@ import {
   readImageFile,
   uploadImageToVariants,
 } from './image-file';
+import { groszeToText, textToGrosze } from '../../../shared/order-to-product';
 
 /** One catalogue row of the style, as the label tab holds it. */
 export interface StyleVariant {
@@ -123,6 +124,12 @@ interface Copy {
   profileCategoryNone: string;
   categoryMoved: (name: string) => string;
   categoryMoveFailed: (reason: string) => string;
+  profilePrice: string;
+  priceMixed: string;
+  priceApply: string;
+  priceApplying: string;
+  priceApplied: (rows: number) => string;
+  priceFailed: (reason: string) => string;
   hide: string;
   hideConfirm: string;
   hideCancel: string;
@@ -185,6 +192,12 @@ const COPY: Record<string, Copy> = {
     profileCategoryNone: '— Chưa có nhóm —',
     categoryMoved: (name) => `Đã chuyển sang nhóm ${name}`,
     categoryMoveFailed: (reason) => `Không chuyển được nhóm: ${reason}`,
+    profilePrice: 'Giá bán (zł)',
+    priceMixed: 'các dòng đang khác giá',
+    priceApply: 'Áp cho cả kiểu',
+    priceApplying: 'Đang đổi giá…',
+    priceApplied: (rows) => `Đã đổi giá ${rows} dòng`,
+    priceFailed: (reason) => `Không đổi được giá: ${reason}`,
     hide: 'Ẩn',
     hideConfirm: 'Ẩn dòng này?',
     hideCancel: 'Thôi',
@@ -254,6 +267,12 @@ const COPY: Record<string, Copy> = {
     profileCategoryNone: '— Brak kategorii —',
     categoryMoved: (name) => `Przeniesiono do kategorii ${name}`,
     categoryMoveFailed: (reason) => `Nie udało się zmienić kategorii: ${reason}`,
+    profilePrice: 'Cena brutto (zł)',
+    priceMixed: 'wiersze mają różne ceny',
+    priceApply: 'Zastosuj do całego fasonu',
+    priceApplying: 'Zmiana ceny…',
+    priceApplied: (rows) => `Zmieniono cenę ${rows} wierszy`,
+    priceFailed: (reason) => `Nie udało się zmienić ceny: ${reason}`,
     hide: 'Ukryj',
     hideConfirm: 'Ukryć ten wiersz?',
     hideCancel: 'Anuluj',
@@ -323,6 +342,12 @@ const COPY: Record<string, Copy> = {
     profileCategoryNone: '— No category —',
     categoryMoved: (name) => `Moved to ${name}`,
     categoryMoveFailed: (reason) => `Could not move the category: ${reason}`,
+    profilePrice: 'Gross price (zł)',
+    priceMixed: 'rows differ',
+    priceApply: 'Apply to the whole style',
+    priceApplying: 'Changing the price…',
+    priceApplied: (rows) => `Price changed on ${rows} rows`,
+    priceFailed: (reason) => `Could not change the price: ${reason}`,
     hide: 'Hide',
     hideConfirm: 'Hide this row?',
     hideCancel: 'Keep',
@@ -487,6 +512,8 @@ export default function StyleReprintPanel({
   const [sizeDraft, setSizeDraft] = useState('');
   const [adding, setAdding] = useState(false);
   const [movingCategory, setMovingCategory] = useState(false);
+  const [priceText, setPriceText] = useState('');
+  const [applyingPrice, setApplyingPrice] = useState(false);
   /** The row whose Hide button was pressed once; the second press is the act. */
   const [hideArmedId, setHideArmedId] = useState<string | null>(null);
   const [hiding, setHiding] = useState(false);
@@ -557,6 +584,53 @@ export default function StyleReprintPanel({
       setStatus({ type: 'error', message: copy.categoryMoveFailed(String(err)) });
     } finally {
       setMovingCategory(false);
+    }
+  };
+
+  /** The one price the style sells at, or null when its rows disagree. */
+  const stylePriceGrosze = useMemo(() => {
+    const prices = new Set(rows.map((row) => Math.max(0, Math.floor(Number(row.retail_price) || 0))));
+    return prices.size === 1 ? [...prices][0] : null;
+  }, [rows]);
+  useEffect(() => {
+    setPriceText(stylePriceGrosze === null ? '' : groszeToText(stylePriceGrosze));
+  }, [stylePriceGrosze, templateId]);
+
+  /**
+   * One price for every row of the style. The server keeps the price on the
+   * row, so this is one PATCH per row that does not already carry it; a row
+   * that fails stops the run and is named, and the rows before it keep the
+   * new price — the catalogue pull afterwards shows exactly what happened.
+   */
+  const handleApplyPrice = async () => {
+    const grosze = textToGrosze(priceText);
+    if (grosze < 1 || applyingPrice || running) return;
+    const targets = rows.filter((row) => Math.floor(Number(row.retail_price) || 0) !== grosze);
+    if (targets.length === 0) return;
+    setApplyingPrice(true);
+    let changed = 0;
+    try {
+      const bridge = (window as any).electronAPI?.pos?.productAdmin;
+      for (const row of targets) {
+        const result = await Promise.resolve().then(() =>
+          bridge?.updateVariant?.(row.id, { priceGrossGrosze: grosze }),
+        );
+        if (!result?.ok) {
+          setStatus({
+            type: 'error',
+            message: copy.priceFailed(`${row.name}: ${result?.error || result?.code || '?'}`),
+          });
+          return;
+        }
+        changed += 1;
+      }
+      setStatus({ type: 'success', message: copy.priceApplied(changed) });
+    } catch (err) {
+      rlog.error('[StyleReprintPanel] Failed to change the price of a style:', err);
+      setStatus({ type: 'error', message: copy.priceFailed(String(err)) });
+    } finally {
+      setApplyingPrice(false);
+      if (changed > 0) await onCatalogChanged?.();
     }
   };
 
@@ -992,6 +1066,38 @@ export default function StyleReprintPanel({
                 <option key={category.id} value={category.id}>{category.name}</option>
               ))}
             </select>
+          </dd>
+          <dt className="self-center font-bold text-slate-500">{copy.profilePrice}</dt>
+          <dd className="flex flex-wrap items-center gap-2">
+            <input
+              className="h-9 w-28 rounded-md border border-slate-300 px-2 text-sm font-bold text-slate-800"
+              data-testid="style-price"
+              aria-label={copy.profilePrice}
+              inputMode="decimal"
+              value={priceText}
+              placeholder={stylePriceGrosze === null ? copy.priceMixed : '129,00'}
+              disabled={applyingPrice || running || rows.length === 0}
+              onChange={(e) => setPriceText(e.target.value)}
+              onBlur={() => { if (textToGrosze(priceText) > 0) setPriceText(groszeToText(textToGrosze(priceText))); }}
+            />
+            {stylePriceGrosze === null && (
+              <span className="text-[11px] font-semibold text-amber-700" data-testid="style-price-mixed">
+                {copy.priceMixed}
+              </span>
+            )}
+            <button
+              type="button"
+              data-testid="style-price-apply"
+              disabled={
+                applyingPrice || running || rows.length === 0
+                || textToGrosze(priceText) < 1
+                || textToGrosze(priceText) === stylePriceGrosze
+              }
+              onClick={() => void handleApplyPrice()}
+              className="rounded-md border border-slate-200 px-2 py-1 text-[11px] font-extrabold text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+            >
+              {applyingPrice ? copy.priceApplying : copy.priceApply}
+            </button>
           </dd>
         </dl>
       </section>

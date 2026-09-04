@@ -540,6 +540,80 @@ describe('StyleReprintPanel', () => {
     });
   });
 
+  describe('style price', () => {
+    const priceBox = () => container.querySelector<HTMLInputElement>('[data-testid="style-price"]')!;
+    const applyButton = () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="style-price-apply"]')!;
+    async function typePrice(value: string) {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+        setter.call(priceBox(), value);
+        priceBox().dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    }
+
+    it('shows the one price the rows carry and applies nothing until it changes', async () => {
+      await render();
+      expect(priceBox().value).toBe('129,00');
+      expect(applyButton().disabled).toBe(true);
+    });
+
+    it('writes a new price onto every row of the style, then pulls the catalogue', async () => {
+      await render();
+      await typePrice('149');
+      expect(applyButton().disabled).toBe(false);
+      await act(async () => applyButton().click());
+      await settle();
+
+      expect(updateVariant.mock.calls.map((call) => [call[0], call[1]])).toEqual([
+        ['v3', { priceGrossGrosze: 14900 }],
+        ['v2', { priceGrossGrosze: 14900 }],
+        ['v1', { priceGrossGrosze: 14900 }],
+      ]);
+      expect(onCatalogChanged).toHaveBeenCalledTimes(1);
+      expect(statusText()).toContain('3 rows');
+    });
+
+    it('skips the rows already at that price and says the rows differ', async () => {
+      await render({
+        variants: [
+          { ...VARIANTS[0], retail_price: 14900 },
+          VARIANTS[1],
+          VARIANTS[2],
+        ],
+      });
+      expect(priceBox().value).toBe('');
+      expect(container.querySelector('[data-testid="style-price-mixed"]')).not.toBeNull();
+      await typePrice('149,00');
+      await act(async () => applyButton().click());
+      await settle();
+
+      expect(updateVariant.mock.calls.map((call) => call[0])).toEqual(['v3', 'v2']);
+      expect(statusText()).toContain('2 rows');
+    });
+
+    it('stops at the row the server refuses, names it, and still pulls what changed', async () => {
+      updateVariant
+        .mockResolvedValueOnce({ ok: true, data: {} })
+        .mockResolvedValueOnce({ ok: false, error: 'stale' });
+      await render();
+      await typePrice('149');
+      await act(async () => applyButton().click());
+      await settle();
+
+      expect(updateVariant).toHaveBeenCalledTimes(2);
+      expect(statusText()).toContain('stale');
+      expect(statusText()).toContain('CZARNY / S');
+      expect(onCatalogChanged).toHaveBeenCalledTimes(1);
+    });
+
+    it('refuses a price of zero', async () => {
+      await render();
+      await typePrice('0');
+      expect(applyButton().disabled).toBe(true);
+    });
+  });
+
   describe('hiding a row', () => {
     const hideButtons = () =>
       Array.from(container.querySelectorAll<HTMLButtonElement>('[data-testid="hide-variant"]'));
