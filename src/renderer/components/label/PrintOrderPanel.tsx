@@ -932,6 +932,16 @@ export default function PrintOrderPanel({
     printInFlight.current = true;
     stopRequested.current = false;
     learnStyle();
+    // A sheet that went to the printer is a real order, so it is filed without
+    // being asked for — under the id the run is tracked by, before the first
+    // batch. Staff press Print and walk off to the ribbon; the sheet nobody
+    // pressed Save on was the one retyped when the customer ordered it again,
+    // and filing it up front also survives the app being closed on a jam. A
+    // sample is not an order and files nothing, same as it records no progress.
+    if (track) {
+      setSavedOrders(saveOrder(orderId, order));
+      setSavedNotice(true);
+    }
     onPrintingChange?.(true);
     setResult(null);
     if (track) setResume(null);

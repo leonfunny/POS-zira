@@ -712,6 +712,60 @@ describe('PrintOrderPanel', () => {
     expect(text('[data-testid="grand-total"]')).toBe('40');
   });
 
+  it('files the order by itself when it goes to the printer', async () => {
+    // Staff press Print and walk off to the ribbon; the sheet nobody pressed
+    // Save on was the one that had to be retyped when the customer reordered.
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => buttonWithText(container, 'Print').click());
+    await settle();
+
+    expect(container.querySelectorAll('[data-saved-order]')).toHaveLength(1);
+    expect(container.textContent).toContain('MOONCOLLECTION · KURTKA 114');
+    // Said out loud, so nobody presses Save on top of a sheet already filed.
+    expect(() => buttonWithText(container, 'Saved')).not.toThrow();
+
+    await act(async () => buttonWithText(container, 'New order').click());
+    await act(async () => buttonWithText(container, 'Open').click());
+    expect(text('[data-testid="grand-total"]')).toBe('40');
+  });
+
+  it('files the order before the first batch, not when the run ends', async () => {
+    // The run that matters is the one that never ends: a jam the operator walks
+    // away from, then closes the app on.
+    printSticker.mockImplementation(() => new Promise(() => {}));
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => buttonWithText(container, 'Print').click());
+    await settle();
+
+    expect(container.querySelectorAll('[data-saved-order]')).toHaveLength(1);
+  });
+
+  it('keeps a reprinted order in one saved row, not one row per run', async () => {
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () => buttonWithText(container, 'Print').click());
+    await settle();
+    await act(async () => buttonWithText(container, 'Print').click());
+    await settle();
+
+    expect(container.querySelectorAll('[data-saved-order]')).toHaveLength(1);
+  });
+
+  it('files nothing for a sample label', async () => {
+    // One label to look at is not an order; a saved row for it would tell the
+    // operator a run had been started.
+    await render();
+    await fillMinimalOrder(40);
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="print-sample"]')!.click(),
+    );
+    await settle();
+
+    expect(container.querySelectorAll('[data-saved-order]')).toHaveLength(0);
+  });
+
   it('saves an edit back into the order it was opened from', async () => {
     await render();
     await fillMinimalOrder(40);
@@ -950,8 +1004,8 @@ describe('PrintOrderPanel', () => {
     });
 
     it('belongs to one order, not to whatever is on screen', async () => {
+      // The run filed the sheet on its own, so there is nothing to press here.
       await stopAfterTheStickers();
-      await act(async () => buttonWithText(container, 'Save order').click());
       await act(async () => buttonWithText(container, 'New order').click());
       await fillMinimalOrder(10);
 
@@ -973,7 +1027,6 @@ describe('PrintOrderPanel', () => {
 
     it('is thrown away when the sheet is put aside for a new one', async () => {
       await stopAfterTheStickers();
-      await act(async () => buttonWithText(container, 'Save order').click());
       await act(async () => buttonWithText(container, 'New order').click());
       await act(async () => buttonWithText(container, 'Open').click());
 
@@ -982,7 +1035,6 @@ describe('PrintOrderPanel', () => {
 
     it('does not follow a duplicate, which has printed nothing', async () => {
       await stopAfterTheStickers();
-      await act(async () => buttonWithText(container, 'Save order').click());
       await act(async () => container.querySelector<HTMLButtonElement>(
         '[data-testid="duplicate-order"]')!.click());
 
@@ -1100,8 +1152,8 @@ describe('PrintOrderPanel', () => {
     it('belongs to the order, not to whichever sheet holds those batches', async () => {
       // A duplicate carries the same colour and size ids, so this is the one
       // case where another sheet could match the record cell for cell.
+      // The printed sheet filed itself; only the copy still needs pressing.
       await stopAfterTheStickers();
-      await act(async () => buttonWithText(container, 'Save order').click());
       await act(async () => container.querySelector<HTMLButtonElement>(
         '[data-testid="duplicate-order"]')!.click());
       await act(async () => buttonWithText(container, 'Save order').click());
