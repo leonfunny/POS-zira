@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Package, Play, Plus, Save, Trash2, X } from 'lucide-react';
+import DateField from './DateField';
 import {
   CARE_TEXT_MAX_CHARS,
   CARE_TEXT_MAX_LINES,
@@ -630,7 +631,6 @@ export default function PrintOrderPanel({
   styleByCode,
 }: Props) {
   const copy = COPY[language] || COPY.vi;
-  const dateLocale = language === 'pl' ? 'pl-PL' : language === 'en' ? 'en-GB' : 'vi-VN';
 
   // Loading a draft goes through the same gate as typing, so an order saved
   // before this rule opens in capitals like every other one.
@@ -1426,13 +1426,12 @@ export default function PrintOrderPanel({
           )}
         </Field>
         <Field label={copy.orderDate}>
-          <input
-            className={INPUT}
-            data-testid="order-date"
-            type="date"
-            lang={dateLocale}
-            value={order.orderDate ?? ''}
-            onChange={(e) => patch({ orderDate: e.target.value })}
+          <DateField
+            testId="order-date"
+            label={copy.orderDate}
+            language={language}
+            value={order.orderDate}
+            onChange={(orderDate) => patch({ orderDate })}
           />
         </Field>
         <Field label={copy.category}>

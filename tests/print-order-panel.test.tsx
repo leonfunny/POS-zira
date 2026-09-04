@@ -128,13 +128,18 @@ describe('PrintOrderPanel', () => {
     );
 
   it.each([
-    ['vi', 'vi-VN'],
-    ['pl', 'pl-PL'],
-    ['en', 'en-GB'],
-  ])('shows the order calendar in the %s tab locale', async (language, locale) => {
+    ['vi', 'tháng'],
+    ['pl', 'wrzes'],
+    ['en', ' 2'],
+  ])('shows the order calendar in the %s tab language, not the OS one', async (language, monthMark) => {
     await render(language);
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="order-date"]')!.click();
+    });
 
-    expect(input(container, '[data-testid="order-date"]').getAttribute('lang')).toBe(locale);
+    const month = container.querySelector('[data-testid="order-date-month"]')?.textContent ?? '';
+    expect(month.toLowerCase()).toContain(monthMark);
+    expect(container.querySelectorAll('[data-testid="order-date-day"]')).toHaveLength(42);
   });
 
   it('adds a size column from a suggestion and from free text', async () => {
@@ -509,13 +514,15 @@ describe('PrintOrderPanel', () => {
     expect(LONG_NAME.toUpperCase().startsWith(printed)).toBe(true);
   });
 
-  it('dates a fresh sheet today', async () => {
+  it('dates a fresh sheet today, read as day/month/year', async () => {
     await render();
     const today = new Date();
     const pad = (value: number) => String(value).padStart(2, '0');
-    expect(input(container, '[data-testid="order-date"]').value).toBe(
+    const field = container.querySelector<HTMLButtonElement>('[data-testid="order-date"]')!;
+    expect(field.dataset.value).toBe(
       `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`,
     );
+    expect(field.textContent).toContain(`${pad(today.getDate())}/${pad(today.getMonth() + 1)}/${today.getFullYear()}`);
   });
 
   it('prints the stickers and the fabric tags in one run, asking nothing', async () => {
