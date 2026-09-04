@@ -5,6 +5,7 @@ import {
   PACKAGING_STICKER_LIMITS,
   parsePackagingSticker,
   layoutPackagingStickerText,
+  stickerLinesNeeded,
 } from '../src/shared/packaging-sticker';
 
 /**
@@ -12,11 +13,13 @@ import {
  * factory (see docs/superpowers/specs/2026-09-02-label-print-order-design.md):
  *
  *   MoonCollection        <- customer
- *   KURTKA - 114          <- style name - style code
+ *   |||| || ||||          <- Code 128 of the bag code
+ *   SP006290              <- the same code, readable
+ *   KURTKA - 114          <- kind of garment - style code
  *   CAPPUCCINO            <- colour
  *
- * The former SP code and Code 128 stay behind a switch in production source,
- * but the workshop does not want either printed today.
+ * The barcode was off for a day and the owner asked for it back; the switch
+ * is kept so the decision stays one line.
  */
 const SAMPLE = {
   customerName: 'MoonCollection',
@@ -40,12 +43,12 @@ describe('parsePackagingSticker', () => {
     expect(parsed.code).toBe('SP006290');
   });
 
-  it('accepts an empty legacy code because the visible sticker no longer uses it', () => {
-    expect(parsePackagingSticker({ ...SAMPLE, code: '   ' }).code).toBe('');
+  it('needs a code, since the barcode is printed again', () => {
+    expect(() => parsePackagingSticker({ ...SAMPLE, code: '   ' })).toThrow(/code/);
   });
 
-  it('does not apply barcode symbology rules while barcode printing is disabled', () => {
-    expect(parsePackagingSticker({ ...SAMPLE, code: 'CZEKOLADĄ' }).code).toBe('CZEKOLADĄ');
+  it('refuses a code Code 128 cannot carry, here rather than at the printer', () => {
+    expect(() => parsePackagingSticker({ ...SAMPLE, code: 'CZEKOLADĄ' })).toThrow();
   });
 
   it('caps each text field so long input cannot silently overflow the sticker', () => {
@@ -78,18 +81,24 @@ describe('parsePackagingSticker', () => {
 describe('buildPackagingStickerHtml', () => {
   const html = buildPackagingStickerHtml(parsePackagingSticker(SAMPLE));
 
-  it('prints only the four details the workshop asked for', () => {
+  it('prints the five lines of the customer sample', () => {
     expect(html).toContain('MoonCollection');
     expect(html).toContain('KURTKA - 114');
     expect(html).toContain('CAPPUCCINO');
-    expect(html).not.toContain('SP006290');
+    expect(html).toContain('<div class="code">SP006290</div>');
   });
 
-  it('keeps the reversible barcode switch off and emits no barcode graphics', () => {
-    expect(PACKAGING_STICKER_BARCODE_ENABLED).toBe(false);
-    expect(html).not.toContain('<div class="barcode">');
-    expect(html).not.toContain('<svg');
-    expect(html).not.toContain('<rect ');
+  it('prints the barcode again, as the owner asked', () => {
+    expect(PACKAGING_STICKER_BARCODE_ENABLED).toBe(true);
+    expect(html).toContain('<div class="barcode">');
+    expect(html).toContain('<svg');
+  });
+
+  it('clips inside a box the print path honours, never onto a second label', () => {
+    // overflow on the body is ignored when printing; the excess became page two.
+    expect(html).toMatch(/\.sheet \{[^}]*overflow:hidden/);
+    expect(html).toMatch(/\.sheet \{[^}]*justify-content:safe center/);
+    expect(html).toContain('<div class="sheet">');
   });
 
   it('sets the page box to the configured label size so the driver cannot rescale', () => {
@@ -159,13 +168,27 @@ describe('long text has to fit the label, not run off it', () => {
     expect(html).toContain('word-break:break-word');
   });
 
-  it('steps the type down until the wrapped text fits the space left', () => {
+  it('steps the type down as far as the head can resolve when nothing else fits', () => {
+    // Three forty-character lines and a code do not fit a 50x30 under a
+    // barcode at any legible size. The type stops at the floor and the tail is
+    // clipped inside the label — the estimate says so instead of pretending.
     const layout = layoutPackagingStickerText(worst());
-    expect(layout.textMm).toBeLessThanOrEqual(layout.budgetMm);
-    expect(layout.customerPt).toBeLessThan(12);
+    expect(layout.customerPt).toBe(5);
+    expect(layout.textMm).toBeGreaterThan(layout.budgetMm);
   });
 
-  it('leaves a sticker that already fits at full size', () => {
+  it('steps the type down until a long colour fits, and no further', () => {
+    const layout = layoutPackagingStickerText(parsePackagingSticker({
+      ...worst(),
+      styleName: 'KOMPLETY DRESOWE',
+      colorName: 'CZARNY Z BIAŁYM PASKIEM I KAPTUREM',
+    }));
+    expect(layout.textMm).toBeLessThanOrEqual(layout.budgetMm);
+    expect(layout.colorPt).toBeLessThan(6.5);
+    expect(layout.colorPt).toBeGreaterThan(5);
+  });
+
+  it('leaves a sticker that already fits at the sample sizes', () => {
     const layout = layoutPackagingStickerText(parsePackagingSticker({
       customerName: 'New Fashion',
       styleName: 'KURTKA',
@@ -175,10 +198,26 @@ describe('long text has to fit the label, not run off it', () => {
       widthMm: 50,
       heightMm: 30,
     }));
-    expect(layout.customerPt).toBeGreaterThan(10);
-    expect(layout.stylePt).toBeGreaterThan(14);
-    expect(layout.colorPt).toBeGreaterThan(12);
+    expect(layout.customerPt).toBe(6.5);
+    expect(layout.stylePt).toBe(6.5);
+    expect(layout.colorPt).toBe(6.5);
     expect(layout.textMm).toBeLessThanOrEqual(layout.budgetMm);
+  });
+
+  it('fits the sticker that came out on two labels, on one', () => {
+    // 04/09: MOONCOLLECTION / KOMPLETY DRESOWE - 115 / CZARNY at 50x30 measured
+    // as fitting and printed as five wrapped lines across two labels.
+    const layout = layoutPackagingStickerText(parsePackagingSticker({
+      customerName: 'MOONCOLLECTION',
+      styleName: 'KOMPLETY DRESOWE',
+      styleCode: '115',
+      colorName: 'CZARNY',
+      code: 'SP123456',
+      widthMm: 50,
+      heightMm: 30,
+    }));
+    expect(layout.textMm).toBeLessThanOrEqual(layout.budgetMm);
+    expect(layout.stylePt).toBe(6.5);
   });
 
   it('never shrinks below what the print head can resolve', () => {
@@ -196,6 +235,16 @@ describe('long text has to fit the label, not run off it', () => {
     for (const pt of [layout.customerPt, layout.codePt, layout.stylePt, layout.colorPt]) {
       expect(pt).toBeGreaterThanOrEqual(5);
     }
+  });
+
+  it('counts lines the way the browser breaks them: at spaces, then anywhere', () => {
+    // Bold capitals at 17.4pt in 45mm hold about ten characters a line.
+    expect(stickerLinesNeeded('KOMPLETY DRESOWE - 115', 17.4, 45)).toBe(3);
+    expect(stickerLinesNeeded('KOMPLETY DRESOWE - 115', 6.5, 45)).toBe(1);
+    // One word longer than the line is broken inside, after moving down.
+    expect(stickerLinesNeeded('MOONCOLLECTION', 17.4, 45)).toBe(2);
+    expect(stickerLinesNeeded('AB MOONCOLLECTION', 17.4, 45)).toBe(3);
+    expect(stickerLinesNeeded('', 10, 45)).toBe(0);
   });
 
   it('puts the sizes it decided into the stylesheet it prints', () => {

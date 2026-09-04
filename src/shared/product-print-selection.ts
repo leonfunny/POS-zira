@@ -119,8 +119,8 @@ export function buildSelectionOrder(input: SelectionInput): LabelPrintOrder {
       row = {
         id: `sel-color-${rowByColor.size}`,
         colorName,
-        // The packaging barcode is off, and a reprint has no sheet to take a
-        // customer code from. The sticker prints its four text lines regardless.
+        // A reprint has no sheet to take a bag code from; the print plan fills
+        // a blank one from the style code and colour, the same way every time.
         code: '',
         quantities: {},
       };

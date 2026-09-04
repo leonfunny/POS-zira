@@ -277,6 +277,22 @@ export function randomStickerCode(random: () => number = Math.random): string {
   return `SP${String(digits).padStart(6, '0')}`;
 }
 
+/**
+ * The bag code for a row that has none: a sheet saved before codes were
+ * filled in, or a reprint from the product tab, which has no sheet to take one
+ * from. Same shape as a typed code, and the same every time for the same
+ * style and colour, so a reprint's barcode matches the last reprint's.
+ */
+export function fallbackStickerCode(styleCode: string, colorName: string): string {
+  const key = `${styleCode.trim()}|${colorName.trim()}`.toLocaleUpperCase('pl');
+  let hash = 2166136261;
+  for (let index = 0; index < key.length; index += 1) {
+    hash ^= key.charCodeAt(index);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return `SP${String(hash % 1_000_000).padStart(6, '0')}`;
+}
+
 export function createEmptyOrder(): LabelPrintOrder {
   return {
     customerName: '',
@@ -523,7 +539,7 @@ export function buildPrintPlan(
 
   if (order.printStickers) {
     for (const row of order.rows) {
-      const code = row.code.trim();
+      const code = row.code.trim() || fallbackStickerCode(order.styleCode, row.colorName);
 
       // One sticker per colour, covering every size in that row. The sticker
       // goes on the bag, and a bag holds mixed sizes — a size printed on it

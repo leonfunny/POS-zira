@@ -14,6 +14,7 @@ import {
   validateOrder,
   orderWarnings,
   randomStickerCode,
+  fallbackStickerCode,
   todayIsoDate,
   stickerGarmentType,
   CARE_TEXT_MAX_CHARS,
@@ -165,16 +166,16 @@ describe('validateOrder', () => {
     expect(validateOrder(order)).toContain('EMPTY_SIZE');
   });
 
-  it('does not treat the dormant sticker code as required', () => {
+  it('does not require a bag code: a blank one is filled at print time', () => {
     const order = sampleOrder();
     order.rows[1].code = '';
     expect(validateOrder(order)).toEqual([]);
   });
 
-  it('does not apply barcode symbology rules while barcode printing is disabled', () => {
+  it('reports a bag code Code 128 cannot carry', () => {
     const order = sampleOrder();
     order.rows[0].code = 'CZEKOLADĄ';
-    expect(validateOrder(order)).not.toContain('BAD_CODE');
+    expect(validateOrder(order)).toContain('BAD_CODE');
   });
 
   it('reports a run larger than the documented cap', () => {
@@ -208,13 +209,17 @@ describe('buildPrintPlan', () => {
     expect(stickers[0]).toMatchObject({ quantity: 100 }); // 40 S + 60 M
   });
 
-  it('prints a colour even when its dormant barcode code is empty', () => {
+  it('prints a colour with no bag code under a code made from style and colour', () => {
     const order = sampleOrder();
     order.rows[1].code = '   ';
     const plan = buildPrintPlan(order);
     const stickers = plan.filter((s) => s.kind === 'sticker');
     expect(stickers).toHaveLength(2);
-    expect(stickers[1]).toMatchObject({ colorName: 'BORDO', code: '', quantity: 20 });
+    expect(stickers[1]).toMatchObject({
+      colorName: 'BORDO',
+      code: fallbackStickerCode(order.styleCode, 'BORDO'),
+      quantity: 20,
+    });
     expect(plan.filter((s) => s.kind === 'fabric' && s.rowId === 'r2')).toHaveLength(1);
   });
 
@@ -432,11 +437,31 @@ describe('one of each, to look at before the ribbon is committed', () => {
       .toEqual(['sticker']);
   });
 
-  it('takes the sticker from the first colour even when its dormant code is empty', () => {
+  it('takes the sticker from the first colour even when its code is empty', () => {
     const order = sampleOrder();
     order.rows[0].code = '   ';
     const sticker = buildSamplePlan(order).find((s) => s.kind === 'sticker');
-    expect(sticker).toMatchObject({ colorName: order.rows[0].colorName, code: '' });
+    expect(sticker).toMatchObject({
+      colorName: order.rows[0].colorName,
+      code: fallbackStickerCode(order.styleCode, order.rows[0].colorName),
+    });
+  });
+
+  describe('fallbackStickerCode', () => {
+    it('has the shape of a typed code and Code 128 can carry it', () => {
+      const code = fallbackStickerCode('114', 'CZARNY');
+      expect(code).toMatch(/^SP\d{6}$/);
+      expect(() => encodeCode128(code)).not.toThrow();
+    });
+
+    it('is the same for the same style and colour however they are typed', () => {
+      expect(fallbackStickerCode('114', 'czarny ')).toBe(fallbackStickerCode(' 114', 'CZARNY'));
+    });
+
+    it('differs between colours of one style, and between styles of one colour', () => {
+      expect(fallbackStickerCode('114', 'CZARNY')).not.toBe(fallbackStickerCode('114', 'BORDO'));
+      expect(fallbackStickerCode('114', 'CZARNY')).not.toBe(fallbackStickerCode('115', 'CZARNY'));
+    });
   });
 
   it('has nothing to show for an order with no colours or no sizes', () => {

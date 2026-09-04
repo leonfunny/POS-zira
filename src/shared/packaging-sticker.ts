@@ -2,21 +2,27 @@
  * Packaging sticker for the garment factory: the paper label stuck on the bag,
  * printed on the Honeywell PC42E-D through its Windows driver.
  *
- * The current workshop layout deliberately prints only the four details staff
- * use to identify a bag:
+ * Layout mirrors the sticker the customer already supplies, so the factory can
+ * keep using one design across both sources:
  *
  *   MoonCollection      customer / brand line
- *   KURTKA - 114        style name - style code
+ *   |||| || ||||        Code 128 of the bag code (SP006290)
+ *   SP006290            the same code, human readable
+ *   KURTKA - 114        kind of garment - style code
  *   CAPPUCCINO          colour
  *
- * The former customer code (`SP…`) and Code 128 implementation are retained
- * behind the switch below so they can be restored without reconstructing the
- * old print path.
+ * The bag code has no reader in the workshop; it is kept because the owner
+ * wants the sticker to look like the one the customer sends. Every line is in
+ * capitals, bold — the width estimate below is tuned for that, not for the
+ * mixed case a body-text average would assume.
  */
 import { code128Svg, encodeCode128 } from './code128';
 
-/** Temporary owner decision: keep the old barcode path, but do not print it. */
-export const PACKAGING_STICKER_BARCODE_ENABLED = false;
+/**
+ * The barcode was switched off for a day (03/09) to give the text the space;
+ * the owner asked for the old layout back once he saw it. One switch either way.
+ */
+export const PACKAGING_STICKER_BARCODE_ENABLED = true;
 
 export const PACKAGING_STICKER_LIMITS = {
   /** Long enough for "MoonCollection" or a two-word colour, short enough to fit. */
@@ -120,15 +126,46 @@ function esc(value: string): string {
 
 /** Build the standalone HTML document handed to the Windows print path. */
 const MM_PER_PT = 25.4 / 72;
-/** Arial's average advance across mixed-case Latin text is close to 0.55 em. */
-const AVG_CHAR_EM = 0.55;
+/**
+ * Arial Bold, capitals: the average advance is about 0.72 em. The 0.55 em of
+ * mixed-case body text was used here once, and a sticker it measured as
+ * fitting came out of the printer on two labels with its first line lost.
+ */
+const AVG_CHAR_EM = 0.72;
 /** Below this the thermal head stops resolving the strokes at 203 dpi. */
 const MIN_TEXT_PT = 5;
 const LINE_HEIGHT = 1.2;
 
-function linesNeeded(text: string, pt: number, usableMm: number): number {
+/**
+ * How many lines a row takes, the way the browser breaks it: at spaces when a
+ * word fits, anywhere inside a word that does not. Counting characters alone
+ * says two lines for "KOMPLETY DRESOWE - 115" where the printer makes three.
+ */
+export function stickerLinesNeeded(text: string, pt: number, usableMm: number): number {
   if (!text) return 0;
-  return Math.max(1, Math.ceil((text.length * pt * MM_PER_PT * AVG_CHAR_EM) / usableMm));
+  const charMm = pt * MM_PER_PT * AVG_CHAR_EM;
+  const perLine = Math.max(1, Math.floor(usableMm / charMm));
+  let lines = 1;
+  let used = 0;
+  for (const word of text.split(' ')) {
+    const width = word.length;
+    if (width === 0) continue;
+    if (width > perLine) {
+      // Too long for any line: moved to a fresh one, then broken anywhere.
+      if (used) lines += 1;
+      lines += Math.ceil(width / perLine) - 1;
+      used = width % perLine || perLine;
+      continue;
+    }
+    const needed = used ? used + 1 + width : width;
+    if (needed > perLine) {
+      lines += 1;
+      used = width;
+    } else {
+      used = needed;
+    }
+  }
+  return lines;
 }
 
 /**
@@ -150,11 +187,12 @@ function stickerGeometry(sticker: PackagingSticker) {
     barcodeHeightMm,
     usableMm: w - padX * 2,
     budgetMm: h - padY * 2 - barcodeHeightMm - barcodeGapsMm,
+    // The sizes of the customer's own sticker, which the workshop reads fine.
     base: {
-      customerPt: clamp(h * 0.4, 10, 16),
+      customerPt: clamp(h * 0.115, 6.5, 11),
       codePt: clamp(h * 0.105, 6, 10),
-      stylePt: clamp(h * 0.58, 13, 22),
-      colorPt: clamp(h * 0.5, 12, 20),
+      stylePt: clamp(h * 0.12, 6.5, 11.5),
+      colorPt: clamp(h * 0.115, 6.5, 11),
     },
   };
 }
@@ -196,7 +234,7 @@ export function layoutPackagingStickerText(
 
   const heightAt = (scale: number) => rows.reduce((sum, [text, pt]) => {
     const size = Math.max(MIN_TEXT_PT, pt * scale);
-    return sum + linesNeeded(text, size, usableMm) * size * MM_PER_PT * LINE_HEIGHT;
+    return sum + stickerLinesNeeded(text, size, usableMm) * size * MM_PER_PT * LINE_HEIGHT;
   }, 0);
 
   let scale = 1;
@@ -222,8 +260,6 @@ export function buildPackagingStickerHtml(sticker: PackagingSticker): string {
   const { padX, padY, barcodeHeightMm } = stickerGeometry(sticker);
   const { customerPt, codePt, stylePt, colorPt } = layoutPackagingStickerText(sticker);
 
-  // Barcode rendering is intentionally kept intact behind one reversible
-  // switch. The owner currently wants the space used for larger text instead.
   const barcodeRows: string[] = [];
   if (PACKAGING_STICKER_BARCODE_ENABLED) {
     // A narrow module of ~0.25mm prints crisply at 203 dpi (2 dots).
@@ -269,17 +305,25 @@ body {
   width:${w}mm;
   height:${h}mm;
   font-family: Arial, "Segoe UI", Helvetica, sans-serif;
-  padding:${padY.toFixed(2)}mm ${padX.toFixed(2)}mm;
   color:#000;
   background:#fff;
+  -webkit-print-color-adjust:exact;
+  print-color-adjust:exact;
+}
+/* The clip lives on a box inside the body: print ignores overflow on the body
+   itself and pages the excess onto a second label. "safe center" keeps the
+   first line on the label when the estimate is still short — the tail is cut,
+   not the head. */
+.sheet {
+  width:${w}mm;
+  height:${h}mm;
+  padding:${padY.toFixed(2)}mm ${padX.toFixed(2)}mm;
   overflow:hidden;
   display:flex;
   flex-direction:column;
   align-items:center;
-  justify-content:center;
+  justify-content:safe center;
   text-align:center;
-  -webkit-print-color-adjust:exact;
-  print-color-adjust:exact;
 }
 .customer { font-size:${customerPt.toFixed(1)}pt; font-weight:800; line-height:1.1; }
 .barcode { margin:${(padY * 0.6).toFixed(2)}mm 0 0; line-height:0; }
@@ -287,9 +331,9 @@ body {
 .code { font-size:${codePt.toFixed(1)}pt; font-weight:600; line-height:1.2; letter-spacing:0.4px; }
 .style { font-size:${stylePt.toFixed(1)}pt; font-weight:700; line-height:1.2; margin-top:${(padY * 0.5).toFixed(2)}mm; }
 .color { font-size:${colorPt.toFixed(1)}pt; font-weight:700; line-height:1.2; }
-</style></head><body>
+</style></head><body><div class="sheet">
 ${rows}
-</body></html>`;
+</div></body></html>`;
 }
 
 function clamp(value: number, min: number, max: number): number {
