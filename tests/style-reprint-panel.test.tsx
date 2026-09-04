@@ -50,7 +50,9 @@ describe('StyleReprintPanel', () => {
   let getTemplate: ReturnType<typeof vi.fn>;
   let saveTemplate: ReturnType<typeof vi.fn>;
   let createProduct: ReturnType<typeof vi.fn>;
-  let onVariantsAdded: ReturnType<typeof vi.fn>;
+  let updateVariant: ReturnType<typeof vi.fn>;
+  let deactivateVariant: ReturnType<typeof vi.fn>;
+  let onCatalogChanged: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     container = document.createElement('div');
@@ -60,7 +62,9 @@ describe('StyleReprintPanel', () => {
     getTemplate = vi.fn(async () => TAG);
     saveTemplate = vi.fn(async (template: any) => template);
     createProduct = vi.fn(async () => ({ ok: true, data: { variants: [{ id: 'v-new' }] } }));
-    onVariantsAdded = vi.fn(async () => undefined);
+    updateVariant = vi.fn(async () => ({ ok: true, data: { variant: { id: 'v1' } } }));
+    deactivateVariant = vi.fn(async () => ({ ok: true, data: { variant: { id: 'v1' } } }));
+    onCatalogChanged = vi.fn(async () => undefined);
     Object.defineProperty(window, 'electronAPI', {
       configurable: true,
       writable: true,
@@ -69,7 +73,7 @@ describe('StyleReprintPanel', () => {
         printFabricTag,
         pos: {
           fabricTagTemplates: { get: getTemplate, save: saveTemplate },
-          productAdmin: { createProduct },
+          productAdmin: { createProduct, updateVariant, deactivateVariant },
         },
       },
     });
@@ -85,7 +89,12 @@ describe('StyleReprintPanel', () => {
     vi.unstubAllGlobals();
   });
 
-  async function render() {
+  const CATEGORIES = [
+    { id: 'cat-tracksuits', name: 'Komplety dresowe' },
+    { id: 'cat-jackets', name: 'Kurtki' },
+  ];
+
+  async function render(overrides: Partial<Parameters<typeof StyleReprintPanel>[0]> = {}) {
     await act(async () => {
       root = createRoot(container);
       root.render(
@@ -95,7 +104,10 @@ describe('StyleReprintPanel', () => {
           styleName="KOMPLET DRESOWY"
           styleCode="115"
           variants={VARIANTS}
-          onVariantsAdded={onVariantsAdded}
+          categoryId="cat-tracksuits"
+          categories={CATEGORIES}
+          onCatalogChanged={onCatalogChanged}
+          {...overrides}
         />,
       );
     });
@@ -395,7 +407,7 @@ describe('StyleReprintPanel', () => {
     ]);
 
     // The row exists on the server; it reaches the list on screen through a sync.
-    expect(onVariantsAdded).toHaveBeenCalledTimes(1);
+    expect(onCatalogChanged).toHaveBeenCalledTimes(1);
     expect(statusText()).toContain('Added ZIELONY / L');
   });
 
@@ -420,7 +432,7 @@ describe('StyleReprintPanel', () => {
     await settle();
 
     expect(statusText()).toContain('VARIANT_COMBINATION_EXISTS');
-    expect(onVariantsAdded).not.toHaveBeenCalled();
+    expect(onCatalogChanged).not.toHaveBeenCalled();
     expect(
       container.querySelector<HTMLInputElement>('[data-testid="add-color"]')!.value,
     ).toBe('ZIELONY');
@@ -450,5 +462,104 @@ describe('StyleReprintPanel', () => {
 
     expect(container.querySelector('[data-testid="style-reprint"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="reprint-no-tag"]')).not.toBeNull();
+  });
+
+  describe('style profile', () => {
+    const categorySelect = () =>
+      container.querySelector<HTMLSelectElement>('[data-testid="style-category"]')!;
+
+    async function pick(id: string) {
+      const select = categorySelect();
+      await act(async () => {
+        select.value = id;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      await settle();
+    }
+
+    it('shows the style as the catalogue holds it', async () => {
+      await render();
+      expect(container.querySelector('[data-testid="profile-name"]')?.textContent).toBe('KOMPLET DRESOWY');
+      expect(container.querySelector('[data-testid="profile-code"]')?.textContent).toBe('115');
+      expect(categorySelect().value).toBe('cat-tracksuits');
+    });
+
+    it('moves the whole style through one of its rows and pulls the catalogue', async () => {
+      await render();
+      await pick('cat-jackets');
+
+      expect(updateVariant).toHaveBeenCalledTimes(1);
+      expect(updateVariant.mock.calls[0][0]).toBe('v3'); // the first row as sorted
+      expect(updateVariant.mock.calls[0][1]).toEqual({ categoryId: 'cat-jackets' });
+      expect(onCatalogChanged).toHaveBeenCalledTimes(1);
+      expect(statusText()).toContain('Kurtki');
+    });
+
+    it('does nothing when the same category is picked again', async () => {
+      await render();
+      await pick('cat-tracksuits');
+      expect(updateVariant).not.toHaveBeenCalled();
+    });
+
+    it('reports a refused move and leaves the catalogue alone', async () => {
+      updateVariant.mockResolvedValue({ ok: false, error: 'stale' });
+      await render();
+      await pick('cat-jackets');
+
+      expect(statusText()).toContain('stale');
+      expect(onCatalogChanged).not.toHaveBeenCalled();
+      // Controlled by the catalogue, so the select shows what is still true.
+      expect(categorySelect().value).toBe('cat-tracksuits');
+    });
+  });
+
+  describe('hiding a row', () => {
+    const hideButtons = () =>
+      Array.from(container.querySelectorAll<HTMLButtonElement>('[data-testid="hide-variant"]'));
+
+    it('takes two presses, and the first can be taken back', async () => {
+      await render();
+      expect(hideButtons()).toHaveLength(3);
+      await act(async () => hideButtons()[0].click());
+      expect(container.querySelector('[data-testid="hide-confirm"]')).not.toBeNull();
+      expect(deactivateVariant).not.toHaveBeenCalled();
+
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-testid="hide-cancel"]')!.click();
+      });
+      expect(container.querySelector('[data-testid="hide-confirm"]')).toBeNull();
+      expect(deactivateVariant).not.toHaveBeenCalled();
+    });
+
+    it('deactivates the row on the second press and pulls the catalogue', async () => {
+      await render();
+      const target = hideButtons().find((button) => button.dataset.variantId === 'v2')!;
+      await act(async () => target.click());
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-testid="hide-confirm"]')!.click();
+      });
+      await settle();
+
+      expect(deactivateVariant).toHaveBeenCalledTimes(1);
+      expect(deactivateVariant.mock.calls[0][0]).toBe('v2');
+      expect(deactivateVariant.mock.calls[0][1]).toMatchObject({ reason: expect.any(String) });
+      expect(onCatalogChanged).toHaveBeenCalledTimes(1);
+      expect(statusText()).toContain('CZARNY / S');
+    });
+
+    it('reports a refused hide and keeps the row', async () => {
+      deactivateVariant.mockResolvedValue({ ok: false, code: 'VARIANT_IN_USE' });
+      await render();
+      await act(async () => hideButtons()[0].click());
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-testid="hide-confirm"]')!.click();
+      });
+      await settle();
+
+      expect(statusText()).toContain('VARIANT_IN_USE');
+      expect(onCatalogChanged).not.toHaveBeenCalled();
+      expect(hideButtons()).toHaveLength(2);
+      expect(container.querySelector('[data-testid="hide-confirm"]')).not.toBeNull();
+    });
   });
 });

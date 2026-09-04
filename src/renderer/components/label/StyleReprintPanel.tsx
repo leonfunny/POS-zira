@@ -21,6 +21,7 @@ import {
   buildAddedVariant,
   validateAddedCell,
   type AddedCellProblem,
+  type CategoryChoice,
 } from '../../../shared/order-to-product';
 import {
   SelectionInput,
@@ -53,13 +54,18 @@ interface Props {
   styleName: string;
   styleCode: string;
   variants: readonly StyleVariant[];
+  /** The category the style sits in, as the catalogue holds it. */
+  categoryId?: string | null;
+  /** The salon's categories, for moving the style to another one. */
+  categories?: readonly CategoryChoice[];
   onPrintingChange?: (printing: boolean) => void;
   /**
-   * Pull the catalogue again after a colour is added. The rows on screen come
-   * from the local mirror, and a row written on the server is not one of them
-   * until the next sync.
+   * Pull the catalogue again after this panel wrote to it — a colour added, a
+   * row hidden, the category moved. The rows on screen come from the local
+   * mirror, and a change written on the server is not in them until the next
+   * sync.
    */
-  onVariantsAdded?: () => void | Promise<unknown>;
+  onCatalogChanged?: () => void | Promise<unknown>;
 }
 
 interface Copy {
@@ -91,6 +97,19 @@ interface Copy {
   tagSaveFailed: string;
   tagCompositionKept: (line: string) => string;
   addTitle: string;
+  profileTitle: string;
+  profileName: string;
+  profileNameHint: string;
+  profileCode: string;
+  profileCategory: string;
+  profileCategoryNone: string;
+  categoryMoved: (name: string) => string;
+  categoryMoveFailed: (reason: string) => string;
+  hide: string;
+  hideConfirm: string;
+  hideCancel: string;
+  hideDone: (colorName: string, sizeName: string) => string;
+  hideFailed: (reason: string) => string;
   addColor: string;
   addSize: string;
   addButton: string;
@@ -132,6 +151,19 @@ const COPY: Record<string, Copy> = {
     tagSaveFailed: 'Không lưu được nội dung tem vải',
     tagCompositionKept: (line) => `Giữ nguyên dòng chất liệu đã lưu: ${line}`,
     addTitle: 'Thêm màu / size',
+    profileTitle: 'Hồ sơ kiểu',
+    profileName: 'Tên hàng',
+    profileNameHint: 'Đổi tên trên bảng điều khiển web — tên các dòng màu đi theo tên kiểu',
+    profileCode: 'Mã hàng',
+    profileCategory: 'Nhóm',
+    profileCategoryNone: '— Chưa có nhóm —',
+    categoryMoved: (name) => `Đã chuyển sang nhóm ${name}`,
+    categoryMoveFailed: (reason) => `Không chuyển được nhóm: ${reason}`,
+    hide: 'Ẩn',
+    hideConfirm: 'Ẩn dòng này?',
+    hideCancel: 'Thôi',
+    hideDone: (colorName, sizeName) => `Đã ẩn ${[colorName, sizeName].filter(Boolean).join(' / ')}`,
+    hideFailed: (reason) => `Không ẩn được: ${reason}`,
     addColor: 'Màu',
     addSize: 'Size',
     addButton: 'Thêm vào mẫu này',
@@ -179,6 +211,19 @@ const COPY: Record<string, Copy> = {
     tagSaveFailed: 'Nie udało się zapisać treści metki',
     tagCompositionKept: (line) => `Zapisany skład pozostaje bez zmian: ${line}`,
     addTitle: 'Dodaj kolor / rozmiar',
+    profileTitle: 'Karta modelu',
+    profileName: 'Nazwa modelu',
+    profileNameHint: 'Nazwę zmienia się w panelu web — nazwy kolorów idą za nazwą modelu',
+    profileCode: 'Kod modelu',
+    profileCategory: 'Kategoria',
+    profileCategoryNone: '— Brak kategorii —',
+    categoryMoved: (name) => `Przeniesiono do kategorii ${name}`,
+    categoryMoveFailed: (reason) => `Nie udało się zmienić kategorii: ${reason}`,
+    hide: 'Ukryj',
+    hideConfirm: 'Ukryć ten wiersz?',
+    hideCancel: 'Anuluj',
+    hideDone: (colorName, sizeName) => `Ukryto ${[colorName, sizeName].filter(Boolean).join(' / ')}`,
+    hideFailed: (reason) => `Nie udało się ukryć: ${reason}`,
     addColor: 'Kolor',
     addSize: 'Rozmiar',
     addButton: 'Dodaj do tego modelu',
@@ -226,6 +271,19 @@ const COPY: Record<string, Copy> = {
     tagSaveFailed: 'Could not save the fabric tag content',
     tagCompositionKept: (line) => `Keeping the stored composition line: ${line}`,
     addTitle: 'Add a colour or size',
+    profileTitle: 'Style profile',
+    profileName: 'Style name',
+    profileNameHint: 'Rename on the web dashboard — the colour rows follow the style name',
+    profileCode: 'Style code',
+    profileCategory: 'Category',
+    profileCategoryNone: '— No category —',
+    categoryMoved: (name) => `Moved to ${name}`,
+    categoryMoveFailed: (reason) => `Could not move the category: ${reason}`,
+    hide: 'Hide',
+    hideConfirm: 'Hide this row?',
+    hideCancel: 'Keep',
+    hideDone: (colorName, sizeName) => `Hidden ${[colorName, sizeName].filter(Boolean).join(' / ')}`,
+    hideFailed: (reason) => `Could not hide: ${reason}`,
     addColor: 'Colour',
     addSize: 'Size',
     addButton: 'Add to this style',
@@ -303,8 +361,10 @@ export default function StyleReprintPanel({
   styleName,
   styleCode,
   variants,
+  categoryId = null,
+  categories = [],
   onPrintingChange,
-  onVariantsAdded,
+  onCatalogChanged,
 }: Props) {
   const copy = COPY[language] || COPY.vi;
   const [quantities, setQuantities] = useState<Record<string, number>>({});
@@ -376,6 +436,78 @@ export default function StyleReprintPanel({
   const [colorDraft, setColorDraft] = useState('');
   const [sizeDraft, setSizeDraft] = useState('');
   const [adding, setAdding] = useState(false);
+  const [movingCategory, setMovingCategory] = useState(false);
+  /** The row whose Hide button was pressed once; the second press is the act. */
+  const [hideArmedId, setHideArmedId] = useState<string | null>(null);
+  const [hiding, setHiding] = useState(false);
+
+  useEffect(() => {
+    setHideArmedId(null);
+  }, [templateId]);
+
+  /**
+   * Move the whole style to another category. Written through one of its rows
+   * because that is the endpoint there is; the server keeps the category on
+   * the template, so every row follows.
+   */
+  const handleMoveCategory = async (nextId: string) => {
+    const target = categories.find((category) => category.id === nextId);
+    const anchor = rows[0];
+    if (!target || !anchor || movingCategory || target.id === categoryId) return;
+    setMovingCategory(true);
+    try {
+      const bridge = (window as any).electronAPI?.pos?.productAdmin;
+      const result = await Promise.resolve().then(() =>
+        bridge?.updateVariant?.(anchor.id, { categoryId: target.id }),
+      );
+      if (!result?.ok) {
+        setStatus({
+          type: 'error',
+          message: copy.categoryMoveFailed(result?.error || result?.code || '?'),
+        });
+        return;
+      }
+      setStatus({ type: 'success', message: copy.categoryMoved(target.name) });
+      await onCatalogChanged?.();
+    } catch (err) {
+      rlog.error('[StyleReprintPanel] Failed to move the style to a category:', err);
+      setStatus({ type: 'error', message: copy.categoryMoveFailed(String(err)) });
+    } finally {
+      setMovingCategory(false);
+    }
+  };
+
+  /**
+   * Hide one colour/size row. Deactivated on the server rather than deleted:
+   * tags may already have been printed for it, and a sale may reference it.
+   * Two presses, because the row sits next to a quantity box and a slip here
+   * would take a colour off the till.
+   */
+  const handleHide = async (variant: StyleVariant) => {
+    if (hiding) return;
+    setHiding(true);
+    try {
+      const bridge = (window as any).electronAPI?.pos?.productAdmin;
+      const result = await Promise.resolve().then(() =>
+        bridge?.deactivateVariant?.(variant.id, { reason: 'Hidden from the label tab' }),
+      );
+      if (!result?.ok) {
+        setStatus({ type: 'error', message: copy.hideFailed(result?.error || result?.code || '?') });
+        return;
+      }
+      setHideArmedId(null);
+      setStatus({
+        type: 'success',
+        message: copy.hideDone((variant.color_name || '').trim(), (variant.size_name || '').trim()),
+      });
+      await onCatalogChanged?.();
+    } catch (err) {
+      rlog.error('[StyleReprintPanel] Failed to hide a row:', err);
+      setStatus({ type: 'error', message: copy.hideFailed(String(err)) });
+    } finally {
+      setHiding(false);
+    }
+  };
   const addKeyRef = useRef<string | null>(null);
 
   /**
@@ -610,7 +742,7 @@ export default function StyleReprintPanel({
       setSizeDraft('');
       setStatus({ type: 'success', message: copy.addDone(cell.colorName, cell.sizeName) });
       // The row exists on the server now; it reaches this list through a sync.
-      await onVariantsAdded?.();
+      await onCatalogChanged?.();
     } catch (err) {
       rlog.error('[StyleReprintPanel] Failed to add a colour or size:', err);
       setStatus({ type: 'error', message: copy.addFailed(String(err)) });
@@ -700,6 +832,37 @@ export default function StyleReprintPanel({
           {copy.noTagContent}
         </div>
       )}
+
+      <section className="rounded-lg border border-slate-200 px-3 py-2" data-testid="style-profile">
+        <div className="mb-2 text-xs font-extrabold uppercase tracking-wide text-slate-400">
+          {copy.profileTitle}
+        </div>
+        <dl className="grid gap-x-4 gap-y-1 text-sm sm:grid-cols-[auto_1fr]">
+          <dt className="font-bold text-slate-500">{copy.profileName}</dt>
+          <dd className="font-bold text-slate-800">
+            <span data-testid="profile-name">{styleName}</span>
+            <span className="ml-2 text-[11px] font-semibold text-slate-400">{copy.profileNameHint}</span>
+          </dd>
+          <dt className="font-bold text-slate-500">{copy.profileCode}</dt>
+          <dd className="font-bold text-slate-800" data-testid="profile-code">{styleCode || '—'}</dd>
+          <dt className="self-center font-bold text-slate-500">{copy.profileCategory}</dt>
+          <dd>
+            <select
+              className="h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-bold text-slate-700"
+              data-testid="style-category"
+              aria-label={copy.profileCategory}
+              value={categoryId ?? ''}
+              disabled={movingCategory || running || rows.length === 0}
+              onChange={(e) => void handleMoveCategory(e.target.value)}
+            >
+              <option value="">{copy.profileCategoryNone}</option>
+              {categories.map((category) => (
+                <option key={category.id} value={category.id}>{category.name}</option>
+              ))}
+            </select>
+          </dd>
+        </dl>
+      </section>
 
       <section className="rounded-lg border border-slate-200" data-testid="tag-editor">
         <div className="flex items-center justify-between gap-2 px-3 py-2">
@@ -813,6 +976,7 @@ export default function StyleReprintPanel({
                 <th className="px-3 py-2 text-left">{copy.color}</th>
                 <th className="px-3 py-2 text-left">{copy.size}</th>
                 <th className="px-3 py-2 text-right">{copy.quantity}</th>
+                <th className="px-3 py-2" />
               </tr>
             </thead>
             <tbody>
@@ -834,6 +998,42 @@ export default function StyleReprintPanel({
                       disabled={running}
                       placeholder="0"
                     />
+                  </td>
+                  <td className="px-2 py-2 text-right whitespace-nowrap">
+                    {hideArmedId === variant.id ? (
+                      <span className="inline-flex items-center gap-1">
+                        <span className="text-[11px] font-bold text-red-700">{copy.hideConfirm}</span>
+                        <button
+                          type="button"
+                          data-testid="hide-confirm"
+                          disabled={hiding}
+                          onClick={() => void handleHide(variant)}
+                          className="rounded-md bg-red-600 px-2 py-1 text-[11px] font-extrabold text-white hover:bg-red-700 disabled:opacity-50"
+                        >
+                          {copy.hide}
+                        </button>
+                        <button
+                          type="button"
+                          data-testid="hide-cancel"
+                          disabled={hiding}
+                          onClick={() => setHideArmedId(null)}
+                          className="rounded-md border border-slate-200 px-2 py-1 text-[11px] font-extrabold text-slate-600 hover:bg-slate-50"
+                        >
+                          {copy.hideCancel}
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        data-testid="hide-variant"
+                        data-variant-id={variant.id}
+                        disabled={running || hiding}
+                        onClick={() => setHideArmedId(variant.id)}
+                        className="rounded-md border border-slate-200 px-2 py-1 text-[11px] font-extrabold text-slate-400 hover:bg-slate-50 hover:text-red-700 disabled:opacity-40"
+                      >
+                        {copy.hide}
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
