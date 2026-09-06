@@ -487,6 +487,17 @@ describe('PrintOrderPanel — filing a sheet as a product', () => {
     expect(container.querySelector('[data-testid="order-image-error"]')?.textContent).toContain('JPG');
   });
 
+  it('keeps the photo controls out of a label, so a tap beside them opens nothing', async () => {
+    // A click anywhere inside a <label> is handed to its first labelable
+    // descendant. With the picker inside one, tapping the caption or the empty
+    // half of the cell opened the file dialog on the shop floor.
+    await render();
+    const picker = container.querySelector('[data-testid="order-image"]')!;
+    const pick = container.querySelector('[data-testid="order-image-pick"]')!;
+    expect(picker.closest('label')).toBeNull();
+    expect(pick.closest('label')).toBeNull();
+  });
+
   it('lets the photo be taken off the sheet again', async () => {
     await render();
     await fillGrid();

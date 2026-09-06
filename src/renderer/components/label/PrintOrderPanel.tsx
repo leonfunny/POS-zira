@@ -1531,8 +1531,8 @@ export default function PrintOrderPanel({
             placeholder="129,00"
           />
         </Field>
-        <Field label={copy.image}>
-          <div className="flex items-center gap-2">
+        <FieldGroup label={copy.image}>
+          <div className="flex flex-wrap items-center gap-2">
             {(order.imageDataUrl || catalogue?.imageUrl) && (
               <img
                 src={order.imageDataUrl || catalogue?.imageUrl || ''}
@@ -1576,7 +1576,7 @@ export default function PrintOrderPanel({
               {imageError}
             </p>
           )}
-        </Field>
+        </FieldGroup>
         {!catalogue && (
           <Field label={copy.orderDate}>
             <DateField
@@ -2204,14 +2204,37 @@ function ColourPriceInput({
   );
 }
 
+const FIELD_CAPTION = 'mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500';
+
+/**
+ * One control with its caption. `min-w-0` because a grid cell defaults to
+ * min-width:auto: without it a long control does not wrap, it widens the column
+ * and lays itself over the field beside it.
+ */
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label className="block">
-      <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
-        {label}
-      </span>
+    <label className="block min-w-0">
+      <span className={FIELD_CAPTION}>{label}</span>
       {children}
     </label>
+  );
+}
+
+/**
+ * The same caption for a field whose control is a group of buttons.
+ *
+ * A click anywhere inside a <label> is handed to its first labelable
+ * descendant, and for the photo field that is the hidden file input: tapping
+ * the caption, the empty half of the cell, or the gap towards the field beside
+ * it opened the file dialog without anyone touching the button. A group has no
+ * single control to point at, so it is not a label.
+ */
+function FieldGroup({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <span className={FIELD_CAPTION}>{label}</span>
+      {children}
+    </div>
   );
 }
 
