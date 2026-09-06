@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer as electronIpcRenderer } from 'electron';
 import { createBootRetryInvoke } from './boot-invoke-retry';
 import { createFabricTagTemplatesBridge } from '../shared/fabric-tag-template-ipc';
+import { createPrintOrdersBridge } from '../shared/label-print-order-ipc';
 import { createFabricTagArtworksBridge } from '../shared/fabric-tag-artwork-ipc';
 import {
   IPC_CHANNELS,
@@ -888,6 +889,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     /** Shared with preload-pos.ts because the Label tab lives in this window. */
     fabricTagTemplates: createFabricTagTemplatesBridge(ipcRenderer.invoke),
+    labelPrintOrders: createPrintOrdersBridge(ipcRenderer.invoke),
     fabricTagArtworks: createFabricTagArtworksBridge(ipcRenderer.invoke),
     masterCatalog: {
       lookupByEan: (ean: string) => ipcRenderer.invoke('pos:master-catalog:lookup-by-ean', ean),
