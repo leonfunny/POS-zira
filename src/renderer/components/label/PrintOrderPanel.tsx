@@ -72,6 +72,7 @@ import {
   clearProgress,
   deleteSavedOrder,
   describeOrder,
+  matchesPrintOrderQuery,
   forgetSize,
   forgetStyle,
   listSavedOrders,
@@ -130,6 +131,13 @@ interface Copy {
   saved: string;
   savedOrders: string;
   noSavedOrders: string;
+  searchOrders: string;
+  noMatchingOrders: string;
+  /** "15 tờ", or "3/15 tờ" while a search is narrowing the list. */
+  sheetCount: (shown: number, total: number) => string;
+  pageOf: (page: number, pages: number) => string;
+  prevPage: string;
+  nextPage: string;
   open: string;
   remove: string;
   newOrder: string;
@@ -235,6 +243,12 @@ const COPY: Record<string, Copy> = {
     saved: 'Đã lưu',
     savedOrders: 'Đơn đã lưu',
     noSavedOrders: 'Chưa có đơn nào được lưu',
+    searchOrders: 'Tìm đơn — gõ tên khách và số, ví dụ: moon 114',
+    noMatchingOrders: 'Không có đơn nào khớp',
+    sheetCount: (shown, total) => (shown === total ? `${total} tờ` : `${shown}/${total} tờ`),
+    pageOf: (page, pages) => `Trang ${page}/${pages}`,
+    prevPage: '← Trước',
+    nextPage: 'Sau →',
     open: 'Mở',
     remove: 'Xoá',
     newOrder: 'Đơn mới',
@@ -367,6 +381,12 @@ const COPY: Record<string, Copy> = {
     saved: 'Zapisano',
     savedOrders: 'Zapisane zlecenia',
     noSavedOrders: 'Brak zapisanych zleceń',
+    searchOrders: 'Szukaj — klient i numer, np. moon 114',
+    noMatchingOrders: 'Brak pasujących zleceń',
+    sheetCount: (shown, total) => (shown === total ? `${total} szt.` : `${shown}/${total} szt.`),
+    pageOf: (page, pages) => `Strona ${page}/${pages}`,
+    prevPage: '← Poprzednia',
+    nextPage: 'Następna →',
     open: 'Otwórz',
     remove: 'Usuń',
     newOrder: 'Nowe zlecenie',
@@ -499,6 +519,12 @@ const COPY: Record<string, Copy> = {
     saved: 'Saved',
     savedOrders: 'Saved orders',
     noSavedOrders: 'No saved orders yet',
+    searchOrders: 'Search — customer and number, e.g. moon 114',
+    noMatchingOrders: 'No orders match',
+    sheetCount: (shown, total) => (shown === total ? `${total} sheets` : `${shown}/${total} sheets`),
+    pageOf: (page, pages) => `Page ${page}/${pages}`,
+    prevPage: '← Previous',
+    nextPage: 'Next →',
     open: 'Open',
     remove: 'Delete',
     newOrder: 'New order',
@@ -712,6 +738,26 @@ export default function PrintOrderPanel({
     void listSavedOrders().then(setSavedOrders);
   }, []);
   useEffect(refreshSavedOrders, [refreshSavedOrders]);
+  const [orderQuery, setOrderQuery] = useState('');
+  const [orderPage, setOrderPage] = useState(0);
+  /** Already newest-first from storage; filtering keeps that order. */
+  const matchingOrders = useMemo(
+    () => savedOrders.filter((saved) => matchesPrintOrderQuery(saved.order, orderQuery)),
+    [savedOrders, orderQuery],
+  );
+  const orderPageCount = Math.max(1, Math.ceil(matchingOrders.length / SAVED_ORDERS_PER_PAGE));
+  /**
+   * The page actually shown is derived, never stored. Deleting the last sheet
+   * on the last page, or narrowing the search down to one page, would leave a
+   * stored page number pointing past the end — an empty list under a pager
+   * that says there is something there. Clamping on the way out means that
+   * state can never be seen.
+   */
+  const orderPageIndex = Math.min(orderPage, orderPageCount - 1);
+  const visibleOrders = matchingOrders.slice(
+    orderPageIndex * SAVED_ORDERS_PER_PAGE,
+    orderPageIndex * SAVED_ORDERS_PER_PAGE + SAVED_ORDERS_PER_PAGE,
+  );
   // Which saved order is on screen. Restored from storage so that editing an
   // order the next morning updates it instead of filing a twin beside it.
   const [orderId, setOrderId] = useState<string>(() =>
@@ -2117,12 +2163,38 @@ export default function PrintOrderPanel({
 
       {!catalogue && (
       <section className="mt-6 border-t border-slate-200 pt-3">
-        <h3 className="mb-2 text-sm font-bold text-slate-700">{copy.savedOrders}</h3>
+        <div className="mb-2 flex items-baseline gap-2">
+          <h3 className="text-sm font-bold text-slate-700">{copy.savedOrders}</h3>
+          {savedOrders.length > 0 && (
+            <span className="text-xs text-slate-500" data-testid="saved-order-count">
+              {copy.sheetCount(matchingOrders.length, savedOrders.length)}
+            </span>
+          )}
+        </div>
+        {savedOrders.length > 0 && (
+          <input
+            type="search"
+            value={orderQuery}
+            /* Back to the first page on every keystroke: narrowing the list
+               while standing on page 4 would otherwise show nothing. */
+            onChange={(e) => {
+              setOrderQuery(e.target.value);
+              setOrderPage(0);
+            }}
+            placeholder={copy.searchOrders}
+            data-testid="saved-order-search"
+            className={`${INPUT} mb-2`}
+          />
+        )}
         {savedOrders.length === 0 ? (
           <p className="text-sm text-slate-500">{copy.noSavedOrders}</p>
+        ) : matchingOrders.length === 0 ? (
+          <p className="text-sm text-slate-500" data-testid="saved-order-no-match">
+            {copy.noMatchingOrders}
+          </p>
         ) : (
           <ul className="space-y-1">
-            {savedOrders.map((saved) => (
+            {visibleOrders.map((saved) => (
               <li
                 key={saved.id}
                 data-saved-order={saved.id}
@@ -2161,6 +2233,34 @@ export default function PrintOrderPanel({
             ))}
           </ul>
         )}
+        {orderPageCount > 1 && (
+          /* Plain buttons that only move a number. No links, no form submit,
+             nothing that could unmount the tab and lose what is being typed
+             in the sheet above. */
+          <div className="mt-2 flex items-center justify-center gap-2">
+            <button
+              type="button"
+              data-testid="saved-order-prev"
+              disabled={orderPageIndex === 0}
+              onClick={() => setOrderPage(orderPageIndex - 1)}
+              className="min-h-9 rounded border border-slate-300 px-3 text-xs font-bold disabled:opacity-40"
+            >
+              {copy.prevPage}
+            </button>
+            <span className="text-xs tabular-nums text-slate-500" data-testid="saved-order-page">
+              {copy.pageOf(orderPageIndex + 1, orderPageCount)}
+            </span>
+            <button
+              type="button"
+              data-testid="saved-order-next"
+              disabled={orderPageIndex >= orderPageCount - 1}
+              onClick={() => setOrderPage(orderPageIndex + 1)}
+              className="min-h-9 rounded border border-slate-300 px-3 text-xs font-bold disabled:opacity-40"
+            >
+              {copy.nextPage}
+            </button>
+          </div>
+        )}
       </section>
       )}
     </div>
@@ -2169,6 +2269,9 @@ export default function PrintOrderPanel({
 
 const INPUT =
   'h-10 w-full rounded-md border border-slate-300 px-2 text-sm focus:border-emerald-500 focus:outline-none';
+
+/** Enough that a normal day's sheets fit on one page, few enough to scan. */
+const SAVED_ORDERS_PER_PAGE = 30;
 
 /**
  * A colour's own price. Typed as text so "12," does not snap under the

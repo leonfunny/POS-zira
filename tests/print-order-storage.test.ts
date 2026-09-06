@@ -4,6 +4,7 @@ import {
   clearDraft,
   deleteSavedOrder,
   describeOrder,
+  matchesPrintOrderQuery,
   listSavedOrders,
   loadDraft,
   saveDraft,
@@ -247,5 +248,44 @@ describe('saved orders with the bridge go to the server copy', () => {
     await saveOrder('b', sample());
     expect((await deleteSavedOrder('a')).map((s) => s.id)).toEqual(['b']);
     expect(bridge.remove).toHaveBeenCalledWith('a');
+  });
+});
+
+describe('finding one sheet among hundreds', () => {
+  // The workshop remembers the customer and the number, not the whole name.
+  const moon = sample();
+
+  it('matches the customer and the number typed together', () => {
+    expect(matchesPrintOrderQuery(moon, 'moon 114')).toBe(true);
+  });
+
+  it('does not care which piece comes first', () => {
+    expect(matchesPrintOrderQuery(moon, '114 moon')).toBe(true);
+  });
+
+  it('matches the garment type as well', () => {
+    expect(matchesPrintOrderQuery(moon, 'moon kurtka 114')).toBe(true);
+  });
+
+  it('refuses a number that belongs to another sheet', () => {
+    expect(matchesPrintOrderQuery(moon, 'moon 115')).toBe(false);
+  });
+
+  it('refuses when only some of the pieces fit', () => {
+    // Every term has to land, or "moon" alone would drag in all 300 sheets.
+    expect(matchesPrintOrderQuery(moon, 'moon spodnie')).toBe(false);
+  });
+
+  it('ignores accents and case, both ways round', () => {
+    const vn = { ...sample(), customerName: 'Chị Hằng', styleName: 'ÁO', styleCode: '7' };
+    expect(matchesPrintOrderQuery(vn, 'chi hang')).toBe(true);
+    expect(matchesPrintOrderQuery(vn, 'CHỊ HẰNG 7')).toBe(true);
+    expect(matchesPrintOrderQuery(vn, 'ao 7')).toBe(true);
+  });
+
+  it('matches everything when nothing was typed', () => {
+    // The panel filters unconditionally; an empty box must not empty the list.
+    expect(matchesPrintOrderQuery(moon, '')).toBe(true);
+    expect(matchesPrintOrderQuery(moon, '   ')).toBe(true);
   });
 });

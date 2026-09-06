@@ -337,11 +337,23 @@ async function migrateLegacyOrders(api: PrintOrdersBridge): Promise<void> {
   }
 }
 
+/**
+ * Newest first, whichever way the sheets arrived.
+ *
+ * The two paths disagreed: the local fallback pushes each save onto the front
+ * of the list, while the server hands them back oldest-first. Sorting here
+ * rather than at the screen means one order for every caller, and the sheet
+ * someone just typed is the one at the top.
+ */
+function newestFirst(orders: SavedPrintOrder[]): SavedPrintOrder[] {
+  return [...orders].sort((a, b) => (a.savedAt < b.savedAt ? 1 : a.savedAt > b.savedAt ? -1 : 0));
+}
+
 export async function listSavedOrders(): Promise<SavedPrintOrder[]> {
   const api = bridge();
-  if (!api) return localSavedOrders();
+  if (!api) return newestFirst(localSavedOrders());
   await migrateLegacyOrders(api);
-  return (await api.list()).map(toSaved);
+  return newestFirst((await api.list()).map(toSaved));
 }
 
 /**
@@ -359,18 +371,18 @@ export async function saveOrder(id: string, order: LabelPrintOrder): Promise<Sav
       savedAt,
       order: order as unknown as Record<string, unknown>,
     });
-    return list.map(toSaved);
+    return newestFirst(list.map(toSaved));
   }
   const entry: SavedPrintOrder = { id, savedAt, order };
   const rest = localSavedOrders().filter((saved) => saved.id !== id);
   const next = [entry, ...rest].slice(0, SAVED_ORDER_LIMIT);
   write(SAVED_KEY, next);
-  return next;
+  return newestFirst(next);
 }
 
 export async function deleteSavedOrder(id: string): Promise<SavedPrintOrder[]> {
   const api = bridge();
-  if (api) return (await api.remove(id)).map(toSaved);
+  if (api) return newestFirst((await api.remove(id)).map(toSaved));
   const next = localSavedOrders().filter((saved) => saved.id !== id);
   write(SAVED_KEY, next);
   return next;
@@ -380,4 +392,34 @@ export async function deleteSavedOrder(id: string): Promise<SavedPrintOrder[]> {
 export function describeOrder(order: LabelPrintOrder): string {
   const style = [order.styleName, order.styleCode].map((v) => v.trim()).filter(Boolean).join(' ');
   return [order.customerName.trim(), style].filter(Boolean).join(' · ') || 'Bez nazwy';
+}
+
+/**
+ * Lower case, no accents. The workshop types on a Polish keyboard and searches
+ * for Vietnamese and Polish names, and nobody reaches for the diacritic when
+ * they are hunting for a sheet.
+ */
+function foldForSearch(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase();
+}
+
+/**
+ * Does this sheet answer what was typed?
+ *
+ * Every whitespace-separated piece has to appear somewhere in the sheet's
+ * name, in any order: "moon 114" and "114 moon" and "moon kurtka 114" all
+ * find MOONCOLLECTION · KURTKA 114, while "moon 115" finds nothing. Order
+ * does not matter because nobody remembers which half of the name comes
+ * first — they remember the customer and the number.
+ *
+ * An empty query matches everything, so the caller can filter unconditionally.
+ */
+export function matchesPrintOrderQuery(order: LabelPrintOrder, query: string): boolean {
+  const terms = foldForSearch(query).split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return true;
+  const haystack = foldForSearch(describeOrder(order));
+  return terms.every((term) => haystack.includes(term));
 }

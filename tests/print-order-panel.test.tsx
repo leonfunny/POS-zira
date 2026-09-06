@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import PrintOrderPanel from '../src/renderer/components/label/PrintOrderPanel';
 import { CARE_SYMBOLS } from '../src/shared/types';
+import { createEmptyOrder } from '../src/shared/label-print-order';
 
 function memoryStorage(): Storage {
   const map = new Map<string, string>();
@@ -1735,4 +1736,128 @@ describe('PrintOrderPanel', () => {
     expect(printSticker).not.toHaveBeenCalled();
     expect(printFabricTag).toHaveBeenCalledTimes(1);
   });
+
+  /**
+   * The workshop will have hundreds of these. Sheets are seeded straight into
+   * storage because what is under test is the browsing, not the typing.
+   */
+  function seedSheets(count: number) {
+    const saved = Array.from({ length: count }, (_, index) => ({
+      id: `order-${index}`,
+      savedAt: new Date(2026, 0, 1 + index).toISOString(),
+      order: {
+        ...createEmptyOrder(),
+        customerName: 'MoonCollection',
+        styleName: 'KURTKA',
+        styleCode: String(100 + index),
+      },
+    }));
+    localStorage.setItem('zira.labelPrintOrder.saved', JSON.stringify(saved));
+  }
+
+  const rows = () => Array.from(container.querySelectorAll('[data-saved-order]'));
+  const searchBox = () => input(container, '[data-testid="saved-order-search"]');
+
+  describe('browsing many saved sheets', () => {
+    it('shows one page of thirty and says which page it is on', async () => {
+      seedSheets(35);
+      await render();
+      expect(rows()).toHaveLength(30);
+      expect(text('[data-testid="saved-order-page"]')).toBe('Page 1/2');
+      expect(text('[data-testid="saved-order-count"]')).toBe('35 sheets');
+    });
+
+    it('puts the newest sheet first', async () => {
+      // The server hands them over oldest-first; the one just typed is the
+      // one someone reaches for.
+      seedSheets(35);
+      await render();
+      expect(rows()[0].textContent).toContain('134');
+    });
+
+    it('turns to the last page without leaving the tab', async () => {
+      seedSheets(35);
+      await render();
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-testid="saved-order-next"]')!.click();
+      });
+      expect(rows()).toHaveLength(5);
+      expect(text('[data-testid="saved-order-page"]')).toBe('Page 2/2');
+      // Still the print order tab, with the sheet being typed untouched.
+      expect(container.querySelector('[data-testid="saved-order-search"]')).not.toBeNull();
+    });
+
+    it('pages with buttons that cannot submit anything', async () => {
+      // A bare <button> inside a form defaults to submit, which would reload
+      // the renderer and throw away whatever is half-typed above.
+      seedSheets(35);
+      await render();
+      for (const id of ['saved-order-prev', 'saved-order-next']) {
+        expect(container.querySelector<HTMLButtonElement>(`[data-testid="${id}"]`)!.type).toBe(
+          'button',
+        );
+      }
+    });
+
+    it('finds one sheet by customer and number', async () => {
+      seedSheets(35);
+      await render();
+      await changeInput(searchBox(), 'moon 114');
+      expect(rows()).toHaveLength(1);
+      expect(rows()[0].textContent).toContain('114');
+      expect(text('[data-testid="saved-order-count"]')).toBe('1/35 sheets');
+      expect(container.querySelector('[data-testid="saved-order-page"]')).toBeNull();
+    });
+
+    it('does not strand the reader on a page that no longer exists', async () => {
+      // Standing on page 2, then searching down to a single match: the stored
+      // page number now points past the end. The match must still be on
+      // screen rather than an empty list under a pager.
+      seedSheets(35);
+      await render();
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-testid="saved-order-next"]')!.click();
+      });
+      await changeInput(searchBox(), 'moon 114');
+      expect(rows()).toHaveLength(1);
+      expect(rows()[0].textContent).toContain('114');
+    });
+
+    it('falls back a page when the last sheet on it is deleted', async () => {
+      // 31 sheets is one lonely sheet on page 2. Deleting it leaves the stored
+      // page number pointing at a page that no longer exists; without the
+      // clamp the reader is left staring at an empty list.
+      seedSheets(31);
+      await render();
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-testid="saved-order-next"]')!.click();
+      });
+      expect(rows()).toHaveLength(1);
+
+      const remove = Array.from(container.querySelectorAll('button')).find(
+        (b) => b.textContent?.trim() === 'Delete',
+      )!;
+      await act(async () => remove.click());
+      await settle();
+
+      expect(rows()).toHaveLength(30);
+      expect(container.querySelector('[data-testid="saved-order-page"]')).toBeNull();
+    });
+
+    it('says so plainly when nothing matches', async () => {
+      seedSheets(35);
+      await render();
+      await changeInput(searchBox(), 'moon 999');
+      expect(rows()).toHaveLength(0);
+      expect(text('[data-testid="saved-order-no-match"]')).toBe('No orders match');
+    });
+
+    it('leaves the pager out entirely when everything fits on one page', async () => {
+      seedSheets(4);
+      await render();
+      expect(container.querySelector('[data-testid="saved-order-page"]')).toBeNull();
+      expect(rows()).toHaveLength(4);
+    });
+  });
+
 });
