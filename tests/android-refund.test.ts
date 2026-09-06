@@ -58,8 +58,8 @@ const LOGIN_BODY = {
 /** Catalog rows the sync normalizes into p1 (track_inventory=1) + p2 (=0). */
 const CATALOG_PAGE = {
   items: [
-    { id: 'p1', name: 'Gel Polish', sku: 'SKU-1', retailPrice: 20, itemType: 'stockable', trackInventory: true, totalStockQty: 5, sellBy: 'PIECE', saleUnit: 'szt' },
-    { id: 'p2', name: 'Nail File', sku: 'SKU-2', retailPrice: 9, itemType: 'service', trackInventory: false, totalStockQty: 5, sellBy: 'PIECE', saleUnit: 'szt' },
+    { id: '11111111-1111-4111-8111-111111111111', name: 'Gel Polish', sku: 'SKU-1', retailPrice: 20, itemType: 'stockable', trackInventory: true, totalStockQty: 5, sellBy: 'PIECE', saleUnit: 'szt' },
+    { id: '22222222-2222-4222-8222-222222222222', name: 'Nail File', sku: 'SKU-2', retailPrice: 9, itemType: 'service', trackInventory: false, totalStockQty: 5, sellBy: 'PIECE', saleUnit: 'szt' },
   ],
   hasMore: false,
   nextSyncCursor: 'cursor-1',
@@ -107,8 +107,8 @@ const ORDER = (shiftId: string, id: string) => ({
   synced: 0,
 });
 const ITEMS = (orderId: string) => [
-  { id: 'l1', order_id: orderId, variant_id: 'p1', name: 'Gel Polish', sku: 'SKU-1', price: 2000, quantity: 2, sell_by: 'PIECE', total: 4000, vat_rate: 23 },
-  { id: 'l2', order_id: orderId, variant_id: 'p2', name: 'Nail File', sku: 'SKU-2', price: 900, quantity: 1, sell_by: 'PIECE', total: 900, vat_rate: 23 },
+  { id: 'l1', order_id: orderId, variant_id: '11111111-1111-4111-8111-111111111111', name: 'Gel Polish', sku: 'SKU-1', price: 2000, quantity: 2, sell_by: 'PIECE', total: 4000, vat_rate: 23 },
+  { id: 'l2', order_id: orderId, variant_id: '22222222-2222-4222-8222-222222222222', name: 'Nail File', sku: 'SKU-2', price: 900, quantity: 1, sell_by: 'PIECE', total: 900, vat_rate: 23 },
 ];
 
 /** Log in, open a shift, and sync the catalog so p1/p2 exist in the local DB. */
@@ -157,8 +157,8 @@ describe('android refund (E1b)', () => {
 
     // Stock after the sale: p1 (track_inventory=1) decremented 5→2; p2 (=0) untouched.
     let products = await transport.getProducts!();
-    const p1Before = products.find((p) => p.id === 'p1')!;
-    const p2Before = products.find((p) => p.id === 'p2')!;
+    const p1Before = products.find((p) => p.id === '11111111-1111-4111-8111-111111111111')!;
+    const p2Before = products.find((p) => p.id === '22222222-2222-4222-8222-222222222222')!;
     expect(p1Before.in_stock).toBe(3);
     expect((p1Before as any).track_inventory).toBe(1);
     expect(p2Before.in_stock).toBe(5);
@@ -170,8 +170,8 @@ describe('android refund (E1b)', () => {
       reason: 'customer-request',
       amount: 4900, // grosze — the renderer builds this; transport passes it through
       lines: [
-        { variantId: 'p1', sku: 'SKU-1', name: 'Gel Polish', quantity: 2, unit: 'szt', unitPrice: 2000, refundAmount: 4000, restock: true, vatRate: 23 },
-        { variantId: 'p2', sku: 'SKU-2', name: 'Nail File', quantity: 1, unit: 'szt', unitPrice: 900, refundAmount: 900, restock: true, vatRate: 23 },
+        { variantId: '11111111-1111-4111-8111-111111111111', sku: 'SKU-1', name: 'Gel Polish', quantity: 2, unit: 'szt', unitPrice: 2000, refundAmount: 4000, restock: true, vatRate: 23 },
+        { variantId: '22222222-2222-4222-8222-222222222222', sku: 'SKU-2', name: 'Nail File', quantity: 1, unit: 'szt', unitPrice: 900, refundAmount: 900, restock: true, vatRate: 23 },
       ],
     };
 
@@ -206,8 +206,8 @@ describe('android refund (E1b)', () => {
 
     // Restock: p1 (track_inventory=1) restocked +2 → 5; p2 (=0) NOT restocked → 5.
     products = await transport.getProducts!();
-    expect(products.find((p) => p.id === 'p1')!.in_stock).toBe(5);
-    expect(products.find((p) => p.id === 'p2')!.in_stock).toBe(5);
+    expect(products.find((p) => p.id === '11111111-1111-4111-8111-111111111111')!.in_stock).toBe(5);
+    expect(products.find((p) => p.id === '22222222-2222-4222-8222-222222222222')!.in_stock).toBe(5);
 
     // Z-report: the refund is subtracted from totalSales AND the cash bucket.
     const closed = await transport.closeShift!({ shiftId, closingCash: 10000 });
@@ -228,7 +228,7 @@ describe('android refund (E1b)', () => {
     await syncOrder(transport);
 
     // p1 is 3 after the sale (5 − 2).
-    expect((await transport.getProducts!()).find((p) => p.id === 'p1')!.in_stock).toBe(3);
+    expect((await transport.getProducts!()).find((p) => p.id === '11111111-1111-4111-8111-111111111111')!.in_stock).toBe(3);
 
     const dto = {
       type: 'PARTIAL' as const,
@@ -236,7 +236,7 @@ describe('android refund (E1b)', () => {
       reason: 'one-item-returned',
       amount: 2000, // grosze — refund 1× p1
       lines: [
-        { variantId: 'p1', sku: 'SKU-1', name: 'Gel Polish', quantity: 1, unit: 'szt', unitPrice: 2000, refundAmount: 2000, restock: true, vatRate: 23 },
+        { variantId: '11111111-1111-4111-8111-111111111111', sku: 'SKU-1', name: 'Gel Polish', quantity: 1, unit: 'szt', unitPrice: 2000, refundAmount: 2000, restock: true, vatRate: 23 },
       ],
     };
 
@@ -261,7 +261,7 @@ describe('android refund (E1b)', () => {
     expect(detail?.order.refund_amount).toBe(2000);
 
     // p1 restocked +1 → 4 (partial refund of 1 of the 2 sold units).
-    expect((await transport.getProducts!()).find((p) => p.id === 'p1')!.in_stock).toBe(4);
+    expect((await transport.getProducts!()).find((p) => p.id === '11111111-1111-4111-8111-111111111111')!.in_stock).toBe(4);
 
     const closed = await transport.closeShift!({ shiftId, closingCash: 10000 });
     expect(closed.report).toMatchObject({
@@ -305,7 +305,7 @@ describe('android refund (E1b)', () => {
 
     const first = await transport.refundOrder!('order-twice', {
       type: 'FULL', amount: 4900,
-      lines: [{ variantId: 'p1', name: 'Gel Polish', quantity: 2, unitPrice: 2000, refundAmount: 4000, restock: true, vatRate: 23 }],
+      lines: [{ variantId: '11111111-1111-4111-8111-111111111111', name: 'Gel Polish', quantity: 2, unitPrice: 2000, refundAmount: 4000, restock: true, vatRate: 23 }],
     });
     expect(first.success).toBe(true);
 

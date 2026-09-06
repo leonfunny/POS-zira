@@ -89,7 +89,7 @@ const CASH_ORDER = (shiftId: string, id = 'local-order-1') => ({
   synced: 0,
 });
 const CASH_ITEMS = (orderId: string) => [{
-  id: 'line-1', order_id: orderId, variant_id: 'p1', name: 'Gel Polish',
+  id: 'line-1', order_id: orderId, variant_id: '11111111-1111-4111-8111-111111111111', name: 'Gel Polish',
   sku: 'SKU-1', price: 4900, quantity: 1, sell_by: 'PIECE', total: 4900, vat_rate: 23,
 }];
 

@@ -354,7 +354,7 @@ describe('real transport orders + shifts (S8+S9)', () => {
     synced: 0,
   });
   const CASH_ITEMS = [{
-    id: 'line-1', order_id: 'local-order-1', variant_id: 'p1', name: 'Gel Polish',
+    id: 'line-1', order_id: 'local-order-1', variant_id: '11111111-1111-4111-8111-111111111111', name: 'Gel Polish',
     sku: 'SKU-1', price: 4900, quantity: 1, sell_by: 'PIECE', total: 4900, vat_rate: 23,
   }];
 
@@ -408,7 +408,11 @@ describe('real transport orders + shifts (S8+S9)', () => {
       changeAmount: 1,
       shiftId,
     });
-    expect(createCall!.body.items[0]).toMatchObject({ variantId: 'p1', customPrice: 49, packQuantity: 1 });
+    expect(createCall!.body.items[0]).toMatchObject({
+      variantId: '11111111-1111-4111-8111-111111111111',
+      customPrice: 49,
+      packQuantity: 1,
+    });
     expect(requests.some((r) => /\/finish$/.test(r.url))).toBe(false);
     expect(synced).toHaveBeenCalledWith({ orderId: 'local-order-1', backendId: 'backend-1' });
 
@@ -434,6 +438,43 @@ describe('real transport orders + shifts (S8+S9)', () => {
     fetchMock.mockClear();
     await transport.syncOrders!();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('a DTO-validation 400 shelves on the first failure instead of burning the retry budget', async () => {
+    const { transport, shiftId } = await transportWithShift();
+    const failed = vi.fn();
+    (transport as any).onOrderSyncFailed(failed);
+    await transport.createOrder!(CASH_ORDER(shiftId), CASH_ITEMS);
+
+    fetchMock.mockResolvedValue(jsonResponse({ message: 'customPrice must be a positive number' }, 400));
+    await transport.syncOrders!();
+
+    expect(failed).toHaveBeenCalledWith(expect.objectContaining({ code: 'INVALID_PAYLOAD' }));
+    expect((await transport.getOrderDetail!('local-order-1'))?.order.synced).toBe(-1);
+
+    fetchMock.mockClear();
+    await transport.syncOrders!();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('a line whose id is not a variant UUID is shelved before any request leaves the till', async () => {
+    const { transport, shiftId } = await transportWithShift();
+    const failed = vi.fn();
+    (transport as any).onOrderSyncFailed(failed);
+    await transport.createOrder!(CASH_ORDER(shiftId), [
+      { ...CASH_ITEMS[0], variant_id: 'bh-suon-1755f58e52d0' },
+    ]);
+
+    fetchMock.mockClear();
+    await transport.syncOrders!();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(failed).toHaveBeenCalledWith(expect.objectContaining({
+      code: 'INVALID_PAYLOAD',
+      error: expect.stringContaining('bh-suon-1755f58e52d0'),
+    }));
+    const detail = await transport.getOrderDetail!('local-order-1');
+    expect(detail?.order.synced).toBe(-1);
   });
 
   test('a legacy itemless local row is shelved and never sent as a fake order', async () => {
@@ -654,7 +695,7 @@ describe('real transport orders + shifts (S8+S9)', () => {
 
     await transport.createOrder!(
       { ...CASH_ORDER(shiftId), id: 'svc-order' },
-      [{ id: 'l-svc', order_id: 'svc-order', variant_id: 'svc-1', name: 'Manicure', price: 8000, quantity: 1, sell_by: 'PIECE', total: 8000, vat_rate: 23 }],
+      [{ id: 'l-svc', order_id: 'svc-order', variant_id: '33333333-3333-4333-8333-333333333333', name: 'Manicure', price: 8000, quantity: 1, sell_by: 'PIECE', total: 8000, vat_rate: 23 }],
     );
     const after = await transport.getProductById!('svc-1');
     // Service stock stays 0 (not driven negative / phantom), unlike a tracked good.

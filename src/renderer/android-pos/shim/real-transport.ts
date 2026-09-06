@@ -355,12 +355,25 @@ const BUSINESS_ERROR_PATTERNS = [
   /invalid.*product/i,
 ];
 
+/** order-sync.ts — DTO-validation rejections. The backend refuses a malformed
+ *  payload identically every time, so retrying it only burns the attempt budget. */
+const PAYLOAD_ERROR_PATTERNS = [
+  /must be a uuid/i,
+  /should not exist/i,
+  /must be a (?:string|number|boolean|valid|positive)/i,
+  /must not be empty/i,
+];
+
+/** order-sync.ts — the backend order-item DTO validates productId with @IsUUID(). */
+const VARIANT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** order-sync.ts:23-29. */
 function classifyError(msg: string): { kind: 'business' | 'transient'; code?: string } {
   if (BUSINESS_ERROR_PATTERNS.some((p) => p.test(msg))) {
     if (/insufficient stock/i.test(msg)) return { kind: 'business', code: 'INSUFFICIENT_STOCK' };
     return { kind: 'business', code: 'BUSINESS_RULE' };
   }
+  if (PAYLOAD_ERROR_PATTERNS.some((p) => p.test(msg))) return { kind: 'business', code: 'INVALID_PAYLOAD' };
   return { kind: 'transient' };
 }
 
@@ -1141,6 +1154,22 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
               orderRepo.shelve(order.id, error);
               for (const cb of [...orderSyncFailedListeners]) {
                 try { cb({ orderId: order.id, orderNumber: order.order_number ?? null, error, code: error }); } catch { /* listener isolation */ }
+              }
+              continue;
+            }
+            // buildBackendOrderItem sends `variant_id || id` as productId, and the
+            // backend rejects anything that is not a variant UUID. That verdict
+            // never changes, so shelve once with the offending value rather than
+            // spending the whole attempt budget re-posting it.
+            const malformed = items.find(
+              (item) => !VARIANT_UUID_RE.test(String(item.variant_id || item.id || '')),
+            );
+            if (malformed) {
+              const error = 'INVALID_LOCAL_ORDER_ITEM_ID: '
+                + `${malformed.name ?? malformed.sku ?? malformed.id} → ${malformed.variant_id || malformed.id || '(none)'}`;
+              orderRepo.shelve(order.id, error);
+              for (const cb of [...orderSyncFailedListeners]) {
+                try { cb({ orderId: order.id, orderNumber: order.order_number ?? null, error, code: 'INVALID_PAYLOAD' }); } catch { /* listener isolation */ }
               }
               continue;
             }
