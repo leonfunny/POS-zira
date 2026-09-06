@@ -2559,7 +2559,11 @@ export class ApiClient {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.message || `HTTP ${response.status}`);
+      const error = new Error(errorData.message || `HTTP ${response.status}`);
+      // OrderSync classifies on the status: a 400/422 is a payload the backend
+      // will refuse identically for ever, so it must not be retried.
+      (error as Error & { status?: number }).status = response.status;
+      throw error;
     }
 
     return response.json();

@@ -66,6 +66,7 @@ vi.mock('../src/main/logger', () => ({
 
 import { apiClient } from '../src/main/network/api-client';
 import { orderRepo } from '../src/main/database/repos/order-repo';
+import { localVariantImportsRepo } from '../src/main/database/repos/local-variant-imports-repo';
 import { database } from '../src/main/database/database';
 import { billiardPosHandoffRepo } from '../src/main/database/repos/billiard-pos-handoff-repo';
 import { getSecureAuthToken } from '../src/main/config/store';
@@ -117,7 +118,7 @@ function makeItem(overrides: Record<string, unknown> = {}) {
   return {
     id: 'item-1',
     order_id: 'order-1',
-    variant_id: 'variant-1',
+    variant_id: '3f2b9c14-8a0d-4e6f-9c21-5b7d8e0a1f34',
     name: 'Banh Trang Re 200g',
     sku: 'CHE-BANHTRANG-13',
     price: 1100,
@@ -236,7 +237,7 @@ describe('OrderSync DTO mapping', () => {
       {
         id: 'item-1',
         order_id: 'order-1',
-        variant_id: 'variant-1',
+        variant_id: '3f2b9c14-8a0d-4e6f-9c21-5b7d8e0a1f34',
         name: 'Refunded item',
         sku: 'SKU-1',
         price: 1799,
@@ -297,6 +298,116 @@ describe('OrderSync DTO mapping', () => {
     expect(billiardPosHandoffRepo.markState).toHaveBeenCalledWith('checkout-1', 'SETTLED');
     expect(database.saveCoalesced).toHaveBeenCalledTimes(1);
     expect(summary).toMatchObject({ synced: 1, failed: 0 });
+  });
+});
+
+describe('OrderSync rejects payloads the backend can never accept', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockNoStrandedSyncingOrders();
+    vi.mocked(getSecureAuthToken).mockReturnValue('secure-token');
+    vi.mocked(apiClient.createPosOrder).mockResolvedValue({ id: 'backend-order-1' });
+    vi.mocked(localVariantImportsRepo.isUnresolvedVariant).mockReturnValue(false);
+    vi.mocked(localVariantImportsRepo.getServerVariantId).mockReturnValue(null);
+  });
+
+  it('shelves an order whose line id is not a variant UUID instead of posting it', async () => {
+    vi.mocked(orderRepo.getUnsynced).mockReturnValue([makeOrder() as any]);
+    vi.mocked(orderRepo.getItemsByOrderId).mockReturnValue([
+      makeItem({ variant_id: 'bh-suon-1755f58e52d0', name: 'Sườn' }) as any,
+    ]);
+
+    const summary = await new OrderSync().syncPendingOrders();
+
+    expect(apiClient.createPosOrder).not.toHaveBeenCalled();
+    expect(orderRepo.markSyncing).not.toHaveBeenCalled();
+    const [, shelvedError] = vi.mocked(orderRepo.shelve).mock.calls[0];
+    // The offending value only ever exists on the till — record it verbatim.
+    expect(shelvedError).toContain('INVALID_LOCAL_ORDER_ITEM_ID');
+    expect(shelvedError).toContain('bh-suon-1755f58e52d0');
+    expect(shelvedError).toContain('Sườn');
+    expect(summary.results[0]).toMatchObject({ status: 'shelved', code: 'INVALID_PAYLOAD' });
+  });
+
+  it('falls back to the order-item row id and still refuses it when the line has no variant', async () => {
+    vi.mocked(orderRepo.getUnsynced).mockReturnValue([makeOrder() as any]);
+    vi.mocked(orderRepo.getItemsByOrderId).mockReturnValue([
+      makeItem({ variant_id: null, id: 'line-42' }) as any,
+    ]);
+
+    await new OrderSync().syncPendingOrders();
+
+    expect(apiClient.createPosOrder).not.toHaveBeenCalled();
+    expect(vi.mocked(orderRepo.shelve).mock.calls[0][1]).toContain('line-42');
+  });
+
+  it('posts the order once the local-import reconciler maps the local id to a server variant', async () => {
+    vi.mocked(orderRepo.getUnsynced).mockReturnValue([makeOrder() as any]);
+    vi.mocked(orderRepo.getItemsByOrderId).mockReturnValue([
+      makeItem({ variant_id: 'draft-local-1' }) as any,
+    ]);
+    vi.mocked(localVariantImportsRepo.getServerVariantId).mockReturnValue(
+      '9ca579ca-028b-49b0-947c-63d16c2d3e2a',
+    );
+
+    await new OrderSync().syncPendingOrders();
+
+    expect(orderRepo.shelve).not.toHaveBeenCalled();
+    const [, dto] = vi.mocked(apiClient.createPosOrder).mock.calls[0] as [string, any];
+    expect(dto.items[0]).toMatchObject({
+      productId: '9ca579ca-028b-49b0-947c-63d16c2d3e2a',
+      variantId: '9ca579ca-028b-49b0-947c-63d16c2d3e2a',
+    });
+  });
+
+  it('shelves a 400 from the backend on the first failure instead of retrying it', async () => {
+    vi.mocked(orderRepo.getUnsynced).mockReturnValue([makeOrder() as any]);
+    vi.mocked(orderRepo.getItemsByOrderId).mockReturnValue([makeItem() as any]);
+    const rejection = Object.assign(new Error('customPrice must be a positive number'), { status: 400 });
+    vi.mocked(apiClient.createPosOrder).mockRejectedValue(rejection);
+
+    const summary = await new OrderSync().syncPendingOrders();
+
+    const shelveCall = vi.mocked(database.run).mock.calls.find(
+      ([sql]) => sql === 'UPDATE orders SET synced = -1, sync_error = ? WHERE id = ?',
+    );
+    expect(shelveCall?.[1]?.[0]).toBe('[PERMANENT] customPrice must be a positive number');
+    expect(orderRepo.markSyncFailed).not.toHaveBeenCalled();
+    expect(summary.results[0]).toMatchObject({ status: 'shelved', code: 'INVALID_PAYLOAD' });
+  });
+
+  it('still retries a genuine network failure', async () => {
+    vi.mocked(orderRepo.getUnsynced).mockReturnValue([makeOrder() as any]);
+    vi.mocked(orderRepo.getItemsByOrderId).mockReturnValue([makeItem() as any]);
+    vi.mocked(apiClient.createPosOrder).mockRejectedValue(new Error('fetch failed'));
+
+    const summary = await new OrderSync().syncPendingOrders();
+
+    expect(orderRepo.markSyncFailed).toHaveBeenCalledWith('order-1');
+    expect(summary.results[0]).toMatchObject({ status: 'failed' });
+  });
+});
+
+describe('OrderSync.requeueShelvedTransient', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockNoStrandedSyncingOrders();
+  });
+
+  it('leaves permanently rejected orders shelved and re-queues only transient ones', () => {
+    vi.mocked(database.all).mockReturnValue([
+      { id: 'order-network', sync_error: 'fetch failed' },
+      { id: 'order-uuid', sync_error: '[PERMANENT] INVALID_LOCAL_ORDER_ITEM_ID: Sườn → bh-suon' },
+      { id: 'order-legacy', sync_error: 'productId must be a UUID,variantId must be a UUID' },
+    ] as any);
+
+    const requeued = new OrderSync().requeueShelvedTransient();
+
+    expect(requeued).toBe(1);
+    const update = vi.mocked(database.run).mock.calls.find(
+      ([sql]) => typeof sql === 'string' && sql.startsWith('UPDATE orders SET synced = 0, sync_attempts = 0 WHERE id IN'),
+    );
+    expect(update?.[1]).toEqual(['order-network']);
   });
 });
 

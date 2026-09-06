@@ -5,8 +5,11 @@ import { billiardPosHandoffRepo } from '../database/repos/billiard-pos-handoff-r
 import { localVariantImportsRepo } from '../database/repos/local-variant-imports-repo';
 import { database } from '../database/database';
 import { getSecureAuthToken } from '../config/store';
-import { buildBackendOrderItem } from '../pos/order-line-contract';
+import { buildBackendOrderItem, resolveBackendVariantId } from '../pos/order-line-contract';
 import logger from '../logger';
+
+/** The backend order-item DTO validates productId/variantId with @IsUUID(). */
+const VARIANT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Max sync attempts for transient (network/5xx) failures before shelving. */
 const MAX_SYNC_ATTEMPTS = 5;
@@ -20,12 +23,36 @@ const BUSINESS_ERROR_PATTERNS = [
   /invalid.*product/i,
 ];
 
-/** Classify an error message — business errors shelve immediately; transient errors retry. */
-function classifyError(msg: string): { kind: 'business' | 'transient'; code?: string } {
+/** DTO-validation rejections (HTTP 400/422). A payload the backend refuses to parse
+ *  is refused identically every time, so retrying only burns requests — one till spent
+ *  three days re-posting the same 38 orders ~190 times a day on
+ *  "productId must be a UUID" because none of the patterns above matched it. */
+const PAYLOAD_ERROR_PATTERNS = [
+  /must be a uuid/i,
+  /should not exist/i,
+  /must be a (?:string|number|boolean|valid|positive)/i,
+  /must not be empty/i,
+];
+
+/** Marker written into sync_error when a rejection is permanent, so the end-of-day
+ *  requeue still recognises it after a restart even if the message text changes. */
+const PERMANENT_ERROR_MARKER = '[PERMANENT]';
+
+/** Classify an error — business/payload errors shelve immediately; transient errors retry.
+ *  `status` is the HTTP status when the failure came from the API; it is absent when a
+ *  stored sync_error string is re-classified later, hence the text patterns too. */
+function classifyError(msg: string, status?: number): { kind: 'business' | 'transient'; code?: string } {
+  if (msg.startsWith(PERMANENT_ERROR_MARKER)) return { kind: 'business', code: 'INVALID_PAYLOAD' };
+  if (status === 400 || status === 422) {
+    if (/insufficient stock/i.test(msg)) return { kind: 'business', code: 'INSUFFICIENT_STOCK' };
+    if (BUSINESS_ERROR_PATTERNS.some(p => p.test(msg))) return { kind: 'business', code: 'BUSINESS_RULE' };
+    return { kind: 'business', code: 'INVALID_PAYLOAD' };
+  }
   if (BUSINESS_ERROR_PATTERNS.some(p => p.test(msg))) {
     if (/insufficient stock/i.test(msg)) return { kind: 'business', code: 'INSUFFICIENT_STOCK' };
     return { kind: 'business', code: 'BUSINESS_RULE' };
   }
+  if (PAYLOAD_ERROR_PATTERNS.some(p => p.test(msg))) return { kind: 'business', code: 'INVALID_PAYLOAD' };
   return { kind: 'transient' };
 }
 
@@ -159,19 +186,44 @@ export class OrderSync {
           continue;
         }
 
+        // A line whose id never resolved to a server variant ships the raw
+        // client-local id (buildBackendOrderItem falls back to it), and the
+        // backend rejects anything that is not a UUID. That verdict never
+        // changes, so shelve once — with the offending value, which is the only
+        // place it is ever recorded — instead of re-posting every sync cycle.
+        const malformed = items
+          .map((item) => ({
+            item,
+            sentId: resolveBackendVariantId(item, (localId) => localVariantImportsRepo.getServerVariantId(localId)),
+          }))
+          .find((line) => !VARIANT_UUID_RE.test(String(line.sentId ?? '')));
+        if (malformed) {
+          const error = `${PERMANENT_ERROR_MARKER} INVALID_LOCAL_ORDER_ITEM_ID: `
+            + `${malformed.item.name ?? malformed.item.sku ?? malformed.item.id} → ${malformed.sentId ?? '(none)'}`;
+          orderRepo.shelve(order.id, error);
+          summary.failed++;
+          summary.results.push({
+            orderId: order.id,
+            orderNumber: order.order_number,
+            status: 'shelved',
+            error,
+            code: 'INVALID_PAYLOAD',
+          });
+          logger.warn(`[OrderSync] Shelved order ${order.order_number || order.id}: ${error}`);
+          continue;
+        }
+
         // Transform local OrderRow + OrderItemRow[] into CreateB2BPOSOrderDto format
         const dto: Record<string, any> = {
           id: order.id, // idempotency key
           priceType: 'brutto',
           requiresInvoice: !!order.customer_nip,
           posLocalCreatedAt: normalizePosLocalCreatedAt(order.created_at),
-          items: items
-            .filter((item) => item.variant_id || item.id) // skip items with no product ID
-            .map((item) => {
-              const localId = item.variant_id || item.id;
-              const serverVariantId = localVariantImportsRepo.getServerVariantId(localId) ?? localId;
-              return buildBackendOrderItem(item, () => serverVariantId);
-            }),
+          items: items.map((item) => {
+            const localId = item.variant_id || item.id;
+            const serverVariantId = localVariantImportsRepo.getServerVariantId(localId) ?? localId;
+            return buildBackendOrderItem(item, () => serverVariantId);
+          }),
         };
         if (order.billiard_origin_json) {
           try {
@@ -277,8 +329,13 @@ export class OrderSync {
           }
         }
       } catch (err: any) {
-        const errMsg = (err.message || String(err)).substring(0, 500);
-        const classified = classifyError(errMsg);
+        const rawMsg = (err.message || String(err)).substring(0, 500);
+        const classified = classifyError(rawMsg, typeof err.status === 'number' ? err.status : undefined);
+        // Stamp permanent rejections so the end-of-day requeue still recognises
+        // them after a restart, when only the stored text survives.
+        const errMsg = classified.kind === 'business' && !rawMsg.startsWith(PERMANENT_ERROR_MARKER)
+          ? `${PERMANENT_ERROR_MARKER} ${rawMsg}`
+          : rawMsg;
 
         if (classified.kind === 'business') {
           // Business-rule rejection — don't retry. Shelve immediately.
@@ -367,11 +424,11 @@ export class OrderSync {
    */
   repairStockFailures(): number {
     const rows = database.all<{ id: string }>(
-      "SELECT id FROM orders WHERE synced = -1 AND backend_id IS NULL AND sync_error LIKE 'Insufficient stock%'",
+      "SELECT id FROM orders WHERE synced = -1 AND backend_id IS NULL AND sync_error LIKE '%Insufficient stock%'",
     );
     if (rows.length === 0) return 0;
     database.run(
-      "UPDATE orders SET synced = 0, sync_attempts = 0, sync_error = NULL WHERE synced = -1 AND backend_id IS NULL AND sync_error LIKE 'Insufficient stock%'",
+      "UPDATE orders SET synced = 0, sync_attempts = 0, sync_error = NULL WHERE synced = -1 AND backend_id IS NULL AND sync_error LIKE '%Insufficient stock%'",
     );
     database.markDirty();
     logger.info(`[OrderSync] Reset ${rows.length} stock-failed orders for retry`);

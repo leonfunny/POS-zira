@@ -54,12 +54,23 @@ export function shouldDecrementStockAtCheckout(
     && getLineSaleQuantity(line) > 0;
 }
 
+/** The id this line will send as productId/variantId — the server variant when the
+ *  local-import reconciler already mapped it, otherwise the raw client-local id.
+ *  Exported so a caller can check the value BEFORE posting it: the backend DTO
+ *  demands a UUID and a client-local id can never become one by retrying. */
+export function resolveBackendVariantId(
+  line: LocalOrderLineContract,
+  resolveVariantId: (localId: string) => string | null | undefined = () => null,
+): string | undefined {
+  const localId = line.variant_id || line.id;
+  return localId ? (resolveVariantId(localId) ?? localId) : undefined;
+}
+
 export function buildBackendOrderItem(
   line: LocalOrderLineContract,
   resolveVariantId: (localId: string) => string | null | undefined = () => null,
 ): Record<string, any> {
-  const localId = line.variant_id || line.id;
-  const serverVariantId = localId ? (resolveVariantId(localId) ?? localId) : undefined;
+  const serverVariantId = resolveBackendVariantId(line, resolveVariantId);
   const sellBy = getLineSellBy(line);
   const quantity = getLineSaleQuantity(line);
   const payload: Record<string, any> = {
