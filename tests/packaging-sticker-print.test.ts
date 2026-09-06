@@ -18,7 +18,6 @@ const REQUEST = {
   styleName: 'KURTKA',
   styleCode: '114',
   colorName: 'CAPPUCCINO',
-  code: 'SP006290',
   quantity: 3,
 };
 
@@ -30,7 +29,7 @@ describe('resolvePackagingStickerJob', () => {
     expect(job.heightMm).toBe(30);
     expect(job.copies).toBe(3);
     expect(job.html).toContain('MoonCollection');
-    expect(job.html).toContain('SP006290');
+    expect(job.html).toContain('KURTKA - 114');
   });
 
   it('refuses when no LABEL printer is configured, instead of printing nowhere', () => {
@@ -78,10 +77,11 @@ describe('resolvePackagingStickerJob', () => {
     ).toThrow(/quantity/i);
   });
 
-  it('refuses a sticker with no code now that the barcode is printed', () => {
+  it('prints no barcode, and does not need a bag code to print at all', () => {
     const cfg = { [PrinterType.LABEL]: LABEL_CONFIG } as any;
-    expect(() => resolvePackagingStickerJob({ ...REQUEST, code: '' }, cfg)).toThrow(/code/);
-    expect(resolvePackagingStickerJob(REQUEST, cfg).html).toContain('<svg');
+    const html = resolvePackagingStickerJob(REQUEST, cfg).html;
+    expect(html).not.toContain('<svg');
+    expect(html).not.toContain('SP006290');
   });
 });
 

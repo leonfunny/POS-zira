@@ -64,7 +64,6 @@ describe('the packaging sticker bridge reaches every window', () => {
       styleName: 'KURTKA',
       styleCode: '114',
       colorName: 'CAPPUCCINO',
-      code: 'SP006290',
       quantity: 4,
     };
     const result = await api.printPackagingSticker(request);

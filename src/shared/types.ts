@@ -1599,7 +1599,6 @@ export interface PackagingStickerPrintRequest {
   styleName?: string;
   styleCode?: string;
   colorName?: string;
-  code: string;
   quantity?: number;
 }
 

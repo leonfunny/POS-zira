@@ -13,8 +13,6 @@ import {
   materialPercentSum,
   validateOrder,
   orderWarnings,
-  randomStickerCode,
-  fallbackStickerCode,
   foldGridIntoSizes,
   todayIsoDate,
   stickerGarmentType,
@@ -29,7 +27,6 @@ import {
   toggleCareTextPreset,
   upperCaseOrder,
 } from '../src/shared/label-print-order';
-import { encodeCode128 } from '../src/shared/code128';
 
 /**
  * Modelled on the A4 order sheet the factory works from: one customer, one
@@ -55,8 +52,8 @@ function sampleOrder(): LabelPrintOrder {
       { id: 'm', label: 'M', quantity: 60 },
     ],
     rows: [
-      { id: 'r1', colorName: 'CZEKOLADA', code: 'SP006290', quantities: {}, stickerQuantity: 24 },
-      { id: 'r2', colorName: 'BORDO', code: 'SP006291', quantities: {}, stickerQuantity: 5 },
+      { id: 'r1', colorName: 'CZEKOLADA', quantities: {}, stickerQuantity: 24 },
+      { id: 'r2', colorName: 'BORDO', quantities: {}, stickerQuantity: 5 },
     ],
     printFabricTags: true,
     printStickers: true,
@@ -181,18 +178,6 @@ describe('validateOrder', () => {
     expect(validateOrder(order)).toContain('EMPTY_SIZE');
   });
 
-  it('does not require a bag code: a blank one is filled at print time', () => {
-    const order = sampleOrder();
-    order.rows[1].code = '';
-    expect(validateOrder(order)).toEqual([]);
-  });
-
-  it('reports a bag code Code 128 cannot carry', () => {
-    const order = sampleOrder();
-    order.rows[0].code = 'CZEKOLADĄ';
-    expect(validateOrder(order)).toContain('BAD_CODE');
-  });
-
   it('reports a run larger than the documented cap', () => {
     const order = sampleOrder();
     order.sizes[0].quantity = LABEL_PRINT_ORDER_LIMITS.maxOrderQuantity;
@@ -210,8 +195,8 @@ describe('buildPrintPlan', () => {
   it('sends one sticker run per colour, as many as the packer typed', () => {
     const stickers = buildPrintPlan(sampleOrder()).filter((s) => s.kind === 'sticker');
     expect(stickers).toHaveLength(2);
-    expect(stickers[0]).toMatchObject({ colorName: 'CZEKOLADA', code: 'SP006290', quantity: 24 });
-    expect(stickers[1]).toMatchObject({ colorName: 'BORDO', code: 'SP006291', quantity: 5 });
+    expect(stickers[0]).toMatchObject({ colorName: 'CZEKOLADA', quantity: 24 });
+    expect(stickers[1]).toMatchObject({ colorName: 'BORDO', quantity: 5 });
     expect(stickers[0].sizeText).toBeUndefined();
   });
 
@@ -240,15 +225,13 @@ describe('buildPrintPlan', () => {
     expect(buildPrintPlan(order).map((s) => s.quantity)).toEqual([24, 5]);
   });
 
-  it('prints a colour with no bag code under a code made from style and colour', () => {
-    const order = sampleOrder();
-    order.rows[1].code = '   ';
-    const plan = buildPrintPlan(order);
-    const stickers = plan.filter((s) => s.kind === 'sticker');
-    expect(stickers).toHaveLength(2);
-    expect(stickers[1]).toMatchObject({
+  it('carries nothing but the colour and the count on a sticker step', () => {
+    const stickers = buildPrintPlan(sampleOrder()).filter((s) => s.kind === 'sticker');
+    expect(stickers[1]).toEqual({
+      kind: 'sticker',
+      id: 'sticker:r2:0',
+      rowId: 'r2',
       colorName: 'BORDO',
-      code: fallbackStickerCode(order.styleCode, 'BORDO'),
       quantity: 5,
     });
   });
@@ -409,7 +392,7 @@ describe('everything typed into a print order is printed in capitals', () => {
       careText: 'szyte w krakowie\nnaturalny len',
       materials: [{ name: 'poliester', percent: 70 }],
       sizes: [{ id: 's1', label: 'xl' }],
-      rows: [{ id: 'r1', colorName: 'czekolada', code: 'sp006290', quantities: { s1: 4 } }],
+      rows: [{ id: 'r1', colorName: 'czekolada', quantities: { s1: 4 } }],
     });
 
     expect(order.customerName).toBe('MOONCOLLECTION');
@@ -418,7 +401,7 @@ describe('everything typed into a print order is printed in capitals', () => {
     expect(order.careText).toBe('SZYTE W KRAKOWIE\nNATURALNY LEN');
     expect(order.materials[0].name).toBe('POLIESTER');
     expect(order.sizes[0].label).toBe('XL');
-    expect(order.rows[0]).toMatchObject({ colorName: 'CZEKOLADA', code: 'SP006290' });
+    expect(order.rows[0]).toMatchObject({ colorName: 'CZEKOLADA' });
   });
 
   it('lifts Polish letters the shop actually types', () => {
@@ -435,7 +418,7 @@ describe('everything typed into a print order is printed in capitals', () => {
     const before = {
       ...createEmptyOrder(),
       customerName: 'MOON',
-      rows: [{ id: 'r1', colorName: 'CZEKOLADA', code: '', quantities: {} }],
+      rows: [{ id: 'r1', colorName: 'CZEKOLADA', quantities: {} }],
       sizes: [{ id: 's1', label: 'S', quantity: 4 }],
       printStickers: false,
     };
@@ -476,31 +459,10 @@ describe('one of each, to look at before the ribbon is committed', () => {
       .toEqual(['sticker']);
   });
 
-  it('takes the sticker from the first colour even when its code is empty', () => {
+  it('takes the sticker from the first colour', () => {
     const order = sampleOrder();
-    order.rows[0].code = '   ';
     const sticker = buildSamplePlan(order).find((s) => s.kind === 'sticker');
-    expect(sticker).toMatchObject({
-      colorName: order.rows[0].colorName,
-      code: fallbackStickerCode(order.styleCode, order.rows[0].colorName),
-    });
-  });
-
-  describe('fallbackStickerCode', () => {
-    it('has the shape of a typed code and Code 128 can carry it', () => {
-      const code = fallbackStickerCode('114', 'CZARNY');
-      expect(code).toMatch(/^SP\d{6}$/);
-      expect(() => encodeCode128(code)).not.toThrow();
-    });
-
-    it('is the same for the same style and colour however they are typed', () => {
-      expect(fallbackStickerCode('114', 'czarny ')).toBe(fallbackStickerCode(' 114', 'CZARNY'));
-    });
-
-    it('differs between colours of one style, and between styles of one colour', () => {
-      expect(fallbackStickerCode('114', 'CZARNY')).not.toBe(fallbackStickerCode('114', 'BORDO'));
-      expect(fallbackStickerCode('114', 'CZARNY')).not.toBe(fallbackStickerCode('115', 'CZARNY'));
-    });
+    expect(sticker).toMatchObject({ colorName: order.rows[0].colorName });
   });
 
   it('has nothing to show for an order with no colours or no sizes', () => {
@@ -650,18 +612,6 @@ describe('orderWarnings', () => {
   it('says nothing when the fabric lane is off or a material is named', () => {
     expect(orderWarnings({ ...sampleOrder(), materials: [], printFabricTags: false })).toEqual([]);
     expect(orderWarnings(sampleOrder())).toEqual([]);
-  });
-});
-
-describe('randomStickerCode', () => {
-  it('is the prefix the sheets used plus six digits, zero-padded', () => {
-    expect(randomStickerCode(() => 0)).toBe('SP000000');
-    expect(randomStickerCode(() => 0.999999)).toBe('SP999999');
-    expect(randomStickerCode()).toMatch(/^SP\d{6}$/);
-  });
-
-  it('is something Code 128 can carry, should the barcode come back', () => {
-    expect(() => encodeCode128(randomStickerCode())).not.toThrow();
   });
 });
 

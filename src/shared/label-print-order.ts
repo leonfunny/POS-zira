@@ -4,12 +4,10 @@
  * shop already works from, typed in.
  *
  * Deliberately independent of the product catalog. The factory prints for its
- * customers' styles; those codes (`SP006290`) belong to the customer's system,
- * carry no size, and must not become sellable products with stock and prices.
+ * customers' styles; those styles carry no size and must not become sellable
+ * products with stock and prices.
  */
 import { CareSymbol, FABRIC_TAG_LIMITS } from './types';
-import { encodeCode128 } from './code128';
-import { PACKAGING_STICKER_BARCODE_ENABLED } from './packaging-sticker';
 
 /** Materials the shop uses, in the Polish spelling that goes on the tag. */
 export const FABRIC_MATERIALS = [
@@ -145,11 +143,7 @@ export function upperCaseOrder(order: LabelPrintOrder): LabelPrintOrder {
     careText: up(order.careText),
     materials: order.materials.map((material) => ({ ...material, name: up(material.name) })),
     sizes: folded.sizes.map((size) => ({ ...size, label: up(size.label) })),
-    rows: folded.rows.map((row) => ({
-      ...row,
-      colorName: up(row.colorName),
-      code: up(row.code),
-    })),
+    rows: folded.rows.map((row) => ({ ...row, colorName: up(row.colorName) })),
   };
 }
 
@@ -190,8 +184,6 @@ export interface OrderSize {
 export interface OrderRow {
   id: string;
   colorName: string;
-  /** The bag code under the barcode; generated, never typed. */
-  code: string;
   /**
    * Left over from the colour × size grid the sheet used to have. No longer
    * typed; folded into `OrderSize.quantity` on load and kept empty since.
@@ -260,7 +252,6 @@ export type OrderProblem =
   | 'NO_STICKER_QTY'
   | 'DUPLICATE_SIZE'
   | 'EMPTY_SIZE'
-  | 'BAD_CODE'
   | 'PERCENT_NOT_100'
   | 'ORDER_TOO_LARGE';
 
@@ -274,7 +265,6 @@ export interface PrintStepBase {
 export interface StickerStep extends PrintStepBase {
   kind: 'sticker';
   colorName: string;
-  code: string;
 }
 
 export interface FabricStep extends PrintStepBase {
@@ -291,33 +281,6 @@ export type PrintStep = StickerStep | FabricStep;
 export function todayIsoDate(now: Date = new Date()): string {
   const pad = (value: number) => String(value).padStart(2, '0');
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-}
-
-/**
- * A code for a colour row nobody has to type. The bag sticker does not print
- * it today, so its only job is to stand in the slot the customer's own code
- * would fill — six digits behind the prefix the photographed sheets used, and
- * inside what Code 128 can carry should the barcode layout come back.
- */
-export function randomStickerCode(random: () => number = Math.random): string {
-  const digits = Math.floor(random() * 1_000_000);
-  return `SP${String(digits).padStart(6, '0')}`;
-}
-
-/**
- * The bag code for a row that has none: a sheet saved before codes were
- * filled in, or a reprint from the product tab, which has no sheet to take one
- * from. Same shape as a typed code, and the same every time for the same
- * style and colour, so a reprint's barcode matches the last reprint's.
- */
-export function fallbackStickerCode(styleCode: string, colorName: string): string {
-  const key = `${styleCode.trim()}|${colorName.trim()}`.toLocaleUpperCase('pl');
-  let hash = 2166136261;
-  for (let index = 0; index < key.length; index += 1) {
-    hash ^= key.charCodeAt(index);
-    hash = Math.imul(hash, 16777619) >>> 0;
-  }
-  return `SP${String(hash % 1_000_000).padStart(6, '0')}`;
 }
 
 export function createEmptyOrder(): LabelPrintOrder {
@@ -513,12 +476,7 @@ export function orderWarnings(order: LabelPrintOrder): OrderWarning[] {
   return warnings;
 }
 
-/**
- * Problems that must be fixed before printing.
- *
- * The dormant sticker code is deliberately ignored while its barcode is off.
- * If the old barcode layout returns, the same switch restores its validation.
- */
+/** Problems that must be fixed before printing. */
 export function validateOrder(order: LabelPrintOrder): OrderProblem[] {
   const problems = new Set<OrderProblem>();
 
@@ -533,18 +491,6 @@ export function validateOrder(order: LabelPrintOrder): OrderProblem[] {
   if (labels.some((label) => !label)) problems.add('EMPTY_SIZE');
   const filled = labels.filter(Boolean);
   if (new Set(filled).size !== filled.length) problems.add('DUPLICATE_SIZE');
-
-  if (PACKAGING_STICKER_BARCODE_ENABLED) {
-    for (const row of order.rows) {
-      const code = row.code.trim();
-      if (!code) continue;
-      try {
-        encodeCode128(code);
-      } catch {
-        problems.add('BAD_CODE');
-      }
-    }
-  }
 
   // A tag with no composition at all is legal and customers do order it, so an
   // order with nothing ticked prints. Once a material is ticked the tag makes a
@@ -601,8 +547,6 @@ export function buildPrintPlan(
 
   if (order.printStickers) {
     for (const row of order.rows) {
-      const code = row.code.trim() || fallbackStickerCode(order.styleCode, row.colorName);
-
       // One sticker run per colour, as many as the packer typed: a sticker
       // goes on a bag of mixed sizes, so neither the size nor the garment
       // count has any say in it.
@@ -611,7 +555,6 @@ export function buildPrintPlan(
         id: `sticker:${row.id}:${index}`,
         rowId: row.id,
         colorName: row.colorName.trim(),
-        code,
         quantity,
       }));
     }
@@ -652,8 +595,7 @@ export function buildSamplePlan(order: LabelPrintOrder): PrintStep[] {
   if (order.rows.length === 0 || order.sizes.length === 0) return [];
   // Built from an order with one of everything rather than from the quantities
   // typed so far: what a label says does not depend on how many are wanted, and
-  // the operator wants to look at a tag before filling the grid in. It also
-  // means a first colour with no dormant sticker code still yields a sample.
+  // the operator wants to look at a tag before filling the grid in.
   const oneOfEach: LabelPrintOrder = {
     ...order,
     sizes: order.sizes.map((size) => ({ ...size, quantity: 1 })),

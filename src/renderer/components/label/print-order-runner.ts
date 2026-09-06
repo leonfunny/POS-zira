@@ -23,7 +23,6 @@ export interface PrintOrderApi {
     styleName: string;
     styleCode: string;
     colorName: string;
-    code: string;
     quantity: number;
   }): Promise<{ success: boolean; error?: string }>;
   printFabricTag(request: {
@@ -132,7 +131,6 @@ export async function runPrintPlan(
               styleName: header.styleName,
               styleCode: header.styleCode,
               colorName: step.colorName,
-              code: step.code,
               quantity: step.quantity,
             })
           : await api.printFabricTag({

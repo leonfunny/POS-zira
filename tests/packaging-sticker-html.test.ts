@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildPackagingStickerHtml,
-  PACKAGING_STICKER_BARCODE_ENABLED,
   PACKAGING_STICKER_LIMITS,
   parsePackagingSticker,
   layoutPackagingStickerText,
@@ -9,24 +8,19 @@ import {
 } from '../src/shared/packaging-sticker';
 
 /**
- * Layout target is the sticker the customer supplied, photographed at the
- * factory (see docs/superpowers/specs/2026-09-02-label-print-order-design.md):
+ * Three lines since 04/09, when the barcode and the bag code under it came off
+ * for good — no reader in the workshop, and the code was generated rather than
+ * meaningful:
  *
- *   MoonCollection        <- customer
- *   |||| || ||||          <- Code 128 of the bag code
- *   SP006290              <- the same code, readable
+ *   MOONCOLLECTION        <- customer
  *   KURTKA - 114          <- kind of garment - style code
  *   CAPPUCCINO            <- colour
- *
- * The barcode was off for a day and the owner asked for it back; the switch
- * is kept so the decision stays one line.
  */
 const SAMPLE = {
   customerName: 'MoonCollection',
   styleName: 'KURTKA',
   styleCode: '114',
   colorName: 'CAPPUCCINO',
-  code: 'SP006290',
   widthMm: 50,
   heightMm: 30,
 };
@@ -34,21 +28,24 @@ const SAMPLE = {
 describe('parsePackagingSticker', () => {
   it('accepts the factory sample', () => {
     const parsed = parsePackagingSticker(SAMPLE);
-    expect(parsed.code).toBe('SP006290');
+    expect(parsed.customerName).toBe('MoonCollection');
     expect(parsed.sizeText).toBeUndefined();
   });
 
-  it('trims surrounding whitespace so a stray space cannot change the barcode', () => {
-    const parsed = parsePackagingSticker({ ...SAMPLE, code: '  SP006290  ' });
-    expect(parsed.code).toBe('SP006290');
+  it('trims surrounding whitespace so a stray space cannot shift a line', () => {
+    const parsed = parsePackagingSticker({ ...SAMPLE, colorName: '  CAPPUCCINO  ' });
+    expect(parsed.colorName).toBe('CAPPUCCINO');
   });
 
-  it('needs a code, since the barcode is printed again', () => {
-    expect(() => parsePackagingSticker({ ...SAMPLE, code: '   ' })).toThrow(/code/);
+  it('drops the bag code a caller may still be sending: nothing prints it', () => {
+    expect(parsePackagingSticker({ ...SAMPLE, code: 'SP006290' } as never))
+      .not.toHaveProperty('code');
   });
 
-  it('refuses a code Code 128 cannot carry, here rather than at the printer', () => {
-    expect(() => parsePackagingSticker({ ...SAMPLE, code: 'CZEKOLADĄ' })).toThrow();
+  it('prints a sticker that has only a colour rather than refusing the run', () => {
+    const bare = parsePackagingSticker({ colorName: 'CAPPUCCINO', widthMm: 50, heightMm: 30 });
+    expect(bare.customerName).toBe('');
+    expect(buildPackagingStickerHtml(bare)).toContain('CAPPUCCINO');
   });
 
   it('caps each text field so long input cannot silently overflow the sticker', () => {
@@ -81,17 +78,17 @@ describe('parsePackagingSticker', () => {
 describe('buildPackagingStickerHtml', () => {
   const html = buildPackagingStickerHtml(parsePackagingSticker(SAMPLE));
 
-  it('prints the five lines of the customer sample', () => {
+  it('prints the three lines of the customer sample', () => {
     expect(html).toContain('MoonCollection');
     expect(html).toContain('KURTKA - 114');
     expect(html).toContain('CAPPUCCINO');
-    expect(html).toContain('<div class="code">SP006290</div>');
   });
 
-  it('prints the barcode again, as the owner asked', () => {
-    expect(PACKAGING_STICKER_BARCODE_ENABLED).toBe(true);
-    expect(html).toContain('<div class="barcode">');
-    expect(html).toContain('<svg');
+  it('prints no barcode and no code line, as the owner asked', () => {
+    expect(html).not.toContain('<svg');
+    expect(html).not.toContain('class="barcode"');
+    expect(html).not.toContain('class="code"');
+    expect(html).not.toContain('SP006290');
   });
 
   it('clips inside a box the print path honours, never onto a second label', () => {
@@ -156,7 +153,6 @@ describe('long text has to fit the label, not run off it', () => {
     styleCode: '9'.repeat(8),
     colorName: 'C'.repeat(LIMIT),
     sizeText: '44/46',
-    code: 'S'.repeat(LIMIT),
     widthMm: 50,
     heightMm: 30,
   });
@@ -168,13 +164,13 @@ describe('long text has to fit the label, not run off it', () => {
     expect(html).toContain('word-break:break-word');
   });
 
-  it('steps the type down as far as the head can resolve when nothing else fits', () => {
-    // Three forty-character lines and a code do not fit a 50x30 under a
-    // barcode at any legible size. The type stops at the floor and the tail is
-    // clipped inside the label — the estimate says so instead of pretending.
+  it('now fits the worst sticker in the catalogue, which used to be clipped', () => {
+    // Three forty-character lines did not fit a 50x30 under the barcode at any
+    // legible size; with those 12mm back the same sticker fits, stepped down.
     const layout = layoutPackagingStickerText(worst());
-    expect(layout.customerPt).toBe(5);
-    expect(layout.textMm).toBeGreaterThan(layout.budgetMm);
+    expect(layout.textMm).toBeLessThanOrEqual(layout.budgetMm);
+    expect(layout.customerPt).toBeLessThan(11);
+    expect(layout.customerPt).toBeGreaterThan(5);
   });
 
   it('steps the type down until a long colour fits, and no further', () => {
@@ -184,7 +180,7 @@ describe('long text has to fit the label, not run off it', () => {
       colorName: 'CZARNY Z BIAŁYM PASKIEM I KAPTUREM',
     }));
     expect(layout.textMm).toBeLessThanOrEqual(layout.budgetMm);
-    expect(layout.colorPt).toBeLessThan(6.5);
+    expect(layout.colorPt).toBeLessThan(13);
     expect(layout.colorPt).toBeGreaterThan(5);
   });
 
@@ -194,14 +190,20 @@ describe('long text has to fit the label, not run off it', () => {
       styleName: 'KURTKA',
       styleCode: '114',
       colorName: 'CZEKOLADA',
-      code: 'SP006290',
       widthMm: 50,
       heightMm: 30,
     }));
-    expect(layout.customerPt).toBe(6.5);
-    expect(layout.stylePt).toBe(6.5);
-    expect(layout.colorPt).toBe(6.5);
+    // The sizes the 45mm text column allows: "MARYNARKA - 111" is the longest
+    // line the catalogue produces and it holds one line at 11pt, two at 12.
+    expect(layout.customerPt).toBe(11);
+    expect(layout.stylePt).toBe(11);
+    expect(layout.colorPt).toBe(13);
     expect(layout.textMm).toBeLessThanOrEqual(layout.budgetMm);
+  });
+
+  it('keeps the longest style line in the catalogue on one line', () => {
+    expect(stickerLinesNeeded('MARYNARKA - 111', 11, 45)).toBe(1);
+    expect(stickerLinesNeeded('MARYNARKA - 111', 12, 45)).toBe(2);
   });
 
   it('fits the sticker that came out on two labels, on one', () => {
@@ -212,27 +214,25 @@ describe('long text has to fit the label, not run off it', () => {
       styleName: 'KOMPLETY DRESOWE',
       styleCode: '115',
       colorName: 'CZARNY',
-      code: 'SP123456',
       widthMm: 50,
       heightMm: 30,
     }));
     expect(layout.textMm).toBeLessThanOrEqual(layout.budgetMm);
-    expect(layout.stylePt).toBe(6.5);
+    expect(layout.stylePt).toBe(11);
   });
 
   it('never shrinks below what the print head can resolve', () => {
-    // A 20mm-tall label leaves almost nothing once the barcode has its share;
-    // the floor has to hold rather than let the type vanish.
+    // A 30x20 label with three forty-character lines is past what any legible
+    // type can hold; the floor has to hold rather than let the type vanish.
     const layout = layoutPackagingStickerText(parsePackagingSticker({
       customerName: 'M'.repeat(LIMIT),
       styleName: 'K'.repeat(LIMIT),
       styleCode: '9'.repeat(8),
       colorName: 'C'.repeat(LIMIT),
-      code: 'S'.repeat(LIMIT),
       widthMm: 30,
       heightMm: 20,
     }));
-    for (const pt of [layout.customerPt, layout.codePt, layout.stylePt, layout.colorPt]) {
+    for (const pt of [layout.customerPt, layout.stylePt, layout.colorPt]) {
       expect(pt).toBeGreaterThanOrEqual(5);
     }
   });

@@ -60,7 +60,7 @@ function sample() {
     styleName: 'KURTKA',
     styleCode: '114',
     sizes: [{ id: 's', label: 'S' }],
-    rows: [{ id: 'r1', colorName: 'CZEKOLADA', code: 'SP006290', quantities: { s: 40 } }],
+    rows: [{ id: 'r1', colorName: 'CZEKOLADA', quantities: { s: 40 } }],
   };
 }
 

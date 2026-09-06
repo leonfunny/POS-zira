@@ -248,14 +248,14 @@ describe('orderFromStyle', () => {
     expect(order.styleCode).toBe('115');
   });
 
-  it('prints the same bag code the order sheet would fall back to', () => {
+  it('prints one sticker per colour, carrying no bag code', () => {
     const order = orderFromStyle({
       templateId: 't', name: 'X', styleCode: '115', categoryId: null, variants: rows, tag: null,
     });
     const plan = buildPrintPlan({ ...order, customerName: 'MOON', rows: order.rows.map((row) => ({ ...row, stickerQuantity: 1 })), printFabricTags: false });
-    const printed = plan.filter((step) => step.kind === 'sticker').map((step: any) => step.code);
-    expect(printed).toEqual(order.rows.map((row) => row.code));
-    expect(order.rows[0].code).not.toBe('');
+    const stickers = plan.filter((step) => step.kind === 'sticker');
+    expect(stickers.map((step: any) => step.colorName)).toEqual(order.rows.map((row) => row.colorName));
+    expect(stickers.every((step) => !('code' in step))).toBe(true);
   });
 
   it('takes the customer, composition and care from the saved tag', () => {

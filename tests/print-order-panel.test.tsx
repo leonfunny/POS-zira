@@ -394,7 +394,7 @@ describe('PrintOrderPanel', () => {
     expect(headers).toHaveLength(1);
   });
 
-  it('gives each colour row a sticker code nobody has to type', async () => {
+  it('prints one run per colour, with no bag code anywhere', async () => {
     await render();
     await fillMinimalOrder(40);
     await act(async () => buttonWithText(container, 'Add colour').click());
@@ -404,15 +404,17 @@ describe('PrintOrderPanel', () => {
     await changeInput(colours[1], 'BORDO');
     await changeInput(input(container, 'input[aria-label="Bag stickers BORDO"]'), '1');
 
-    // No code column on the sheet any more — the sticker does not print it.
+    // No code column on the sheet, and no code on the sticker either.
     expect(container.querySelector('input[placeholder="SP006290"]')).toBeNull();
     expect(buttonWithText(container, 'Print').disabled).toBe(false);
     await act(async () => buttonWithText(container, 'Print').click());
     await settle();
     expect(printSticker).toHaveBeenCalledTimes(2);
-    const codes = printSticker.mock.calls.map((call) => call[0].code);
-    expect(codes.every((code) => /^SP\d{6}$/.test(code))).toBe(true);
-    expect(new Set(codes).size).toBe(2);
+    // One run per colour, and no bag code on any of them: the sticker prints
+    // the customer, the garment and the colour, nothing else.
+    const printedColours = printSticker.mock.calls.map((call) => call[0].colorName);
+    expect(new Set(printedColours).size).toBe(2);
+    expect(printSticker.mock.calls.every((call) => !('code' in call[0]))).toBe(true);
   });
 
   it('refuses to print without a customer name, and says so', async () => {
@@ -544,8 +546,8 @@ describe('PrintOrderPanel', () => {
           styleCode: '114',
           sizes: [{ id: 's', label: 'S' }, { id: 'm', label: 'M' }],
           rows: [
-            { id: 'r1', colorName: 'CZEKOLADA', code: 'SP000001', quantities: { s: 40, m: 60 } },
-            { id: 'r2', colorName: 'BORDO', code: 'SP000002', quantities: { s: 20 } },
+            { id: 'r1', colorName: 'CZEKOLADA', quantities: { s: 40, m: 60 } },
+            { id: 'r2', colorName: 'BORDO', quantities: { s: 20 } },
           ],
         }),
       );
@@ -619,8 +621,6 @@ describe('PrintOrderPanel', () => {
       styleName: 'KURTKA',
       styleCode: '114',
       colorName: 'CZEKOLADA',
-      // Nobody typed a code: the row got one when it was added.
-      code: expect.stringMatching(/^SP\d{6}$/),
       // Ten bags, typed by hand; not the forty garments.
       quantity: 10,
     });
@@ -1399,7 +1399,9 @@ describe('PrintOrderPanel', () => {
       expect(text('[data-testid="grand-total"]')).toBe('40');
     });
 
-    it('takes the sticker code from the sheet when it carries one', async () => {
+    it('prints the pasted colour, and no bag code even when the sheet had one', async () => {
+      // The KOD column is still read into the row (see order-paste.test.ts);
+      // it stopped travelling to the printer when the barcode came off.
       await render();
       await changeInput(input(container, 'input[placeholder="MoonCollection"]'), 'MOON');
       await changeInput(input(container, 'input[placeholder="114"]'), '114');
@@ -1410,21 +1412,8 @@ describe('PrintOrderPanel', () => {
       await act(async () => buttonWithText(container, 'Print').click());
       await settle();
 
-      expect(printSticker.mock.calls[0][0].code).toBe('SP006290');
-    });
-
-    it('makes up a sticker code for a pasted sheet that has none', async () => {
-      await render();
-      await changeInput(input(container, 'input[placeholder="MoonCollection"]'), 'MOON');
-      await changeInput(input(container, 'input[placeholder="114"]'), '114');
-      await paste('KOLOR\tS\nczekolada\t40');
-      await act(async () => container.querySelector<HTMLButtonElement>(
-        '[data-testid="paste-accept"]')!.click());
-      await changeInput(input(container, 'input[aria-label="Bag stickers CZEKOLADA"]'), '1');
-      await act(async () => buttonWithText(container, 'Print').click());
-      await settle();
-
-      expect(printSticker.mock.calls[0][0].code).toMatch(/^SP\d{6}$/);
+      expect(printSticker.mock.calls[0][0]).toMatchObject({ colorName: 'CZEKOLADA' });
+      expect(printSticker.mock.calls[0][0]).not.toHaveProperty('code');
     });
 
     it('does not carry an interrupted run over to the pasted sheet', async () => {

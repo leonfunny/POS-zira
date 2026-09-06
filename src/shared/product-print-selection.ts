@@ -21,7 +21,6 @@ import {
   SIZE_SUGGESTIONS,
   compositionText,
   createEmptyOrder,
-  fallbackStickerCode,
   foldGridIntoSizes,
   parseCompositionText,
 } from './label-print-order';
@@ -148,9 +147,6 @@ export function buildSelectionOrder(input: SelectionInput): LabelPrintOrder {
       row = {
         id: `sel-color-${rowByColor.size}`,
         colorName,
-        // A reprint has no sheet to take a bag code from; the print plan fills
-        // a blank one from the style code and colour, the same way every time.
-        code: '',
         quantities: {},
         stickerQuantity: selectionQuantity(input.stickerQuantities?.[colorName]),
       };
@@ -310,9 +306,6 @@ export function orderFromStyle(seed: StyleSeed): LabelPrintOrder {
       return {
         id: `row-${index}`,
         colorName,
-        // The same code the sheet would fall back to, so a sticker printed from
-        // here reads like one printed from the order.
-        code: fallbackStickerCode(styleCode, colorName),
         quantities: {},
         ...(own === undefined ? {} : { priceGrossGrosze: own }),
       };

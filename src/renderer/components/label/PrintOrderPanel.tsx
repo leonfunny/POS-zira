@@ -11,7 +11,6 @@ import {
   OrderProblem,
   OrderWarning,
   orderWarnings,
-  randomStickerCode,
   stickerGarmentType,
   SIZE_SUGGESTIONS,
   STYLE_SUGGESTIONS,
@@ -114,8 +113,6 @@ interface Copy {
   forgetStyle: string;
   learnedStyles: string;
   color: string;
-  code: string;
-  codeHint: string;
   rowTotal: string;
   stickerQty: string;
   colourPrice: string;
@@ -221,8 +218,6 @@ const COPY: Record<string, Copy> = {
     forgetStyle: 'Bỏ nhớ tên hàng',
     learnedStyles: 'Đã nhớ',
     color: 'Màu',
-    code: 'Mã tem',
-    codeHint: 'Để trống thì màu này không in tem dán',
     rowTotal: 'Tổng',
     stickerQty: 'Tem túi',
     colourPrice: 'Giá riêng (zł)',
@@ -280,8 +275,7 @@ const COPY: Record<string, Copy> = {
       NO_STICKER_QTY: 'Chưa nhập số tem túi cho một màu — mỗi màu một số, tính theo chồng đóng túi',
       DUPLICATE_SIZE: 'Có hai cột size trùng tên',
       EMPTY_SIZE: 'Có cột size chưa đặt tên',
-      BAD_CODE: 'Mã tem có ký tự máy in không đọc được',
-      PERCENT_NOT_100: 'Tổng phần trăm chất liệu phải bằng 100%',
+        PERCENT_NOT_100: 'Tổng phần trăm chất liệu phải bằng 100%',
       ORDER_TOO_LARGE: 'Số lượng quá lớn — kiểm tra lại',
     },
     warning: {
@@ -356,8 +350,6 @@ const COPY: Record<string, Copy> = {
     forgetStyle: 'Zapomnij nazwę',
     learnedStyles: 'Zapamiętane',
     color: 'Kolor',
-    code: 'Kod etykiety',
-    codeHint: 'Puste = bez naklejki dla tego koloru',
     rowTotal: 'Razem',
     stickerQty: 'Naklejki',
     colourPrice: 'Cena koloru (zł)',
@@ -415,8 +407,7 @@ const COPY: Record<string, Copy> = {
       NO_STICKER_QTY: 'Brak liczby naklejek na worek dla koloru — po jednej na kolor, według paczek',
       DUPLICATE_SIZE: 'Dwie kolumny mają ten sam rozmiar',
       EMPTY_SIZE: 'Kolumna rozmiaru bez nazwy',
-      BAD_CODE: 'Kod zawiera znaki, których drukarka nie odczyta',
-      PERCENT_NOT_100: 'Skład musi sumować się do 100%',
+        PERCENT_NOT_100: 'Skład musi sumować się do 100%',
       ORDER_TOO_LARGE: 'Zbyt duża ilość — sprawdź',
     },
     warning: {
@@ -491,8 +482,6 @@ const COPY: Record<string, Copy> = {
     forgetStyle: 'Forget',
     learnedStyles: 'Remembered',
     color: 'Colour',
-    code: 'Sticker code',
-    codeHint: 'Blank means no packaging sticker for this colour',
     rowTotal: 'Total',
     stickerQty: 'Bag stickers',
     colourPrice: 'Colour price (zł)',
@@ -550,8 +539,7 @@ const COPY: Record<string, Copy> = {
       NO_STICKER_QTY: 'A colour has no bag sticker count — one per colour, by stacks packed',
       DUPLICATE_SIZE: 'Two size columns share a name',
       EMPTY_SIZE: 'A size column has no name',
-      BAD_CODE: 'A sticker code has characters the printer cannot encode',
-      PERCENT_NOT_100: 'The composition must add up to 100%',
+        PERCENT_NOT_100: 'The composition must add up to 100%',
       ORDER_TOO_LARGE: 'Quantity is implausibly large — check the sheet',
     },
     warning: {
@@ -924,7 +912,7 @@ export default function PrintOrderPanel({
     patch({
       rows: [
         ...order.rows,
-        { id: nextId('row'), colorName: '', code: randomStickerCode(), quantities: {} },
+        { id: nextId('row'), colorName: '', quantities: {} },
       ],
     });
 
@@ -948,14 +936,10 @@ export default function PrintOrderPanel({
     if (!pasted) return;
     // Fresh ids all round, so nothing is inherited from the sheet being
     // replaced — including an interrupted run's batches.
-    // A pasted sheet without a code column gets codes like a typed one does.
     // Its colour × size cells become one garment count per size; the bag
     // counts per colour are the packer's to type.
     const folded = foldGridIntoSizes(pasted.sizes, pasted.rows);
-    patch({
-      sizes: folded.sizes,
-      rows: folded.rows.map((row) => (row.code.trim() ? row : { ...row, code: randomStickerCode() })),
-    });
+    patch({ sizes: folded.sizes, rows: folded.rows });
     setPasteText(null);
   };
 

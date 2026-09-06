@@ -10,7 +10,6 @@ function stickerStep(over: Partial<PrintStep> = {}): PrintStep {
     id: 'sticker:r1:0',
     rowId: 'r1',
     colorName: 'CZEKOLADA',
-    code: 'SP006290',
     quantity: 100,
     ...(over as any),
   };
@@ -54,10 +53,15 @@ describe('runPrintPlan', () => {
       styleName: 'KURTKA',
       styleCode: '114',
       colorName: 'CZEKOLADA',
-      code: 'SP006290',
       sizeText: undefined,
       quantity: 100,
     });
+  });
+
+  it('sends no bag code — the sticker stopped printing one when the barcode went', async () => {
+    const api = makeApi();
+    await runPrintPlan([stickerStep()], HEADER, api, makeHooks());
+    expect(api.printSticker.mock.calls[0][0]).not.toHaveProperty('code');
   });
 
   it('sends no size on a sticker — one sticker covers a bag of mixed sizes', async () => {

@@ -23,7 +23,12 @@ export interface PastedGrid {
   problems: PasteProblem[];
 }
 
-/** Header cells that name the sticker code column. */
+/**
+ * Header cells that name a code column on the customer's sheet. Nothing is
+ * kept from it — the bag code went with the barcode — but it still has to be
+ * recognised, or it would be read as a size and shift every quantity one
+ * column to the left.
+ */
 const CODE_HEADERS = /^(kod|code|m[ãa]|m[ãa] tem|kod ean|ean|symbol|indeks)$/i;
 
 /**
@@ -138,7 +143,6 @@ export function parsePastedGrid(text: string, makeId: (prefix: string) => string
     rows.push({
       id: makeId('row'),
       colorName: colorName.toUpperCase(),
-      code: (codeColumn === -1 ? '' : cells[codeColumn] ?? '').toUpperCase(),
       quantities,
     });
   }

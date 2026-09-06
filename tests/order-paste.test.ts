@@ -9,12 +9,11 @@ function grid(text: string) {
   return parsePastedGrid(text, makeId);
 }
 
-/** How the sheet reads once it is on the panel: colour, code, then quantities. */
+/** How the sheet reads once it is on the panel: colour, then quantities. */
 function readable(text: string) {
   const parsed = grid(text);
   return parsed.rows.map((row) => ({
     colorName: row.colorName,
-    code: row.code,
     quantities: parsed.sizes.map((size) => row.quantities[size.id] ?? 0),
   }));
 }
@@ -26,27 +25,28 @@ describe('reading the customer sheet off the clipboard', () => {
     expect(parsed.problems).toEqual([]);
     expect(parsed.sizes.map((size) => size.label)).toEqual(['S', 'M']);
     expect(readable('\tS\tM\nCZEKOLADA\t40\t60\nBORDO\t20\t0')).toEqual([
-      { colorName: 'CZEKOLADA', code: '', quantities: [40, 60] },
-      { colorName: 'BORDO', code: '', quantities: [20, 0] },
+      { colorName: 'CZEKOLADA', quantities: [40, 60] },
+      { colorName: 'BORDO', quantities: [20, 0] },
     ]);
     expect(parsed.totalCopies).toBe(120);
   });
 
   it('reads a header that names the colour column', () => {
     expect(readable('KOLOR\tS\tM\nCZEKOLADA\t40\t60')).toEqual([
-      { colorName: 'CZEKOLADA', code: '', quantities: [40, 60] },
+      { colorName: 'CZEKOLADA', quantities: [40, 60] },
     ]);
   });
 
-  it('takes the sticker code from a column that says so', () => {
+  it('skips a code column instead of keeping it: nothing prints a bag code', () => {
+    const parsed = grid('KOLOR\tKOD\tS\tM\nCZEKOLADA\tsp006290\t40\t60');
+    expect(parsed.rows[0]).not.toHaveProperty('code');
     expect(readable('KOLOR\tKOD\tS\tM\nCZEKOLADA\tsp006290\t40\t60')).toEqual([
-      { colorName: 'CZEKOLADA', code: 'SP006290', quantities: [40, 60] },
+      { colorName: 'CZEKOLADA', quantities: [40, 60] },
     ]);
   });
 
-  it('leaves the code blank when the sheet has none, and still prints the tags', () => {
+  it('reads a sheet with no code column at all', () => {
     const parsed = grid('\tS\nCZEKOLADA\t40');
-    expect(parsed.rows[0].code).toBe('');
     expect(parsed.problems).toEqual([]);
   });
 
@@ -54,28 +54,28 @@ describe('reading the customer sheet off the clipboard', () => {
     // The rows are one cell wider than the header, so the sizes sit one to the
     // right and the first column is the colours.
     expect(readable('S\tM\nCZEKOLADA\t40\t60')).toEqual([
-      { colorName: 'CZEKOLADA', code: '', quantities: [40, 60] },
+      { colorName: 'CZEKOLADA', quantities: [40, 60] },
     ]);
   });
 
   it('reads a header that is all sizes, standing over the colour names', () => {
     // Same width as the rows: the first heading is over the colour column.
     expect(readable('S\tM\nCZEKOLADA\t60')).toEqual([
-      { colorName: 'CZEKOLADA', code: '', quantities: [60] },
+      { colorName: 'CZEKOLADA', quantities: [60] },
     ]);
   });
 
   it('puts everything in capitals, like everything else typed on this tab', () => {
     expect(readable('\ts\nczekolada\t40')).toEqual([
-      { colorName: 'CZEKOLADA', code: '', quantities: [40] },
+      { colorName: 'CZEKOLADA', quantities: [40] },
     ]);
     expect(grid('\ts\nczekolada\t40').sizes[0].label).toBe('S');
   });
 
   it('treats an empty cell, a dash and an x as "not this size"', () => {
     expect(readable('\tS\tM\tL\nCZEKOLADA\t40\t\t-\nBORDO\tx\t10\t')).toEqual([
-      { colorName: 'CZEKOLADA', code: '', quantities: [40, 0, 0] },
-      { colorName: 'BORDO', code: '', quantities: [0, 10, 0] },
+      { colorName: 'CZEKOLADA', quantities: [40, 0, 0] },
+      { colorName: 'BORDO', quantities: [0, 10, 0] },
     ]);
   });
 
@@ -83,13 +83,13 @@ describe('reading the customer sheet off the clipboard', () => {
     // A decimal comma inside a tab-separated cell, and a space between
     // thousands. Half a label is not a thing, so the fraction is dropped.
     expect(readable('\tS\tM\nCZEKOLADA\t1,5\t1 200')).toEqual([
-      { colorName: 'CZEKOLADA', code: '', quantities: [1, 1200] },
+      { colorName: 'CZEKOLADA', quantities: [1, 1200] },
     ]);
   });
 
   it('reads a comma-separated sheet when there is not a tab in sight', () => {
     expect(readable(',S,M\nCZEKOLADA,40,60')).toEqual([
-      { colorName: 'CZEKOLADA', code: '', quantities: [40, 60] },
+      { colorName: 'CZEKOLADA', quantities: [40, 60] },
     ]);
   });
 
@@ -131,14 +131,14 @@ describe('reading the customer sheet off the clipboard', () => {
 
   it('keeps the quantities lined up with the sizes when a code column sits between', () => {
     expect(readable('KOLOR\tKOD\tS\tM\nCZEKOLADA\tSP1\t40\t60\nBORDO\tSP2\t0\t20')).toEqual([
-      { colorName: 'CZEKOLADA', code: 'SP1', quantities: [40, 60] },
-      { colorName: 'BORDO', code: 'SP2', quantities: [0, 20] },
+      { colorName: 'CZEKOLADA', quantities: [40, 60] },
+      { colorName: 'BORDO', quantities: [0, 20] },
     ]);
   });
 
   it('reads a sheet with the code column last', () => {
     expect(readable('KOLOR\tS\tM\tKOD\nCZEKOLADA\t40\t60\tSP1')).toEqual([
-      { colorName: 'CZEKOLADA', code: 'SP1', quantities: [40, 60] },
+      { colorName: 'CZEKOLADA', quantities: [40, 60] },
     ]);
   });
 
