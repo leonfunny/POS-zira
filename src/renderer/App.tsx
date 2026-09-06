@@ -437,7 +437,14 @@ export default function App() {
   const sessionKey = authUser?.id || 'anon';
   const appLanguage = (config?.language || 'en') as Language;
   const posUiLanguage = (config?.posLanguage || config?.language || 'en') as Language;
-  const keyboardLanguage = (activeTab === 'pos' || activeTab === 'label') ? posUiLanguage : appLanguage;
+  /**
+   * "POS Language" is for the till screen, where the person serving customers
+   * may not be the person who set the app up. The label tab is not that screen
+   * — it is a workshop tool that follows the app, like Settings and Products.
+   * It used to follow the till setting, so a shop with a Vietnamese till and a
+   * Polish app got a Vietnamese label tab it never asked for.
+   */
+  const keyboardLanguage = activeTab === 'pos' ? posUiLanguage : appLanguage;
   const appT = getTranslation(appLanguage);
   const keyboardT = getTranslation(keyboardLanguage);
   const tOrApp = useCallback((key: string, fallback: string) => {
@@ -644,7 +651,7 @@ export default function App() {
                 />
               )}
               {activeTab === 'label' && isTabAvailable('label') && (
-                <LabelModule language={posUiLanguage} />
+                <LabelModule language={appLanguage} />
               )}
               {activeTab === 'selfCheckout' && isTabAvailable('selfCheckout') && (
                 <SelfCheckoutTab language={(config?.language as Language) || 'en'} />

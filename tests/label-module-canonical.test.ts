@@ -71,6 +71,16 @@ describe('canonical Label tab workflow', () => {
     expect(LABEL_MODULE).not.toContain('saveConfig({ posLanguage: next })');
   });
 
+  it('gives the label tab the app language, not the till language', () => {
+    // "POS Language" belongs to the till screen, where the person serving
+    // customers may not be the person who set the app up. A shop running a
+    // Vietnamese till under a Polish app used to get a Vietnamese label tab
+    // that no setting could change.
+    expect(APP).toContain('<LabelModule language={appLanguage} />');
+    expect(APP).not.toContain('<LabelModule language={posUiLanguage} />');
+    expect(APP).toContain("const keyboardLanguage = activeTab === 'pos' ? posUiLanguage : appLanguage;");
+  });
+
   it('repairs stale selections only after an explicit operator action', () => {
     expect(LABEL_MODULE).toContain('const repairLabelSettings = async () => {');
     expect(LABEL_MODULE).toContain('if (loading || error || repairingSettings) return;');
