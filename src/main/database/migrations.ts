@@ -2047,4 +2047,28 @@ export const migrations: Migration[] = [
       ALTER TABLE fabric_tag_templates ADD COLUMN materials TEXT;
     `,
   },
+  {
+    version: 902,
+    name: 'label_print_orders',
+    // This machine's copy of the salon's print sheets, which now live on the
+    // server. It is the copy the workshop reads from, so a factory with no
+    // internet still opens and prints yesterday's order; `dirty` marks what
+    // was written here and not yet acknowledged. A deleted sheet keeps its row
+    // until the server has been told, because the deletion has to reach the
+    // other machines as well.
+    up: `
+      CREATE TABLE IF NOT EXISTS label_print_orders (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL DEFAULT '',
+        payload TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT,
+        dirty INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS idx_label_print_orders_dirty
+        ON label_print_orders(dirty);
+      CREATE INDEX IF NOT EXISTS idx_label_print_orders_live
+        ON label_print_orders(deleted_at, updated_at);
+    `,
+  },
 ];

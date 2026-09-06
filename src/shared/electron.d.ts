@@ -127,6 +127,7 @@ import type {
   ScaleAutoDetectResult,
 } from './types';
 import type { FabricTagArtworksBridge } from './fabric-tag-artwork-ipc';
+import type { PrintOrdersBridge } from './label-print-order-ipc';
 
 
 // ── POS DB row types (mirrors repos) ──
@@ -1060,6 +1061,11 @@ interface ElectronAPI {
     };
     /** Customer-supplied BTW sources and validated production PNGs. */
     fabricTagArtworks?: FabricTagArtworksBridge;
+    /**
+     * The salon's saved print sheets. Optional because an older preload does
+     * not expose it, and the panel then falls back to browser storage.
+     */
+    labelPrintOrders?: PrintOrdersBridge;
     masterCatalog: {
       lookupByEan: (ean: string) => Promise<{ ok: boolean; draft: any | null; error?: string }>;
       lookupExternalByEan: (ean: string) => Promise<{ ok: boolean; product: any | null; error?: string }>;

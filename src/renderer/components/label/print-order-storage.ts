@@ -1,9 +1,15 @@
 /**
- * Keeps print orders on the machine so staff do not retype an A4 sheet to
- * reprint it. Browser storage, not the app database: this is deliberately the
- * smallest thing that survives an app restart, and it can be lifted into a
- * table once the shape has settled against real sheets.
+ * Keeps print orders so staff do not retype an A4 sheet to reprint it.
+ *
+ * The saved sheets belong to the salon and live on the server, mirrored into
+ * the app database; browser storage still holds what belongs to the machine
+ * doing the typing — the draft, the run in progress, and the lists this
+ * machine has been taught.
  */
+import type {
+  PrintOrdersBridge,
+  StoredPrintOrder,
+} from '../../../shared/label-print-order-ipc';
 import {
   LABEL_PRINT_ORDER_LIMITS,
   LabelPrintOrder,
@@ -271,7 +277,26 @@ export function rememberStyleCategory(
 }
 
 
-export function listSavedOrders(): SavedPrintOrder[] {
+/**
+ * The saved sheets live on the server now, mirrored into the app database, so
+ * a broken machine is no longer a retyped catalogue. Browser storage stays as
+ * the fallback for anything running without the bridge — a browser, the tests
+ * — and as the place the sheets typed before this change are read from once,
+ * on the way up.
+ */
+function bridge(): PrintOrdersBridge | null {
+  try {
+    return window.electronAPI?.pos?.labelPrintOrders ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function toSaved(entry: StoredPrintOrder): SavedPrintOrder {
+  return { id: entry.id, savedAt: entry.savedAt, order: entry.order as unknown as LabelPrintOrder };
+}
+
+function localSavedOrders(): SavedPrintOrder[] {
   const stored = read<SavedPrintOrder[]>(SAVED_KEY, []);
   if (!Array.isArray(stored)) return [];
   return stored.filter(
@@ -281,18 +306,72 @@ export function listSavedOrders(): SavedPrintOrder[] {
 }
 
 /**
- * Store an order under `id`, replacing any earlier version of it, newest first.
+ * Hand the sheets typed on this machine before the move to the server, then
+ * forget them locally.
+ *
+ * The key is cleared only after every one of them has been handed over and
+ * comes back in the list. Clearing it on the way would lose the shop's whole
+ * catalogue if the app closed mid-migration — these are exactly the sheets
+ * that exist nowhere else.
  */
-export function saveOrder(id: string, order: LabelPrintOrder): SavedPrintOrder[] {
-  const entry: SavedPrintOrder = { id, savedAt: new Date().toISOString(), order };
-  const rest = listSavedOrders().filter((saved) => saved.id !== id);
+async function migrateLegacyOrders(api: PrintOrdersBridge): Promise<void> {
+  const legacy = localSavedOrders();
+  if (legacy.length === 0) return;
+  let list: StoredPrintOrder[] = [];
+  for (const entry of legacy) {
+    list = await api.save({
+      id: entry.id,
+      name: describeOrder(entry.order),
+      savedAt: entry.savedAt ?? new Date().toISOString(),
+      order: entry.order as unknown as Record<string, unknown>,
+    });
+  }
+  const stored = new Set(list.map((entry) => entry.id));
+  if (legacy.every((entry) => stored.has(entry.id))) {
+    const s = store();
+    try {
+      s?.removeItem(SAVED_KEY);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+export async function listSavedOrders(): Promise<SavedPrintOrder[]> {
+  const api = bridge();
+  if (!api) return localSavedOrders();
+  await migrateLegacyOrders(api);
+  return (await api.list()).map(toSaved);
+}
+
+/**
+ * Store an order under `id`, replacing any earlier version of it, newest first.
+ * The answer comes from this machine's copy, so saving is instant and works
+ * with the line down; the sheet goes up to the server behind it.
+ */
+export async function saveOrder(id: string, order: LabelPrintOrder): Promise<SavedPrintOrder[]> {
+  const savedAt = new Date().toISOString();
+  const api = bridge();
+  if (api) {
+    const list = await api.save({
+      id,
+      name: describeOrder(order),
+      savedAt,
+      order: order as unknown as Record<string, unknown>,
+    });
+    return list.map(toSaved);
+  }
+  const entry: SavedPrintOrder = { id, savedAt, order };
+  const rest = localSavedOrders().filter((saved) => saved.id !== id);
   const next = [entry, ...rest].slice(0, SAVED_ORDER_LIMIT);
   write(SAVED_KEY, next);
   return next;
 }
 
-export function deleteSavedOrder(id: string): SavedPrintOrder[] {
-  const next = listSavedOrders().filter((saved) => saved.id !== id);
+export async function deleteSavedOrder(id: string): Promise<SavedPrintOrder[]> {
+  const api = bridge();
+  if (api) return (await api.remove(id)).map(toSaved);
+  const next = localSavedOrders().filter((saved) => saved.id !== id);
   write(SAVED_KEY, next);
   return next;
 }

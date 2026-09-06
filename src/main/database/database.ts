@@ -419,6 +419,11 @@ class Database {
       // salon-scoped userData directory and remain isolated for archive restore;
       // the live database must never expose the departing salon's rows.
       'fabric_tag_artworks',
+      // The salon's print sheets. They carry the departing tenant's customers,
+      // styles and fabric labels, and the cursor that pulls them is dropped
+      // with the rest of sync_metadata below, so the next tenant starts from
+      // an empty list and a full pull rather than a delta of someone else's.
+      'label_print_orders',
       // Product/catalog mirrors, including local-only imports from master drafts
       'product_admin_mutation_outbox',
       'local_variant_imports',

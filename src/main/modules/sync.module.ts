@@ -13,6 +13,7 @@ import type { ToolDefinition } from '../core/tool-registry';
 import { SERVICE_TOKENS } from '../core/tokens';
 import { ProductSync } from '../sync/product-sync';
 import { draftProductSync } from '../sync/draft-product-sync';
+import { printOrderSync } from '../sync/print-order-sync';
 import { fullSyncOnCooldown } from '../sync/full-sync-cooldown';
 import { OrderSync } from '../sync/order-sync';
 import { BilliardSync } from '../sync/billiard-sync';
@@ -152,6 +153,10 @@ export class SyncModule extends BaseModule {
     // socket events handle real-time updates, this is the backstop so a
     // long-running kiosk doesn't drift from the master catalog.
     this.startPeriodicDraftProductSync();
+    // The garment workshop's print sheets. Same 60s backstop: they change when
+    // someone types one, which is rare, but a second machine in the factory
+    // must not stay a day behind the one that typed it.
+    printOrderSync.startPeriodicSync();
     this.startPeriodicShiftRetry();
 
     this.setState(ModuleState.READY);
@@ -634,6 +639,10 @@ export class SyncModule extends BaseModule {
         await draftProductSync.deltaSync();
         notifyPosRenderers(this.container, 'pos:draft-products-synced');
       } catch (err) { logger.warn(`[SyncModule] Post-login draft sync failed: ${err}`); }
+      try {
+        await printOrderSync.sync();
+        notifyPosRenderers(this.container, 'pos:label-print-orders-synced');
+      } catch (err) { logger.warn(`[SyncModule] Post-login print order sync failed: ${err}`); }
     });
 
     // Billiard REST recovery is independent from the realtime socket. Start

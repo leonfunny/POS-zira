@@ -705,7 +705,13 @@ export default function PrintOrderPanel({
       ),
     [],
   );
-  const [savedOrders, setSavedOrders] = useState<SavedPrintOrder[]>(() => listSavedOrders());
+  // Empty until the first read comes back: the sheets live on the server now
+  // and reach the panel through the app database, which is a round trip.
+  const [savedOrders, setSavedOrders] = useState<SavedPrintOrder[]>([]);
+  const refreshSavedOrders = useCallback(() => {
+    void listSavedOrders().then(setSavedOrders);
+  }, []);
+  useEffect(refreshSavedOrders, [refreshSavedOrders]);
   // Which saved order is on screen. Restored from storage so that editing an
   // order the next morning updates it instead of filing a twin beside it.
   const [orderId, setOrderId] = useState<string>(() =>
@@ -973,7 +979,7 @@ export default function PrintOrderPanel({
     // and filing it up front also survives the app being closed on a jam. A
     // sample is not an order and files nothing, same as it records no progress.
     if (track) {
-      setSavedOrders(saveOrder(orderId, order));
+      void saveOrder(orderId, order).then(setSavedOrders);
       setSavedNotice(true);
     }
     onPrintingChange?.(true);
@@ -1251,7 +1257,7 @@ export default function PrintOrderPanel({
   };
 
   const handleSave = () => {
-    setSavedOrders(saveOrder(orderId, order));
+    void saveOrder(orderId, order).then(setSavedOrders);
     learnStyle();
     setSavedNotice(true);
   };
@@ -2146,7 +2152,7 @@ export default function PrintOrderPanel({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setSavedOrders(deleteSavedOrder(saved.id))}
+                  onClick={() => void deleteSavedOrder(saved.id).then(setSavedOrders)}
                   className="min-h-9 rounded border border-slate-200 px-2 text-xs font-bold text-slate-500 hover:bg-red-50 hover:text-red-700"
                 >
                   {copy.remove}

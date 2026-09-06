@@ -6,6 +6,9 @@
 
 import { fabricTagTemplateRepo } from '../database/repos/fabric-tag-template-repo';
 import { registerFabricTagTemplateIpcHandlers } from '../pos/fabric-tag-template-ipc';
+import { labelPrintOrderRepo } from '../database/repos/label-print-order-repo';
+import { registerPrintOrderIpcHandlers } from '../pos/label-print-order-ipc';
+import { printOrderSync } from '../sync/print-order-sync';
 import { registerFabricTagArtworkIpcHandlers } from '../pos/fabric-tag-artwork-ipc';
 import { fabricTagArtworkService } from '../pos/fabric-tag-artwork-service';
 import { ipcMain, dialog, shell, BrowserWindow, app, type IpcMainInvokeEvent } from 'electron';
@@ -4891,6 +4894,7 @@ export class PosModule extends BaseModule {
     // Care-label content per garment style. Read by the Label tab to decide
     // which products can print a fabric tag and what goes on it.
     registerFabricTagTemplateIpcHandlers(ipcMain, fabricTagTemplateRepo);
+    registerPrintOrderIpcHandlers(ipcMain, labelPrintOrderRepo, printOrderSync);
 
     // Customer-owned label files live outside the product catalogue. All
     // paths are selected and retained in main; renderer calls use opaque ids.
