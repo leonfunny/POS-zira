@@ -62,7 +62,11 @@ describe('canonical Label tab workflow', () => {
     expect(CONFIG_STORE).toContain("labelModuleLanguage: { type: 'string', enum: ['vi', 'pl'] }");
     expect(SHARED_TYPES).toContain("labelModuleLanguage?: 'vi' | 'pl'");
     expect(LABEL_MODULE).toContain('const labelLanguage: LabelLanguage = PRODUCT_LABEL_NAME_LOCALE;');
-    expect(LABEL_MODULE).toContain('const copy = COPY[language] || COPY.vi;');
+    // The printed label content stays Polish (the line above). The module's
+    // own wording is a separate matter: it is written in vi/pl/en, and a till
+    // set to one of the app's other four languages now falls back to English
+    // rather than Vietnamese, which it could not read either way.
+    expect(LABEL_MODULE).toContain('const copy = COPY[language] || COPY.en;');
     expect(LABEL_MODULE).not.toContain('saveConfig({ labelModuleLanguage: next })');
     expect(LABEL_MODULE).not.toContain('saveConfig({ posLanguage: next })');
   });

@@ -105,6 +105,11 @@ interface LabelCopy {
   staleSelections: (quantity: number) => string;
   repair: string;
   variantSummary: (colors: number, sizes: number, rows: number) => string;
+  /** The three lanes of the label module, and the group that holds them. */
+  chooseLabelType: string;
+  tabPrintOrder: string;
+  tabFabricFromFile: string;
+  tabProductCode: string;
 }
 
 
@@ -151,6 +156,10 @@ const COPY: Record<string, LabelCopy> = {
       colors + sizes === 0
         ? `${rows} row${rows === 1 ? '' : 's'}`
         : `${colors} colour${colors === 1 ? '' : 's'} · ${sizes} size${sizes === 1 ? '' : 's'}`,
+    chooseLabelType: 'Choose label type',
+    tabPrintOrder: 'Print order',
+    tabFabricFromFile: 'Fabric labels from customer files',
+    tabProductCode: 'Product code / EAN label',
   },
   vi: {
     title: 'Label',
@@ -190,6 +199,10 @@ const COPY: Record<string, LabelCopy> = {
     repair: 'Sửa cấu hình',
     variantSummary: (colors, sizes, rows) =>
       colors + sizes === 0 ? `${rows} dòng` : `${colors} màu · ${sizes} size`,
+    chooseLabelType: 'Chọn loại mác',
+    tabPrintOrder: 'Đơn in',
+    tabFabricFromFile: 'Mác vải từ file khách',
+    tabProductCode: 'Tem mã sản phẩm / EAN',
   },
   pl: {
     title: 'Label',
@@ -229,6 +242,10 @@ const COPY: Record<string, LabelCopy> = {
     repair: 'Napraw ustawienia',
     variantSummary: (colors, sizes, rows) =>
       colors + sizes === 0 ? `${rows} poz.` : `${colors} kolor. · ${sizes} rozm.`,
+    chooseLabelType: 'Wybierz rodzaj etykiety',
+    tabPrintOrder: 'Zlecenie druku',
+    tabFabricFromFile: 'Metki z pliku klienta',
+    tabProductCode: 'Etykieta produktu / EAN',
   },
 };
 
@@ -274,7 +291,7 @@ function productMatches(
 export default function LabelModule({ language }: LabelModuleProps) {
   const { config, saveConfig } = useConfig();
   const labelLanguage: LabelLanguage = PRODUCT_LABEL_NAME_LOCALE;
-  const copy = COPY[language] || COPY.vi;
+  const copy = COPY[language] || COPY.en;
   const t = getTranslation(language);
   const tOr = (key: string, fallback: string) => {
     const value = t(key);
@@ -781,7 +798,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
     <div className="h-[calc(100vh-2rem)] min-h-0 overflow-hidden bg-slate-50 text-slate-900 flex flex-col">
       <nav
         className="mb-3 shrink-0 rounded-lg border border-slate-200 bg-white p-1.5 shadow-sm"
-        aria-label={language === 'vi' ? 'Chọn loại mác' : language === 'pl' ? 'Wybierz rodzaj etykiety' : 'Choose label type'}
+        aria-label={copy.chooseLabelType}
       >
         <div className="grid max-w-3xl grid-cols-3 gap-2">
           <button
@@ -800,7 +817,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
             }`}
           >
             <Table2 size={18} aria-hidden="true" />
-            {language === 'vi' ? 'Đơn in' : language === 'pl' ? 'Zlecenie druku' : 'Print order'}
+            {copy.tabPrintOrder}
           </button>
           <button
             type="button"
@@ -818,7 +835,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
             }`}
           >
             <FileImage size={18} aria-hidden="true" />
-            {language === 'vi' ? 'Mác vải từ file khách' : language === 'pl' ? 'Metki z pliku klienta' : 'Fabric labels from customer files'}
+            {copy.tabFabricFromFile}
           </button>
           <button
             type="button"
@@ -834,7 +851,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
             }`}
           >
             <Barcode size={18} aria-hidden="true" />
-            {language === 'vi' ? 'Tem mã sản phẩm / EAN' : language === 'pl' ? 'Etykieta produktu / EAN' : 'Product code / EAN label'}
+            {copy.tabProductCode}
           </button>
         </div>
       </nav>

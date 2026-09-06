@@ -63,10 +63,13 @@ interface FabricTagCopy {
   careLineNumber: (index: number) => string;
   percentSum: (sum: number) => string;
   percentFix: (name: string, percent: number) => string;
+  /** Read out where the wash symbols are drawn, which is an image to a reader. */
+  carePreview: string;
 }
 
 const COPY: Record<string, FabricTagCopy> = {
   vi: {
+    carePreview: 'Xem trước ký hiệu giặt',
     materials: 'Chất liệu',
     materialsHint: 'Bấm chọn rồi gõ số phần trăm',
     care: 'Ký hiệu giặt',
@@ -82,6 +85,7 @@ const COPY: Record<string, FabricTagCopy> = {
     percentFix: (name, percent) => `Đặt ${name} = ${percent}%`,
   },
   pl: {
+    carePreview: 'Podgląd symboli prania',
     materials: 'Skład',
     materialsHint: 'Kliknij materiał i wpisz procent',
     care: 'Symbole prania',
@@ -97,6 +101,7 @@ const COPY: Record<string, FabricTagCopy> = {
     percentFix: (name, percent) => `Ustaw ${name} = ${percent}%`,
   },
   en: {
+    carePreview: 'Care symbol preview',
     materials: 'Composition',
     materialsHint: 'Tap a material and type the percentage',
     care: 'Care symbols',
@@ -292,7 +297,7 @@ export default function FabricTagFields({
           <div
             className="mt-2 flex flex-wrap items-center gap-1 text-slate-700"
             data-testid="care-preview"
-            aria-label="care preview"
+            aria-label={copy.carePreview}
             dangerouslySetInnerHTML={{
               __html: value.careSymbols.map((s) => careSymbolSvg(s, 20)).join(''),
             }}

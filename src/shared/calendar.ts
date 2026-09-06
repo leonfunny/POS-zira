@@ -6,15 +6,26 @@
  * its own: day/month/year in the app's language, weeks starting on Monday.
  */
 
-/** BCP 47 tags for the three app languages; the date format follows them. */
+/**
+ * BCP 47 tags for every app language; the date format follows them.
+ *
+ * All seven are listed even though the label module's own wording only covers
+ * three: month names and day order come from Intl, which needs no translating,
+ * so a Turkish till can show Turkish dates for free. English is the fallback
+ * because a date nobody can read is worse than an English one.
+ */
 export const DATE_LOCALES: Record<string, string> = {
   vi: 'vi-VN',
   pl: 'pl-PL',
   en: 'en-GB',
+  tr: 'tr-TR',
+  zh: 'zh-CN',
+  uk: 'uk-UA',
+  ru: 'ru-RU',
 };
 
 export function dateLocaleFor(language: string): string {
-  return DATE_LOCALES[language] ?? DATE_LOCALES.vi;
+  return DATE_LOCALES[language] ?? DATE_LOCALES.en;
 }
 
 export interface CalendarDate {

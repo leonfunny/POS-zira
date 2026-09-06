@@ -1823,6 +1823,32 @@ describe('PrintOrderPanel', () => {
       expect(rows()[0].textContent).toContain('114');
     });
 
+    it.each([
+      [1, '1 zlecenie'],
+      [2, '2 zlecenia'],
+      [4, '4 zlecenia'],
+      [5, '5 zleceń'],
+      [12, '12 zleceń'],
+      [22, '22 zlecenia'],
+      [25, '25 zleceń'],
+    ])('counts %i saved sheets the way Polish counts', async (count, expected) => {
+      // Polish has three shapes, and the teens take the last one however they
+      // end: 22 is "zlecenia" but 12 is "zleceń".
+      seedSheets(count);
+      await render('pl');
+      expect(text('[data-testid="saved-order-count"]')).toBe(expected);
+    });
+
+    it('speaks English, not Vietnamese, to a language the tab has no wording for', async () => {
+      // The app ships seven languages, this tab is written in three. A Turkish
+      // or Ukrainian till used to get the whole panel in Vietnamese, which is
+      // no more readable to them than the untranslated English is.
+      seedSheets(2);
+      await render('tr');
+      expect(text('[data-testid="saved-order-count"]')).toBe('2 sheets');
+      expect(searchBox().placeholder).toContain('Search');
+    });
+
     it('falls back a page when the last sheet on it is deleted', async () => {
       // 31 sheets is one lonely sheet on page 2. Deleting it leaves the stored
       // page number pointing at a page that no longer exists; without the

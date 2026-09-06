@@ -31,7 +31,7 @@ const COPY: Record<string, { today: string; previous: string; next: string; empt
  * language. The value in and out is ISO `YYYY-MM-DD`, as the sheet stores it.
  */
 export default function DateField({ value, onChange, language, testId, label }: DateFieldProps) {
-  const copy = COPY[language] || COPY.vi;
+  const copy = COPY[language] || COPY.en;
   const [open, setOpen] = useState(false);
   const selected = parseIsoDate(value);
   const today = parseIsoDate(todayIsoDate())!;

@@ -202,6 +202,20 @@ interface Copy {
   filedWithoutTag: (variants: number) => string;
 }
 
+/**
+ * Polish counts in three shapes, not two: one kolor, two/three/four kolory,
+ * five kolorów — with the teens taking the last shape however they end. The
+ * panel used the 5+ shape for everything, so the workshop read "2 kolorów"
+ * and "2 warianty" came out wrong all day.
+ */
+function plForm(count: number, one: string, few: string, many: string): string {
+  const lastDigit = count % 10;
+  const lastTwo = count % 100;
+  if (count === 1) return one;
+  if (lastDigit >= 2 && lastDigit <= 4 && (lastTwo < 12 || lastTwo > 14)) return few;
+  return many;
+}
+
 const COPY: Record<string, Copy> = {
   vi: {
     title: 'Đơn in',
@@ -383,7 +397,8 @@ const COPY: Record<string, Copy> = {
     noSavedOrders: 'Brak zapisanych zleceń',
     searchOrders: 'Szukaj — klient i numer, np. moon 114',
     noMatchingOrders: 'Brak pasujących zleceń',
-    sheetCount: (shown, total) => (shown === total ? `${total} szt.` : `${shown}/${total} szt.`),
+    sheetCount: (shown, total) =>
+      `${shown === total ? total : `${shown}/${total}`} ${plForm(total, 'zlecenie', 'zlecenia', 'zleceń')}`,
     pageOf: (page, pages) => `Strona ${page}/${pages}`,
     prevPage: '← Poprzednia',
     nextPage: 'Następna →',
@@ -393,8 +408,9 @@ const COPY: Record<string, Copy> = {
     pasteOpen: 'Wklej z Excela',
     pasteHint: 'Zaznacz zakres w Excelu, Ctrl+C, wklej poniżej.',
     pasteRead: (colors, sizes, copies) =>
-      `Odczytano ${colors} kolorów × ${sizes} rozmiarów, razem ${copies} szt.`,
-    pasteReplace: (colors, sizes) => `Zastąpi ${colors} kolorów × ${sizes} rozmiarów.`,
+      `Odczytano ${colors} ${plForm(colors, 'kolor', 'kolory', 'kolorów')} × ${sizes} ${plForm(sizes, 'rozmiar', 'rozmiary', 'rozmiarów')}, razem ${copies} szt.`,
+    pasteReplace: (colors, sizes) =>
+      `Zastąpi ${colors} ${plForm(colors, 'kolor', 'kolory', 'kolorów')} × ${sizes} ${plForm(sizes, 'rozmiar', 'rozmiary', 'rozmiarów')}.`,
     pasteAccept: 'Wstaw tabelę',
     pasteCancel: 'Anuluj',
     pasteProblem: {
@@ -416,7 +432,7 @@ const COPY: Record<string, Copy> = {
     resumeForget: 'Odrzuć postęp',
     percentSum: (sum) => `Suma procentów: ${sum}%`,
     percentFix: (name, percent) => `Ustaw ${name} = ${percent}%`,
-    progress: (done, total, copies, all) => `${done}/${total} partii · ${copies}/${all} sztuk`,
+    progress: (done, total, copies, all) => `${done}/${total} partii · ${copies}/${all} szt.`,
     finished: (copies) => `Wydrukowano ${copies} szt.`,
     stopped: (done, total) => `Zatrzymano po ${done}/${total} partii`,
     problem: {
@@ -427,7 +443,7 @@ const COPY: Record<string, Copy> = {
       NO_STICKER_QTY: 'Brak liczby naklejek na worek dla koloru — po jednej na kolor, według paczek',
       DUPLICATE_SIZE: 'Dwie kolumny mają ten sam rozmiar',
       EMPTY_SIZE: 'Kolumna rozmiaru bez nazwy',
-        PERCENT_NOT_100: 'Skład musi sumować się do 100%',
+      PERCENT_NOT_100: 'Skład musi sumować się do 100%',
       ORDER_TOO_LARGE: 'Zbyt duża ilość — sprawdź',
     },
     warning: {
@@ -442,11 +458,11 @@ const COPY: Record<string, Copy> = {
     imageClear: 'Usuń zdjęcie',
     imageBadType: 'Tylko JPG, PNG lub WEBP',
     imageUploaded: (done, total) => (done === total ? ' · zdjęcie dodane' : ` · zdjęcie dodano do ${done}/${total} wierszy`),
-    priceSynced: (rows) => ` · cena ${rows} starych wierszy zmieniona wg arkusza`,
+    priceSynced: (rows) => ` · cena zmieniona wg arkusza w starych wierszach: ${rows}`,
     priceSyncFailed: (reason) => `Wiersze dodane, ale cena starych nie zmieniona: ${reason}`,
-    nameSynced: ' · nazwa fasonu zmieniona',
-    nameSyncUnsupported: ' · nazwa fasonu bez zmian: serwer tego nie obsługuje',
-    nameSyncFailed: (reason) => `Nie udało się zmienić nazwy fasonu: ${reason}`,
+    nameSynced: ' · nazwa modelu zmieniona',
+    nameSyncUnsupported: ' · nazwa modelu bez zmian: serwer tego nie obsługuje',
+    nameSyncFailed: (reason) => `Nie udało się zmienić nazwy modelu: ${reason}`,
     categoryNone: 'Brak kategorii — wybierz powyżej lub utwórz nową, inaczej model nie pojawi się w zakładce etykiet',
     categoryPick: '— Wybierz kategorię —',
     createCategory: (name) => `Utwórz kategorię „${name}”`,
@@ -454,19 +470,25 @@ const COPY: Record<string, Copy> = {
     categoryCreateFailed: (reason) => `Nie udało się utworzyć kategorii: ${reason}`,
     fileProduct: 'Zapisz jako produkt',
     filing: 'Zapisywanie…',
-    filed: (variants) => `Zapisano — ${variants} wariantów`,
+    filed: (variants) =>
+      `Zapisano — ${variants} ${plForm(variants, 'wariant', 'warianty', 'wariantów')}`,
     filedWithoutTag: (variants) =>
-      `Zapisano ${variants} wariantów, ale treść metki nie zapisała się — zakładka etykiet nie wydrukuje metki`,
+      `Zapisano ${variants} ${plForm(variants, 'wariant', 'warianty', 'wariantów')}, ale treść metki nie zapisała się — zakładka etykiet nie wydrukuje metki`,
     fileHint: 'Każda wypełniona komórka to jeden wariant koloru i rozmiaru',
     updateProduct: 'Aktualizuj produkt',
     updating: 'Aktualizowanie…',
-    updated: (added) => (added > 0 ? `Zaktualizowano — dodano ${added} nowych kolorów/rozmiarów` : 'Produkt zaktualizowany'),
+    updated: (added) =>
+      added > 0
+        ? `Zaktualizowano — nowych kolorów/rozmiarów: ${added}`
+        : 'Produkt zaktualizowany',
     filedHint: (name) => `To już produkt „${name}” — otwórz w zakładce etykiet`,
     attachProduct: (name) => `Dołącz do modelu „${name}”`,
     attaching: 'Dołączanie…',
     attachHint: (name) => `Ten kod to już model „${name}” — kliknij, aby dodać brakujące kolory/rozmiary do niego zamiast tworzyć nowy`,
     attached: (name, added) =>
-      added > 0 ? `Dołączono do „${name}” — dodano ${added} nowych kolorów/rozmiarów` : `Dołączono do „${name}”`,
+      added > 0
+        ? `Dołączono do „${name}” — nowych kolorów/rozmiarów: ${added}`
+        : `Dołączono do „${name}”`,
     styleUnknown: 'Tego modelu nie ma jeszcze w katalogu na tej maszynie — kliknij Sync w zakładce etykiet i spróbuj ponownie',
     fileFailed: (reason) => `Nie zapisano: ${reason}`,
     fileProblem: {
@@ -475,7 +497,7 @@ const COPY: Record<string, Copy> = {
       NO_CATEGORY: 'Nie wybrano kategorii',
       NO_CELLS: 'Brak kolorów — każdy kolor × rozmiar to jeden wariant',
       ALREADY_FILED: 'To zlecenie jest już zapisane jako produkt',
-      NO_PRICE: 'Brak ceny — jedna cena dla całego fasonu',
+      NO_PRICE: 'Brak ceny — jedna cena dla całego modelu',
       TOO_MANY_VARIANTS: 'Ponad 100 wariantów — podziel zlecenie',
     },
   },
@@ -706,7 +728,7 @@ export default function PrintOrderPanel({
   styleByCode,
   catalogue,
 }: Props) {
-  const copy = COPY[language] || COPY.vi;
+  const copy = COPY[language] || COPY.en;
 
   // Loading a draft goes through the same gate as typing, so an order saved
   // before this rule opens in capitals like every other one.
