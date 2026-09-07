@@ -29,7 +29,8 @@ describe('resolvePackagingStickerJob', () => {
     expect(job.heightMm).toBe(30);
     expect(job.copies).toBe(3);
     expect(job.html).toContain('MoonCollection');
-    expect(job.html).toContain('KURTKA - 114');
+    expect(job.html).toContain('<div class="style">KURTKA</div>');
+    expect(job.html).toContain('<div class="style-code">114</div>');
   });
 
   it('refuses when no LABEL printer is configured, instead of printing nowhere', () => {
