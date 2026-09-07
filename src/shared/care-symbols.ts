@@ -43,7 +43,9 @@ const HAND_PATH = 'M32 86 c0-10 2-15 6-19 l0-17 a4 4 0 0 1 8 0 l0 11 l0-19'
 const HAND = `<g transform="translate(22 22) scale(0.56)"><path d="${HAND_PATH}" ${SOLID}/></g>`;
 
 function tubText(label: string): string {
-  return `${TUB}<text x="50" y="82" font-family="Arial, sans-serif" font-size="36" font-weight="700" text-anchor="middle" ${SOLID}>${label}</text>`;
+  // On 20mm ribbon the icon is ~22 dots wide. Give the temperature more
+  // pixels, with its baseline placed between the waterline and basin bottom.
+  return `${TUB}<text x="50" y="84" font-family="Arial, sans-serif" font-size="44" font-weight="700" text-anchor="middle" ${SOLID}>${label}</text>`;
 }
 
 /** `count` evenly spaced dots on the horizontal centreline at `cy`. */
