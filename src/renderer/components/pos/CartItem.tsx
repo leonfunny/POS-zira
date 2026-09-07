@@ -146,14 +146,14 @@ export default function CartItemRow({
             <span className="line-clamp-2">
               {resolveName(item, lang)}
               {lineDiscountBadge && (
-                <span className="ml-1.5 inline-block rounded-full bg-emerald-100 px-1.5 py-0.5 align-middle text-[10px] font-black text-emerald-800">
+                <span className="ml-1.5 inline-block rounded-full bg-emerald-100 px-1.5 py-0.5 align-middle text-xs font-black text-emerald-800">
                   {lineDiscountBadge}
                 </span>
               )}
             </span>
           </button>
           {item.locked && item.billiard && (
-            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide">
+            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs font-bold uppercase tracking-wide">
               <span className="rounded-full bg-blue-50 px-2 py-0.5 text-blue-700">Billiard · {item.billiard.kind}</span>
               <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">Locked</span>
               {item.billiard.durationMinutes != null && (

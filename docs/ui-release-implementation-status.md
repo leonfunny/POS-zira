@@ -12,7 +12,7 @@ This change implements the independently verifiable UI foundation from the comme
 | R04–R05 | Shared keyboard ownership and focus restoration for Modal/ConfirmActionDialog; input handlers can consume Escape before dialog shortcuts | Complete native keyboard/scanner and complex overlay audit |
 | R06 | Product images reset failure state on source changes; broken thumbnails fall back to original images | Visual sampling of all catalog surfaces |
 | R07 | Darker shared primary/payment buttons and readable TextInput helpers/placeholders | Full theme/state contrast audit across every module |
-| R08 | Touch sizes improved for retail quick actions and sidebar; independent icon controls labeled | Device/DPI layout measurement across other controls |
+| R08 | Touch sizes improved for retail quick actions and sidebar; independent icon controls labeled; unallowlisted 9–10px labels raised to 12px in floor/table, reservation, cart and history views | Device/DPI layout measurement across other controls |
 | R09 | Removed the four hardcoded promotional banners and autoplay from check-in; actions remain | Merchant-editable check-in promotions, scheduling and visual review |
 | R10 | Filled missing VI/PL keys in the main translation map; localized product badges and held-cart actions; key/interpolation coverage tests | Auth/kiosk maps, remaining literal strings and human-language review |
 | R11 | Cancel/lost-capture/edit-mode exit/unmount clears temporary table positions without saving; ignores other pointers | Real touch interruption and keyboard position editing |
@@ -28,8 +28,8 @@ This change implements the independently verifiable UI foundation from the comme
 - Existing autosave and sync-conflict tests are retained and run with the changed UI tests.
 - Existing class/source assertions affected by the intentional primary color and localized weight badge are updated; test gates are not weakened or skipped in CI.
 - Full local suite attempted. This Linux workspace lacks the Electron binary and restricts network-interface inspection. Windows-path-sensitive backup tests also fail here. Full Windows CI is needed; local full-suite success is not claimed.
-- The design guard was invoked but cannot execute its Bash process substitution in this sandbox (`/dev/fd/63` unavailable). Its rules and allowlist were not weakened; a supported shell is still needed to run it.
-- Build and test results for the submitted commit are recorded in the PR. Visual screenshots cannot be supplied from this environment: the earlier browser connection was blocked and native Electron is unavailable. Keep the PR as a draft until Windows visual/hardware evidence is attached.
+- The design guard now uses a cleaned-up regular temporary file instead of Bash process substitution, making it runnable in this sandbox. Its dark-variant detector distinguishes utilities from object keys such as `dark: { ... }`. Existing unallowlisted small-text and Android color violations were fixed. The guard passes, and a negative probe confirms `dark:bg-white` is still rejected. The allowlist is unchanged.
+- Latest local validation: 240 targeted tests passed across 21 suites; the production build and design guard passed. Full Windows/Android CI results are linked in the PR. Visual screenshots cannot be supplied from this environment: the earlier browser connection was blocked and native Electron is unavailable. Keep the PR as a draft until Windows visual/hardware evidence is attached.
 
 ## Required before broad release
 

@@ -330,7 +330,7 @@ export function ReservationPanel({
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="font-semibold text-slate-900 truncate">{booking.customerName}</p>
-                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${statusTone(booking.status)}`}>
+                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${statusTone(booking.status)}`}>
                           {booking.status}
                         </span>
                       </div>

@@ -152,8 +152,8 @@ export default function AndroidBootApp() {
 
   if (state === 'checking') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <div className="text-gray-500 text-lg">Đang khởi động…</div>
+      <div className="min-h-screen flex items-center justify-center bg-slate-100">
+        <div className="text-slate-600 text-lg">Đang khởi động…</div>
       </div>
     );
   }
@@ -168,14 +168,14 @@ export default function AndroidBootApp() {
         <nav className="flex shrink-0 border-b bg-white" aria-label="POS mode">
           <button
             type="button"
-            className={`flex-1 py-3 text-sm font-semibold ${mode === 'pos' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
+            className={`flex-1 py-3 text-sm font-semibold ${mode === 'pos' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-slate-600'}`}
             onClick={() => switchMode('pos')}
           >
             POS
           </button>
           <button
             type="button"
-            className={`flex-1 py-3 text-sm font-semibold ${mode === 'billiard' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
+            className={`flex-1 py-3 text-sm font-semibold ${mode === 'billiard' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-slate-600'}`}
             onClick={() => switchMode('billiard')}
           >
             Bi-a

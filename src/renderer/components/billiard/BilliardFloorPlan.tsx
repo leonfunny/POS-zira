@@ -1294,13 +1294,13 @@ function FloorPlanInner({ language, onPreflightPos, onPayInPos, active = true }:
                       } ${floorSurfaceTheme === 'dark' ? 'border-emerald-400/25' : 'border-black/10'} rounded-sm`}
                     />
                   ))}
-                  <span className={`absolute bottom-2 right-3 text-[10px] font-mono tabular-nums pointer-events-none z-[2] tracking-wider ${
+                  <span className={`absolute bottom-2 right-3 text-xs font-mono tabular-nums pointer-events-none z-[2] tracking-wider ${
                     floorSurfaceTheme === 'dark' ? 'text-emerald-400/30' : 'text-black/25'
                   }`}>
                     {roomWidth}m × {roomHeight}m
                   </span>
                   {activeFloor && (
-                    <span className={`absolute top-2.5 left-8 text-[10px] font-medium pointer-events-none z-[2] uppercase tracking-widest ${
+                    <span className={`absolute top-2.5 left-8 text-xs font-medium pointer-events-none z-[2] uppercase tracking-widest ${
                       floorSurfaceTheme === 'dark' ? 'text-emerald-400/25' : 'text-black/20'
                     }`}>
                       {activeFloor.name}

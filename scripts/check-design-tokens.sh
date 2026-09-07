@@ -6,6 +6,10 @@ ALLOWLIST_FILE="scripts/design-token-allowlist.txt"
 
 cd "$ROOT_DIR"
 
+# A regular temporary file also works in restricted shells without /dev/fd.
+HITS_FILE="$(mktemp "$ROOT_DIR/.design-token-hits.XXXXXX")"
+trap 'rm -f "$HITS_FILE"' EXIT
+
 is_allowed() {
   local file="$1"
   local content="$2"
@@ -31,7 +35,8 @@ is_allowed() {
 declare -a CHECKS=(
   "gray utility:(bg-gray-|text-gray-|border-gray-)"
   "green utility:(bg-green-|text-green-)"
-  "dark variant:dark:"
+  # Match utility prefixes, not object properties such as `dark: { ... }`.
+  "dark variant:dark:([a-zA-Z]|\[)"
   "purple utility:purple-"
   "tiny text token:text-\[(9|10)px\]"
   "native confirm:window\.confirm\("
@@ -46,7 +51,8 @@ for check in "${CHECKS[@]}"; do
   label="${check%%:*}"
   regex="${check#*:}"
 
-  mapfile -t hits < <(rg -n --no-heading --color never -g '*.tsx' -g '*.ts' -e "$regex" src/renderer || true)
+  rg -n --no-heading --color never -g '*.tsx' -g '*.ts' -e "$regex" src/renderer > "$HITS_FILE" || true
+  mapfile -t hits < "$HITS_FILE"
 
   for hit in "${hits[@]}"; do
     file="${hit%%:*}"

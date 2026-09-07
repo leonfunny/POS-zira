@@ -204,14 +204,14 @@ export const DraggableTable = memo(function DraggableTable({
 
       {/* Status pill — on outer div so it doesn't rotate; free tables stay bare */}
       {!editMode && table.status !== 'free' && (
-        <span className={`absolute -top-3 left-1/2 -translate-x-1/2 z-20 rounded-full px-1.5 py-px text-[9px] font-semibold shadow-sm ${theme.pill}`}>
+        <span className={`absolute -top-3 left-1/2 -translate-x-1/2 z-20 rounded-full px-1.5 py-px text-xs font-semibold shadow-sm ${theme.pill}`}>
           {statusLabel}
         </span>
       )}
 
       {/* F&B badge — on outer div so it doesn't rotate */}
       {itemsCount > 0 && !editMode && (
-        <span className="absolute -top-1.5 -left-1.5 flex items-center gap-0.5 bg-blue-500 text-white text-[9px] font-bold rounded-full px-1.5 py-0.5 z-20">
+        <span className="absolute -top-1.5 -left-1.5 flex items-center gap-0.5 bg-blue-500 text-white text-xs font-bold rounded-full px-1.5 py-0.5 z-20">
           <UtensilsCrossed className="w-2.5 h-2.5" />
           {itemsCount}
         </span>
@@ -314,7 +314,7 @@ export const DraggableTable = memo(function DraggableTable({
             />
           ) : (
             <span
-              className={`${compact ? 'text-[10px] leading-tight' : 'text-sm'} font-bold truncate max-w-full ${ink.name}`}
+              className={`${compact ? 'text-xs leading-tight' : 'text-sm'} font-bold truncate max-w-full ${ink.name}`}
               onDoubleClick={() => editMode && setEditing(true)}
             >
               {table.resource.name}
@@ -324,7 +324,7 @@ export const DraggableTable = memo(function DraggableTable({
           {/* Session info (occupied or paused) — tiny tiles keep only the
               running charge; everything else lives in the table drawer */}
           {session && !editMode && compact && (
-            <div className={`text-[9px] font-semibold tabular-nums ${ink.money}`}>
+            <div className={`text-xs font-semibold tabular-nums ${ink.money}`}>
               {formatCurrency(charge)}
             </div>
           )}
@@ -335,13 +335,13 @@ export const DraggableTable = memo(function DraggableTable({
             return (
               <>
                 {session.customerName && (
-                  <div className={`flex items-center gap-0.5 text-[9px] truncate max-w-full ${ink.soft}`}>
+                  <div className={`flex items-center gap-0.5 text-xs truncate max-w-full ${ink.soft}`}>
                     <User className="w-2.5 h-2.5 shrink-0" />
                     <span className="truncate">{session.customerName}</span>
                   </div>
                 )}
                 {isPackage ? (
-                  <div className={`flex items-center gap-1 text-[10px] font-mono tabular-nums ${lowTime ? `${ink.warn} font-semibold` : ink.body}`}>
+                  <div className={`flex items-center gap-1 text-xs font-mono tabular-nums ${lowTime ? `${ink.warn} font-semibold` : ink.body}`}>
                     <Timer className="w-3 h-3" />
                     {remaining!.text}
                     {table.status === 'paused' && (
@@ -349,7 +349,7 @@ export const DraggableTable = memo(function DraggableTable({
                     )}
                   </div>
                 ) : (
-                  <div className={`flex items-center gap-1 text-[10px] font-mono tabular-nums ${ink.body}`}>
+                  <div className={`flex items-center gap-1 text-xs font-mono tabular-nums ${ink.body}`}>
                     <Clock className="w-3 h-3" />
                     {elapsed}
                     {table.status === 'paused' && (
@@ -361,7 +361,7 @@ export const DraggableTable = memo(function DraggableTable({
                   {formatCurrency(charge)}
                 </div>
                 {session.guestCount > 1 && (
-                  <div className={`flex items-center gap-0.5 text-[9px] ${ink.soft}`}>
+                  <div className={`flex items-center gap-0.5 text-xs ${ink.soft}`}>
                     <Users className="w-2.5 h-2.5" />
                     {session.guestCount}
                   </div>
@@ -380,7 +380,7 @@ export const DraggableTable = memo(function DraggableTable({
             <div className={`text-xs tabular-nums ${ink.body}`}>
               {hourlyRate != null && hourlyRate > 0
                 ? `${hourlyRate} PLN/h`
-                : <span className={`text-[10px] font-medium uppercase tracking-wide ${ink.freeLabel}`}>{t('billiard.free') || 'Free'}</span>}
+                : <span className={`text-xs font-medium uppercase tracking-wide ${ink.freeLabel}`}>{t('billiard.free') || 'Free'}</span>}
             </div>
           )}
 

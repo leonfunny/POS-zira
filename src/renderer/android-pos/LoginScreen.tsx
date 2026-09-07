@@ -42,17 +42,17 @@ export default function LoginScreen({ onLoggedIn }: LoginScreenProps) {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100 p-6">
+    <div className="min-h-screen flex items-center justify-center bg-slate-100 p-6">
       <form
         onSubmit={submit}
         className="w-full max-w-sm bg-white rounded-2xl shadow-lg p-8 space-y-4"
       >
         <div className="text-center space-y-1">
-          <div className="text-2xl font-bold text-gray-900">Zira POS</div>
-          <div className="text-sm text-gray-500">Đăng nhập nhân viên</div>
+          <div className="text-2xl font-bold text-slate-900">Zira POS</div>
+          <div className="text-sm text-slate-600">Đăng nhập nhân viên</div>
         </div>
         <label className="block">
-          <span className="text-sm text-gray-700">Email, số điện thoại hoặc tên đăng nhập</span>
+          <span className="text-sm text-slate-700">Email, số điện thoại hoặc tên đăng nhập</span>
           {/* Not type="email": the backend accepts an email, a phone number or a
               plain username (LoginDto validates none of them). A type="email"
               input made the WebView block usernames before the request was ever
@@ -67,19 +67,19 @@ export default function LoginScreen({ onLoggedIn }: LoginScreenProps) {
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-3 text-base"
+            className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-3 text-base"
             placeholder="tên đăng nhập / +48 500 100 200 / staff@salon.pl"
           />
         </label>
         <label className="block">
-          <span className="text-sm text-gray-700">Mật khẩu</span>
+          <span className="text-sm text-slate-700">Mật khẩu</span>
           <input
             type="password"
             autoComplete="current-password"
             required
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-3 text-base"
+            className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-3 text-base"
           />
         </label>
         {error ? (
@@ -90,7 +90,7 @@ export default function LoginScreen({ onLoggedIn }: LoginScreenProps) {
         <button
           type="submit"
           disabled={busy}
-          className="w-full rounded-lg bg-gray-900 text-white py-3 text-base font-semibold disabled:opacity-50"
+          className="w-full rounded-lg bg-slate-900 text-white py-3 text-base font-semibold disabled:opacity-50"
         >
           {busy ? 'Đang đăng nhập…' : 'Đăng nhập'}
         </button>

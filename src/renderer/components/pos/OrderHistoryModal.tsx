@@ -891,7 +891,7 @@ function RefundPanel({
                 <div className="min-w-0">
                   <div className="whitespace-normal break-words text-sm font-bold leading-5 text-slate-950">{item.name}</div>
                   {billiardMetadata && (
-                    <div className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${refundForbidden ? 'bg-slate-200 text-slate-700' : 'bg-blue-50 text-blue-700'}`}>
+                    <div className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-xs font-bold uppercase ${refundForbidden ? 'bg-slate-200 text-slate-700' : 'bg-blue-50 text-blue-700'}`}>
                       {billiardMetadata.kind}{refundForbidden ? ' · Non-refundable' : ' · No restock'}
                     </div>
                   )}
