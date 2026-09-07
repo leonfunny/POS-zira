@@ -1883,14 +1883,40 @@ describe('PrintOrderPanel', () => {
       expect(text('[data-testid="saved-order-count"]')).toBe(expected);
     });
 
+    it.each([
+      [1, '1 лист'],
+      [2, '2 листа'],
+      [4, '4 листа'],
+      [5, '5 листов'],
+      [11, '11 листов'],
+      [12, '12 листов'],
+      [21, '21 лист'],
+      [22, '22 листа'],
+      [25, '25 листов'],
+    ])('counts %i saved sheets the way Russian counts', async (count, expected) => {
+      // Russian parts ways with Polish at 21: Polish says "21 zleceń" (the many
+      // shape) while Russian says "21 лист" (the one shape). 11 stays "листов"
+      // in both — the teens always take the last shape.
+      seedSheets(count);
+      await render('ru');
+      expect(text('[data-testid="saved-order-count"]')).toBe(expected);
+    });
+
     it('speaks English, not Vietnamese, to a language the tab has no wording for', async () => {
-      // The app ships seven languages, this tab is written in three. A Turkish
-      // or Ukrainian till used to get the whole panel in Vietnamese, which is
-      // no more readable to them than the untranslated English is.
+      // The app ships seven languages and the tab now carries all seven, but the
+      // fallback still has to hold: an unknown code must land on English, never
+      // on Vietnamese, which is no more readable to that till than English is.
       seedSheets(2);
-      await render('tr');
+      await render('de');
       expect(text('[data-testid="saved-order-count"]')).toBe('2 sheets');
       expect(searchBox().placeholder).toContain('Search');
+    });
+
+    it('speaks Turkish to a Turkish till', async () => {
+      seedSheets(2);
+      await render('tr');
+      expect(text('[data-testid="saved-order-count"]')).toBe('2 sayfa');
+      expect(searchBox().placeholder).toContain('Ara');
     });
 
     it('falls back a page when the last sheet on it is deleted', async () => {

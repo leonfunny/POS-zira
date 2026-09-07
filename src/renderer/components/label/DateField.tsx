@@ -24,6 +24,10 @@ const COPY: Record<string, { today: string; previous: string; next: string; empt
   vi: { today: 'Hôm nay', previous: 'Tháng trước', next: 'Tháng sau', empty: 'Chọn ngày' },
   pl: { today: 'Dziś', previous: 'Poprzedni miesiąc', next: 'Następny miesiąc', empty: 'Wybierz datę' },
   en: { today: 'Today', previous: 'Previous month', next: 'Next month', empty: 'Pick a date' },
+  tr: { today: 'Bugün', previous: 'Önceki ay', next: 'Sonraki ay', empty: 'Tarih seçin' },
+  zh: { today: '今天', previous: '上个月', next: '下个月', empty: '选择日期' },
+  uk: { today: 'Сьогодні', previous: 'Попередній місяць', next: 'Наступний місяць', empty: 'Оберіть дату' },
+  ru: { today: 'Сегодня', previous: 'Предыдущий месяц', next: 'Следующий месяц', empty: 'Выберите дату' },
 };
 
 /**
