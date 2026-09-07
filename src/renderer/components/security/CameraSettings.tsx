@@ -82,7 +82,7 @@ export default function CameraSettings({ cameras, onSave, t }: CameraSettingsPro
         <div className="flex gap-2">
           <button
             onClick={addCamera}
-            className="px-3 py-2 text-xs bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors touch-manipulation"
+            className="px-3 py-2 text-xs bg-brand-700 text-white rounded-lg hover:bg-brand-800 transition-colors touch-manipulation"
           >
             {tl('security.addCamera', '+ Add Camera')}
           </button>

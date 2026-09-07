@@ -29,7 +29,19 @@ This change implements the independently verifiable UI foundation from the comme
 - Existing class/source assertions affected by the intentional primary color and localized weight badge are updated; test gates are not weakened or skipped in CI.
 - Full local suite attempted. This Linux workspace lacks the Electron binary and restricts network-interface inspection. Windows-path-sensitive backup tests also fail here. Full Windows CI is needed; local full-suite success is not claimed.
 - The design guard now uses a cleaned-up regular temporary file instead of Bash process substitution, making it runnable in this sandbox. Its dark-variant detector distinguishes utilities from object keys such as `dark: { ... }`. Existing unallowlisted small-text and Android color violations were fixed. The guard passes, and a negative probe confirms `dark:bg-white` is still rejected. The allowlist is unchanged.
-- Latest local validation: 240 targeted tests passed across 21 suites; the production build and design guard passed. Full Windows/Android CI results are linked in the PR. Visual screenshots cannot be supplied from this environment: the earlier browser connection was blocked and native Electron is unavailable. Keep the PR as a draft until Windows visual/hardware evidence is attached.
+- Foundation local validation: 240 targeted tests passed across 21 suites; the production build and design guard passed. Full Windows/Android CI results are linked in the PR. Visual screenshots cannot be supplied from this environment: the earlier browser connection was blocked and native Electron is unavailable. Keep the PR as a draft until Windows visual/hardware evidence is attached.
+
+## Follow-up after the second review
+
+- Payment and fiscal-choice surfaces now register with the shared dialog interaction hook. The fiscal choice owns focus/Tab and leaves the payment panel inert until a choice completes. Existing Escape, payment-idempotency and receipt-recovery guards remain covered.
+- Table dragging rejects additional pointerdown events while a drag is active and rejects non-primary touches. The initial pointer remains responsible for save/cancel.
+- Delayed Booksy Chrome-launch failures remain visible after switching into Booksy settings.
+- Security start/stop/configuration operations show failures and pending state and reject overlapping operations. A reported start is also checked against engine status. Confirmed camera configuration changes only after successful IPC completion.
+- Global security settings now use an explicit Save action with a retained draft and saved/unsaved status. Failed saves keep edits for retry. Camera Save All and global Save are serialized, and global drafts do not overwrite newer saved cameras. This does not change the backend security configuration contract.
+- Retail category and customer catalog images use source-keyed fallback rendering. Missing or failed images preserve item names/prices; new/reintroduced sources get another attempt.
+- Remaining white-on-brand-600 buttons in Booksy, product-camera capture and camera setup now use brand-700 with brand-800 hover.
+- Follow-up local validation: production build (including renderer typecheck), design guard, and 135 targeted tests across 20 suites passed. New regression cases cover fiscal focus/Tab, second-finger interference, delayed Booksy errors, security failure/retry/concurrent saves, and catalog fallback. New commit CI is tracked in PR #2 separately from the earlier foundation run.
+- Native Windows DPI/touch/scanner/printer and installer evidence, wider typography/layout work, and the BLIK merchant/receipt contract remain outstanding. This follow-up is not a production release.
 
 ## Required before broad release
 

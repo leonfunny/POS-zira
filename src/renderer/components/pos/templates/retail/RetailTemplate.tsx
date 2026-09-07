@@ -16,6 +16,7 @@ import type {
 } from '../../../../../shared/billiard-pos-handoff';
 import { formatRetailSaleError, resolveRetailCartItem } from '../../retail-sale-flow';
 import { cartItemsSignature, shouldRefocusSearchAfterCartChange } from '../../cart-refocus';
+import ImageWithFallback from '../../../shared/ImageWithFallback';
 import SearchBar from '../../SearchBar';
 import ProductGrid from '../../ProductGrid';
 import Cart from '../../Cart';
@@ -1522,22 +1523,21 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
                         className="group relative flex flex-col overflow-hidden rounded-2xl bg-white border-2 border-slate-100 hover:border-brand-500 active:scale-[0.98] transition-all duration-150 cursor-pointer touch-manipulation text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-300"
                       >
                         <div className="relative w-full overflow-hidden bg-slate-100 aspect-[4/3]">
-                          {catImg ? (
-                            <img
-                              src={catImg}
-                              alt={displayName}
-                              loading="lazy"
-                              className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
-                            />
-                          ) : (
-                            <div
-                              className="w-full h-full flex items-center justify-center font-extrabold text-3xl"
-                              style={{ backgroundColor: `${bg}2E`, color: bg }}
-                              aria-hidden="true"
-                            >
-                              {categoryGlyph(cat, displayName)}
-                            </div>
-                          )}
+                          <ImageWithFallback
+                            src={catImg || undefined}
+                            alt={displayName}
+                            loading="lazy"
+                            className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
+                            fallback={(
+                              <div
+                                className="w-full h-full flex items-center justify-center font-extrabold text-3xl"
+                                style={{ backgroundColor: `${bg}2E`, color: bg }}
+                                aria-hidden="true"
+                              >
+                                {categoryGlyph(cat, displayName)}
+                              </div>
+                            )}
+                          />
                           {noBarcode > 0 && (
                             <span className="absolute top-2 left-2 text-[10px] font-extrabold leading-none px-2 py-1 rounded-md bg-amber-500 text-white shadow-sm tabular-nums">
                               {noBarcode} {tOr('pos.categories.mustTap', 'cần bấm')}

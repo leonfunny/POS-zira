@@ -61,4 +61,22 @@ describe('floor drag lifecycle', () => {
     await act(async () => drag.dragHandlers.onPointerCancel(pointer(100, 2)));
     expect(cancel).not.toHaveBeenCalled(); expect(host.textContent).toBe('true');
   });
+  it('keeps the original pointer when a second finger touches the table', async () => {
+    await start();
+    await act(async () => drag.dragHandlers.onPointerDown(pointer(100, 2)));
+    await act(async () => drag.dragHandlers.onPointerUp(pointer(100, 2)));
+    expect(save).not.toHaveBeenCalled();
+    await act(async () => drag.dragHandlers.onPointerUp(pointer(100, 1)));
+    expect(save).toHaveBeenCalledExactlyOnceWith('table', 30, 20);
+    expect(cancel).not.toHaveBeenCalled();
+    expect(host.textContent).toBe('false');
+  });
+  it('does not start a drag with a non-primary touch', async () => {
+    await act(async () => root.render(<Harness />));
+    await act(async () => drag.dragHandlers.onPointerDown({ ...pointer(0, 2), isPrimary: false }));
+    await act(async () => drag.dragHandlers.onPointerMove(pointer(100, 2)));
+    await act(async () => drag.dragHandlers.onPointerUp(pointer(100, 2)));
+    expect(move).not.toHaveBeenCalled(); expect(save).not.toHaveBeenCalled();
+  });
+
 });

@@ -69,7 +69,7 @@ export function useFreeformDrag({
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent) => {
-      if (!enabled) return;
+      if (!enabled || dragState.current.active || e.isPrimary === false) return;
       // Only primary button (left click / single touch)
       if (e.button !== 0) return;
 

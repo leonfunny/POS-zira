@@ -3,6 +3,7 @@ import { Coffee, Package } from 'lucide-react';
 import type { CustomerDisplayCatalogSection } from '../../../../shared/types';
 import { resolveName } from '../../../../shared/catalog-names';
 import type { Language } from '../../../i18n/translations';
+import ImageWithFallback from '../../../components/shared/ImageWithFallback';
 import CustomerDisplayShell from '../components/CustomerDisplayShell';
 import { EmptyState } from '../components/CustomerDisplayPrimitives';
 import {
@@ -163,13 +164,13 @@ export default function CustomerCatalogView({
                       data-customer-display-catalog-item="true"
                     >
                       <div className="flex h-24 items-center justify-center bg-white">
-                        {item.imageUrl ? (
-                          <img src={item.imageUrl} alt="" className="h-full w-full object-contain" />
-                        ) : (
-                          <div className="flex h-14 w-14 items-center justify-center rounded-lg bg-slate-100 text-slate-400">
-                            <SectionIcon section={selectedSection} />
-                          </div>
-                        )}
+                        <ImageWithFallback src={item.imageUrl || undefined} alt="" className="h-full w-full object-contain"
+                          fallback={(
+                            <div aria-hidden="true" className="flex h-14 w-14 items-center justify-center rounded-lg bg-slate-100 text-slate-400">
+                              <SectionIcon section={selectedSection} />
+                            </div>
+                          )}
+                        />
                       </div>
                       <div className="flex min-h-0 flex-1 flex-col p-4">
                         <div className="line-clamp-2 min-h-[56px] text-xl font-semibold leading-7 text-slate-950">

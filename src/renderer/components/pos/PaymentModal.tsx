@@ -7,6 +7,7 @@ import {
   type PrintReceiptResponse,
 } from './receipt-outcome';
 import { formatInitialCashAmount } from './format-cash-amount';
+import { useDialogInteraction } from '../../hooks/useDialogInteraction';
 import { useConfig } from '../../hooks/useConfig';
 import {
   resolveFiscalAction,
@@ -1109,6 +1110,11 @@ export default function PaymentModal({
     if (!closeBlocked) onClose();
   }, [closeBlocked, onClose]);
 
+  const paymentPanelRef = useRef<HTMLDivElement>(null);
+  const fiscalPanelRef = useRef<HTMLDivElement>(null);
+  useDialogInteraction(paymentPanelRef, true, 50, requestClose);
+  useDialogInteraction(fiscalPanelRef, !!fiscalPrompt, 60, () => {});
+
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented) return;
@@ -1310,6 +1316,8 @@ export default function PaymentModal({
   const fiscalPromptOverlay = fiscalPrompt && (
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/70 p-4"
+      ref={fiscalPanelRef}
+      tabIndex={-1}
       role="dialog"
       aria-modal="true"
       aria-labelledby="fiscal-prompt-title"
@@ -1357,6 +1365,10 @@ export default function PaymentModal({
     >
       {fiscalPromptOverlay}
       <div
+        ref={paymentPanelRef}
+        tabIndex={-1}
+        {...(fiscalPrompt ? { inert: '' } : {})}
+        aria-hidden={fiscalPrompt ? true : undefined}
         role="dialog"
         aria-modal="true"
         aria-labelledby="payment-modal-title"

@@ -51,4 +51,26 @@ describe('payment close guard', () => {
     expect(create).toHaveBeenCalledOnce(); expect(print).toHaveBeenCalledOnce();
     expect(close).not.toHaveBeenCalled();
   });
+  it('owns focus and Tab navigation while the fiscal choice is open', async () => {
+    await mount(); await pay();
+    const fiscal = host.querySelector<HTMLElement>('[aria-labelledby="fiscal-prompt-title"]')!;
+    const payment = host.querySelector('[aria-labelledby="payment-modal-title"]')!;
+    expect(fiscal.contains(document.activeElement)).toBe(true);
+    expect(payment.hasAttribute('inert')).toBe(true);
+    expect(payment.getAttribute('aria-hidden')).toBe('true');
+    const buttons = [...fiscal.querySelectorAll('button')];
+    // happy-dom has no layout; supply visibility rectangles for the real focus handler.
+    buttons.forEach(button => { vi.spyOn(button, 'getClientRects').mockReturnValue([{}] as any); });
+    const tab = async (shiftKey = false) => {
+      await act(async () => { document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey, bubbles: true, cancelable: true })); });
+    };
+    await tab(); expect(document.activeElement).toBe(buttons[0]);
+    await tab(true); expect(document.activeElement).toBe(buttons[1]);
+    await tab(); expect(document.activeElement).toBe(buttons[0]);
+    await act(async () => { document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); });
+    expect(close).not.toHaveBeenCalled();
+    await act(async () => buttons[0].click());
+    expect(close).toHaveBeenCalledOnce();
+  });
+
 });
