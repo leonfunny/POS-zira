@@ -115,7 +115,7 @@ export default function CameraSettings({ cameras, onSave, t }: CameraSettingsPro
                   <div className="flex items-center gap-2">
                     <span className={`w-2 h-2 rounded-full ${cam.enabled ? 'bg-emerald-500' : 'bg-slate-300'}`} />
                     <span className="text-sm font-medium text-slate-700">{cam.name || tl('security.unnamed', 'Unnamed')}</span>
-                    <span className="text-[10px] text-slate-400 uppercase bg-slate-200 px-1.5 py-0.5 rounded">{cam.zone}</span>
+                    <span className="text-xs text-slate-600 uppercase bg-slate-200 px-1.5 py-0.5 rounded">{cam.zone}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-slate-400">{cam.algorithms.length} {tl('security.algos', 'algos')}</span>

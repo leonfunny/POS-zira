@@ -216,7 +216,7 @@ export default function SecurityTab({ config }: SecurityTabProps) {
               <span>&#x25B6;</span> {t('security.start')}
             </button>
           )}
-          <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-medium ${
+          <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium ${
             status.running ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'
           }`}>
             <span className={`w-1.5 h-1.5 rounded-full ${status.running ? 'bg-emerald-500' : 'bg-slate-400'}`} />

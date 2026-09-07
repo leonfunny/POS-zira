@@ -43,6 +43,14 @@ This change implements the independently verifiable UI foundation from the comme
 - Follow-up local validation: production build (including renderer typecheck), design guard, and 135 targeted tests across 20 suites passed. New regression cases cover fiscal focus/Tab, second-finger interference, delayed Booksy errors, security failure/retry/concurrent saves, and catalog fallback. New commit CI is tracked in PR #2 separately from the earlier foundation run.
 - Native Windows DPI/touch/scanner/printer and installer evidence, wider typography/layout work, and the BLIK merchant/receipt contract remain outstanding. This follow-up is not a production release.
 
+## Readability and constrained viewport follow-up
+
+- Retail search/actions can wrap instead of enforcing a 310px minimum search width on one non-wrapping row. The product/cart flex chain explicitly permits vertical shrinking so the item list can scroll.
+- Customer catalog uses horizontal category browsing below the desktop breakpoint, a bounded desktop category column, and product columns sized from available content width. Selected sections/categories expose pressed state. Customer shell spacing reduces at narrower widths.
+- Long confirmation content can scroll within the dynamic viewport height instead of extending beyond a short window.
+- Raised 14 remaining 10px labels to 12px across retail badges, sidebar, security and customer language controls. Improved low-contrast text/badge combinations and the cart's primary action color. This is a targeted readability pass, not completion of the whole typography audit.
+- Local validation: 71 existing tests across 12 suites passed; production build and design guard passed. Browser launch was attempted with a writable temporary directory, but the Chromium executable is not installed. No rendered layout or Windows DPI result is claimed. The fixed retail cart width and broader navigation redesign remain pending native viewport evidence.
+
 ## Required before broad release
 
 1. Resolve the BLIK merchant/snapshot backend contract and remove fixed recipient values through a separately tested change.

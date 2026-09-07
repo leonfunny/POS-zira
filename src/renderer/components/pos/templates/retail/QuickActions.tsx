@@ -60,7 +60,7 @@ function ActionButton({ icon, label, onClick, disabled, active, tone = 'neutral'
       <span className="w-4 h-4 shrink-0 [&>svg]:w-4 [&>svg]:h-4" aria-hidden="true">{icon}</span>
       <span className="truncate max-w-[96px]">{label}</span>
       {typeof badge === 'number' && badge > 0 && (
-        <span className="ml-0.5 min-w-4 h-4 px-1 rounded-full bg-slate-900 text-white text-[10px] leading-4 text-center">
+        <span className="ml-0.5 min-w-5 min-h-5 px-1 rounded-full bg-slate-900 text-white text-xs leading-4 text-center">
           {badge}
         </span>
       )}

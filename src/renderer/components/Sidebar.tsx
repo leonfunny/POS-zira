@@ -160,7 +160,7 @@ export default function Sidebar({
               {collapsed ? (
                 <div className="mx-3 my-2 border-t border-[var(--sand-200)]" />
               ) : (
-                <div className="text-[10px] uppercase tracking-[0.15em] text-slate-400 px-4 pt-4 pb-1 select-none">
+                <div className="text-xs uppercase tracking-[0.15em] text-slate-600 px-4 pt-4 pb-1 select-none">
                   {t(group.labelKey)}
                 </div>
               )}
@@ -279,7 +279,7 @@ export default function Sidebar({
 
         {/* Version */}
         {!collapsed && (
-          <div className="px-3 pb-2 text-[10px] text-slate-400">
+          <div className="px-3 pb-2 text-xs text-slate-600">
             v{appVersion}
           </div>
         )}

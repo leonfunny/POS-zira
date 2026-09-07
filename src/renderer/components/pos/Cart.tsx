@@ -546,7 +546,7 @@ function PricePopup({ item, currency, onApply, onUpdateBackendPrice, onClose, tO
               type="button"
               onClick={() => canApply && onApply(parsedPrice)}
               disabled={!canApply}
-              className="h-12 flex-1 rounded-lg bg-brand-600 px-3 text-sm font-extrabold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-45"
+              className="h-12 flex-1 rounded-lg bg-brand-700 px-3 text-sm font-extrabold text-white hover:bg-brand-800 disabled:cursor-not-allowed disabled:opacity-45"
             >
               {tOr('pos.price.apply', 'Apply price')}
             </button>
@@ -823,7 +823,7 @@ export default function Cart({
   }, []);
 
   return (
-    <div className="flex flex-col h-full bg-white">
+    <div className="flex min-h-0 flex-col h-full bg-white">
       {/* ─── HEADER ───────────────────────────────────────────────
           Compact summary line replaces the old plain "Cart [N]"
           header so the cashier always sees count + subtotal at a
@@ -871,7 +871,7 @@ export default function Cart({
       {/* ─── ITEMS LIST ──────────────────────────────────────────── */}
       <div
         ref={itemsScrollRef}
-        className="flex-1 overflow-y-auto bg-white"
+        className="min-h-0 flex-1 overflow-y-auto bg-white"
         onClick={(e) => {
           // Tap empty area inside the cart list deselects whichever field
           // the operator was editing so the numpad collapses.
