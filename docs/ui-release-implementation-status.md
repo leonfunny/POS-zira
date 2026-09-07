@@ -51,6 +51,14 @@ This change implements the independently verifiable UI foundation from the comme
 - Raised 14 remaining 10px labels to 12px across retail badges, sidebar, security and customer language controls. Improved low-contrast text/badge combinations and the cart's primary action color. This is a targeted readability pass, not completion of the whole typography audit.
 - Local validation: 71 existing tests across 12 suites passed; production build and design guard passed. Browser launch was attempted with a writable temporary directory, but the Chromium executable is not installed. No rendered layout or Windows DPI result is claimed. The fixed retail cart width and broader navigation redesign remain pending native viewport evidence.
 
+## Cart editing and short-window follow-up
+
+- Price and discount popups now share dialog focus/Tab/Escape ownership. Price editing no longer applies a cart price from a document-wide Enter handler; Enter activates the focused button normally. Custom discount Enter is scoped to its own input and ignores IME composition.
+- Backend price updates lock cancellation, editing and duplicate submissions until completion. Failed updates retain the draft, expose an alert and allow retry. Existing price validation, backend authorization/concurrency handling and monetary calculations are unchanged.
+- The price popup scrolls within the dynamic viewport; the inline cart keypad is capped at 40dvh with scrolling. Total labels/values may wrap as a group. These CSS changes still require native short-window checks.
+- Cart action targets are at least 44px and their scroll affordance is visible. Payment keypad delete/clear and close controls have localized accessible labels; the cash-note removal target is 44px. The shared numeric keypad primary color uses brand-700.
+- Local production build, design guard and 72 tests across nine related suites passed. Six new behavioral cases exercise unintended Enter submission, busy-close/duplicate prevention, retry, stacked-dialog Escape and input-scoped discount Enter. Updated the old source assertion for document-wide discount Enter to the input-scoped handler; no gate is skipped.
+
 ## Required before broad release
 
 1. Resolve the BLIK merchant/snapshot backend contract and remove fixed recipient values through a separately tested change.

@@ -1275,6 +1275,7 @@ export default function PaymentModal({
             key={key}
           type="button"
           onClick={() => handleKeypadPress(key)}
+          aria-label={key === 'backspace' ? tOr('pos.payment.nipBackspace', 'Delete') : key === 'clear' ? t('pos.clear') : key}
           disabled={tenderPrepared}
             className={`flex min-h-[44px] items-center justify-center rounded-md border text-lg font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 ${
               key === 'backspace' || key === 'clear'
@@ -1398,7 +1399,7 @@ export default function PaymentModal({
               type="button"
               onClick={requestClose}
               disabled={closeBlocked}
-              aria-label="Close"
+              aria-label={t('common.close')}
               className="flex h-11 w-11 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-950 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
@@ -2059,7 +2060,7 @@ export default function PaymentModal({
                              onClick={() => updateDenom(denom, -1)}
                              disabled={tenderPrepared}
                             aria-label={`Remove one ${denom / 100} ${currency} bill`}
-                            className="absolute -top-2.5 -right-2.5 w-10 h-10 rounded-full bg-slate-800 text-white text-xl font-bold leading-none flex items-center justify-center shadow-md hover:bg-slate-950 cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
+                            className="absolute -top-2.5 -right-2.5 w-11 h-11 rounded-full bg-slate-800 text-white text-xl font-bold leading-none flex items-center justify-center shadow-md hover:bg-slate-950 cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
                           >
                             −
                           </button>
