@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect, useSyncExternalStore } from 'react';
 import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab, ALLOWED_PROTOCOLS_BY_TYPE, PrinterType, LiveCustomerDisplayProfile, PosnetDiagnoseResult, charsPerLineFor, ServerPrinterMapping, LocalPrinterMirrorRow, SalonPrinterMapping, SalonPrinterAssignment, SalonPrinterRole, ScaleConnectionMode, ScaleDiagnoseStep, FiscalDailyReportPrintResponse, LanFirstKitchenNetworkInfo, LanFirstKitchenPairingStatus, LanFirstKitchenTestRouteResponse } from '../../shared/types';
 import { resolveCustomerDisplayProfile } from '../../shared/customer-display-profile';
 import { DEFAULT_LAN_FIRST_KITCHEN_PORT, getReadyKitchenWifiPrinters, planLanKitchenSave, resolveLanFirstKitchenTimeoutMs } from '../../shared/lan-first-kitchen-settings';
@@ -13,6 +13,8 @@ import { ShoppingCart, LayoutDashboard, FileText, Shield, Printer, Tag, Ticket, 
 import ModuleManager from './ModuleManager';
 import TextInput from './shared/TextInput';
 import { matchesSettingSection } from './settings-search';
+import { ConfigAutosave } from '../lib/config-autosave';
+import { useGeneralSettingState } from '../hooks/useGeneralSettingState';
 
 interface PortMismatchValidation {
   ok: boolean;
@@ -80,6 +82,7 @@ function PortProtocolMismatchBanner({
 }
 
 interface SettingsProps {
+  generalAutosave: ConfigAutosave;
   config: AgentConfig | null;
   onConfigChange: (config: Partial<AgentConfig>) => void | Promise<any>;
   /** Plan/entitlement default for a tab — used by the Module Manager for the
@@ -509,7 +512,16 @@ function getWindowsPrinterOptionsForSelect(
   );
 }
 
-export default function Settings({ config, onConfigChange, isModuleEntitled }: SettingsProps) {
+export default function Settings({ config: savedConfig, onConfigChange, isModuleEntitled, generalAutosave }: SettingsProps) {
+  const config = useMemo(() => savedConfig
+    ? { ...savedConfig, ...generalAutosave.getPending() }
+    : savedConfig, [savedConfig, generalAutosave]);
+  const generalSaveState = useSyncExternalStore(generalAutosave.subscribe, generalAutosave.getSnapshot);
+  const generalEditedKeys = useRef(new Set<keyof AgentConfig>());
+  const hydratingGeneralConfig = useRef(false);
+  const markGeneralEdited = useCallback((key: keyof AgentConfig) => {
+    if (!hydratingGeneralConfig.current) generalEditedKeys.current.add(key);
+  }, []);
   const [ports, setPorts] = useState<string[]>([]);
   const [windowsPrinters, setWindowsPrinters] = useState<WindowsPrinterOption[]>(
     () => getInitialWindowsPrinterOptions(config),
@@ -520,8 +532,8 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   );
   const [baudRate, setBaudRate] = useState(config?.printerBaudRate || 9600);
   const [serverUrl, setServerUrl] = useState(config?.serverUrl || 'https://api.enail.pro');
-  const [name, setName] = useState(config?.name || 'Zira AI');
-  const [autoStart, setAutoStart] = useState(config?.autoStart ?? true);
+  const [name, setName] = useGeneralSettingState('name', config?.name || 'Zira AI', markGeneralEdited);
+  const [autoStart, setAutoStart] = useGeneralSettingState('autoStart', config?.autoStart ?? true, markGeneralEdited);
   const [copied, setCopied] = useState(false);
   const [showChangeSalonConfirm, setShowChangeSalonConfirm] = useState(false);
   const [isResyncingProducts, setIsResyncingProducts] = useState(false);
@@ -533,7 +545,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   const [connectionError, setConnectionError] = useState<string | null>(null);
 
   // Language
-  const [language, setLanguage] = useState<Language>(config?.language || 'en');
+  const [language, setLanguage] = useGeneralSettingState<Language>('language', config?.language || 'en', markGeneralEdited);
 
   const t = getTranslation(language);
   const tOr = (key: string, fallback: string) => {
@@ -589,23 +601,23 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   const [diagnoseResult, setDiagnoseResult] = useState<{ key: string; result: PosnetDiagnoseResult } | null>(null);
 
   // POS settings
-  const [posEnabled, setPosEnabled] = useState(config?.posEnabled ?? false);
-  const [posMode, setPosMode] = useState<'retail' | 'salon' | 'b2b' | 'restaurant'>(config?.posMode || 'retail');
-  const [posLanguage, setPosLanguage] = useState<Language | ''>(config?.posLanguage || '');
-  const [allowOversell, setAllowOversell] = useState(config?.allowOversell ?? false);
-  const [retailSimpleGrid, setRetailSimpleGrid] = useState(config?.retailSimpleGrid ?? false);
-  const [fiscalOnCashSale, setFiscalOnCashSale] = useState<FiscalOnCashSaleMode>(config?.fiscalOnCashSale || 'ask');
-  const [autoDiscountEnabled, setAutoDiscountEnabled] = useState(config?.autoOrderDiscount?.enabled ?? false);
-  const [autoDiscountPercent, setAutoDiscountPercent] = useState(String(config?.autoOrderDiscount?.percent || 5));
-  const [autoDiscountEndDate, setAutoDiscountEndDate] = useState(config?.autoOrderDiscount?.endDate || '');
-  const [scaleConnection, setScaleConnection] = useState<ScaleConnectionMode>(deriveScaleConnection(config?.scale));
-  const [scalePort, setScalePort] = useState(config?.scale?.port || '');
-  const [scaleShareEnabled, setScaleShareEnabled] = useState(config?.scale?.share?.enabled ?? false);
-  const [scaleSharePort, setScaleSharePort] = useState(String(config?.scale?.share?.port || DEFAULT_SCALE_SHARE_PORT));
-  const [scaleShareToken, setScaleShareToken] = useState(config?.scale?.share?.token || '');
-  const [scaleRemoteHost, setScaleRemoteHost] = useState(config?.scale?.remote?.host || '');
-  const [scaleRemotePort, setScaleRemotePort] = useState(String(config?.scale?.remote?.port || DEFAULT_SCALE_SHARE_PORT));
-  const [scaleRemoteToken, setScaleRemoteToken] = useState(config?.scale?.remote?.token || '');
+  const [posEnabled, setPosEnabled] = useGeneralSettingState('posEnabled', config?.posEnabled ?? false, markGeneralEdited);
+  const [posMode, setPosMode] = useGeneralSettingState<'retail' | 'salon' | 'b2b' | 'restaurant'>('posMode', config?.posMode || 'retail', markGeneralEdited);
+  const [posLanguage, setPosLanguage] = useGeneralSettingState<Language | ''>('posLanguage', config?.posLanguage || '', markGeneralEdited);
+  const [allowOversell, setAllowOversell] = useGeneralSettingState('allowOversell', config?.allowOversell ?? false, markGeneralEdited);
+  const [retailSimpleGrid, setRetailSimpleGrid] = useGeneralSettingState('retailSimpleGrid', config?.retailSimpleGrid ?? false, markGeneralEdited);
+  const [fiscalOnCashSale, setFiscalOnCashSale] = useGeneralSettingState<FiscalOnCashSaleMode>('fiscalOnCashSale', config?.fiscalOnCashSale || 'ask', markGeneralEdited);
+  const [autoDiscountEnabled, setAutoDiscountEnabled] = useGeneralSettingState('autoOrderDiscount', config?.autoOrderDiscount?.enabled ?? false, markGeneralEdited);
+  const [autoDiscountPercent, setAutoDiscountPercent] = useGeneralSettingState('autoOrderDiscount', String(config?.autoOrderDiscount?.percent || 5), markGeneralEdited);
+  const [autoDiscountEndDate, setAutoDiscountEndDate] = useGeneralSettingState('autoOrderDiscount', config?.autoOrderDiscount?.endDate || '', markGeneralEdited);
+  const [scaleConnection, setScaleConnection] = useGeneralSettingState<ScaleConnectionMode>('scale', deriveScaleConnection(config?.scale), markGeneralEdited);
+  const [scalePort, setScalePort] = useGeneralSettingState('scale', config?.scale?.port || '', markGeneralEdited);
+  const [scaleShareEnabled, setScaleShareEnabled] = useGeneralSettingState('scale', config?.scale?.share?.enabled ?? false, markGeneralEdited);
+  const [scaleSharePort, setScaleSharePort] = useGeneralSettingState('scale', String(config?.scale?.share?.port || DEFAULT_SCALE_SHARE_PORT), markGeneralEdited);
+  const [scaleShareToken, setScaleShareToken] = useGeneralSettingState('scale', config?.scale?.share?.token || '', markGeneralEdited);
+  const [scaleRemoteHost, setScaleRemoteHost] = useGeneralSettingState('scale', config?.scale?.remote?.host || '', markGeneralEdited);
+  const [scaleRemotePort, setScaleRemotePort] = useGeneralSettingState('scale', String(config?.scale?.remote?.port || DEFAULT_SCALE_SHARE_PORT), markGeneralEdited);
+  const [scaleRemoteToken, setScaleRemoteToken] = useGeneralSettingState('scale', config?.scale?.remote?.token || '', markGeneralEdited);
   const [scaleNetworkInfo, setScaleNetworkInfo] = useState<{
     ips: string[];
     suggestedHost: string;
@@ -616,9 +628,9 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   } | null>(null);
   const [scaleTesting, setScaleTesting] = useState(false);
   const [scaleAutoDetecting, setScaleAutoDetecting] = useState(false);
-  const [scaleChipset, setScaleChipset] = useState(config?.scale?.chipset || '');
-  const [scaleModel, setScaleModel] = useState(config?.scale?.model || 'DIBAL GDPOS Scale');
-  const [scaleDriverStatus, setScaleDriverStatus] = useState(config?.scale?.driverStatus || '');
+  const [scaleChipset, setScaleChipset] = useGeneralSettingState('scale', config?.scale?.chipset || '', markGeneralEdited);
+  const [scaleModel, setScaleModel] = useGeneralSettingState('scale', config?.scale?.model || 'DIBAL GDPOS Scale', markGeneralEdited);
+  const [scaleDriverStatus, setScaleDriverStatus] = useGeneralSettingState('scale', config?.scale?.driverStatus || '', markGeneralEdited);
   const [scaleDiagnoseSteps, setScaleDiagnoseSteps] = useState<ScaleDiagnoseStep[]>([]);
   const [scaleTestResult, setScaleTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [lanKitchenReceiveEnabled, setLanKitchenReceiveEnabled] = useState(config?.lanFirstReceiver?.enabled ?? false);
@@ -634,23 +646,21 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   const [lanKitchenSaving, setLanKitchenSaving] = useState(false);
   const [lanKitchenTesting, setLanKitchenTesting] = useState(false);
   const [lanKitchenResult, setLanKitchenResult] = useState<{ success: boolean; message: string } | null>(null);
-  const [receiptSellerName, setReceiptSellerName] = useState(config?.receiptSellerName || '');
-  const [receiptSellerAddress, setReceiptSellerAddress] = useState(config?.receiptSellerAddress || '');
-  const [receiptSellerNip, setReceiptSellerNip] = useState(config?.receiptSellerNip || '');
-  const [customerDisplayEnabled, setCustomerDisplayEnabled] = useState(config?.customerDisplayEnabled ?? false);
-  const [customerDisplayProfile, setCustomerDisplayProfile] = useState<LiveCustomerDisplayProfile>(
-    resolveCustomerDisplayProfile(config),
-  );
+  const [receiptSellerName, setReceiptSellerName] = useGeneralSettingState('receiptSellerName', config?.receiptSellerName || '', markGeneralEdited);
+  const [receiptSellerAddress, setReceiptSellerAddress] = useGeneralSettingState('receiptSellerAddress', config?.receiptSellerAddress || '', markGeneralEdited);
+  const [receiptSellerNip, setReceiptSellerNip] = useGeneralSettingState('receiptSellerNip', config?.receiptSellerNip || '', markGeneralEdited);
+  const [customerDisplayEnabled, setCustomerDisplayEnabled] = useGeneralSettingState('customerDisplayEnabled', config?.customerDisplayEnabled ?? false, markGeneralEdited);
+  const [customerDisplayProfile, setCustomerDisplayProfile] = useGeneralSettingState<LiveCustomerDisplayProfile>('customerDisplayProfile', resolveCustomerDisplayProfile(config), markGeneralEdited);
   const customerDisplayProfileRef = useRef<LiveCustomerDisplayProfile>(customerDisplayProfile);
   const customerDisplayProfileSelectRef = useRef<HTMLSelectElement | null>(null);
   customerDisplayProfileRef.current = customerDisplayProfile;
-  const [customerDisplayMonitor, setCustomerDisplayMonitor] = useState(config?.customerDisplayMonitor ?? 0);
-  const [customerDisplayForceKiosk, setCustomerDisplayForceKiosk] = useState(config?.customerDisplayForceKiosk ?? true);
-  const [customerDisplayRetailCatalogEnabled, setCustomerDisplayRetailCatalogEnabled] = useState(config?.customerDisplayRetailCatalogEnabled ?? true);
-  const [customerDisplayFoodMenuEnabled, setCustomerDisplayFoodMenuEnabled] = useState(config?.customerDisplayFoodMenuEnabled ?? false);
-  const [promoFolder, setPromoFolder] = useState((config as any)?.customerDisplayPromoFolder || '');
-  const [promoInterval, setPromoInterval] = useState((config as any)?.customerDisplayPromoInterval ?? 5000);
-  const [idleTimeout, setIdleTimeout] = useState((config as any)?.customerDisplayIdleTimeout ?? 120000);
+  const [customerDisplayMonitor, setCustomerDisplayMonitor] = useGeneralSettingState('customerDisplayMonitor', config?.customerDisplayMonitor ?? 0, markGeneralEdited);
+  const [customerDisplayForceKiosk, setCustomerDisplayForceKiosk] = useGeneralSettingState('customerDisplayForceKiosk', config?.customerDisplayForceKiosk ?? true, markGeneralEdited);
+  const [customerDisplayRetailCatalogEnabled, setCustomerDisplayRetailCatalogEnabled] = useGeneralSettingState('customerDisplayRetailCatalogEnabled', config?.customerDisplayRetailCatalogEnabled ?? true, markGeneralEdited);
+  const [customerDisplayFoodMenuEnabled, setCustomerDisplayFoodMenuEnabled] = useGeneralSettingState('customerDisplayFoodMenuEnabled', config?.customerDisplayFoodMenuEnabled ?? false, markGeneralEdited);
+  const [promoFolder, setPromoFolder] = useGeneralSettingState('customerDisplayPromoFolder', (config as any)?.customerDisplayPromoFolder || '', markGeneralEdited);
+  const [promoInterval, setPromoInterval] = useGeneralSettingState('customerDisplayPromoInterval', (config as any)?.customerDisplayPromoInterval ?? 5000, markGeneralEdited);
+  const [idleTimeout, setIdleTimeout] = useGeneralSettingState('customerDisplayIdleTimeout', (config as any)?.customerDisplayIdleTimeout ?? 120000, markGeneralEdited);
 
   // TV Ad state
   const [tvAdEnabled, setTvAdEnabled] = useState<boolean>((config as any)?.tvAdEnabled ?? false);
@@ -1125,7 +1135,10 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
 
   // Update state when config changes
   useEffect(() => {
-    if (config) {
+    const incomingConfig = config && { ...config, ...generalAutosave.getPending() };
+    if (incomingConfig) {
+      const config = incomingConfig;
+      hydratingGeneralConfig.current = true;
       const incomingPrinterSignature = getPrinterPayloadSignature(buildPrinterPayloadFromConfig(config));
       setServerUrl(config.serverUrl || 'https://api.enail.pro');
       setName(config.name || 'Zira AI');
@@ -1197,12 +1210,12 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
         syncedPrinterSignatureRef.current = incomingPrinterSignature;
       }
       setWindowsPrinters(prev => mergeWindowsPrinterOptions(prev, getConfiguredWindowsPrinterOptions(config)));
+      hydratingGeneralConfig.current = false;
     }
-  }, [config]);
+  }, [config, generalAutosave]);
 
   // ─── Auto-save: debounced save on any config state change ─────────────────
   const configSyncedRef = useRef(false);  // true once initial config has been synced to state
-  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Mark config as synced after the config→state useEffect runs
   useEffect(() => {
@@ -1213,17 +1226,17 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
     }
   }, [config]);
 
-  // Debounced auto-save whenever config-bearing state changes
-  useEffect(() => {
-    if (!configSyncedRef.current) return;  // skip initial config→state sync
-    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    autoSaveTimerRef.current = setTimeout(() => {
-      const payload = buildGeneralConfigPayload();
-      onConfigChange(payload);
-      window.electronAPI.setAutoStart(autoStart).catch(() => {});
-    }, 600);
-    return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
-  }, [buildGeneralConfigPayload, autoStart, onConfigChange]);
+  // Capture edits before config hydration; the session-owned queue survives
+  // tab unmounts. Hydration setters do not enqueue unrelated settings.
+  useLayoutEffect(() => {
+    if (!generalEditedKeys.current.size) return;
+    const payload = buildGeneralConfigPayload();
+    const patch = Object.fromEntries(
+      [...generalEditedKeys.current].map(key => [key, payload[key]]),
+    ) as Partial<AgentConfig>;
+    generalEditedKeys.current.clear();
+    generalAutosave.enqueue(patch);
+  }, [buildGeneralConfigPayload, generalAutosave]);
   // ─── End auto-save ───────────────────────────────────────────────────────────
   const persistPrinterChanges = useCallback(async (
     payload: Partial<AgentConfig> = latestPrinterPayloadRef.current,
@@ -1594,8 +1607,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
     setScaleTesting(true);
     setScaleTestResult(null);
     try {
-      const payload = buildGeneralConfigPayload();
-      await Promise.resolve(onConfigChange(payload));
+      await generalAutosave.flush();
       const result = await window.electronAPI.scale.readWeight({
         port: scaleConnection === 'local' ? scalePort || undefined : undefined,
       });
@@ -2272,6 +2284,7 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   // Change salon / disconnect — uses dedicated handler that clears credentials server-side
   const handleChangeSalon = async () => {
     try {
+      await generalAutosave.flush();
       await window.electronAPI.changeSalon();
       // Refresh config from backend to get the cleared state
       const updated = await window.electronAPI.getConfig();
@@ -2698,6 +2711,15 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
   return (
     <>
     <div className="space-y-4">
+      {generalSaveState.status !== 'idle' && (
+        <div role={generalSaveState.status === 'error' ? 'alert' : 'status'}
+          className={`flex items-center justify-between gap-3 rounded-lg border px-4 py-2 text-sm ${generalSaveState.status === 'error' ? 'border-amber-300 bg-amber-50 text-amber-950' : 'border-slate-200 bg-white text-slate-700'}`}>
+          <span>{t(`settings.save.${generalSaveState.status === 'error' ? 'failed' : generalSaveState.status}`)}</span>
+          {generalSaveState.status === 'error' && (
+            <button type="button" onClick={() => { void generalAutosave.flush().catch(() => {}); }} className="min-h-11 rounded-md border border-amber-300 px-3 font-semibold">{t('settings.save.retry')}</button>
+          )}
+        </div>
+      )}
       <div role="tablist" aria-label="Settings sections" className="flex gap-2 rounded-lg border border-slate-200 bg-white p-1">
         {([
           { id: 'general' as const, label: t('settings.general'), icon: <LayoutDashboard size={15} /> },
@@ -5608,18 +5630,11 @@ export default function Settings({ config, onConfigChange, isModuleEntitled }: S
                 type="button"
                 onClick={async () => {
                   try {
-                    if (autoSaveTimerRef.current) {
-                      clearTimeout(autoSaveTimerRef.current);
-                      autoSaveTimerRef.current = null;
-                    }
                     const currentCustomerDisplayProfile = (
                       customerDisplayProfileSelectRef.current?.value as LiveCustomerDisplayProfile | undefined
                     ) || customerDisplayProfileRef.current;
-                    const payload = buildGeneralConfigPayload({
-                      customerDisplayProfile: currentCustomerDisplayProfile,
-                    });
-                    await Promise.resolve(onConfigChange(payload));
-                    window.electronAPI.setAutoStart(autoStart).catch(() => {});
+                    generalAutosave.enqueue({ customerDisplayProfile: currentCustomerDisplayProfile });
+                    await generalAutosave.flush();
                     const result = await window.electronAPI.window.open('customer');
                     if (!result.success) {
                       rlog.error('[Settings] Failed to open customer display:', result.error);

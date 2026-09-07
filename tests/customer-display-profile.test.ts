@@ -68,11 +68,14 @@ describe('customer display profile runtime wiring', () => {
 
     expect(settingsSource).toContain('customerDisplayProfileRef.current = nextProfile;');
     expect(settingsSource).toContain('customerDisplayProfileSelectRef');
-    expect(openHandlerSource).toContain('const payload = buildGeneralConfigPayload({');
+    expect(openHandlerSource).toContain('generalAutosave.enqueue({');
     expect(openHandlerSource).toContain('customerDisplayProfile: currentCustomerDisplayProfile');
     expect(openHandlerSource).toContain('customerDisplayProfileSelectRef.current?.value');
-    expect(openHandlerSource).toContain('await Promise.resolve(onConfigChange(payload));');
-    expect(openHandlerSource.indexOf('onConfigChange(payload)')).toBeLessThan(
+    expect(openHandlerSource).toContain('await generalAutosave.flush();');
+    expect(openHandlerSource.indexOf('generalAutosave.enqueue(')).toBeLessThan(
+      openHandlerSource.indexOf('await generalAutosave.flush()'),
+    );
+    expect(openHandlerSource.indexOf('await generalAutosave.flush()')).toBeLessThan(
       openHandlerSource.indexOf(openCall),
     );
   });

@@ -495,7 +495,8 @@ export class SyncModule extends BaseModule {
 
     ipcMain.handle('pos:sync:resolve-conflict', async (_event, conflictId: number, resolution: string, adjustments?: any) => {
       try {
-        this.syncLogService?.resolveConflict(conflictId, resolution, adjustments);
+        if (!this.syncLogService) throw new Error('Sync service is not ready. Try again shortly.');
+        this.syncLogService.resolveConflict(conflictId, resolution, adjustments);
         return { success: true };
       } catch (e: any) { return { success: false, error: e.message }; }
     });
