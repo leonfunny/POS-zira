@@ -16,6 +16,7 @@ export interface PrintOrderRepository {
   list(): StoredPrintOrder[];
   save(order: StoredPrintOrder): void;
   remove(id: string, at: string): void;
+  flush(): Promise<void>;
 }
 
 export interface PrintOrderSyncer {
@@ -87,8 +88,9 @@ export function registerPrintOrderIpcHandlers(
 ): void {
   ipc.handle(PRINT_ORDER_CHANNELS.list, () => repository.list());
 
-  ipc.handle(PRINT_ORDER_CHANNELS.save, (_event, input: unknown) => {
+  ipc.handle(PRINT_ORDER_CHANNELS.save, async (_event, input: unknown) => {
     repository.save(parsePrintOrderInput(input));
+    await repository.flush();
     // The list is answered from the local copy first, so the panel updates at
     // once whether or not the shop has a line to the server right now.
     const list = repository.list();
@@ -96,8 +98,9 @@ export function registerPrintOrderIpcHandlers(
     return list;
   });
 
-  ipc.handle(PRINT_ORDER_CHANNELS.remove, (_event, id: unknown) => {
+  ipc.handle(PRINT_ORDER_CHANNELS.remove, async (_event, id: unknown) => {
     repository.remove(parsePrintOrderId(id), new Date().toISOString());
+    await repository.flush();
     const list = repository.list();
     syncInBackground(syncer);
     return list;

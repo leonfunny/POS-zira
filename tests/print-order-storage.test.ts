@@ -319,3 +319,28 @@ describe('finding one sheet among hundreds', () => {
     expect(matchesPrintOrderQuery(moon, '   ')).toBe(true);
   });
 });
+
+
+describe('storage failures and progress identity', () => {
+  it('rejects save and delete when browser storage is full', async () => {
+    await saveOrder('a', sample());
+    const before = localStorage.getItem('zira.labelPrintOrder.saved');
+    vi.spyOn(localStorage, 'setItem').mockImplementation(() => { throw new Error('Quota exceeded'); });
+    await expect(saveOrder('b', sample())).rejects.toThrow('Quota exceeded');
+    await expect(deleteSavedOrder('a')).rejects.toThrow('Quota exceeded');
+    expect(localStorage.getItem('zira.labelPrintOrder.saved')).toBe(before);
+  });
+
+  it('round-trips the content snapshot with the completed batches', () => {
+    saveProgress('a', ['fabric:s:0'], 'exact-content-and-quantities');
+    expect(loadProgress('a')).toMatchObject({
+      completedIds: ['fabric:s:0'], planKey: 'exact-content-and-quantities',
+    });
+    expect(loadProgress('b')).toBeNull();
+  });
+
+  it('matches Polish and Vietnamese stroked letters without their strokes', () => {
+    expect(matchesPrintOrderQuery({ ...sample(), customerName: 'ŁÓDŹ' }, 'lodz')).toBe(true);
+    expect(matchesPrintOrderQuery({ ...sample(), customerName: 'Đặng' }, 'dang')).toBe(true);
+  });
+});

@@ -97,6 +97,13 @@ describe('PrintOrderPanel', () => {
     await settle();
   }
 
+  async function confirmPending() {
+    await settle();
+    const confirm = container.querySelector<HTMLButtonElement>('[data-testid="confirm-order-action"]');
+    if (confirm) await act(async () => confirm.click());
+    await settle();
+  }
+
   /** Header, one size column, one colour row, one quantity, and the bags it packs into. */
   async function fillMinimalOrder(quantity = 40, stickers = 10) {
     await changeInput(input(container, 'input[placeholder="MoonCollection"]'), 'MoonCollection');
@@ -128,6 +135,106 @@ describe('PrintOrderPanel', () => {
     Array.from(container.querySelectorAll('[data-care-line]')).map(
       (li) => li.querySelector('span:nth-of-type(2)')?.textContent?.trim() ?? '',
     );
+
+  describe('saving and protecting the current sheet', () => {
+    function installBridge(save: (...args: any[]) => any, remove = vi.fn(async () => [])) {
+      (window.electronAPI as any).pos = { labelPrintOrders: {
+        list: vi.fn(async () => []), save, remove, onSynced: () => () => {},
+      } };
+      return remove;
+    }
+
+    it('does not claim Saved or send a print before persistence succeeds', async () => {
+      await render();
+      await fillMinimalOrder();
+      let release!: (value: any[]) => void;
+      let saved: any;
+      installBridge(vi.fn((entry) => { saved = entry; return new Promise(resolve => { release = resolve; }); }));
+      await act(async () => buttonWithText(container, 'Print').click());
+      await settle();
+      expect(buttonWithText(container, 'Saving…').disabled).toBe(true);
+      expect(buttonWithText(container, 'New order').disabled).toBe(true);
+      expect(printSticker).not.toHaveBeenCalled();
+      await act(async () => release([saved]));
+      await settle();
+      expect(printSticker).toHaveBeenCalledTimes(1);
+      expect(buttonWithText(container, 'Saved')).not.toBeNull();
+      expect(container.textContent).toContain('Saved on this device');
+    });
+
+    it('reports a save failure and sends no labels', async () => {
+      await render();
+      await fillMinimalOrder();
+      installBridge(vi.fn(async () => { throw new Error('Disk full'); }));
+      await act(async () => buttonWithText(container, 'Save order').click());
+      await settle();
+      expect(container.querySelector('[role="alert"]')?.textContent).toContain('Disk full');
+      expect(buttonWithText(container, 'Save order').disabled).toBe(false);
+      await act(async () => buttonWithText(container, 'Print').click());
+      await settle();
+      expect(printSticker).not.toHaveBeenCalled();
+      expect(printFabricTag).not.toHaveBeenCalled();
+      expect(buttonWithText(container, 'Print').disabled).toBe(false);
+    });
+
+    it('keeps unsaved edits when switching is cancelled', async () => {
+      await render();
+      await fillMinimalOrder();
+      await act(async () => buttonWithText(container, 'New order').click());
+      expect(container.querySelector('[role="dialog"]')?.textContent).toContain('unsaved changes');
+      await act(async () => buttonWithText(container, 'Cancel').click());
+      expect(input(container, 'input[placeholder="MoonCollection"]').value).toBe('MOONCOLLECTION');
+      await act(async () => buttonWithText(container, 'New order').click());
+      await confirmPending();
+      expect(input(container, 'input[placeholder="MoonCollection"]').value).toBe('');
+    });
+
+    it('confirms deletion and preserves the row when cancelled', async () => {
+      await render();
+      await fillMinimalOrder();
+      await act(async () => buttonWithText(container, 'Save order').click());
+      await settle();
+      const remove = () => container.querySelector<HTMLButtonElement>('[data-saved-order] button:last-child')!;
+      await act(async () => remove().click());
+      expect(container.querySelector('[role="dialog"]')?.textContent).toContain('MOONCOLLECTION');
+      expect(container.querySelectorAll('[data-saved-order]')).toHaveLength(1);
+      await act(async () => buttonWithText(container, 'Cancel').click());
+      expect(container.querySelectorAll('[data-saved-order]')).toHaveLength(1);
+      await act(async () => remove().click());
+      await confirmPending();
+      expect(container.querySelectorAll('[data-saved-order]')).toHaveLength(0);
+    });
+
+    it('keeps the saved row and reports an unsuccessful deletion', async () => {
+      await render();
+      await fillMinimalOrder();
+      await act(async () => buttonWithText(container, 'Save order').click());
+      await settle();
+      installBridge(vi.fn(), vi.fn(async () => { throw new Error('Delete failed'); }));
+      await act(async () => container.querySelector<HTMLButtonElement>('[data-saved-order] button:last-child')!.click());
+      await confirmPending();
+      expect(container.querySelectorAll('[data-saved-order]')).toHaveLength(1);
+      expect(container.querySelector('[role="alert"]')?.textContent).toContain('Delete failed');
+    });
+
+    it('blocks opening, clearing and editing a sheet while its printer is running', async () => {
+      await render();
+      await fillMinimalOrder();
+      let release!: (value: { success: boolean }) => void;
+      printSticker.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+      await act(async () => buttonWithText(container, 'Print').click());
+      await settle();
+      expect(buttonWithText(container, 'New order').disabled).toBe(true);
+      expect(buttonWithText(container, 'Open').disabled).toBe(true);
+      expect(input(container, 'input[placeholder="MoonCollection"]').closest('fieldset')?.disabled).toBe(true);
+      await act(async () => buttonWithText(container, 'New order').click());
+      expect(input(container, 'input[placeholder="MoonCollection"]').value).toBe('MOONCOLLECTION');
+      expect(container.querySelector<HTMLButtonElement>('[data-testid="stop-print"]')?.disabled).toBe(false);
+      await act(async () => release({ success: true }));
+      await settle();
+      expect(buttonWithText(container, 'New order').disabled).toBe(false);
+    });
+  });
 
   it.each([
     ['vi', 'tháng'],
@@ -172,6 +279,7 @@ describe('PrintOrderPanel', () => {
 
     // Still there on the next order, and on the next start of the app.
     await act(async () => buttonWithText(container, 'New order').click());
+    await confirmPending();
     expect(container.querySelector('[data-learned-size="3XL"]')).not.toBeNull();
 
     const first = root!;
@@ -710,9 +818,11 @@ describe('PrintOrderPanel', () => {
     expect(container.textContent).toContain('MOONCOLLECTION · KURTKA 114');
 
     await act(async () => buttonWithText(container, 'New order').click());
+    await confirmPending();
     expect(text('[data-testid="grand-total"]')).toBe('0');
 
     await act(async () => buttonWithText(container, 'Open').click());
+    await confirmPending();
     expect(text('[data-testid="grand-total"]')).toBe('40');
   });
 
@@ -730,7 +840,9 @@ describe('PrintOrderPanel', () => {
     expect(() => buttonWithText(container, 'Saved')).not.toThrow();
 
     await act(async () => buttonWithText(container, 'New order').click());
+    await confirmPending();
     await act(async () => buttonWithText(container, 'Open').click());
+    await confirmPending();
     expect(text('[data-testid="grand-total"]')).toBe('40');
   });
 
@@ -780,7 +892,9 @@ describe('PrintOrderPanel', () => {
 
     expect(container.querySelectorAll('[data-saved-order]')).toHaveLength(1);
     await act(async () => buttonWithText(container, 'New order').click());
+    await confirmPending();
     await act(async () => buttonWithText(container, 'Open').click());
+    await confirmPending();
     expect(text('[data-testid="grand-total"]')).toBe('55');
   });
 
@@ -798,7 +912,7 @@ describe('PrintOrderPanel', () => {
     expect(at(lanes)).toBeGreaterThan(at(container.querySelector('table')!));
     expect(at(lanes)).toBeLessThan(at(buttonWithText(container, 'Print')));
     // Nothing wedged in between: the box and the button read as one step.
-    expect(lanes.nextElementSibling!.contains(buttonWithText(container, 'Print'))).toBe(true);
+    expect(lanes.closest('fieldset')!.nextElementSibling!.contains(buttonWithText(container, 'Print'))).toBe(true);
   });
 
   it('dates each row of the saved list with the date typed on the sheet', async () => {
@@ -865,7 +979,9 @@ describe('PrintOrderPanel', () => {
     await fillMinimalOrder(40);
     await act(async () => buttonWithText(container, 'Save order').click());
     await act(async () => buttonWithText(container, 'New order').click());
+    await confirmPending();
     await act(async () => buttonWithText(container, 'Open').click());
+    await confirmPending();
 
     await changeInput(input(container, 'input[aria-label="Fabric tags S"]'), '55');
     await act(async () => buttonWithText(container, 'Print').click());
@@ -873,7 +989,9 @@ describe('PrintOrderPanel', () => {
 
     expect(container.querySelectorAll('[data-saved-order]')).toHaveLength(1);
     await act(async () => buttonWithText(container, 'New order').click());
+    await confirmPending();
     await act(async () => buttonWithText(container, 'Open').click());
+    await confirmPending();
     expect(text('[data-testid="grand-total"]')).toBe('55');
   });
 
@@ -895,7 +1013,9 @@ describe('PrintOrderPanel', () => {
 
     expect(container.querySelectorAll('[data-saved-order]')).toHaveLength(1);
     await act(async () => buttonWithText(container, 'New order').click());
+    await confirmPending();
     await act(async () => buttonWithText(container, 'Open').click());
+    await confirmPending();
     expect(text('[data-testid="grand-total"]')).toBe('55');
   });
 
@@ -934,6 +1054,7 @@ describe('PrintOrderPanel', () => {
     expect(container.querySelector('[data-saved-order][data-open="true"]')).not.toBeNull();
 
     await act(async () => buttonWithText(container, 'New order').click());
+    await confirmPending();
     expect(container.querySelector('[data-saved-order][data-open="true"]')).toBeNull();
   });
 
@@ -992,6 +1113,7 @@ describe('PrintOrderPanel', () => {
     expect(container.querySelector('[data-testid="duplicate-order"]')).not.toBeNull();
 
     await act(async () => buttonWithText(container, 'New order').click());
+    await confirmPending();
     expect(container.querySelector('[data-testid="duplicate-order"]')).toBeNull();
   });
 
@@ -1034,6 +1156,38 @@ describe('PrintOrderPanel', () => {
       printSticker.mockReset();
       printSticker.mockResolvedValue({ success: true });
     }
+
+    it('does not reuse completed batches after a quantity changes', async () => {
+      await stopAfterTheStickers();
+      await changeInput(input(container, 'input[aria-label="Bag stickers CZEKOLADA"]'), '20');
+      expect(text('[data-testid="resume-changed"]')).toContain('order changed');
+      expect(container.querySelector('[data-testid="resume-continue"]')).toBeNull();
+      await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="resume-restart"]')!.click());
+      await settle();
+      expect(printSticker).toHaveBeenCalledWith(expect.objectContaining({ quantity: 20 }));
+    });
+
+    it('validates restart after the customer or composition is changed', async () => {
+      await stopAfterTheStickers();
+      await changeInput(input(container, 'input[placeholder="MoonCollection"]'), '');
+      const restart = container.querySelector<HTMLButtonElement>('[data-testid="resume-restart"]')!;
+      expect(restart.disabled).toBe(true);
+      await act(async () => restart.click());
+      expect(printSticker).not.toHaveBeenCalled();
+      expect(printFabricTag).not.toHaveBeenCalled();
+    });
+
+    it('refuses continuation of legacy progress without a content snapshot', async () => {
+      await stopAfterTheStickers();
+      const record = JSON.parse(localStorage.getItem('zira.labelPrintOrder.progress')!);
+      delete record.planKey;
+      localStorage.setItem('zira.labelPrintOrder.progress', JSON.stringify(record));
+      await act(async () => root!.unmount());
+      root = null;
+      await render();
+      expect(text('[data-testid="resume-changed"]')).toContain('incomplete');
+      expect(container.querySelector('[data-testid="resume-continue"]')).toBeNull();
+    });
 
     it('says how much went out, in batches and in labels', async () => {
       await stopAfterTheStickers();
@@ -1118,6 +1272,7 @@ describe('PrintOrderPanel', () => {
     it('goes away with the sheet when a new order is started', async () => {
       await stopAfterTheStickers();
       await act(async () => buttonWithText(container, 'New order').click());
+      await confirmPending();
 
       expect(container.querySelector('[data-testid="resume-block"]')).toBeNull();
     });
@@ -1126,6 +1281,7 @@ describe('PrintOrderPanel', () => {
       // The run filed the sheet on its own, so there is nothing to press here.
       await stopAfterTheStickers();
       await act(async () => buttonWithText(container, 'New order').click());
+      await confirmPending();
       await fillMinimalOrder(10);
 
       expect(container.querySelector('[data-testid="resume-block"]')).toBeNull();
@@ -1147,7 +1303,9 @@ describe('PrintOrderPanel', () => {
     it('is thrown away when the sheet is put aside for a new one', async () => {
       await stopAfterTheStickers();
       await act(async () => buttonWithText(container, 'New order').click());
+      await confirmPending();
       await act(async () => buttonWithText(container, 'Open').click());
+      await confirmPending();
 
       expect(container.querySelector('[data-testid="resume-block"]')).toBeNull();
     });
@@ -1160,12 +1318,13 @@ describe('PrintOrderPanel', () => {
       expect(container.querySelector('[data-testid="resume-block"]')).toBeNull();
     });
 
-    it('says nothing when the sheet no longer holds what was sent', async () => {
+    it('requires a fresh run when the sheet no longer holds what was sent', async () => {
       await stopAfterTheStickers();
       await act(async () => container.querySelector<HTMLButtonElement>(
         'button[aria-label="Delete CZEKOLADA"]')!.click());
 
-      expect(container.querySelector('[data-testid="resume-block"]')).toBeNull();
+      expect(text('[data-testid="resume-changed"]')).toContain('order changed');
+      expect(container.querySelector('[data-testid="resume-continue"]')).toBeNull();
     });
 
     it('offers no "carry on" when nothing is left to send', async () => {
@@ -1241,7 +1400,7 @@ describe('PrintOrderPanel', () => {
       expect(text('[data-testid="resume-sent"]')).toContain('2/3 batches');
     });
 
-    it('counts against the sheet, not the length of the record', async () => {
+    it('invalidates the prior run when a printed size is removed', async () => {
       await render();
       await fillMinimalOrder(40);
       await act(async () => buttonWithText(container, '+ M').click());
@@ -1265,7 +1424,8 @@ describe('PrintOrderPanel', () => {
       // of them is still on the sheet, and that is what the operator is holding.
       await act(async () => container.querySelector<HTMLButtonElement>(
         'button[aria-label="Delete S"]')!.click());
-      expect(text('[data-testid="resume-sent"]')).toContain('1/2 batches');
+      expect(text('[data-testid="resume-changed"]')).toContain('order changed');
+      expect(container.querySelector('[data-testid="resume-continue"]')).toBeNull();
     });
 
     it('belongs to the order, not to whichever sheet holds those batches', async () => {
@@ -1442,7 +1602,8 @@ describe('PrintOrderPanel', () => {
       await act(async () => container.querySelector<HTMLButtonElement>(
         '[data-testid="paste-accept"]')!.click());
 
-      expect(container.querySelector('[data-testid="resume-block"]')).toBeNull();
+      expect(text('[data-testid="resume-changed"]')).toContain('order changed');
+      expect(container.querySelector('[data-testid="resume-continue"]')).toBeNull();
     });
   });
 
@@ -1457,10 +1618,12 @@ describe('PrintOrderPanel', () => {
     panel.scrollTo = scrollTo as unknown as HTMLDivElement['scrollTo'];
 
     await act(async () => buttonWithText(container, 'New order').click());
+    await confirmPending();
     expect(scrollTo).toHaveBeenCalledWith({ top: 0 });
 
     scrollTo.mockClear();
     await act(async () => buttonWithText(container, 'Open').click());
+    await confirmPending();
     expect(scrollTo).toHaveBeenCalledWith({ top: 0 });
   });
 
@@ -1940,7 +2103,7 @@ describe('PrintOrderPanel', () => {
         (b) => b.textContent?.trim() === 'Delete',
       )!;
       await act(async () => remove.click());
-      await settle();
+      await confirmPending();
 
       expect(rows()).toHaveLength(30);
       expect(container.querySelector('[data-testid="saved-order-page"]')).toBeNull();

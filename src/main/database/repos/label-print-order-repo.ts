@@ -37,6 +37,12 @@ function toStored(row: LabelPrintOrderRow): StoredPrintOrder | null {
 }
 
 export const labelPrintOrderRepo = {
+  /** A user-visible save must survive shutdown, not wait for the 5s autosave. */
+  async flush(): Promise<void> {
+    const result = await database.saveCoalesced();
+    if (!result.success) throw new Error(result.error || 'Could not persist print orders');
+  },
+
   /** Live sheets, newest first — the order the saved list shows them in. */
   list(): StoredPrintOrder[] {
     const rows = database.all<LabelPrintOrderRow>(

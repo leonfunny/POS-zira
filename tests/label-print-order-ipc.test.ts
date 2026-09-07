@@ -14,6 +14,7 @@ function harness() {
     list: vi.fn(() => [] as any[]),
     save: vi.fn(),
     remove: vi.fn(),
+    flush: vi.fn(async () => {}),
   };
   const syncer = { sync: vi.fn(async () => 0) };
   registerPrintOrderIpcHandlers(ipc as any, repository, syncer);
@@ -69,7 +70,7 @@ describe('the handlers the panel calls', () => {
   it('does not fail a save when the sync fails — the sheet is stored either way', async () => {
     const { handlers, repository, syncer } = harness();
     syncer.sync.mockRejectedValue(new Error('offline'));
-    expect(() => handlers.get(PRINT_ORDER_CHANNELS.save)!({}, { id: 'a', order: {} })).not.toThrow();
+    await expect(handlers.get(PRINT_ORDER_CHANNELS.save)!({}, { id: 'a', order: {} })).resolves.toEqual([]);
     expect(repository.save).toHaveBeenCalled();
     // The rejection must not escape as an unhandled one in the main process.
     await Promise.resolve();
@@ -83,9 +84,34 @@ describe('the handlers the panel calls', () => {
     expect(Number.isNaN(Date.parse(at as string))).toBe(false);
   });
 
-  it('refuses a malformed id rather than passing it to SQLite', () => {
+  it('refuses a malformed id rather than passing it to SQLite', async () => {
     const { handlers, repository } = harness();
-    expect(() => handlers.get(PRINT_ORDER_CHANNELS.remove)!({}, 42)).toThrow(TypeError);
+    await expect(handlers.get(PRINT_ORDER_CHANNELS.remove)!({}, 42)).rejects.toThrow(TypeError);
     expect(repository.remove).not.toHaveBeenCalled();
+  });
+});
+
+describe('durable acknowledgements', () => {
+  it.each([PRINT_ORDER_CHANNELS.save, PRINT_ORDER_CHANNELS.remove])('waits for disk before acknowledging %s', async (channel) => {
+    const { handlers, repository, syncer } = harness();
+    let release!: () => void;
+    repository.flush.mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+    let acknowledged = false;
+    const input = channel === PRINT_ORDER_CHANNELS.save ? { id: 'a', order: {} } : 'a';
+    const result = Promise.resolve(handlers.get(channel)!({}, input)).then(() => { acknowledged = true; });
+    await Promise.resolve();
+    expect(acknowledged).toBe(false);
+    expect(syncer.sync).not.toHaveBeenCalled();
+    release();
+    await result;
+    expect(acknowledged).toBe(true);
+  });
+
+  it('propagates disk failure instead of reporting Saved', async () => {
+    const { handlers, repository, syncer } = harness();
+    repository.flush.mockRejectedValueOnce(new Error('Disk full'));
+    await expect(handlers.get(PRINT_ORDER_CHANNELS.save)!({}, { id: 'a', order: {} }))
+      .rejects.toThrow('Disk full');
+    expect(syncer.sync).not.toHaveBeenCalled();
   });
 });

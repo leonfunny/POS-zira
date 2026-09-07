@@ -116,13 +116,15 @@ export interface PrintProgressRecord {
   completedIds: string[];
   /** Epoch ms, so a stale record can be shown with its age if that ever helps. */
   at: number;
+  /** Exact printed content and quantities; older records cannot safely resume. */
+  planKey?: string;
 }
 
 /** Written after every batch — a jam that ends in the app being closed never
  *  reaches the end of the run. */
-export function saveProgress(orderId: string, completedIds: string[]): void {
+export function saveProgress(orderId: string, completedIds: string[], planKey?: string): void {
   if (!orderId || completedIds.length === 0) return;
-  write(PROGRESS_KEY, { orderId, completedIds, at: Date.now() });
+  write(PROGRESS_KEY, { orderId, completedIds, at: Date.now(), planKey });
 }
 
 /** Only for the order asked about: another order's run says nothing here. */
@@ -131,7 +133,9 @@ export function loadProgress(orderId: string): PrintProgressRecord | null {
   if (!raw || raw.orderId !== orderId || !Array.isArray(raw.completedIds)) return null;
   const completedIds = raw.completedIds.filter((id): id is string => typeof id === 'string');
   if (completedIds.length === 0) return null;
-  return { orderId, completedIds, at: typeof raw.at === 'number' ? raw.at : 0 };
+  return { orderId, completedIds, at: typeof raw.at === 'number' ? raw.at : 0,
+    ...(typeof raw.planKey === 'string' ? { planKey: raw.planKey } : {}),
+  };
 }
 
 export function clearProgress(): void {
@@ -387,7 +391,9 @@ export async function saveOrder(id: string, order: LabelPrintOrder): Promise<Sav
   const entry: SavedPrintOrder = { id, savedAt, order };
   const rest = localSavedOrders().filter((saved) => saved.id !== id);
   const next = [entry, ...rest].slice(0, SAVED_ORDER_LIMIT);
-  write(SAVED_KEY, next);
+  const storage = store();
+  if (!storage) throw new Error('Storage unavailable');
+  storage.setItem(SAVED_KEY, JSON.stringify(next));
   return newestFirst(next);
 }
 
@@ -395,7 +401,9 @@ export async function deleteSavedOrder(id: string): Promise<SavedPrintOrder[]> {
   const api = bridge();
   if (api) return newestFirst((await api.remove(id)).map(toSaved));
   const next = localSavedOrders().filter((saved) => saved.id !== id);
-  write(SAVED_KEY, next);
+  const storage = store();
+  if (!storage) throw new Error('Storage unavailable');
+  storage.setItem(SAVED_KEY, JSON.stringify(next));
   return next;
 }
 
@@ -414,7 +422,9 @@ function foldForSearch(value: string): string {
   return value
     .normalize('NFD')
     .replace(/\p{Diacritic}/gu, '')
-    .toLowerCase();
+    .toLowerCase()
+    .replace(/ł/g, 'l')
+    .replace(/đ/g, 'd');
 }
 
 /**

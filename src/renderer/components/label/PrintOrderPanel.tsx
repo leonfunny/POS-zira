@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Package, Play, Plus, Save, Trash2, X } from 'lucide-react';
 import DateField from './DateField';
+import Modal from '../shared/Modal';
 import { eastSlavicForm, plForm } from './plural';
 import {
   CARE_TEXT_MAX_CHARS,
@@ -131,6 +132,16 @@ interface Copy {
   samplePrintHint: string;
   save: string;
   saved: string;
+  saving: string;
+  savedLocalHint: string;
+  storageFailed: string;
+  loadingOrders: string;
+  retry: string;
+  resumeChanged: string;
+  deleteConfirm: string;
+  discardConfirm: string;
+  discard: string;
+  cancel: string;
   savedOrders: string;
   noSavedOrders: string;
   searchOrders: string;
@@ -243,6 +254,16 @@ const COPY: Record<string, Copy> = {
     samplePrintHint: 'In đúng một mác vải và một tem dán để soi trước khi chạy cả đơn.',
     save: 'Lưu đơn',
     saved: 'Đã lưu',
+    saving: "Đang lưu…",
+    savedLocalHint: "Đã lưu trên máy. Đơn được đồng bộ lên máy chủ khi có mạng.",
+    storageFailed: "Không thể lưu hoặc đọc đơn",
+    loadingOrders: "Đang tải đơn…",
+    retry: "Thử lại",
+    resumeChanged: "Đơn đã thay đổi hoặc tiến độ cũ không đủ thông tin. Đếm lại mác đã in; không thể tự động in tiếp.",
+    deleteConfirm: "Xóa đơn này khỏi danh sách đã lưu?",
+    discardConfirm: "Đơn đang có thay đổi chưa lưu. Bỏ thay đổi để chuyển đơn?",
+    discard: "Bỏ thay đổi",
+    cancel: "Hủy",
     savedOrders: 'Đơn đã lưu',
     noSavedOrders: 'Chưa có đơn nào được lưu',
     searchOrders: 'Tìm đơn — gõ tên khách và số, ví dụ: moon 114',
@@ -382,6 +403,16 @@ const COPY: Record<string, Copy> = {
     samplePrintHint: 'Jedna metka i jedna naklejka do sprawdzenia przed całym zleceniem.',
     save: 'Zapisz',
     saved: 'Zapisano',
+    saving: "Zapisywanie…",
+    savedLocalHint: "Zapisano na tym urządzeniu. Zlecenie jest synchronizowane z serwerem, gdy jest dostępny internet.",
+    storageFailed: "Nie można zapisać lub odczytać zlecenia",
+    loadingOrders: "Wczytywanie zleceń…",
+    retry: "Spróbuj ponownie",
+    resumeChanged: "Zlecenie się zmieniło lub stary zapis postępu jest niepełny. Policz wydrukowane metki; automatyczne wznowienie jest niedostępne.",
+    deleteConfirm: "Usunąć to zlecenie z listy zapisanych?",
+    discardConfirm: "Zlecenie ma niezapisane zmiany. Odrzucić je i przejść dalej?",
+    discard: "Odrzuć zmiany",
+    cancel: "Anuluj",
     savedOrders: 'Zapisane zlecenia',
     noSavedOrders: 'Brak zapisanych zleceń',
     searchOrders: 'Szukaj — klient i numer, np. moon 114',
@@ -529,6 +560,16 @@ const COPY: Record<string, Copy> = {
     samplePrintHint: 'One tag and one sticker to look at before the whole order runs.',
     save: 'Save order',
     saved: 'Saved',
+    saving: "Saving…",
+    savedLocalHint: "Saved on this device. The order syncs to the server when internet is available.",
+    storageFailed: "Could not save or read the order",
+    loadingOrders: "Loading orders…",
+    retry: "Retry",
+    resumeChanged: "The order changed or the old progress record is incomplete. Count the printed labels; automatic continuation is unavailable.",
+    deleteConfirm: "Delete this order from the saved list?",
+    discardConfirm: "This order has unsaved changes. Discard them and switch orders?",
+    discard: "Discard changes",
+    cancel: "Cancel",
     savedOrders: 'Saved orders',
     noSavedOrders: 'No saved orders yet',
     searchOrders: 'Search — customer and number, e.g. moon 114',
@@ -668,6 +709,16 @@ const COPY: Record<string, Copy> = {
     samplePrintHint: 'Tüm sipariş çıkmadan önce bakmak için bir etiket ve bir sticker.',
     save: 'Siparişi kaydet',
     saved: 'Kaydedildi',
+    saving: "Kaydediliyor…",
+    savedLocalHint: "Bu cihazda kaydedildi. İnternet olduğunda sipariş sunucuyla eşitlenir.",
+    storageFailed: "Sipariş kaydedilemedi veya okunamadı",
+    loadingOrders: "Siparişler yükleniyor…",
+    retry: "Tekrar dene",
+    resumeChanged: "Sipariş değişti veya eski ilerleme kaydı eksik. Basılan etiketleri sayın; otomatik devam kullanılamıyor.",
+    deleteConfirm: "Bu sipariş kayıtlı listeden silinsin mi?",
+    discardConfirm: "Bu siparişte kaydedilmemiş değişiklikler var. Değişiklikler atılıp başka siparişe geçilsin mi?",
+    discard: "Değişiklikleri at",
+    cancel: "İptal",
     savedOrders: 'Kayıtlı siparişler',
     noSavedOrders: 'Henüz kayıtlı sipariş yok',
     searchOrders: 'Ara — müşteri ve numara, örn. moon 114',
@@ -807,6 +858,16 @@ const COPY: Record<string, Copy> = {
     samplePrintHint: '整单开印前，先出一张布标和一张贴纸看看。',
     save: '保存打印单',
     saved: '已保存',
+    saving: "正在保存…",
+    savedLocalHint: "已保存在本机。有网络时，打印单会同步到服务器。",
+    storageFailed: "无法保存或读取打印单",
+    loadingOrders: "正在加载打印单…",
+    retry: "重试",
+    resumeChanged: "打印单已更改，或旧的进度记录不完整。请清点已打印标签；无法自动续打。",
+    deleteConfirm: "从已保存列表中删除此打印单？",
+    discardConfirm: "此打印单有未保存的更改。放弃更改并切换打印单？",
+    discard: "放弃更改",
+    cancel: "取消",
     savedOrders: '已保存的打印单',
     noSavedOrders: '还没有保存的打印单',
     searchOrders: '搜索 — 客户和编号，例如 moon 114',
@@ -942,6 +1003,16 @@ const COPY: Record<string, Copy> = {
     samplePrintHint: 'Одна бирка й одна наліпка, щоб подивитися перед друком усього замовлення.',
     save: 'Зберегти замовлення',
     saved: 'Збережено',
+    saving: "Збереження…",
+    savedLocalHint: "Збережено на цьому пристрої. За наявності інтернету замовлення синхронізується із сервером.",
+    storageFailed: "Не вдалося зберегти або прочитати замовлення",
+    loadingOrders: "Завантаження замовлень…",
+    retry: "Повторити",
+    resumeChanged: "Замовлення змінилося або старий запис прогресу неповний. Порахуйте надруковані етикетки; автоматичне продовження недоступне.",
+    deleteConfirm: "Видалити це замовлення зі списку збережених?",
+    discardConfirm: "Замовлення має незбережені зміни. Відкинути їх і перейти до іншого?",
+    discard: "Відкинути зміни",
+    cancel: "Скасувати",
     savedOrders: 'Збережені замовлення',
     noSavedOrders: 'Збережених замовлень ще немає',
     searchOrders: 'Пошук — клієнт і номер, напр. moon 114',
@@ -1084,6 +1155,16 @@ const COPY: Record<string, Copy> = {
     samplePrintHint: 'Одна бирка и одна наклейка, чтобы посмотреть до печати всего заказа.',
     save: 'Сохранить заказ',
     saved: 'Сохранено',
+    saving: "Сохранение…",
+    savedLocalHint: "Сохранено на этом устройстве. При наличии интернета заказ синхронизируется с сервером.",
+    storageFailed: "Не удалось сохранить или прочитать заказ",
+    loadingOrders: "Загрузка заказов…",
+    retry: "Повторить",
+    resumeChanged: "Заказ изменился или старая запись прогресса неполная. Пересчитайте напечатанные этикетки; автоматическое продолжение недоступно.",
+    deleteConfirm: "Удалить этот заказ из списка сохранённых?",
+    discardConfirm: "В заказе есть несохранённые изменения. Отбросить их и перейти к другому?",
+    discard: "Отбросить изменения",
+    cancel: "Отмена",
     savedOrders: 'Сохранённые заказы',
     noSavedOrders: 'Сохранённых заказов пока нет',
     searchOrders: 'Поиск — клиент и номер, напр. moon 114',
@@ -1305,9 +1386,20 @@ export default function PrintOrderPanel({
   // Empty until the first read comes back: the sheets live on the server now
   // and reach the panel through the app database, which is a round trip.
   const [savedOrders, setSavedOrders] = useState<SavedPrintOrder[]>([]);
+  const [ordersLoaded, setOrdersLoaded] = useState(false);
+  const [storageError, setStorageError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const saveInFlight = useRef(false);
+  const [deleting, setDeleting] = useState(false);
+  const [isPrinting, setIsPrinting] = useState(false);
+  const [confirmation, setConfirmation] = useState<
+    { kind: 'delete'; saved: SavedPrintOrder } | { kind: 'discard'; next: SavedPrintOrder | null } | null
+  >(null);
   const refreshSavedOrders = useCallback(() => {
-    void listSavedOrders().then(setSavedOrders);
-  }, []);
+    void listSavedOrders().then((orders) => { setSavedOrders(orders); setStorageError(null); })
+      .catch((error) => setStorageError(`${copy.storageFailed}: ${String(error)}`))
+      .finally(() => setOrdersLoaded(true));
+  }, [copy.storageFailed]);
   useEffect(refreshSavedOrders, [refreshSavedOrders]);
   // A sync that lands while the tab is open must show up in the list. The
   // first login on a fresh machine is exactly this case: the panel mounts
@@ -1431,6 +1523,13 @@ export default function PrintOrderPanel({
     [order, productCategory, productDraft],
   );
   const plan = useMemo(() => buildPrintPlan(order), [order]);
+  const printHeader = {
+    customerName: order.customerName,
+    styleName: stickerGarmentType(productCategory?.name, order.styleName),
+    styleCode: order.styleCode,
+  };
+  const planKey = JSON.stringify({ header: printHeader, plan });
+  const resumeMatches = !!resume && resume.planKey === planKey;
   const composition = compositionText(order.materials);
   const percentSum = order.materials.reduce((sum, m) => sum + (Number(m.percent) || 0), 0);
   // One press that lands the composition on exactly 100, when one press can.
@@ -1581,7 +1680,11 @@ export default function PrintOrderPanel({
     steps: PrintStep[],
     options: { resumeFrom?: string[]; track?: boolean } = {},
   ) => {
-    if (printInFlight.current || steps.length === 0) return;
+    if (printInFlight.current || saveInFlight.current || deleting || filing || steps.length === 0) return;
+    const blocking = options.track === false
+      ? problems.filter((problem) => problem !== 'EMPTY_ORDER')
+      : problems;
+    if (blocking.length > 0 || (options.resumeFrom && !resumeMatches)) return;
     const api = (window as any).electronAPI;
     if (!api?.printPackagingSticker || !api?.printFabricTag) {
       setResult({ type: 'error', message: 'Print bridge unavailable' });
@@ -1592,32 +1695,22 @@ export default function PrintOrderPanel({
     const already = options.resumeFrom ?? [];
 
     printInFlight.current = true;
+    setIsPrinting(true);
     stopRequested.current = false;
-    learnStyle();
-    // A sheet that went to the printer is a real order, so it is filed without
-    // being asked for — under the id the run is tracked by, before the first
-    // batch. Staff press Print and walk off to the ribbon; the sheet nobody
-    // pressed Save on was the one retyped when the customer ordered it again,
-    // and filing it up front also survives the app being closed on a jam. A
-    // sample is not an order and files nothing, same as it records no progress.
-    if (track) {
-      void saveOrder(orderId, order).then(setSavedOrders);
-      setSavedNotice(true);
-    }
     onPrintingChange?.(true);
     setResult(null);
-    if (track) setResume(null);
-
     try {
+      // Persist before dispatch. A failed save must never claim the sheet is
+      // safe while sending a print run that cannot be recovered after a crash.
+      if (track && !await persistOrder()) return;
+      learnStyle();
+      if (track) {
+        if (!options.resumeFrom) clearProgress();
+        setResume(null);
+      }
       const outcome = await runPrintPlan(
         steps,
-        {
-          customerName: order.customerName,
-          // The sticker names the kind of garment, not the style: see
-          // `stickerGarmentType`.
-          styleName: stickerGarmentType(productCategory?.name, order.styleName),
-          styleCode: order.styleCode,
-        },
+        printHeader,
         {
           printSticker: (request) => api.printPackagingSticker(request),
           printFabricTag: (request) => api.printFabricTag(request),
@@ -1627,7 +1720,7 @@ export default function PrintOrderPanel({
             setProgress(update);
             // After every batch, not at the end of the run: a jam the operator
             // walks away from never reaches the end of the run.
-            if (track) saveProgress(orderId, [...already, ...update.completedIds]);
+            if (track) saveProgress(orderId, [...already, ...update.completedIds], planKey);
           },
           shouldStop: () => stopRequested.current,
         },
@@ -1654,6 +1747,7 @@ export default function PrintOrderPanel({
       });
     } finally {
       printInFlight.current = false;
+      setIsPrinting(false);
       onPrintingChange?.(false);
     }
   };
@@ -1677,7 +1771,7 @@ export default function PrintOrderPanel({
   const canPrintSample =
     progress?.type !== 'printing' && blockingForSample.length === 0 && samplePlan.length > 0;
 
-  // No second guard in here: the button carries `disabled={!canPrintSample}`, and
+  // No second guard in here: the button carries `disabled={!canPrintSample || busy}`, and
   // `runPlan` refuses an empty plan or a run already in flight. A mutation run
   // showed a repeated check was unreachable — dead code that reads like safety.
   const handleSamplePrint = () => runPlan(samplePlan, { track: false });
@@ -1876,10 +1970,28 @@ export default function PrintOrderPanel({
     }
   };
 
-  const handleSave = () => {
-    void saveOrder(orderId, order).then(setSavedOrders);
-    learnStyle();
-    setSavedNotice(true);
+  const persistOrder = async (): Promise<boolean> => {
+    if (saveInFlight.current) return false;
+    saveInFlight.current = true;
+    setSaving(true);
+    setSavedNotice(false);
+    setStorageError(null);
+    try {
+      setSavedOrders(await saveOrder(orderId, order));
+      setSavedNotice(true);
+      return true;
+    } catch (error) {
+      setStorageError(`${copy.storageFailed}: ${String(error)}`);
+      return false;
+    } finally {
+      saveInFlight.current = false;
+      setSaving(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (printInFlight.current || deleting || filing) return;
+    if (await persistOrder()) learnStyle();
   };
 
   const handlePickImage = async (file: File | undefined) => {
@@ -1981,6 +2093,7 @@ export default function PrintOrderPanel({
    * order", and the saved list stops marking any row as the one on screen.
    */
   const handleDuplicate = () => {
+    if (printInFlight.current || saveInFlight.current || deleting || filing) return;
     setOrderId(nextId('order'));
     // The copy is a new sheet, so it may become a new product; the photo is
     // usually the same garment and stays.
@@ -1997,6 +2110,7 @@ export default function PrintOrderPanel({
   const scrollToTop = () => scrollRef.current?.scrollTo({ top: 0 });
 
   const handleOpen = (saved: SavedPrintOrder) => {
+    if (printInFlight.current || saveInFlight.current || deleting || filing) return;
     setOrder(saved.order);
     setOrderId(saved.id);
     setProgress(null);
@@ -2007,6 +2121,7 @@ export default function PrintOrderPanel({
   };
 
   const handleNew = () => {
+    if (printInFlight.current || saveInFlight.current || deleting || filing) return;
     clearDraft();
     clearProgress();
     setResume(null);
@@ -2019,12 +2134,11 @@ export default function PrintOrderPanel({
   };
 
   /**
-   * What the interrupted run got through, counted against the plan as it stands
-   * now. Ids are stable per (colour, size) cell, so a sheet edited since the jam
-   * simply matches fewer of them — which is the honest answer, not a stale one.
+   * Only count completed batches against the exact content that was sent.
+   * Stable row ids alone cannot distinguish 10 old copies from 20 new ones.
    */
   const resumeStats = useMemo(() => {
-    if (!resume) return null;
+    if (!resume || !resumeMatches) return null;
     const sent = new Set(resume.completedIds);
     const done = plan.filter((step) => sent.has(step.id));
     if (done.length === 0) return null;
@@ -2035,13 +2149,12 @@ export default function PrintOrderPanel({
       totalCopies: plan.reduce((sum, step) => sum + step.quantity, 0),
       remaining: plan.length - done.length,
     };
-  }, [resume, plan]);
+  }, [resume, plan, resumeMatches]);
 
   const handleResumeContinue = () => runPlan(plan, { resumeFrom: resume?.completedIds ?? [] });
 
   const handleResumeRestart = () => {
-    clearProgress();
-    setResume(null);
+    if (problems.length > 0 || printInFlight.current || saveInFlight.current) return;
     return runPlan(plan);
   };
 
@@ -2050,8 +2163,39 @@ export default function PrintOrderPanel({
     setResume(null);
   };
 
-  const isPrinting = progress?.type === 'printing';
-  const canPrint = problems.length === 0 && plan.length > 0 && !isPrinting;
+  const busy = isPrinting || saving || deleting || filing;
+  const savedVersion = savedOrders.find((saved) => saved.id === orderId);
+  const hasUnsavedChanges = JSON.stringify(order) !== JSON.stringify(
+    upperCaseOrder(savedVersion?.order ?? createEmptyOrder()),
+  );
+  const requestSwitch = (next: SavedPrintOrder | null) => {
+    if (printInFlight.current || saveInFlight.current || busy) return;
+    if (hasUnsavedChanges) setConfirmation({ kind: 'discard', next });
+    else if (next) handleOpen(next);
+    else handleNew();
+  };
+  const confirmAction = async () => {
+    if (!confirmation || busy || printInFlight.current || saveInFlight.current) return;
+    if (confirmation.kind === 'discard') {
+      if (confirmation.next) handleOpen(confirmation.next);
+      else handleNew();
+      setConfirmation(null);
+      return;
+    }
+    setDeleting(true);
+    setStorageError(null);
+    try {
+      setSavedOrders(await deleteSavedOrder(confirmation.saved.id));
+      setConfirmation(null);
+      setSavedNotice(false);
+    } catch (error) {
+      setStorageError(`${copy.storageFailed}: ${String(error)}`);
+      setConfirmation(null);
+    } finally {
+      setDeleting(false);
+    }
+  };
+  const canPrint = problems.length === 0 && plan.length > 0 && !busy;
 
   // Only offered for a sheet that came from the list: duplicating something
   // that was never filed writes nothing either way, so the button would sit
@@ -2070,6 +2214,7 @@ export default function PrintOrderPanel({
         <p className="text-sm text-slate-500">{copy.subtitle}</p>
       </header>
 
+      <fieldset disabled={busy} className="contents">
       <section className="mb-4 grid gap-3 sm:grid-cols-3">
         <Field label={copy.customer}>
           <input
@@ -2524,12 +2669,12 @@ export default function PrintOrderPanel({
 
       <p className="mb-2 text-xs text-slate-500">{copy.noResume}</p>
 
-      {resumeStats && !isPrinting && (
+      {resume && !isPrinting && (
         <div
           className="mb-2 rounded-md border border-amber-300 bg-amber-50 p-3"
           data-testid="resume-block"
         >
-          <p className="text-sm font-bold text-amber-900" data-testid="resume-sent">
+          {resumeStats ? <p className="text-sm font-bold text-amber-900" data-testid="resume-sent">
             {copy.resumeSent(
               resumeStats.sentSteps,
               resumeStats.totalSteps,
@@ -2537,13 +2682,15 @@ export default function PrintOrderPanel({
               resumeStats.totalCopies,
             )}
           </p>
+          : <p role="status" className="text-sm font-bold text-amber-900" data-testid="resume-changed">{copy.resumeChanged}</p>}
           <p className="mb-2 text-xs text-amber-800">{copy.resumeCount}</p>
           <div className="flex flex-wrap gap-2">
-            {resumeStats.remaining > 0 && (
+            {resumeMatches && resumeStats && resumeStats.remaining > 0 && (
               <button
                 type="button"
                 data-testid="resume-continue"
                 onClick={handleResumeContinue}
+                disabled={busy || problems.length > 0}
                 className="min-h-10 rounded-md bg-amber-600 px-3 text-sm font-extrabold text-white"
               >
                 {copy.resumeContinue(resumeStats.sentSteps + 1)}
@@ -2553,6 +2700,7 @@ export default function PrintOrderPanel({
               type="button"
               data-testid="resume-restart"
               onClick={handleResumeRestart}
+              disabled={busy || problems.length > 0}
               className="min-h-10 rounded-md border border-amber-400 px-3 text-sm font-bold text-amber-900"
             >
               {copy.resumeRestart}
@@ -2589,6 +2737,7 @@ export default function PrintOrderPanel({
         </div>
       </section>
 
+      </fieldset>
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
@@ -2603,7 +2752,7 @@ export default function PrintOrderPanel({
           type="button"
           data-testid="print-sample"
           onClick={handleSamplePrint}
-          disabled={!canPrintSample}
+          disabled={!canPrintSample || busy}
           title={copy.samplePrintHint}
           className="inline-flex min-h-11 items-center gap-2 rounded-md border border-emerald-300 px-4 text-sm font-bold text-emerald-800 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
@@ -2612,11 +2761,12 @@ export default function PrintOrderPanel({
         {!catalogue && (
           <button
             type="button"
-            onClick={handleSave}
+            onClick={() => void handleSave()}
+            disabled={busy}
             className="inline-flex min-h-11 items-center gap-2 rounded-md border border-slate-300 px-4 text-sm font-bold text-slate-700 hover:bg-slate-50"
           >
             <Save size={18} aria-hidden="true" />
-            {savedNotice ? copy.saved : copy.save}
+            {saving ? copy.saving : savedNotice ? copy.saved : copy.save}
           </button>
         )}
         {order.productId ? (
@@ -2624,7 +2774,7 @@ export default function PrintOrderPanel({
             type="button"
             data-testid="update-product"
             onClick={handleUpdateProduct}
-            disabled={updateProblems.length > 0 || filing}
+            disabled={updateProblems.length > 0 || busy}
             title={updateProblems.length > 0 ? copy.fileProblem[updateProblems[0]] : copy.fileHint}
             className="inline-flex min-h-11 items-center gap-2 rounded-md border border-sky-300 px-4 text-sm font-bold text-sky-800 hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -2636,7 +2786,7 @@ export default function PrintOrderPanel({
             type="button"
             data-testid="attach-product"
             onClick={handleAttachProduct}
-            disabled={attachProblems.length > 0 || filing}
+            disabled={attachProblems.length > 0 || busy}
             title={attachProblems.length > 0 ? copy.fileProblem[attachProblems[0]] : copy.attachHint(matchingStyle.name)}
             className="inline-flex min-h-11 items-center gap-2 rounded-md border border-sky-300 px-4 text-sm font-bold text-sky-800 hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -2648,7 +2798,7 @@ export default function PrintOrderPanel({
             type="button"
             data-testid="file-product"
             onClick={handleFileProduct}
-            disabled={productProblems.length > 0 || filing}
+            disabled={productProblems.length > 0 || busy}
             title={productProblems.length > 0
               ? copy.fileProblem[productProblems[0]]
               : copy.fileHint}
@@ -2663,7 +2813,7 @@ export default function PrintOrderPanel({
             type="button"
             data-testid="duplicate-order"
             onClick={handleDuplicate}
-            disabled={isPrinting}
+            disabled={busy}
             title={copy.duplicateHint}
             className="inline-flex min-h-11 items-center rounded-md border border-slate-300 px-4 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -2673,7 +2823,8 @@ export default function PrintOrderPanel({
         {!catalogue && (
           <button
             type="button"
-            onClick={handleNew}
+            onClick={() => requestSwitch(null)}
+            disabled={busy}
             className="inline-flex min-h-11 items-center rounded-md border border-slate-300 px-4 text-sm font-bold text-slate-700 hover:bg-slate-50"
           >
             {copy.newOrder}
@@ -2693,6 +2844,12 @@ export default function PrintOrderPanel({
         )}
       </div>
 
+      {savedNotice && <p role="status" className="mt-2 text-xs text-slate-500">{copy.savedLocalHint}</p>}
+      {storageError && (
+        <div role="alert" className="mt-2 text-sm text-red-700">
+          {storageError}
+        </div>
+      )}
       {progress && (
         <p className="mt-2 text-sm font-bold text-slate-700" data-testid="print-progress">
           {copy.progress(
@@ -2739,6 +2896,8 @@ export default function PrintOrderPanel({
       <section className="mt-6 border-t border-slate-200 pt-3">
         <div className="mb-2 flex items-baseline gap-2">
           <h3 className="text-sm font-bold text-slate-700">{copy.savedOrders}</h3>
+          {storageError && <button type="button" onClick={refreshSavedOrders} disabled={busy}
+            className="text-xs underline">{copy.retry}</button>}
           {savedOrders.length > 0 && (
             <span className="text-xs text-slate-500" data-testid="saved-order-count">
               {copy.sheetCount(matchingOrders.length, savedOrders.length)}
@@ -2761,7 +2920,7 @@ export default function PrintOrderPanel({
           />
         )}
         {savedOrders.length === 0 ? (
-          <p className="text-sm text-slate-500">{copy.noSavedOrders}</p>
+          <p className="text-sm text-slate-500">{ordersLoaded ? copy.noSavedOrders : copy.loadingOrders}</p>
         ) : matchingOrders.length === 0 ? (
           <p className="text-sm text-slate-500" data-testid="saved-order-no-match">
             {copy.noMatchingOrders}
@@ -2791,14 +2950,16 @@ export default function PrintOrderPanel({
                 <span className="flex-1 truncate">{describeOrder(saved.order)}</span>
                 <button
                   type="button"
-                  onClick={() => handleOpen(saved)}
+                  onClick={() => requestSwitch(saved)}
+                  disabled={busy}
                   className="min-h-9 rounded border border-slate-300 px-2 text-xs font-bold hover:bg-slate-50"
                 >
                   {copy.open}
                 </button>
                 <button
                   type="button"
-                  onClick={() => void deleteSavedOrder(saved.id).then(setSavedOrders)}
+                  onClick={() => setConfirmation({ kind: 'delete', saved })}
+                  disabled={busy}
                   className="min-h-9 rounded border border-slate-200 px-2 text-xs font-bold text-slate-500 hover:bg-red-50 hover:text-red-700"
                 >
                   {copy.remove}
@@ -2836,6 +2997,26 @@ export default function PrintOrderPanel({
           </div>
         )}
       </section>
+      )}
+      {confirmation && (
+        <Modal title={confirmation.kind === 'delete' ? copy.remove : copy.discard}
+          size="sm" busy={deleting} closeLabel={copy.cancel}
+          onClose={() => setConfirmation(null)}
+          footer={<div className="flex justify-end gap-2">
+            <button type="button" disabled={deleting} onClick={() => setConfirmation(null)}
+              className="min-h-11 rounded border px-4">{copy.cancel}</button>
+            <button type="button" data-testid="confirm-order-action" disabled={deleting}
+              onClick={() => void confirmAction()}
+              className="min-h-11 rounded bg-red-600 px-4 font-bold text-white">
+              {confirmation.kind === 'delete' ? copy.remove : copy.discard}
+            </button>
+          </div>}
+        >
+          <div className="p-5">
+            <p>{confirmation.kind === 'delete' ? copy.deleteConfirm : copy.discardConfirm}</p>
+            {confirmation.kind === 'delete' && <p className="mt-2 font-bold">{describeOrder(confirmation.saved.order)}</p>}
+          </div>
+        </Modal>
       )}
     </div>
   );

@@ -4,6 +4,7 @@ const db = vi.hoisted(() => ({
   get: vi.fn(),
   all: vi.fn(),
   run: vi.fn(),
+  saveCoalesced: vi.fn(async () => ({ success: true })),
 }));
 
 vi.mock('../src/main/database/database', () => ({ database: db }));
@@ -128,5 +129,14 @@ describe('acknowledging a push', () => {
     const [sql, params] = db.run.mock.calls.at(-1)!;
     expect(String(sql).replace(/\s+/g, ' ')).toContain('DELETE FROM label_print_orders');
     expect(params).toEqual(['order-1', 'pushed-stamp']);
+  });
+});
+
+describe('flushing user edits', () => {
+  it('waits for the existing durability barrier and propagates failures', async () => {
+    await expect(labelPrintOrderRepo.flush()).resolves.toBeUndefined();
+    expect(db.saveCoalesced).toHaveBeenCalled();
+    db.saveCoalesced.mockResolvedValueOnce({ success: false });
+    await expect(labelPrintOrderRepo.flush()).rejects.toThrow('Could not persist print orders');
   });
 });
