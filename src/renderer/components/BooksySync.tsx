@@ -1,3 +1,4 @@
+import { useFeedbackDialog } from '../hooks/useFeedbackDialog';
 import React, { useEffect, useState, useCallback } from 'react';
 import { BooksySyncStatus, BooksySyncConfig, BooksyBookingSummary } from '../../shared/types';
 import rlog from '../utils/logger';
@@ -10,6 +11,7 @@ export default function BooksySync() {
   const { config: appConfig } = useConfig();
   const language = appConfig?.language || 'en';
   const { t } = useTranslation(language);
+  const feedback = useFeedbackDialog(t);
   const [status, setStatus] = useState<BooksySyncStatus | null>(null);
   const [config, setConfig] = useState<BooksySyncConfig | null>(null);
   const [bookings, setBookings] = useState<BooksyBookingSummary[]>([]);
@@ -172,11 +174,11 @@ export default function BooksySync() {
     try {
       const result = await window.electronAPI.shell.launchChromeDebug(config?.cdpPort || 9222);
       if (!result.success) {
-        alert(t('booksy.chromeOpenError') + result.error);
+        void feedback.message(t('booksy.chromeOpenError') + result.error);
       }
     } catch (err: any) {
       rlog.error('[BooksySync] Failed to launch Chrome:', err);
-      alert(t('booksy.error') + err.message);
+      void feedback.message(t('booksy.error') + err.message);
     }
   }, [config]);
 
@@ -420,6 +422,7 @@ export default function BooksySync() {
 
   return (
     <div className="space-y-4">
+      {feedback.dialog}
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-slate-800">Booksy Sync</h2>
         <button

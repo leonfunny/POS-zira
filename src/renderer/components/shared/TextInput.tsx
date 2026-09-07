@@ -11,14 +11,14 @@ export interface TextInputProps extends React.InputHTMLAttributes<HTMLInputEleme
 
 const baseInputClasses = [
   'min-h-11 w-full rounded-lg border bg-white px-3 py-2 text-sm text-slate-950',
-  'outline-none transition-colors placeholder:text-slate-400',
+  'outline-none transition-colors placeholder:text-slate-600',
   'focus:border-brand-500 focus:ring-2 focus:ring-brand-100',
   'disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500',
 ].join(' ');
 
 const labelClasses = 'block text-xs font-medium text-slate-600';
 const errorClasses = 'text-xs font-medium text-red-600';
-const helperClasses = 'text-xs text-slate-500';
+const helperClasses = 'text-xs text-slate-600';
 
 const joinClasses = (...classes: Array<string | undefined | false>) => classes.filter(Boolean).join(' ');
 

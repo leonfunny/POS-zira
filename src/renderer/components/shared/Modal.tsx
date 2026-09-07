@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useId, useRef } from 'react';
+import React, { useCallback, useId, useRef } from 'react';
 import { X } from 'lucide-react';
 import { useKeyboardAwareFocus } from '../../hooks/useKeyboardAwareFocus';
+import { useDialogInteraction } from '../../hooks/useDialogInteraction';
 
 export type ModalSize = 'sm' | 'md' | 'lg' | 'full';
 export type ModalZLayer = 'base' | 'nested';
@@ -92,35 +93,17 @@ export default function Modal({
     onClose();
   }, [busy, guardUnsaved, onClose, onGuardedClose]);
 
+  const isTopmost = useDialogInteraction(panelRef, open, Number(overlayStyle?.zIndex) || (zLayer === 'nested' ? 60 : 50), requestClose);
+
   const focusBoundary = useCallback((position: 'first' | 'last') => {
     const panel = panelRef.current;
-    if (!panel) return;
+    if (!panel || !isTopmost()) return;
 
     const focusable = Array.from(panel.querySelectorAll<HTMLElement>(focusableSelector))
       .filter((element) => element.offsetParent !== null && element.tabIndex >= 0);
     const target = position === 'first' ? focusable[0] : focusable[focusable.length - 1];
     (target || panel).focus();
-  }, []);
-
-  useEffect(() => {
-    if (!open) return;
-    const panel = panelRef.current;
-    if (!panel || panel.contains(document.activeElement)) return;
-    panel.focus();
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return undefined;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || busy) return;
-      event.preventDefault();
-      requestClose();
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [busy, open, requestClose]);
+  }, [isTopmost]);
 
   if (!open) return null;
 

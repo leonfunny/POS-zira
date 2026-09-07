@@ -664,6 +664,14 @@ function FloorPlanInner({ language, onPreflightPos, onPayInPos, active = true }:
   }, []);
 
   // Persist position on drag end
+  const handleDragCancel = useCallback((id: string) => {
+    setPositionOverrides((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  }, []);
+
   const handleDragEnd = useCallback(async (id: string, x: number, y: number) => {
     setPositionOverrides((prev) => ({ ...prev, [id]: { x, y } }));
     try {
@@ -1357,6 +1365,7 @@ function FloorPlanInner({ language, onPreflightPos, onPayInPos, active = true }:
                   isMeasureHighlighted={pendingMeasureTable === table.resource.id}
                   onDrag={handleDrag}
                   onDragEnd={handleDragEnd}
+                  onDragCancel={handleDragCancel}
                   onTableClick={handleTableClick}
                   onRename={handleRename}
                   onRenameEnd={() => setRenamingTableId(null)}

@@ -469,22 +469,6 @@ export default function PaymentModal({
     if (initialMethod) setMethod(initialMethod);
   }, [initialMethod]);
 
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (
-        e.key === 'Escape'
-        && !saving
-        && (
-          !protectedTender
-          || protectedBoundaryStatus === 'failed'
-          || !!completedOrderIdRef.current
-        )
-      ) onClose();
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [onClose, protectedBoundaryStatus, protectedTender, saving]);
-
   // ─── Denomination counters ────────────────────────────────
 
   const totalFromDenoms = Object.entries(denomCounts).reduce(
@@ -1121,6 +1105,20 @@ export default function PaymentModal({
       && !completedOrderIdRef.current
     );
 
+  const requestClose = useCallback(() => {
+    if (!closeBlocked) onClose();
+  }, [closeBlocked, onClose]);
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      event.preventDefault();
+      requestClose();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [requestClose]);
+
   const removeScannedCommandFromActiveInput = useCallback((code: string) => {
     window.setTimeout(() => {
       const active = document.activeElement as HTMLInputElement | HTMLTextAreaElement | null;
@@ -1355,7 +1353,7 @@ export default function PaymentModal({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/55 p-2 sm:p-3"
-      onClick={closeBlocked ? undefined : onClose}
+      onClick={requestClose}
     >
       {fiscalPromptOverlay}
       <div
@@ -1378,7 +1376,7 @@ export default function PaymentModal({
               aria-pressed={splitMode}
               className={`min-h-[44px] rounded-md border px-4 text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${
                 splitMode
-                  ? 'border-brand-600 bg-brand-600 text-white'
+                  ? 'border-brand-600 bg-brand-700 text-white'
                   : 'border-slate-300 bg-white text-slate-700 hover:border-brand-500 hover:text-brand-700'
               }`}
             >
@@ -1386,7 +1384,7 @@ export default function PaymentModal({
             </button>
             <button
               type="button"
-              onClick={onClose}
+              onClick={requestClose}
               disabled={closeBlocked}
               aria-label="Close"
               className="flex h-11 w-11 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-950 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
@@ -1870,7 +1868,7 @@ export default function PaymentModal({
                         || Math.round(parseFloat(splitAmount) * 100) > Math.max(remaining, 0)
                       }
                       aria-label="Add tender"
-                      className="mt-0 flex min-h-[48px] min-w-[56px] items-center justify-center rounded-md bg-brand-600 px-5 text-xl font-semibold text-white transition-colors hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40 md:mt-6"
+                      className="mt-0 flex min-h-[48px] min-w-[56px] items-center justify-center rounded-md bg-brand-700 px-5 text-xl font-semibold text-white transition-colors hover:bg-brand-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40 md:mt-6"
                     >
                       +
                     </button>
@@ -2199,7 +2197,7 @@ export default function PaymentModal({
                   type="button"
                   onClick={handleRetryReceipt}
                   disabled={receiptRetrying}
-                  className="min-h-[56px] flex-1 rounded-md bg-brand-600 px-5 text-base font-semibold text-white shadow-sm transition-colors hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600"
+                  className="min-h-[56px] flex-1 rounded-md bg-brand-700 px-5 text-base font-semibold text-white shadow-sm transition-colors hover:bg-brand-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600"
                 >
                   {receiptRetrying ? (savingLabel || tOr('test.printing', 'Printing...')) : tOr('pos.payment.retryReceipt', 'Retry order print')}
                 </button>
@@ -2217,7 +2215,7 @@ export default function PaymentModal({
                 type="button"
                 onClick={handleComplete}
                 disabled={!canComplete}
-                className="min-h-[56px] w-full max-w-full rounded-md bg-brand-600 px-4 text-center text-base font-semibold leading-tight text-white shadow-sm transition-colors hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600 sm:w-auto sm:min-w-[220px] sm:max-w-[320px] whitespace-normal break-words"
+                className="min-h-[56px] w-full max-w-full rounded-md bg-brand-700 px-4 text-center text-base font-semibold leading-tight text-white shadow-sm transition-colors hover:bg-brand-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600 sm:w-auto sm:min-w-[220px] sm:max-w-[320px] whitespace-normal break-words"
               >
                 {completeButtonText}
               </button>

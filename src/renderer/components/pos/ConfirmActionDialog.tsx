@@ -1,4 +1,5 @@
-import React, { useEffect, useId, useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
+import { useDialogInteraction } from '../../hooks/useDialogInteraction';
 import type { ConfirmActionTier } from './confirm-action-copy';
 
 interface ConfirmActionDialogProps {
@@ -37,23 +38,12 @@ export default function ConfirmActionDialog({
   const [step, setStep] = useState<'review' | 'final'>('review');
   const titleId = useId();
   const bodyId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
+  useDialogInteraction(panelRef, open, 60, () => { if (!busy) onCancel(); });
 
   useEffect(() => {
     setStep('review');
   }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || busy) return;
-      event.preventDefault();
-      onCancel();
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [busy, onCancel, open]);
 
   if (!open) return null;
 
@@ -80,6 +70,8 @@ export default function ConfirmActionDialog({
       onClick={handleBackdropClick}
     >
       <div
+        ref={panelRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}

@@ -18,8 +18,8 @@ describe('buttonClassNames', () => {
   });
 
   it('keeps variant surfaces distinct', () => {
-    expect(buttonClassNames('primary', 'md')).toContain('bg-brand-600');
-    expect(buttonClassNames('primary', 'md')).toContain('hover:bg-brand-700');
+    expect(buttonClassNames('primary', 'md')).toContain('bg-brand-700');
+    expect(buttonClassNames('primary', 'md')).toContain('hover:bg-brand-800');
     expect(buttonClassNames('secondary', 'md')).toContain('bg-white');
     expect(buttonClassNames('secondary', 'md')).toContain('border-slate-300');
     expect(buttonClassNames('danger', 'md')).toContain('bg-red-600');

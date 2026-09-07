@@ -45,24 +45,34 @@ export default function SecurityTab({ config }: SecurityTabProps) {
   });
   const [loading, setLoading] = useState(true);
 
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+
   // Load config + status
   useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setLoadFailed(false);
     const load = async () => {
       try {
         const [cfg, sts] = await Promise.all([
           window.electronAPI.security.getConfig(),
           window.electronAPI.security.getStatus(),
         ]);
-        if (cfg) setSecurityConfig(cfg);
-        if (sts) setStatus(sts);
+        if (cancelled) return;
+        if (!cfg || !sts) throw new Error('Security status unavailable');
+        setSecurityConfig(cfg);
+        setStatus(sts);
       } catch (err) {
+        if (!cancelled) setLoadFailed(true);
         rlog.error('[SecurityTab] Load error:', err);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
-    load();
-  }, []);
+    void load();
+    return () => { cancelled = true; };
+  }, [loadAttempt]);
 
   // Subscribe to status changes
   useEffect(() => {
@@ -113,6 +123,17 @@ export default function SecurityTab({ config }: SecurityTabProps) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-brand-600" />
+      </div>
+    );
+  }
+
+  if (loadFailed) {
+    return (
+      <div role="alert" className="space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+        <p>{t('security.loadFailed')}</p>
+        <button type="button" className="min-h-11 rounded-lg border border-amber-700 px-4 font-semibold" onClick={() => setLoadAttempt(value => value + 1)}>
+          {t('common.retry')}
+        </button>
       </div>
     );
   }

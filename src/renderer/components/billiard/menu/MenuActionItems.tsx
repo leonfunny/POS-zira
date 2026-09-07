@@ -1,3 +1,4 @@
+import { useFeedbackDialog } from '../../../hooks/useFeedbackDialog';
 import { Banknote, Pencil, RotateCw, ImageIcon, Ruler, Trash2 } from 'lucide-react';
 import { ROTATION_STEPS } from '../constants';
 import type { Language } from '../../../i18n/translations';
@@ -55,8 +56,10 @@ export function MenuActionItems({
   language,
 }: MenuActionItemsProps) {
   const { t } = useTranslation(language);
+  const feedback = useFeedbackDialog(t);
   return (
     <div className="py-1">
+      {feedback.dialog}
       <MenuItem
         icon={Pencil}
         label={t('billiard.rename') || 'Rename'}
@@ -92,8 +95,8 @@ export function MenuActionItems({
         icon={Trash2}
         label={t('billiard.delete') || 'Delete'}
         variant="danger"
-        onClick={() => {
-          if (confirm(t('billiard.deleteConfirm') || 'Delete this table?')) {
+        onClick={async () => {
+          if (await feedback.confirm(t('billiard.deleteConfirm') || 'Delete this table?', true)) {
             onDelete(tableId);
             onClose();
           }

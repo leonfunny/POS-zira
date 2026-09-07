@@ -1,3 +1,4 @@
+import { useFeedbackDialog } from '../../hooks/useFeedbackDialog';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ChefHat,
@@ -113,6 +114,7 @@ export default function KitchenSelfOrderPanel({
 }: KitchenSelfOrderPanelProps) {
   const { config, saveConfig } = useConfig();
   const { t } = useTranslation(uiLanguage);
+  const feedback = useFeedbackDialog(t);
   const kitchenCopy = getKitchenSelfOrderCopy(uiLanguage);
   const menuSourceTouchedRef = useRef(false);
 
@@ -192,7 +194,7 @@ export default function KitchenSelfOrderPanel({
 
   const openKitchenSelfOrder = async () => {
     if (!menuSource) {
-      alert(categoryLoadError || 'Kitchen menu source is still resolving.');
+      void feedback.message(categoryLoadError || 'Kitchen menu source is still resolving.');
       return;
     }
 
@@ -210,11 +212,11 @@ export default function KitchenSelfOrderPanel({
       const result = await window.electronAPI.window.open('kitchenSelfOrder');
       if (!result?.success) {
         rlog.error('[KitchenSelfOrderPanel] Failed to open kitchen self-order:', result?.error);
-        alert(`${t('selfCheckout.openError')}: ${result?.error || t('selfCheckout.unknownError')}`);
+        void feedback.message(`${t('selfCheckout.openError')}: ${result?.error || t('selfCheckout.unknownError')}`);
       }
     } catch (err: any) {
       rlog.error('[KitchenSelfOrderPanel] openKitchenSelfOrder failed:', err);
-      alert(`${t('selfCheckout.openError')}: ${err?.message || err}`);
+      void feedback.message(`${t('selfCheckout.openError')}: ${err?.message || err}`);
     } finally {
       setKitchenOpening(false);
     }
@@ -224,6 +226,7 @@ export default function KitchenSelfOrderPanel({
 
   return (
     <>
+      {feedback.dialog}
       <section className="panel p-5">
       <div className="mb-5 flex items-start justify-between gap-4">
         <div>

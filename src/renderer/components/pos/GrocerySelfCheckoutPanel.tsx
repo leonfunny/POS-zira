@@ -1,3 +1,4 @@
+import { useFeedbackDialog } from '../../hooks/useFeedbackDialog';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
@@ -48,6 +49,7 @@ export default function GrocerySelfCheckoutPanel({
 }: GrocerySelfCheckoutPanelProps) {
   const { config, saveConfig } = useConfig();
   const { t } = useTranslation(uiLanguage);
+  const feedback = useFeedbackDialog(t);
 
   const [kioskLanguage, setKioskLanguage] = useState<ScLang>('pl');
   const [mode, setMode] = useState<SelfCheckoutMode>('demo');
@@ -121,11 +123,11 @@ export default function GrocerySelfCheckoutPanel({
       const result = await window.electronAPI.window.open('selfCheckout');
       if (!result?.success) {
         rlog.error('[GrocerySelfCheckoutPanel] Failed to open kiosk:', result?.error);
-        alert(`${t('selfCheckout.openError')}: ${result?.error || t('selfCheckout.unknownError')}`);
+        void feedback.message(`${t('selfCheckout.openError')}: ${result?.error || t('selfCheckout.unknownError')}`);
       }
     } catch (err: any) {
       rlog.error('[GrocerySelfCheckoutPanel] openKiosk failed:', err);
-      alert(`${t('selfCheckout.openError')}: ${err?.message || err}`);
+      void feedback.message(`${t('selfCheckout.openError')}: ${err?.message || err}`);
     } finally {
       setOpening(false);
     }
@@ -133,6 +135,7 @@ export default function GrocerySelfCheckoutPanel({
 
   return (
     <>
+      {feedback.dialog}
       <section
         className={`rounded-2xl border p-5 ${
           isProductionBlocked

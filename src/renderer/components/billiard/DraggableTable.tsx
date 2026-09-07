@@ -24,6 +24,7 @@ export const DraggableTable = memo(function DraggableTable({
   isMeasureHighlighted,
   onDrag,
   onDragEnd,
+  onDragCancel,
   onTableClick,
   onRename,
   onRenameEnd,
@@ -43,6 +44,7 @@ export const DraggableTable = memo(function DraggableTable({
   isMeasureHighlighted?: boolean;
   onDrag: (id: string, x: number, y: number) => void;
   onDragEnd: (id: string, x: number, y: number) => void;
+  onDragCancel: (id: string) => void;
   onTableClick: (table: TableOverview, e?: React.MouseEvent) => void;
   onRename: (id: string, name: string) => void;
   onRenameEnd?: () => void;
@@ -72,6 +74,7 @@ export const DraggableTable = memo(function DraggableTable({
     enabled: editMode && !isMeasureTarget && !isMeasureHighlighted,
     onDrag,
     onDragEnd,
+    onDragCancel,
   });
 
   const [tick, setTick] = useState(0);

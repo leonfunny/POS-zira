@@ -122,8 +122,9 @@ export default function Sidebar({
         <div className="h-14 flex items-center justify-center border-b border-[var(--sand-200)] shrink-0">
           <button
             onClick={onToggleCollapse}
-            className="w-8 h-8 rounded-lg bg-gradient-to-br from-[var(--primary)] to-[var(--primary-deep)] flex items-center justify-center hover:opacity-80 transition-opacity cursor-pointer"
+            className="w-11 h-11 rounded-lg bg-gradient-to-br from-[var(--primary)] to-[var(--primary-deep)] flex items-center justify-center hover:opacity-80 transition-opacity cursor-pointer"
             title={t('sidebar.expand')}
+            aria-label={t('sidebar.expand')}
           >
             <span className="text-base font-bold text-white">Z</span>
           </button>
@@ -138,8 +139,9 @@ export default function Sidebar({
           </span>
           <button
             onClick={onToggleCollapse}
-            className="ml-auto p-1 rounded hover:bg-[var(--sand-100)] text-[var(--ink-muted)] transition-colors shrink-0"
+            className="ml-auto min-h-11 min-w-11 flex items-center justify-center rounded hover:bg-[var(--sand-100)] text-[var(--ink-muted)] transition-colors shrink-0"
             title={t('sidebar.collapse')}
+            aria-label={t('sidebar.collapse')}
           >
             <ChevronLeft size={16} />
           </button>
@@ -173,7 +175,8 @@ export default function Sidebar({
                     <button
                       onClick={() => onTabChange(item.tab)}
                       data-tooltip={label}
-                      className={`sidebar-item flex items-center gap-2.5 w-full text-left text-sm transition-colors ${
+                      aria-label={label}
+                      className={`sidebar-item min-h-11 flex items-center gap-2.5 w-full text-left text-sm transition-colors ${
                         collapsed ? 'px-0 justify-center py-2.5 mx-1 rounded-lg' : 'px-4 py-2'
                       } ${
                         isActive
@@ -191,8 +194,9 @@ export default function Sidebar({
                     {item.tab === 'pos' && isActive && !collapsed && (
                       <button
                         onClick={onFullscreen}
-                        className="p-1.5 mr-2 rounded text-[var(--ink-muted)] hover:text-[var(--primary)] hover:bg-[var(--sand-100)] transition-colors shrink-0"
+                        className="min-h-11 min-w-11 flex items-center justify-center mr-2 rounded text-[var(--ink-muted)] hover:text-[var(--primary)] hover:bg-[var(--sand-100)] transition-colors shrink-0"
                         title={t('sidebar.fullscreen')}
+                        aria-label={t('sidebar.fullscreen')}
                       >
                         <Maximize size={14} />
                       </button>
@@ -227,7 +231,7 @@ export default function Sidebar({
             <select
               value={language}
               onChange={(e) => onLanguageChange(e.target.value as Language)}
-              className="w-full text-xs bg-white border border-[var(--sand-200)] rounded-lg px-2 py-1.5 text-[var(--ink-muted)] cursor-pointer hover:bg-[var(--sand-50)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/30"
+              className="min-h-11 w-full text-sm bg-white border border-[var(--sand-200)] rounded-lg px-2 py-1.5 text-[var(--ink-muted)] cursor-pointer hover:bg-[var(--sand-50)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/30"
             >
               {(Object.keys(languageNames) as Language[]).map((lang) => (
                 <option key={lang} value={lang}>{languageNames[lang]}</option>

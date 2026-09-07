@@ -51,7 +51,7 @@ function ActionButton({ icon, label, onClick, disabled, active, tone = 'neutral'
       onClick={onClick}
       disabled={disabled}
       aria-pressed={active}
-      className={`h-10 flex-none px-2.5 rounded-lg border text-xs font-bold transition-colors flex items-center gap-1.5 whitespace-nowrap touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 ${
+      className={`min-h-11 flex-none px-2.5 rounded-lg border text-xs font-bold transition-colors flex items-center gap-1.5 whitespace-nowrap touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 ${
         active
           ? activeClasses
           : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50 hover:border-slate-400'
@@ -101,7 +101,7 @@ export default function QuickActions({
   return (
     <div className="border-t border-slate-200 bg-white shadow-[0_-1px_0_rgba(15,23,42,0.04)]">
       {showHeld && heldCarts.length > 0 && (
-        <div className="flex items-center gap-1.5 px-2 py-1.5 overflow-x-auto border-b border-slate-200 bg-slate-50" style={{ scrollbarWidth: 'none' }}>
+        <div className="flex items-center gap-1.5 px-2 py-1.5 overflow-x-auto border-b border-slate-200 bg-slate-50" >
           {heldCarts.map((held) => (
             <div key={held.id} className="flex items-center gap-1.5 px-2 py-1 bg-white border border-slate-300 rounded-lg shrink-0 shadow-sm">
               <span className="max-w-32 truncate text-xs font-semibold text-slate-600">{held.title}</span>
@@ -109,15 +109,15 @@ export default function QuickActions({
               <button
                 onClick={() => { onRecall?.(held.id); setShowHeld(false); }}
                 disabled={held.protected}
-                className="h-8 px-2.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 text-xs font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                className="min-h-11 px-2.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 text-xs font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {held.protected ? 'Auto restore' : tOr('pos.recall', 'Use')}
+                {held.protected ? tOr('pos.held.autoRestore', 'Auto restore') : tOr('pos.recall', 'Use')}
               </button>
               {!held.protected && (
                 <button
                   onClick={() => onDiscardHeld?.(held.id)}
-                  className="w-8 h-8 flex items-center justify-center rounded-md text-slate-500 hover:text-red-700 hover:bg-red-50 border border-transparent hover:border-red-200 cursor-pointer"
-                  aria-label="Discard held cart"
+                  className="w-11 h-11 flex items-center justify-center rounded-md text-slate-500 hover:text-red-700 hover:bg-red-50 border border-transparent hover:border-red-200 cursor-pointer"
+                  aria-label={tOr('pos.held.discardLabel', 'Discard held cart')}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M6 18L18 6M6 6l12 12" />
@@ -129,7 +129,7 @@ export default function QuickActions({
         </div>
       )}
 
-      <div className="flex items-center gap-1.5 px-2 py-1.5 overflow-x-auto whitespace-nowrap scrollbar-hide" style={{ scrollbarWidth: 'none' }}>
+      <div className="flex items-center gap-1.5 px-2 py-1.5 overflow-x-auto whitespace-nowrap scrollbar-hide" >
         {onHold && (
           <ActionButton
             icon={icons.hold}

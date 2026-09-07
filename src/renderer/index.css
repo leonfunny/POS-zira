@@ -221,7 +221,7 @@ body {
   background-color: var(--sand-50);
   color: var(--ink);
   user-select: none;
-  -webkit-app-region: drag;
+  -webkit-app-region: no-drag;
 }
 
 button, input, select {
@@ -1571,4 +1571,14 @@ body.self-checkout-root {
   white-space: nowrap;
   z-index: 100;
   pointer-events: none;
+}
+
+/* Respect the OS motion preference in every window, including auth and check-in. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

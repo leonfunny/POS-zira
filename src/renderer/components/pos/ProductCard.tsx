@@ -45,7 +45,7 @@ function formatTemplate(template: string, values: Record<string, string | number
 }
 
 function ProductCard({ product, onAdd, onLongPress, t, allowOversell = false, lang }: ProductCardProps) {
-  const [imgError, setImgError] = useState(false);
+  const [failedImageSources, setFailedImageSources] = useState<string[]>([]);
   const [longPressState, setLongPressState] = useState<'idle' | 'printing' | 'printed' | 'error'>('idle');
   const [longPressMessage, setLongPressMessage] = useState('');
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -72,8 +72,9 @@ function ProductCard({ product, onAdd, onLongPress, t, allowOversell = false, la
   // same tile color regardless of operator language.
   const colorClass = placeholderColor(product.name);
   const displayName = resolveName(product, lang);
-  const imgSrc = product.thumbnail_url || product.image_url;
-  const showImage = imgSrc && !imgError;
+  const imgSrc = [product.thumbnail_url, product.image_url].find(source => source && !failedImageSources.includes(source));
+  useEffect(() => { setFailedImageSources([]); }, [product.thumbnail_url, product.image_url]);
+  const showImage = !!imgSrc;
   const clearLongPressTimer = useCallback(() => {
     if (longPressTimerRef.current) {
       clearTimeout(longPressTimerRef.current);
@@ -183,7 +184,7 @@ function ProductCard({ product, onAdd, onLongPress, t, allowOversell = false, la
             src={imgSrc!}
             alt={displayName}
             loading="lazy"
-            onError={() => setImgError(true)}
+            onError={() => { if (imgSrc) setFailedImageSources(previous => [...previous, imgSrc]); }}
             className={`w-full h-full object-cover ${soldOut ? 'grayscale' : ''}`}
           />
         ) : (
@@ -213,17 +214,17 @@ function ProductCard({ product, onAdd, onLongPress, t, allowOversell = false, la
         )}
         {saleClass.isWeighted && !soldOut && (
           <span className="absolute bottom-2 left-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-300 px-2 py-1 rounded font-extrabold leading-none shadow-sm">
-            {saleClass.saleUnit.toLowerCase() === 'kg' ? 'kg' : 'WEIGHT'}
+            {saleClass.saleUnit.toLowerCase() === 'kg' ? 'kg' : (t?.('pos.product.weightBadge') ?? 'Weight')}
           </span>
         )}
         {product.is_on_sale === 1 && !soldOut && !isDraft && (
           <span className="absolute top-2 right-2 text-xs text-red-700 bg-red-50 border border-red-300 px-2 py-1 rounded font-bold leading-none shadow-sm">
-            SALE
+            {t?.('pos.product.saleBadge') ?? 'Sale'}
           </span>
         )}
         {isDraft && (
           <span className="absolute top-2 right-2 text-xs text-sky-700 bg-sky-50 border border-sky-300 px-2 py-1 rounded font-bold leading-none shadow-sm">
-            DRAFT
+            {t?.('pos.product.draftBadge') ?? 'Draft'}
           </span>
         )}
         {longPressState !== 'idle' && (

@@ -1,4 +1,4 @@
-import { useRef, useCallback, useState } from 'react';
+import { useRef, useCallback, useState, useEffect } from 'react';
 import { SNAP_STEP_M } from '../constants';
 import { snapToGrid } from '../utils';
 
@@ -14,6 +14,7 @@ interface UseFreeformDragOptions {
   enabled: boolean;
   onDrag: (id: string, x: number, y: number) => void;
   onDragEnd: (id: string, x: number, y: number) => void;
+  onDragCancel: (id: string) => void;
 }
 
 export function useFreeformDrag({
@@ -26,6 +27,7 @@ export function useFreeformDrag({
   enabled,
   onDrag,
   onDragEnd,
+  onDragCancel,
 }: UseFreeformDragOptions) {
   const [isDragging, setIsDragging] = useState(false);
 
@@ -42,6 +44,17 @@ export function useFreeformDrag({
     lastY: 0,
     canvasRect: null as DOMRect | null, // cached on pointerdown to avoid repeated getBoundingClientRect
   });
+
+  useEffect(() => {
+    if (!enabled) setIsDragging(false);
+    return () => {
+      const ds = dragState.current;
+      const cancelled = ds.active && ds.activated;
+      ds.active = false;
+      ds.activated = false;
+      if (cancelled) onDragCancel(id);
+    };
+  }, [id, enabled, onDragCancel]);
 
   const snap = useCallback(
     (rawPct: number, axis: 'x' | 'y') => {
@@ -85,7 +98,7 @@ export function useFreeformDrag({
   const handlePointerMove = useCallback(
     (e: React.PointerEvent) => {
       const ds = dragState.current;
-      if (!ds.active || !ds.canvasRect) return;
+      if (!ds.active || e.pointerId !== ds.pointerId || !ds.canvasRect) return;
 
       const rect = ds.canvasRect;
 
@@ -117,7 +130,11 @@ export function useFreeformDrag({
   const handlePointerUp = useCallback(
     (e: React.PointerEvent) => {
       const ds = dragState.current;
-      if (!ds.active) return;
+      if (!ds.active || e.pointerId !== ds.pointerId) return;
+
+      const wasDragging = ds.activated;
+      ds.active = false;
+      ds.activated = false;
 
       const el = e.currentTarget as HTMLElement;
       try {
@@ -126,9 +143,6 @@ export function useFreeformDrag({
         // pointer capture may already be released
       }
 
-      const wasDragging = ds.activated;
-      ds.active = false;
-      ds.activated = false;
       setIsDragging(false);
 
       if (wasDragging) {
@@ -142,7 +156,10 @@ export function useFreeformDrag({
   const handlePointerCancel = useCallback(
     (e: React.PointerEvent) => {
       const ds = dragState.current;
-      if (!ds.active) return;
+      if (!ds.active || e.pointerId !== ds.pointerId) return;
+      const wasDragging = ds.activated;
+      ds.active = false;
+      ds.activated = false;
 
       const el = e.currentTarget as HTMLElement;
       try {
@@ -151,12 +168,10 @@ export function useFreeformDrag({
         // already released
       }
 
-      ds.active = false;
-      ds.activated = false;
       setIsDragging(false);
-      // Don't call onDragEnd — position wasn't finalized
+      if (wasDragging) onDragCancel(id);
     },
-    [],
+    [id, onDragCancel],
   );
 
   return {
@@ -166,6 +181,7 @@ export function useFreeformDrag({
       onPointerMove: handlePointerMove,
       onPointerUp: handlePointerUp,
       onPointerCancel: handlePointerCancel,
+      onLostPointerCapture: handlePointerCancel,
     },
   };
 }
