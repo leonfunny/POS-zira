@@ -4,7 +4,7 @@ import {
   Barcode,
   Check,
   CheckCircle2,
-  FileImage,
+  // FileImage, // Restore with the customer artwork tab below.
   Plus,
   Printer,
   RefreshCw,
@@ -979,7 +979,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
         className="mb-3 shrink-0 rounded-lg border border-slate-200 bg-white p-1.5 shadow-sm"
         aria-label={copy.chooseLabelType}
       >
-        <div className="grid max-w-3xl grid-cols-3 gap-2">
+        <div className="grid max-w-3xl grid-cols-2 gap-2">
           <button
             type="button"
             onClick={() => {
@@ -998,6 +998,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
             <Table2 size={18} aria-hidden="true" />
             {copy.tabPrintOrder}
           </button>
+          {/* Customer artwork tab paused: the workshop currently has no customer files.
           <button
             type="button"
             onClick={() => {
@@ -1016,6 +1017,7 @@ export default function LabelModule({ language }: LabelModuleProps) {
             <FileImage size={18} aria-hidden="true" />
             {copy.tabFabricFromFile}
           </button>
+          */}
           <button
             type="button"
             onClick={() => {
