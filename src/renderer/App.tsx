@@ -1,4 +1,5 @@
-import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useMemo, useCallback, useRef, useSyncExternalStore } from 'react';
+import { ConfigAutosave } from './lib/config-autosave';
 import rlog from './utils/logger';
 import { AgentConfig, DeviceStatus, ConnectionStatus, AuthUser, FeatureKey, Tab, SIDEBAR_WIDTH, DEFAULT_ENTITLEMENTS } from '../shared/types';
 import Status from './components/Status';
@@ -88,6 +89,28 @@ export default function App() {
   const rendererAuthBoundaryKey = isAuthenticated
     ? `${authUser?.id || ''}:${config?.salonId || authUser?.salonId || ''}:${(config as any)?.registerCode || config?.machineId || config?.agentId || ''}`
     : 'anonymous';
+  const activeAutosaveRef = useRef<ConfigAutosave | null>(null);
+  const generalAutosave = useMemo(() => {
+    const queue: ConfigAutosave = new ConfigAutosave(async (patch) => {
+      const updated = await window.electronAPI.setConfig(patch);
+      if (activeAutosaveRef.current !== queue) throw new Error('Settings session changed');
+      if (patch.autoStart !== undefined) {
+        const result = await window.electronAPI.setAutoStart(patch.autoStart);
+        if (!result?.success) throw new Error('Could not update Windows auto-start');
+      }
+      return updated;
+    }, setConfig, () => activeAutosaveRef.current === queue);
+    return queue;
+  }, [rendererAuthBoundaryKey, setConfig]);
+  activeAutosaveRef.current = generalAutosave;
+  useEffect(() => {
+    activeAutosaveRef.current = generalAutosave;
+    return () => {
+      if (activeAutosaveRef.current === generalAutosave) activeAutosaveRef.current = null;
+      generalAutosave.cancel();
+    };
+  }, [generalAutosave]);
+  const generalSaveState = useSyncExternalStore(generalAutosave.subscribe, generalAutosave.getSnapshot);
   useEffect(() => {
     if (rendererAuthBoundaryRef.current === rendererAuthBoundaryKey) return;
     rendererAuthBoundaryRef.current = rendererAuthBoundaryKey;
@@ -391,6 +414,7 @@ export default function App() {
 
   const handleLogout = async () => {
     try {
+      await generalAutosave.flush();
       clearRendererState();
       await logout();
       // Refresh config so Settings/Status tabs pick up cleared values
@@ -401,6 +425,12 @@ export default function App() {
   };
 
   const handleOfflineMode = async () => {
+    try {
+      await generalAutosave.flush();
+    } catch (err) {
+      rlog.error('[App] Could not save settings before offline mode:', err);
+      return;
+    }
     // Clear any previous salon data to prevent data leakage from prior logins
     try {
       clearRendererState();
@@ -425,6 +455,7 @@ export default function App() {
 
   const handleLanguageChange = async (lang: Language) => {
     try {
+      await generalAutosave.flush();
       await saveConfig({ language: lang });
     } catch (err) {
       rlog.error('[App] Failed to save language:', err);
@@ -589,6 +620,13 @@ export default function App() {
         onEndSession={handleEndRemoteSession}
       />
 
+      {generalSaveState.status === 'error' && activeTab !== 'settings' && (
+        <div role="alert" className="flex shrink-0 items-center justify-between gap-3 border-b border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-950">
+          <span>{appT('settings.save.failed')}</span>
+          <button type="button" onClick={() => setActiveTab('settings')} className="min-h-11 rounded-md border border-amber-300 px-3 font-semibold">{appT('settings.save.review')}</button>
+        </div>
+      )}
+
       {/* Sidebar + Content */}
       <div className="flex flex-1 overflow-hidden">
         <Sidebar
@@ -707,8 +745,10 @@ export default function App() {
               )}
               {activeTab === 'settings' && isTabAvailable('settings') && (
                 <Settings
+                  key={rendererAuthBoundaryKey}
                   config={config}
                   onConfigChange={updateConfig}
+                  generalAutosave={generalAutosave}
                   isModuleEntitled={(tab: Tab) => isFeatureEnabled(TAB_TO_FEATURE[tab])}
                 />
               )}

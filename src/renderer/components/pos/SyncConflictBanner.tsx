@@ -7,7 +7,8 @@
  * Design: minimal, non-intrusive, touch-friendly. Cashier can continue working.
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { getTranslation } from '../../i18n/translations';
 
 interface SyncConflict {
   id: number;
@@ -42,57 +43,83 @@ function filterVisibleConflicts(conflicts: SyncConflict[]): SyncConflict[] {
   return conflicts.filter((conflict) => !isMirrorOnlyOrderCreatedConflict(conflict));
 }
 
-export default function SyncConflictBanner() {
+export default function SyncConflictBanner({ t = getTranslation('en') }: { t?: (key: string) => string }) {
   const [conflicts, setConflicts] = useState<SyncConflict[]>([]);
   const [expanded, setExpanded] = useState(false);
+  const [pendingIds, setPendingIds] = useState<Set<number>>(new Set());
+  const [errors, setErrors] = useState<Record<number, string>>({});
+  const [notice, setNotice] = useState<string | null>(null);
+  const inFlight = useRef(new Set<number>());
+  const generation = useRef(0);
+  const mounted = useRef(true);
+
+  // A poll started before an action must not resurrect a resolved conflict.
+  const refreshConflicts = useCallback(async () => {
+    const requestGeneration = ++generation.current;
+    try {
+      const result = await window.electronAPI?.pos?.sync?.getConflicts?.();
+      if (mounted.current && requestGeneration === generation.current && Array.isArray(result)) {
+        setConflicts(filterVisibleConflicts(result));
+      }
+    } catch { /* Keep the last known conflicts when the refresh fails. */ }
+  }, []);
 
   // Poll for conflicts every 10 seconds
   useEffect(() => {
-    const fetchConflicts = async () => {
-      try {
-        const result = await window.electronAPI?.pos?.sync?.getConflicts?.();
-        if (Array.isArray(result)) {
-          setConflicts(filterVisibleConflicts(result));
-        }
-      } catch {
-        // IPC not available or handler not registered yet
-      }
+    mounted.current = true;
+    void refreshConflicts();
+    const interval = setInterval(refreshConflicts, 10_000);
+    return () => {
+      mounted.current = false;
+      generation.current++;
+      clearInterval(interval);
     };
-
-    fetchConflicts();
-    const interval = setInterval(fetchConflicts, 10_000);
-    return () => clearInterval(interval);
-  }, []);
+  }, [refreshConflicts]);
 
   // Also listen for push events
   useEffect(() => {
-    const unsub = window.electronAPI?.pos?.sync?.onSyncEntry?.(() => {
-      // Re-fetch conflicts when a sync entry arrives
-      window.electronAPI?.pos?.sync?.getConflicts?.().then((result: any) => {
-        if (Array.isArray(result)) setConflicts(filterVisibleConflicts(result));
-      }).catch(() => {});
-    });
+    const unsub = window.electronAPI?.pos?.sync?.onSyncEntry?.(refreshConflicts);
     return () => { unsub?.(); };
-  }, []);
+  }, [refreshConflicts]);
 
   const handleResolve = useCallback(async (conflictId: number, resolution: string) => {
+    if (inFlight.current.has(conflictId)) return;
+    inFlight.current.add(conflictId);
+    setPendingIds(new Set(inFlight.current));
+    setNotice(null);
+    setErrors(prev => ({ ...prev, [conflictId]: '' }));
     try {
-      await window.electronAPI?.pos?.sync?.resolveConflict?.(conflictId, resolution);
+      const result = await window.electronAPI?.pos?.sync?.resolveConflict?.(conflictId, resolution);
+      if (result?.success !== true) throw new Error(result?.error || 'Sync operation unavailable');
+      if (!mounted.current) return;
+      generation.current++;
       setConflicts(prev => prev.filter(c => c.id !== conflictId));
+      setNotice(resolution === 'retried' ? 'pos.sync.retryQueued' : 'pos.sync.acknowledged');
+      void refreshConflicts();
     } catch (err) {
       console.error('Failed to resolve conflict:', err);
+      if (mounted.current) setErrors(prev => ({ ...prev, [conflictId]: 'pos.sync.actionFailed' }));
+    } finally {
+      inFlight.current.delete(conflictId);
+      if (mounted.current) setPendingIds(new Set(inFlight.current));
     }
-  }, []);
+  }, [refreshConflicts]);
 
-  if (conflicts.length === 0) return null;
+  const noticeView = notice && (
+    <div role="status" className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-800">
+      <span>{t(notice)}</span>
+      <button type="button" onClick={() => setNotice(null)} className="min-h-11 px-3 font-semibold">{t('pos.sync.close')}</button>
+    </div>
+  );
+  if (conflicts.length === 0) return noticeView;
 
   const firstConflict = conflicts[0];
   const label = CONFLICT_LABELS[firstConflict.conflict_type] || CONFLICT_LABELS.UNKNOWN;
 
   return (
-    <div style={{
+    <>{noticeView}<div style={{
       position: 'relative',
-      zIndex: 1000,
+      zIndex: 10,
       background: label.color,
       color: '#fff',
       padding: '8px 16px',
@@ -100,6 +127,8 @@ export default function SyncConflictBanner() {
       display: 'flex',
       alignItems: 'center',
       gap: 12,
+      flexWrap: 'wrap',
+      flexShrink: 0,
       minHeight: 40,
       fontFamily: 'inherit',
     }}>
@@ -108,10 +137,10 @@ export default function SyncConflictBanner() {
 
       {/* Summary */}
       <div style={{ flex: 1 }}>
-        <strong>{label.title}</strong>
+        <strong>{t(`pos.sync.${CONFLICT_LABELS[firstConflict.conflict_type] ? firstConflict.conflict_type : 'UNKNOWN'}`)}</strong>
         {conflicts.length > 1 && (
           <span style={{ marginLeft: 8, opacity: 0.9 }}>
-            (+{conflicts.length - 1} more)
+            (+{conflicts.length - 1})
           </span>
         )}
         {firstConflict.detail && (
@@ -119,22 +148,23 @@ export default function SyncConflictBanner() {
             — {tryParseDetail(firstConflict.detail)}
           </span>
         )}
+        {errors[firstConflict.id] && <p role="alert" className="mt-1 font-semibold">{t(errors[firstConflict.id])}</p>}
       </div>
 
       {/* Actions */}
       <button
         onClick={() => handleResolve(firstConflict.id, 'retried')}
         style={btnStyle}
-        title="Retry sync"
+        disabled={pendingIds.has(firstConflict.id)}
       >
-        Retry
+        {t(pendingIds.has(firstConflict.id) ? 'pos.sync.working' : 'pos.sync.retry')}
       </button>
       <button
         onClick={() => handleResolve(firstConflict.id, 'acknowledged')}
         style={btnStyle}
-        title="Dismiss"
+        disabled={pendingIds.has(firstConflict.id)}
       >
-        OK
+        {t('pos.sync.acknowledge')}
       </button>
 
       {conflicts.length > 1 && (
@@ -142,7 +172,7 @@ export default function SyncConflictBanner() {
           onClick={() => setExpanded(!expanded)}
           style={{ ...btnStyle, fontSize: 11 }}
         >
-          {expanded ? 'Hide' : 'Show all'}
+          {t(expanded ? 'pos.sync.hide' : 'pos.sync.showAll')}
         </button>
       )}
 
@@ -156,7 +186,7 @@ export default function SyncConflictBanner() {
           background: '#2c3e50',
           maxHeight: 200,
           overflowY: 'auto',
-          zIndex: 1001,
+          zIndex: 11,
         }}>
           {conflicts.slice(1).map(c => {
             const cl = CONFLICT_LABELS[c.conflict_type] || CONFLICT_LABELS.UNKNOWN;
@@ -169,19 +199,20 @@ export default function SyncConflictBanner() {
                 gap: 10,
                 fontSize: 12,
               }}>
-                <span style={{ color: cl.color, fontWeight: 600 }}>{cl.title}</span>
+                <span style={{ color: cl.color, fontWeight: 600 }}>{t(`pos.sync.${CONFLICT_LABELS[c.conflict_type] ? c.conflict_type : 'UNKNOWN'}`)}</span>
                 <span style={{ flex: 1, opacity: 0.8 }}>
                   {c.entity_type}/{c.entity_id.substring(0, 8)}
                   {c.detail && ` — ${tryParseDetail(c.detail)}`}
+                  {errors[c.id] && <span role="alert" className="block font-semibold">{t(errors[c.id])}</span>}
                 </span>
-                <button onClick={() => handleResolve(c.id, 'retried')} style={btnSmallStyle}>Retry</button>
-                <button onClick={() => handleResolve(c.id, 'acknowledged')} style={btnSmallStyle}>OK</button>
+                <button disabled={pendingIds.has(c.id)} onClick={() => handleResolve(c.id, 'retried')} style={btnSmallStyle}>{t('pos.sync.retry')}</button>
+                <button disabled={pendingIds.has(c.id)} onClick={() => handleResolve(c.id, 'acknowledged')} style={btnSmallStyle}>{t('pos.sync.acknowledge')}</button>
               </div>
             );
           })}
         </div>
       )}
-    </div>
+    </div></>
   );
 }
 
@@ -210,12 +241,12 @@ const btnStyle: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 600,
   minWidth: 50,
-  minHeight: 32,
+  minHeight: 44,
 };
 
 const btnSmallStyle: React.CSSProperties = {
   ...btnStyle,
   padding: '2px 8px',
-  minHeight: 24,
+  minHeight: 44,
   fontSize: 11,
 };

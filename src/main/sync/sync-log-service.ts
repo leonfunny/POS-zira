@@ -607,16 +607,20 @@ export class SyncLogService {
   }
 
   resolveConflict(conflictId: number, resolution: string, adjustments?: any): void {
-    syncLogRepo.resolveConflict(conflictId, resolution);
-
-    if (resolution === 'retried') {
-      // Find the log entry and reset to pending
-      const conflicts = syncLogRepo.getUnresolvedConflicts();
-      const conflict = conflicts.find(c => c.id === conflictId);
-      if (conflict) {
+    if (resolution !== 'retried' && resolution !== 'acknowledged') {
+      throw new Error('Unsupported conflict resolution');
+    }
+    database.transaction(() => {
+      // Look up the unresolved row before acknowledging it. Otherwise the
+      // filtered query can no longer find the log entry to retry.
+      const conflict = syncLogRepo.getUnresolvedConflicts().find(c => c.id === conflictId);
+      if (!conflict) throw new Error('Conflict is no longer available. Refresh and try again.');
+      if (resolution === 'retried') {
         syncLogRepo.retryRejectedEntry(conflict.log_entry_id);
       }
-    }
+      syncLogRepo.resolveConflict(conflictId, resolution);
+    });
+    database.markDirty();
 
     logger.info(`[SyncLog] Conflict ${conflictId} resolved: ${resolution}`);
   }

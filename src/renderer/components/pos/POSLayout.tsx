@@ -1646,7 +1646,7 @@ export default function POSLayout({
         onClose={() => setShowDebt(false)}
       />
       {/* Sync conflict banner (Path B) */}
-      <SyncConflictBanner />
+      <SyncConflictBanner t={t} />
       {dispatchError && (
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-red-300 bg-red-50 px-5 py-2 text-sm font-bold text-red-900" role="alert">
           <span>{dispatchError}</span>

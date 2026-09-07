@@ -56,7 +56,7 @@ describe('retailSimpleGrid wiring', () => {
 
   it('is switchable from Settings > POS and saved with the other POS settings', () => {
     const settings = read('src/renderer/components/Settings.tsx');
-    expect(settings).toMatch(/useState\(config\?\.retailSimpleGrid \?\? false\)/);
+    expect(settings).toContain("useGeneralSettingState('retailSimpleGrid', config?.retailSimpleGrid ?? false, markGeneralEdited)");
     expect(settings).toMatch(/setRetailSimpleGrid\(config\.retailSimpleGrid \?\? false\)/);
     expect(settings).toMatch(/aria-checked=\{retailSimpleGrid\}/);
     expect(settings).toMatch(/^\s*retailSimpleGrid,\s*$/m);
