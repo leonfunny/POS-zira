@@ -1759,6 +1759,50 @@ describe('PrintOrderPanel', () => {
   const searchBox = () => input(container, '[data-testid="saved-order-search"]');
 
   describe('browsing many saved sheets', () => {
+    it('shows sheets that arrive after the tab is already open', async () => {
+      // The bug the workshop hit on a brand-new machine: log in, open the tab,
+      // see nothing. The sheets were already in the database a second later,
+      // but the panel only read the list when it mounted, so it took a logout
+      // and a second login to show them.
+      let notify: (() => void) | null = null;
+      const serverRows: unknown[] = [];
+      Object.defineProperty(window, 'electronAPI', {
+        configurable: true,
+        writable: true,
+        value: {
+          printPackagingSticker: printSticker,
+          printFabricTag,
+          pos: {
+            labelPrintOrders: {
+              list: async () => serverRows,
+              save: async () => serverRows,
+              remove: async () => serverRows,
+              sync: async () => serverRows,
+              onSynced: (cb: () => void) => {
+                notify = cb;
+                return () => { notify = null; };
+              },
+            },
+          },
+        },
+      });
+
+      await render();
+      expect(rows()).toHaveLength(0);
+
+      // The background sync writes the sheets, then says so.
+      serverRows.push({
+        id: 'order-1',
+        name: 'MoonCollection · KURTKA 114',
+        savedAt: '2026-09-07T10:00:00.000Z',
+        order: { ...createEmptyOrder(), customerName: 'MoonCollection', styleName: 'KURTKA', styleCode: '114' },
+      });
+      await act(async () => { notify?.(); });
+      await settle();
+
+      expect(rows()).toHaveLength(1);
+    });
+
     it('shows one page of thirty and says which page it is on', async () => {
       seedSheets(35);
       await render();

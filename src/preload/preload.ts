@@ -889,7 +889,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     /** Shared with preload-pos.ts because the Label tab lives in this window. */
     fabricTagTemplates: createFabricTagTemplatesBridge(ipcRenderer.invoke),
-    labelPrintOrders: createPrintOrdersBridge(ipcRenderer.invoke),
+    labelPrintOrders: createPrintOrdersBridge(ipcRenderer.invoke, {
+        on: (channel, listener) => ipcRenderer.on(channel, listener),
+        off: (channel, listener) => ipcRenderer.removeListener(channel, listener),
+      }),
     fabricTagArtworks: createFabricTagArtworksBridge(ipcRenderer.invoke),
     masterCatalog: {
       lookupByEan: (ean: string) => ipcRenderer.invoke('pos:master-catalog:lookup-by-ean', ean),

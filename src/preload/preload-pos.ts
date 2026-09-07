@@ -241,8 +241,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
       getById: (id: string) => ipcRenderer.invoke('pos:draft-products:getById', id),
       searchByCode: (query: string) => ipcRenderer.invoke('pos:draft-products:searchByCode', query),
   },
-    labelPrintOrders: createPrintOrdersBridge((channel, ...args) =>
-      ipcRenderer.invoke(channel, ...args),
+    labelPrintOrders: createPrintOrdersBridge(
+      (channel, ...args) => ipcRenderer.invoke(channel, ...args),
+      {
+        on: (channel, listener) => ipcRenderer.on(channel, listener),
+        off: (channel, listener) => ipcRenderer.removeListener(channel, listener),
+      },
     ),
     fabricTagTemplates: createFabricTagTemplatesBridge((channel, ...args) =>
       ipcRenderer.invoke(channel, ...args),

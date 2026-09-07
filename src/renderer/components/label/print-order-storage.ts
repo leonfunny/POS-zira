@@ -349,6 +349,17 @@ function newestFirst(orders: SavedPrintOrder[]): SavedPrintOrder[] {
   return [...orders].sort((a, b) => (a.savedAt < b.savedAt ? 1 : a.savedAt > b.savedAt ? -1 : 0));
 }
 
+/**
+ * Call back whenever a background sync has just brought sheets down, so the
+ * open panel shows them without the operator reopening the tab. Returns the
+ * unsubscribe function; a no-op where there is no bridge (browser fallback).
+ */
+export function onPrintOrdersSynced(callback: () => void): () => void {
+  const api = bridge();
+  if (!api?.onSynced) return () => undefined;
+  return api.onSynced(callback);
+}
+
 export async function listSavedOrders(): Promise<SavedPrintOrder[]> {
   const api = bridge();
   if (!api) return newestFirst(localSavedOrders());

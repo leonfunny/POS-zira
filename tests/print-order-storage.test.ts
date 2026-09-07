@@ -5,6 +5,7 @@ import {
   deleteSavedOrder,
   describeOrder,
   matchesPrintOrderQuery,
+  onPrintOrdersSynced,
   listSavedOrders,
   loadDraft,
   saveDraft,
@@ -183,6 +184,7 @@ describe('saved orders without the bridge fall back to browser storage', () => {
 describe('saved orders with the bridge go to the server copy', () => {
   function fakeBridge(overrides: Partial<Record<string, unknown>> = {}) {
     const rows = new Map<string, { id: string; name: string; savedAt: string; order: unknown }>();
+    const synced: Array<() => void> = [];
     const bridge = {
       list: vi.fn(async () => [...rows.values()].reverse()),
       save: vi.fn(async (entry: any) => {
@@ -195,10 +197,14 @@ describe('saved orders with the bridge go to the server copy', () => {
         return [...rows.values()].reverse();
       }),
       sync: vi.fn(async () => [...rows.values()].reverse()),
+      onSynced: vi.fn((cb: () => void) => {
+        synced.push(cb);
+        return () => void synced.splice(synced.indexOf(cb), 1);
+      }),
       ...overrides,
     };
     vi.stubGlobal('window', { electronAPI: { pos: { labelPrintOrders: bridge } } });
-    return { bridge, rows };
+    return { bridge, rows, synced };
   }
 
   it('saves through the bridge instead of browser storage', async () => {
@@ -240,6 +246,30 @@ describe('saved orders with the bridge go to the server copy', () => {
     fakeBridge({ save: vi.fn(async () => []) });
     await listSavedOrders();
     expect(localStorage.getItem('zira.labelPrintOrder.saved')).not.toBeNull();
+  });
+
+  describe('a sync that lands while the panel is already open', () => {
+    it('tells the caller so it can reload the list', () => {
+      // The first login on a fresh machine: the panel is on screen before the
+      // sheets arrive, so nothing would ask for them again.
+      const { synced } = fakeBridge();
+      const seen = vi.fn();
+      onPrintOrdersSynced(seen);
+      expect(synced).toHaveLength(1);
+      synced[0]();
+      expect(seen).toHaveBeenCalledTimes(1);
+    });
+
+    it('stops listening once unsubscribed', () => {
+      const { synced } = fakeBridge();
+      onPrintOrdersSynced(vi.fn())();
+      expect(synced).toHaveLength(0);
+    });
+
+    it('is harmless with no bridge at all', () => {
+      vi.stubGlobal('window', {});
+      expect(() => onPrintOrdersSynced(() => undefined)()).not.toThrow();
+    });
   });
 
   it('deletes through the bridge', async () => {

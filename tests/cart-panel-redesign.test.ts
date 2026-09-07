@@ -111,7 +111,9 @@ describe('POS cart panel redesign', () => {
     expect(TOUCH_KEYBOARD).toContain('spaceLabel =');
     expect(TOUCH_KEYBOARD).toContain('{doneLabel}');
     expect(TOUCH_KEYBOARD).toContain('{spaceLabel}');
-    expect(APP).toContain('const keyboardLanguage = (activeTab === \'pos\' || activeTab === \'label\') ? posUiLanguage : appLanguage');
+    // The label tab left the till-language group on 2026-09-06: its UI follows the app
+    // language, so its on-screen keyboard must follow the app language too.
+    expect(APP).toContain("const keyboardLanguage = activeTab === 'pos' ? posUiLanguage : appLanguage");
     expect(APP).toContain("doneLabel={keyboardT('keyboard.done')}");
     expect(APP).toContain("spaceLabel={keyboardT('keyboard.space')}");
   });

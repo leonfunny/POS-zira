@@ -73,6 +73,7 @@ import {
   deleteSavedOrder,
   describeOrder,
   matchesPrintOrderQuery,
+  onPrintOrdersSynced,
   forgetSize,
   forgetStyle,
   listSavedOrders,
@@ -760,6 +761,11 @@ export default function PrintOrderPanel({
     void listSavedOrders().then(setSavedOrders);
   }, []);
   useEffect(refreshSavedOrders, [refreshSavedOrders]);
+  // A sync that lands while the tab is open must show up in the list. The
+  // first login on a fresh machine is exactly this case: the panel mounts
+  // empty, the sheets arrive a second later, and without this the operator
+  // sees an empty tab until they log out and back in.
+  useEffect(() => onPrintOrdersSynced(refreshSavedOrders), [refreshSavedOrders]);
   const [orderQuery, setOrderQuery] = useState('');
   const [orderPage, setOrderPage] = useState(0);
   /** Already newest-first from storage; filtering keeps that order. */
