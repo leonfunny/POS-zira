@@ -308,10 +308,8 @@ export class TscDriver {
       `(size: ${data.size || '-'}, symbols: ${data.careSymbols?.length ?? 0}, qty: ${data.quantity})...`,
     );
 
-    // The configured length is a ceiling, not a target: fabric arrives as a
-    // continuous ribbon, so a tag that needs 18mm should advance 18mm and not
-    // feed 14mm of blank between tags. The barcode zone, when there is one,
-    // still has to fit under whatever the graphic ends up using.
+    // Measure the printed tag inside the configured ceiling. On continuous
+    // ribbon, leave another full tag length blank for cutting and sewing.
     const graphicCeilingMm = this.formatter.graphicHeightMm(hasBarcode);
     const graphic = await renderFabricTagBitmap(
       data,
@@ -332,7 +330,8 @@ export class TscDriver {
       ? graphicMm + (configuredMm - graphicCeilingMm)
       : graphicMm;
 
-    await this.printRaw(this.formatter.formatFabricTag(data, graphic, labelHeightMm), { docName: 'Zira Fabric Tag' });
+    const trailingBlankMm = this.mediaSensor === 'none' ? labelHeightMm : 0;
+    await this.printRaw(this.formatter.formatFabricTag(data, graphic, labelHeightMm, trailingBlankMm), { docName: 'Zira Fabric Tag' });
     logger.info('[TscDriver] Fabric tag printed successfully');
   }
 

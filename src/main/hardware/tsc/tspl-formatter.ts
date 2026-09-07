@@ -495,9 +495,12 @@ export class TsplFormatter {
     data: FabricTagData,
     graphic: MonoBitmap | null,
     labelHeightMmOverride?: number,
+    trailingBlankMm = 0,
   ): Buffer {
-    const b = this.header(new TsplBuilder(), labelHeightMmOverride);
     const effectiveHeightMm = labelHeightMmOverride ?? this.labelHeightMm;
+    this.assertFiniteRange('Fabric tag trailing blank', trailingBlankMm, 0, MAX_LABEL_DIMENSION_MM);
+    // Extend the media advance, keeping the artwork and barcode geometry intact.
+    const b = this.header(new TsplBuilder(), effectiveHeightMm + trailingBlankMm);
     const effectiveHeightDots = this.mmToDots(effectiveHeightMm);
     const margin = this.mmToDots(2);
     const barcode = String(data.barcode || '').trim();

@@ -402,3 +402,21 @@ describe('TsplFormatter geometry', () => {
     expect(new TsplFormatter(40, 60, 203).widthDots).toBe(320);
   });
 });
+
+
+describe('fabric sewing allowance', () => {
+  it('extends the media without stretching either the bitmap or barcode', () => {
+    const formatter = new TsplFormatter(100, 60, 203, { sensor: 'none' });
+    const data = fabricTag({ barcode: '5901234123457', quantity: 3 });
+    const graphic = fakeGraphic(formatter.widthDots, 144);
+    const original = formatter.formatFabricTag(data, graphic, 38).toString('latin1');
+    const spaced = formatter.formatFabricTag(data, graphic, 38, 38).toString('latin1');
+    expect(spaced).toBe(original.replace('SIZE 100 mm,38 mm', 'SIZE 100 mm,76 mm'));
+  });
+
+  it('refuses invalid blank space before building a job', () => {
+    const formatter = new TsplFormatter(20, 60);
+    expect(() => formatter.formatFabricTag(fabricTag(), null, 18, -1)).toThrow();
+    expect(() => formatter.formatFabricTag(fabricTag(), null, 18, Number.NaN)).toThrow();
+  });
+});

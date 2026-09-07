@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * The fabric tag's length is decided at print time, not in config: care-label
- * ribbon is continuous, so a tag that fits in 18mm must advance 18mm or every
- * tag drags a blank gap behind it. That decision spans three modules -- the
+ * ribbon is continuous, so an 18mm tag must leave another 18mm blank for
+ * cutting and sewing. That decision spans three modules -- the
  * rasteriser measures, the driver converts, the formatter emits SIZE -- so it
  * is covered here through the driver rather than on any one of them.
  */
@@ -63,9 +63,11 @@ describe('fabric tag length follows the content', () => {
     vi.mocked(getStuckPrintJobStatus).mockReset().mockResolvedValue(null);
   });
 
-  it('declares the measured length rather than the configured ceiling', async () => {
+  it('leaves one measured tag length blank after every tag', async () => {
     const job = await printOnce();
-    expect(job).toContain('SIZE 20 mm,18 mm');
+    expect(job).toContain('SIZE 20 mm,36 mm');
+    expect(job).toContain('BITMAP 0,0,20,144,');
+    expect(job).toContain('GAP 0 mm,0 mm');
     expect(job).not.toContain('SIZE 20 mm,60 mm');
   });
 
@@ -92,11 +94,11 @@ describe('fabric tag length follows the content', () => {
     expect(renderCalls[0].widthDots).toBe(160);
   });
 
-  it('never declares more than the configured ceiling', async () => {
+  it('limits printed content to the ceiling while reserving equal sewing space', async () => {
     const job = await printOnce({ heightMm: 15 });
     const size = job.split('\r\n').find((line) => line.startsWith('SIZE '))!;
     const declared = Number(size.split(',')[1].replace(/[^0-9.]/g, ''));
-    expect(declared).toBeLessThanOrEqual(15);
+    expect(declared).toBe(30);
   });
 
   it('rechecks driver connectivity immediately before sending RAW bytes', async () => {
@@ -257,5 +259,28 @@ describe('TSC 1D barcode safety', () => {
       barcode: '5901234123457',
     })).rejects.toThrow(/1D barcode.*does not fit.*human-readable/i);
     expect(sent).toHaveLength(0);
+  });
+});
+
+
+describe('cutting space follows every copy on continuous ribbon', () => {
+  beforeEach(() => { sent.length = 0; renderCalls.length = 0; });
+
+  it('sends three original-size bitmaps at a double-length pitch', async () => {
+    const driver = new TscDriver('TSC MB241', 20, 60, { sensor: 'none' });
+    await driver.connect();
+    await driver.printFabricTag({ ...tag, quantity: 3 });
+    const job = sent.at(-1)!.toString('latin1');
+    expect(job).toContain('SIZE 20 mm,36 mm');
+    expect(job).toContain('BITMAP 0,0,20,144,');
+    expect(job).toContain('PRINT 1,3');
+    expect(renderCalls).toHaveLength(1);
+  });
+
+  it('does not add sewing space to gap-sensed sticker stock', async () => {
+    const driver = new TscDriver('TSC MB241', 20, 60, { sensor: 'gap' });
+    await driver.connect();
+    await driver.printFabricTag(tag);
+    expect(sent.at(-1)!.toString('latin1')).toContain('SIZE 20 mm,18 mm');
   });
 });
