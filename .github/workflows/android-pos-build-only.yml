@@ -124,6 +124,9 @@ jobs:
       - name: Verify pinned Android toolchain
         run: npm run android:preflight
 
+      - name: Install Chromium for responsive verification
+        run: npx --no-install playwright install --with-deps chromium
+
       - name: Build and verify development APKs
         run: npm run android:build:verify
 
