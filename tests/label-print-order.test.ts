@@ -590,11 +590,42 @@ describe('validateOrder — what the labels cannot go without', () => {
 });
 
 describe('orderWarnings', () => {
-  it('wants a bag count for every colour while the sticker lane is on', () => {
+  it('prints the colours that carry a bag count and warns about the ones left blank', () => {
+    // A blank count used to block the whole sheet, so reprinting one colour
+    // meant deleting every other colour first. Blank is zero now: that colour
+    // does not print, the rest does, and the sheet says so out loud.
     const order = sampleOrder();
     order.rows[1].stickerQuantity = undefined;
-    expect(validateOrder(order)).toContain('NO_STICKER_QTY');
-    expect(validateOrder({ ...order, printStickers: false })).not.toContain('NO_STICKER_QTY');
+    expect(validateOrder(order)).toEqual([]);
+    expect(orderWarnings(order)).toContain('SOME_ROWS_NO_STICKER');
+    expect(buildPrintPlan(order).some((step) => step.rowId === order.rows[1].id)).toBe(false);
+    expect(buildPrintPlan(order).some((step) => step.rowId === order.rows[0].id)).toBe(true);
+  });
+
+  it('says nothing about blanks when the sticker lane is off, or when none are blank', () => {
+    const order = sampleOrder();
+    order.rows[1].stickerQuantity = undefined;
+    expect(orderWarnings({ ...order, printStickers: false })).not.toContain('SOME_ROWS_NO_STICKER');
+    expect(orderWarnings(sampleOrder())).not.toContain('SOME_ROWS_NO_STICKER');
+  });
+
+  it('warns about a size left blank, and still prints the sizes that are filled', () => {
+    const order = sampleOrder();
+    order.sizes[1].quantity = undefined;
+    expect(validateOrder(order)).toEqual([]);
+    expect(orderWarnings(order)).toContain('SOME_SIZES_NO_TAG');
+    const plan = buildPrintPlan(order);
+    expect(plan.some((step) => step.kind === 'fabric' && step.rowId === order.sizes[1].id)).toBe(false);
+    expect(plan.some((step) => step.kind === 'fabric' && step.rowId === order.sizes[0].id)).toBe(true);
+  });
+
+  it('still refuses a sheet where every count is blank', () => {
+    // Nothing to print at all stays a problem: that is a sheet not filled in,
+    // not a deliberate partial reprint.
+    const order = sampleOrder();
+    order.rows.forEach((row) => { row.stickerQuantity = undefined; });
+    order.sizes.forEach((size) => { size.quantity = undefined; });
+    expect(validateOrder(order)).toContain('EMPTY_ORDER');
   });
 
   it('counts bags and garments apart', () => {

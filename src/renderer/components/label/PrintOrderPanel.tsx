@@ -288,7 +288,6 @@ const COPY: Record<string, Copy> = {
       NOTHING_SELECTED: 'Chưa chọn in loại nhãn nào',
       NO_CUSTOMER: 'Chưa có tên khách',
       NO_STYLE_CODE: 'Chưa có mã hàng — tem túi cần mã',
-      NO_STICKER_QTY: 'Chưa nhập số tem túi cho một màu — mỗi màu một số, tính theo chồng đóng túi',
       DUPLICATE_SIZE: 'Có hai cột size trùng tên',
       EMPTY_SIZE: 'Có cột size chưa đặt tên',
         PERCENT_NOT_100: 'Tổng phần trăm chất liệu phải bằng 100%',
@@ -296,6 +295,8 @@ const COPY: Record<string, Copy> = {
     },
     warning: {
       NO_COMPOSITION: 'Mác vải chưa có thành phần — sẽ in mác trống chỗ đó',
+      SOME_ROWS_NO_STICKER: 'Có màu bỏ trống số tem túi — màu đó không in tem',
+      SOME_SIZES_NO_TAG: 'Có size bỏ trống số lượng — size đó không in mác',
     },
     orderDate: 'Ngày đơn',
     category: 'Danh mục',
@@ -428,7 +429,6 @@ const COPY: Record<string, Copy> = {
       NOTHING_SELECTED: 'Nie wybrano rodzaju etykiety',
       NO_CUSTOMER: 'Brak nazwy klienta',
       NO_STYLE_CODE: 'Brak kodu modelu — naklejka go wymaga',
-      NO_STICKER_QTY: 'Brak liczby naklejek na worek dla koloru — po jednej na kolor, według paczek',
       DUPLICATE_SIZE: 'Dwie kolumny mają ten sam rozmiar',
       EMPTY_SIZE: 'Kolumna rozmiaru bez nazwy',
       PERCENT_NOT_100: 'Skład musi sumować się do 100%',
@@ -436,6 +436,8 @@ const COPY: Record<string, Copy> = {
     },
     warning: {
       NO_COMPOSITION: 'Metka bez składu — to miejsce zostanie puste',
+      SOME_ROWS_NO_STICKER: 'Kolor bez liczby naklejek — ten kolor nie zostanie wydrukowany',
+      SOME_SIZES_NO_TAG: 'Rozmiar bez ilości — ten rozmiar nie zostanie wydrukowany',
     },
     orderDate: 'Data zlecenia',
     category: 'Kategoria',
@@ -572,7 +574,6 @@ const COPY: Record<string, Copy> = {
       NOTHING_SELECTED: 'No label kind selected',
       NO_CUSTOMER: 'No customer name',
       NO_STYLE_CODE: 'No style code — the bag sticker needs one',
-      NO_STICKER_QTY: 'A colour has no bag sticker count — one per colour, by stacks packed',
       DUPLICATE_SIZE: 'Two size columns share a name',
       EMPTY_SIZE: 'A size column has no name',
         PERCENT_NOT_100: 'The composition must add up to 100%',
@@ -580,6 +581,8 @@ const COPY: Record<string, Copy> = {
     },
     warning: {
       NO_COMPOSITION: 'The fabric tag has no composition — that line will print empty',
+      SOME_ROWS_NO_STICKER: 'A colour has no sticker count — that colour will not print',
+      SOME_SIZES_NO_TAG: 'A size has no quantity — that size will not print',
     },
     orderDate: 'Order date',
     category: 'Category',
@@ -710,7 +713,6 @@ const COPY: Record<string, Copy> = {
       NOTHING_SELECTED: 'Etiket türü seçilmedi',
       NO_CUSTOMER: 'Müşteri adı yok',
       NO_STYLE_CODE: 'Model kodu yok — poşet etiketi için gerekli',
-      NO_STICKER_QTY: 'Bir rengin poşet etiketi sayısı yok — renk başına bir tane, paketlenen deste sayısına göre',
       DUPLICATE_SIZE: 'İki beden sütunu aynı adı taşıyor',
       EMPTY_SIZE: 'Bir beden sütununun adı yok',
       PERCENT_NOT_100: 'Bileşim toplamı %100 olmalı',
@@ -718,6 +720,8 @@ const COPY: Record<string, Copy> = {
     },
     warning: {
       NO_COMPOSITION: 'Kumaş etiketinde bileşim yok — o satır boş basılacak',
+      SOME_ROWS_NO_STICKER: 'Bir rengin etiket sayısı yok — o renk basılmayacak',
+      SOME_SIZES_NO_TAG: 'Bir bedenin miktarı yok — o beden basılmayacak',
     },
     orderDate: 'Sipariş tarihi',
     category: 'Kategori',
@@ -846,7 +850,6 @@ const COPY: Record<string, Copy> = {
       NOTHING_SELECTED: '未选择标签种类',
       NO_CUSTOMER: '没有客户名称',
       NO_STYLE_CODE: '没有款号 — 包装贴纸需要款号',
-      NO_STICKER_QTY: '有颜色没有填包装贴纸数量 — 每种颜色一个，按打包的叠数',
       DUPLICATE_SIZE: '两个尺码列名称相同',
       EMPTY_SIZE: '有尺码列没有名称',
       PERCENT_NOT_100: '成分合计必须为 100%',
@@ -854,6 +857,8 @@ const COPY: Record<string, Copy> = {
     },
     warning: {
       NO_COMPOSITION: '布标没有成分 — 那一行会印成空白',
+      SOME_ROWS_NO_STICKER: '有颜色没填贴纸数量 — 该颜色不会打印',
+      SOME_SIZES_NO_TAG: '有尺码没填数量 — 该尺码不会打印',
     },
     orderDate: '下单日期',
     category: '类别',
@@ -985,7 +990,6 @@ const COPY: Record<string, Copy> = {
       NOTHING_SELECTED: 'Не обрано вид етикетки',
       NO_CUSTOMER: 'Немає імені клієнта',
       NO_STYLE_CODE: 'Немає коду моделі — він потрібен для наліпки на пакет',
-      NO_STICKER_QTY: 'У кольору немає кількості наліпок — по одній на колір, за спакованими стосами',
       DUPLICATE_SIZE: 'Два стовпці розмірів мають однакову назву',
       EMPTY_SIZE: 'Стовпець розміру без назви',
       PERCENT_NOT_100: 'Склад має давати в сумі 100%',
@@ -993,6 +997,8 @@ const COPY: Record<string, Copy> = {
     },
     warning: {
       NO_COMPOSITION: 'У бирці немає складу — цей рядок надрукується порожнім',
+      SOME_ROWS_NO_STICKER: 'У кольору немає кількості наліпок — цей колір не друкуватиметься',
+      SOME_SIZES_NO_TAG: 'У розміру немає кількості — цей розмір не друкуватиметься',
     },
     orderDate: 'Дата замовлення',
     category: 'Категорія',
@@ -1126,7 +1132,6 @@ const COPY: Record<string, Copy> = {
       NOTHING_SELECTED: 'Не выбран вид этикетки',
       NO_CUSTOMER: 'Нет имени клиента',
       NO_STYLE_CODE: 'Нет кода модели — он нужен для наклейки на пакет',
-      NO_STICKER_QTY: 'У цвета нет количества наклеек — по одной на цвет, по упакованным стопкам',
       DUPLICATE_SIZE: 'Два столбца размеров с одинаковым именем',
       EMPTY_SIZE: 'Столбец размера без имени',
       PERCENT_NOT_100: 'Состав должен давать в сумме 100%',
@@ -1134,6 +1139,8 @@ const COPY: Record<string, Copy> = {
     },
     warning: {
       NO_COMPOSITION: 'У бирки нет состава — эта строка напечатается пустой',
+      SOME_ROWS_NO_STICKER: 'У цвета нет количества наклеек — этот цвет не будет напечатан',
+      SOME_SIZES_NO_TAG: 'У размера нет количества — этот размер не будет напечатан',
     },
     orderDate: 'Дата заказа',
     category: 'Категория',
@@ -1661,14 +1668,12 @@ export default function PrintOrderPanel({
    * wrong wash symbol is only visible on the printed tag, and by then the whole
    * order is out.
    *
-   * A quantity is not needed to look at a tag, so an empty order or a colour
-   * without a bag count does not block it — but a code the printer would
-   * refuse does, since that sample cannot print either.
+   * A quantity is not needed to look at a tag, so an empty order does not block
+   * it — but a code the printer would refuse does, since that sample cannot
+   * print either.
    */
   const samplePlan = useMemo(() => buildSamplePlan(order), [order]);
-  const blockingForSample = problems.filter(
-    (problem) => problem !== 'EMPTY_ORDER' && problem !== 'NO_STICKER_QTY',
-  );
+  const blockingForSample = problems.filter((problem) => problem !== 'EMPTY_ORDER');
   const canPrintSample =
     progress?.type !== 'printing' && blockingForSample.length === 0 && samplePlan.length > 0;
 

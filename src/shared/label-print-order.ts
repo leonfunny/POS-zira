@@ -249,7 +249,6 @@ export type OrderProblem =
   | 'NOTHING_SELECTED'
   | 'NO_CUSTOMER'
   | 'NO_STYLE_CODE'
-  | 'NO_STICKER_QTY'
   | 'DUPLICATE_SIZE'
   | 'EMPTY_SIZE'
   | 'PERCENT_NOT_100'
@@ -460,7 +459,7 @@ export function stickerGarmentType(categoryName: string | null | undefined, styl
     .slice(0, LABEL_PRINT_ORDER_LIMITS.textChars);
 }
 
-export type OrderWarning = 'NO_COMPOSITION';
+export type OrderWarning = 'NO_COMPOSITION' | 'SOME_ROWS_NO_STICKER' | 'SOME_SIZES_NO_TAG';
 
 /**
  * Things worth a look before printing that do not stop the run. A fabric tag
@@ -472,6 +471,16 @@ export function orderWarnings(order: LabelPrintOrder): OrderWarning[] {
   const warnings: OrderWarning[] = [];
   if (order.printFabricTags && !order.materials.some((m) => m.name.trim())) {
     warnings.push('NO_COMPOSITION');
+  }
+  // A blank count used to block the whole sheet, so reprinting one colour meant
+  // deleting every other colour first. Blank now means zero — that colour or
+  // size simply does not print — and the sheet says out loud what is being left
+  // out, so a half-filled sheet is still noticed without stopping the reprint.
+  if (order.printStickers && order.rows.some((row) => rowStickerQuantity(row) === 0)) {
+    warnings.push('SOME_ROWS_NO_STICKER');
+  }
+  if (order.printFabricTags && order.sizes.some((size) => sizeQuantity(size) === 0)) {
+    warnings.push('SOME_SIZES_NO_TAG');
   }
   return warnings;
 }
@@ -501,12 +510,6 @@ export function validateOrder(order: LabelPrintOrder): OrderProblem[] {
   }
 
   const totals = orderTotals(order);
-  // Stickers are counted by the packer, not derived from the garments: a
-  // colour on the sheet with no sticker count is a sheet half filled in, and
-  // printing zero stickers for it silently would be the worse outcome.
-  if (order.printStickers && order.rows.some((row) => rowStickerQuantity(row) === 0)) {
-    problems.add('NO_STICKER_QTY');
-  }
   const garments = order.printFabricTags ? totals.grandTotal : 0;
   const stickers = order.printStickers ? totals.stickerTotal : 0;
   if (garments + stickers <= 0) problems.add('EMPTY_ORDER');

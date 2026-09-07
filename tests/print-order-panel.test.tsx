@@ -463,11 +463,14 @@ describe('PrintOrderPanel', () => {
     expect(container.querySelector('[data-testid="add-care-line"]')).not.toBeNull();
   });
 
-  it('asks for the bag count of a colour with garments, and totals bags apart', async () => {
+  it('prints a colour with no bag count instead of blocking, and totals bags apart', async () => {
+    // A blank bag count is zero, not a half-typed sheet: the operator reprinting
+    // one colour must not have to delete the others first. The sheet warns, the
+    // Print button stays alive, and no sticker goes out for that colour.
     await render();
     await fillMinimalOrder(40, 0);
-    expect(buttonWithText(container, 'Print').disabled).toBe(true);
-    expect(container.textContent).toContain('bag sticker count');
+    expect(buttonWithText(container, 'Print').disabled).toBe(false);
+    expect(text('[data-testid="order-warnings"]')).toContain('will not print');
     expect(text('[data-testid="sticker-total"]')).toBe('0');
 
     await changeInput(input(container, 'input[aria-label="Bag stickers CZEKOLADA"]'), '12');
@@ -1375,7 +1378,10 @@ describe('PrintOrderPanel', () => {
         container.querySelectorAll('input[type=number][aria-label^="Fabric tags"]'),
       ).toHaveLength(2);
       // The pasted sheet carries garments, not bags: the packer types those.
-      expect(buttonWithText(container, 'Print').disabled).toBe(true);
+      // Missing bags no longer block the run — the fabric tags can go out — but
+      // the sheet says the bags are not coming.
+      expect(buttonWithText(container, 'Print').disabled).toBe(false);
+      expect(text('[data-testid="order-warnings"]')).toContain('will not print');
     });
 
     it('leaves the sheet alone when the paste is dropped', async () => {
