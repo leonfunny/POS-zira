@@ -114,6 +114,10 @@ function remoteScaleFailure(code: string, error: string, host?: string): ScaleRe
   };
 }
 
+function remoteScaleTargetLabel(host: string, port: number): string {
+  return `${hostForUrl(host)}:${port}`;
+}
+
 function normalizeRemoteScalePayload(payload: any, host: string): ScaleReadResult {
   const data = payload?.result ?? payload;
   if (data?.success === true && Number.isFinite(Number(data.weightKg))) {
@@ -159,11 +163,12 @@ export async function readRemoteScaleWeight(config: AgentConfig): Promise<ScaleR
   if (!token) return remoteScaleFailure('REMOTE_TOKEN_MISSING', 'Remote scale pairing code is not configured', target.host);
 
   const timeoutMs = Math.max(500, Math.min(Number(remote?.timeoutMs) || DEFAULT_REMOTE_SCALE_TIMEOUT_MS, 10_000));
+  const targetLabel = remoteScaleTargetLabel(target.host, target.port);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(`http://${hostForUrl(target.host)}:${target.port}/scale/read`, {
+    const response = await fetch(`http://${targetLabel}/scale/read`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -175,7 +180,9 @@ export async function readRemoteScaleWeight(config: AgentConfig): Promise<ScaleR
 
     if (!response.ok) {
       const text = await response.text().catch(() => '');
-      const message = text ? text.slice(0, 200) : `Remote scale returned HTTP ${response.status}`;
+      const message = text
+        ? `${targetLabel}: ${text.slice(0, 200)}`
+        : `Remote scale at ${targetLabel} returned HTTP ${response.status}`;
       return remoteScaleFailure(
         response.status === 401 ? 'REMOTE_UNAUTHORIZED' : 'REMOTE_HTTP_ERROR',
         message,
@@ -186,9 +193,17 @@ export async function readRemoteScaleWeight(config: AgentConfig): Promise<ScaleR
     return normalizeRemoteScalePayload(await response.json(), target.host);
   } catch (error: any) {
     if (error?.name === 'AbortError') {
-      return remoteScaleFailure('REMOTE_TIMEOUT', `Remote scale timed out after ${timeoutMs} ms`, target.host);
+      return remoteScaleFailure(
+        'REMOTE_TIMEOUT',
+        `Remote scale at ${targetLabel} did not answer within ${timeoutMs} ms. Check the host IP, Wi-Fi scale sharing, and Windows Firewall on the POS connected to the scale.`,
+        target.host,
+      );
     }
-    return remoteScaleFailure('REMOTE_NETWORK_ERROR', error?.message || 'Remote scale network error', target.host);
+    return remoteScaleFailure(
+      'REMOTE_NETWORK_ERROR',
+      `Remote scale at ${targetLabel} is unreachable: ${error?.message || 'network error'}. Check the host IP, Wi-Fi scale sharing, and Windows Firewall on the POS connected to the scale.`,
+      target.host,
+    );
   } finally {
     clearTimeout(timer);
   }
@@ -208,14 +223,22 @@ export class ScaleNetworkService {
   async applyConfig(): Promise<void> {
     const config = this.getConfig();
     const scale = config.scale;
-    const shouldShare =
-      resolveScaleConnection(config) === 'local' &&
-      scale?.share?.enabled === true;
+    const connection = resolveScaleConnection(config);
+    const shareRequested = scale?.share?.enabled === true;
+    const shouldShare = connection === 'local' && shareRequested;
     const token = String(scale?.share?.token || '').trim();
     const port = coerceScaleNetworkPort(scale?.share?.port, DEFAULT_SCALE_SHARE_PORT);
 
     if (!shouldShare || !token) {
-      if (shouldShare && !token) logger.warn('[ScaleNetwork] Share requested without a pairing token; not starting server');
+      if (shareRequested && connection !== 'local') {
+        this.lastError = 'Wi-Fi scale sharing only runs when Scale mode is "This POS has scale".';
+        logger.warn(`[ScaleNetwork] Share requested while scale connection is ${connection}; not starting server`);
+      } else if (shouldShare && !token) {
+        this.lastError = 'Pairing code is required before Wi-Fi scale sharing can start.';
+        logger.warn('[ScaleNetwork] Share requested without a pairing token; not starting server');
+      } else {
+        this.lastError = undefined;
+      }
       await this.stop();
       return;
     }

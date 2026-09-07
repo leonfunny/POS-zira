@@ -103,4 +103,25 @@ describe('scale network service', () => {
       source: 'remote',
     });
   });
+
+  it('does not share when share is enabled but the scale is configured as remote', async () => {
+    const hostConfig = configWithScale({
+      enabled: true,
+      connection: 'remote',
+      protocol: 'DIBAL_GDPOS',
+      port: '',
+      baudRate: 9600,
+      share: { enabled: true, port: 0, token: '123456' },
+      remote: { host: '192.168.1.20', port: 17891, token: '123456', timeoutMs: 1000 },
+    });
+
+    service = new ScaleNetworkService(() => hostConfig, async () => successfulWeight());
+    await service.applyConfig();
+
+    expect(service.getStatus()).toMatchObject({
+      running: false,
+      port: null,
+      error: 'Wi-Fi scale sharing only runs when Scale mode is "This POS has scale".',
+    });
+  });
 });
