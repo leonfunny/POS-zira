@@ -79,19 +79,19 @@ describe('Android canonical event isolation from legacy refund accounting', () =
     const h = await setup(); mark(h, marker); await h.database.flush();
     const before = state(h);
     expect(() => h.orders.markRefunded('local-order', 1000, 'legacy overwrite', 'FULL')).toThrow('ANDROID_REFUND_EVENT_LEGACY_WRITE_BLOCKED');
-    expect(() => h.orders.closeShift('local-shift', 1000)).toThrow('ANDROID_REFUND_EVENT_REPORT_NOT_ENABLED');
+    expect(() => h.orders.closeShift('local-shift', 1000)).toThrow('ANDROID_REFUND_EVENT_REPORT_INVALID');
     await blockedCoordinator(h); noExternal(h);
     expect(state(h)).toEqual(before);
   });
   it('blocks orphaned event rows even when the local order has no context marker', async () => {
     const h = await setup(); seedEvent(h); const before = state(h);
     expect(() => h.orders.markRefunded('local-order', 1000, 'legacy overwrite', 'FULL')).toThrow('ANDROID_REFUND_EVENT_LEGACY_WRITE_BLOCKED');
-    expect(() => h.orders.closeShift('local-shift', 1000)).toThrow('ANDROID_REFUND_EVENT_REPORT_NOT_ENABLED');
+    expect(() => h.orders.closeShift('local-shift', 1000)).toThrow('ANDROID_REFUND_EVENT_REPORT_INVALID');
     await blockedCoordinator(h); noExternal(h); expect(state(h)).toEqual(before);
   });
   it('blocks new shift accounting from an event referencing that shift even when its order is absent', async () => {
     const h = await setup(); seedEvent(h, 'missing-local-order'); const before = state(h);
-    expect(() => h.orders.closeShift('local-shift', 1000)).toThrow('ANDROID_REFUND_EVENT_REPORT_NOT_ENABLED');
+    expect(() => h.orders.closeShift('local-shift', 1000)).toThrow('ANDROID_REFUND_EVENT_REPORT_INVALID');
     expect(state(h)).toEqual(before); noExternal(h);
   });
   it('keeps an already frozen close report readable without recalculating marked orders or events', async () => {

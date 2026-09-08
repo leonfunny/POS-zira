@@ -25,6 +25,8 @@
 
 This is a source-only integration, not a production release. Version remains 1.0.26; no release tag, published APK/installer, backend deployment, or live POS restart is authorized by this operation.
 
-Production remains NO-GO pending event-aware shift reporting, capability negotiation and guarded V1 dispatch, recoverable remote close acknowledgement, native device/offline/restart/printer tests, and signed artifact validation. Backend work in its separate checkout is not included in this repository's commits.
+Event-aware shift reporting is now implemented in the follow-up branch: canonical deltas are attributed to their refund shift, converted cumulative refunds are excluded, full frozen journal evidence and tender/audit chains are revalidated, and finalized reports remain immutable. Local follow-up evidence after rebasing onto `main@438bb81`: 111 focused tests; 396 non-browser test files passed with 1 skipped (4,319 tests passed, 13 skipped); Electron smoke 13/13; full build; Android boundary scan 162 source files / 5 bundles; production-readiness and build-only CI policy checks passed.
+
+Production remains NO-GO pending capability negotiation and guarded V1 dispatch, recoverable remote close acknowledgement, native device/offline/restart/printer tests, signed artifact validation, and separate backend completion. Backend work in its separate checkout is not included in this repository's commits.
 
 See `docs/plans/SESSION_HANDOFF_ANDROID_POS.md` for continuation context. CI must pass on the pushed head before merge; local results above do not substitute for that gate.

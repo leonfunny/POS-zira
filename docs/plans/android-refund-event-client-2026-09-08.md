@@ -2,6 +2,13 @@
 
 Status: implementation in stages; production opt-in remains OFF until every gate below passes.
 
+## Stage 5 verified result — event-aware shift reporting (not runtime activation)
+
+- Android close reports now keep unconverted legacy cumulative refund accounting separate from canonical event accounting. Converted order cumulative money is excluded; each validated event delta and its exact CASH/CARD/BLIK/BANK_TRANSFER allocation is applied once to the event's refund shift. Finalized Schema12 snapshots still return unchanged before any recalculation.
+- Reporting revalidates the persisted event row, shift binding, order context, confirmed journal, frozen V1 payload and authority, ordinary refund response, canonical event, cumulative chain, original/used tender capacities and order audit projection. Missing, ambiguous, malformed or coordinated-but-inconsistent evidence fails closed and leaves the shift open. OTHER remains blocked rather than mapped to cash.
+- Verification after rebasing onto `main@438bb81`: 111 focused tests passed; the serial non-browser suite passed 396 files with 1 skipped (4,319 tests passed, 13 skipped); Electron smoke passed 13/13 separately. Renderer/main/Windows build, Android web build, production-readiness policy, build-only CI policy and boundary checks passed (162 reachable source files / 5 bundle files).
+- V1 HTTP dispatch is still OFF. No capability/coordinator activation, cross-shift gate removal, remote-close outbox, native asset sync, APK, device install, real refund, backend deployment or production release is included. Next: guarded capability/coordinator integration with session/device/journal checks, then remote-close recovery and native acceptance.
+
 ## Stage 4 verified result — canonical confirmation storage (not runtime activation)
 
 - Schema13 adds nullable order context and a uniquely keyed event ledger without backfilling history. Migration preserves legacy money, snapshots and original UNKNOWN request bytes; tenant clearing keeps the existing unresolved-request prohibition and device identity.
