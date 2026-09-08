@@ -4,7 +4,7 @@
 
 Continue making Android a standalone selling POS with Windows functional parity. Do not describe it as a companion display or claim production acceptance from web tests.
 
-Working checkout: `C:/Users/maxis/enail/POS-zira-release-foundation`, repository `leonfunny/POS-zira`, branch `codex/pos-ui-release-foundation`, PR https://github.com/leonfunny/POS-zira/pull/2 targeting `main`. At handoff preparation the user authorized source commit/push/merge, not activation of unfinished production features. Verify actual Git/PR status before continuing; this document does not assert merge completion. Preserve dirty work. The clone fetch refspec originally included only the feature branch; fetch `main` explicitly when needed.
+Working checkout: `C:/Users/maxis/enail/POS-zira-release-foundation`, repository `leonfunny/POS-zira`. PR https://github.com/leonfunny/POS-zira/pull/2 merged to `main` at `ce19a83d29516ba2b1ac18ae4b33900c3555526a`; event-aware reporting continues on `codex/android-refund-event-reporting`. The user authorized source commit/push/merge, not activation of unfinished production features. Preserve dirty work. The clone fetch refspec originally included only the feature branch; fetch `main` explicitly when needed.
 
 ## Read first
 
@@ -22,20 +22,19 @@ Use graph discovery and path coverage first. The previously available graph gene
 - Schema12 immutable close-report snapshots; repeat close reads saved evidence without duplicate close POST or recalculation.
 - Schema13 nullable order event context and canonical refund-event ledger. The storage-only repository validates exact money, frozen request/response, full audit chain, original/remaining tenders and scope; event/order/journal update atomically. Confirmed replay does not apply money again.
 - Original settlement must retain exactly the order total, zero tip/discount, exact tender/header consistency and unique local backend mapping. First conversion requires zero prior refunds; no invented historical baseline.
-- Legacy paths reject event-bearing orders and preserve original UNKNOWN bytes. New close reports with event data stay blocked pending event accounting. Existing snapshots stay readable.
+- Legacy paths reject event-bearing orders and preserve original UNKNOWN bytes. New close reports validate the complete canonical request/authority/response/event chain, subtract exact event deltas in the refund shift and exclude converted cumulative order refunds. Invalid or incomplete evidence fails closed; existing finalized snapshots stay readable without recalculation.
 
 ## Next implementation order
 
-1. Event-aware shift aggregation: subtract event deltas once in the proper refund shift, excluding converted order cumulative refunds; preserve unconverted legacy behavior and finalized snapshots. Design and tests before relaxing current same-sale-shift restriction.
-2. Explicit capability negotiation and guarded V1 coordinator integration. Preserve original request ID, payload, protocol, auth context and durable flush barriers. The new repository currently has no runtime caller.
-3. Recoverable remote-close acknowledgement/outbox; current remote close remains best-effort.
-4. Full Windows/Android regression checks plus real Android restart, offline, tenant switch, payment/refund and printer acceptance. Only then prepare production artifacts and rollout.
+1. Explicit capability negotiation and guarded V1 coordinator integration. Preserve original request ID, payload, protocol, auth context and durable flush barriers. The repository still has no runtime caller and V1 remains OFF.
+2. Recoverable remote-close acknowledgement/outbox; current remote close remains best-effort.
+3. Full Windows/Android regression checks plus real Android restart, offline, tenant switch, payment/refund and printer acceptance. Only then prepare production artifacts and rollout.
 
 No guessing missing canonical history, no silently mapping OTHER to cash, no disabling split/cross-shift gates early. Missing server behavior requires a server change request, not a brittle client workaround.
 
 ## Evidence and release limits
 
-Before source shipping, the focused run passed 1,087 tests across 49 suites, renderer typecheck, Android web build and boundary checks (159 reachable source files / 5 bundle files). These counts are not full-repository or native acceptance. Re-run full tests/build on the merged state and inspect current CI. Old APKs do not represent this source. Do not publish a release tag, auto-update artifact or production APK just because a source PR merged.
+For the event-reporting follow-up, 111 focused tests passed. The full non-browser suite passed serially with 396 files passed, 1 skipped, 4,316 tests passed and 13 opt-in tests skipped; Electron smoke then passed separately with 13/13 tests. Renderer/main/Windows build, Android web build, production-readiness policy, build-only CI policy and boundary checks passed (162 reachable source files / 5 bundle files). These are not native Android, real backend or printer acceptance. Inspect fresh PR CI before merge. Old APKs do not represent this source. Do not publish a release tag, auto-update artifact or production APK just because a source PR merged.
 
 Separate backend DEV work was reported in `/var/www/www/enail/.worktrees/android-pos-restaurant-parity-20260908` on netcup, branch `feat/android-pos-restaurant-parity-20260908-20260908`, base HEAD `c6576a518311b81171d566c4c919f7e2355bce85`, with uncommitted changes. Verify separately; POS repository commit/merge does not save or deploy that work. Do not build on live Contabo or run real financial mutations as tests.
 

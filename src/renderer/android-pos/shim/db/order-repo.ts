@@ -30,6 +30,11 @@ import {
   getOrderPaymentAllocations,
   summarizeShiftSales,
 } from '../../../../shared/shift-accounting';
+import {
+  validateCanonicalRefundEvent,
+  type CanonicalRefundEvent,
+} from '../../../../shared/refund-event';
+import { validateRefundEventEvidence } from './refund-event-repo';
 import { ShiftAlreadyClosedError } from '../../../../shared/shift-close';
 
 const shiftReportNumbers = ['openingCash', 'closingCash', 'totalSales', 'totalOrders', 'cashTotal',
@@ -53,6 +58,191 @@ function readShiftReportSnapshot(shift: any): any | null {
     || shiftReportNumbers.some(field => !Number.isSafeInteger(report[field]))
     || shiftReportNonnegative.some(field => report[field] < 0)) throw invalid();
   return report;
+}
+
+type RefundEventReportRow = {
+  request_id: string;
+  server_url: string;
+  salon_id: string;
+  local_order_id: string;
+  backend_order_id: string;
+  local_shift_id: string;
+  backend_shift_id: string;
+  machine_id: string;
+  operator_id: string;
+  occurred_at: string;
+  delta_amount_minor: number;
+  event_json: string;
+};
+
+const reportTenderMethods = new Set(['CASH', 'CARD', 'BLIK', 'BANK_TRANSFER']);
+
+function refundEventReportInvalid(reason: string): never {
+  throw new Error(`ANDROID_REFUND_EVENT_REPORT_INVALID: ${reason}`);
+}
+
+function parseReportObject(value: unknown, label: string): Record<string, any> {
+  if (typeof value !== 'string') return refundEventReportInvalid(`${label} is missing`);
+  let parsed: unknown;
+  try { parsed = JSON.parse(value); } catch { return refundEventReportInvalid(`${label} is malformed`); }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return refundEventReportInvalid(`${label} is malformed`);
+  }
+  return parsed as Record<string, any>;
+}
+
+function canonicalReportJson(value: unknown): string {
+  const normalize = (current: any): any => Array.isArray(current) ? current.map(normalize)
+    : current && typeof current === 'object'
+      ? Object.fromEntries(Object.keys(current).sort().map(key => [key, normalize(current[key])]))
+      : current;
+  return JSON.stringify(normalize(value));
+}
+
+type ValidatedRefundEventReportRow = {
+  event: CanonicalRefundEvent;
+  alreadyRefundedGrosze: number;
+  cumulativeGrosze: number;
+  originalTenderCapacities: Array<{ method: string; amountMinor: number }>;
+  priorLines: any[];
+  lines: any[];
+};
+
+function validateRefundEventReportRow(database: AndroidDatabase, row: RefundEventReportRow): ValidatedRefundEventReportRow {
+  const rawEvent = parseReportObject(row.event_json, 'Canonical event');
+  const validated = validateCanonicalRefundEvent(rawEvent, {
+    refundRequestId: row.request_id,
+    orderId: row.backend_order_id,
+    salonId: row.salon_id,
+    shiftId: row.backend_shift_id,
+    machineId: row.machine_id,
+    operatorId: row.operator_id,
+    deltaAmountMinor: row.delta_amount_minor,
+    tenderAllocations: rawEvent.tenderAllocations,
+  });
+  if (!validated.ok || validated.event.occurredAt !== row.occurred_at) {
+    return refundEventReportInvalid(validated.ok ? 'Canonical event timestamp mismatch' : validated.error);
+  }
+  if (validated.event.tenderAllocations.some(allocation => !reportTenderMethods.has(allocation.method))) {
+    return refundEventReportInvalid('Unsupported canonical tender method');
+  }
+
+  const refundShift = database.get<any>('SELECT * FROM shifts WHERE id = ?', [row.local_shift_id]);
+  const binding = parseReportObject(refundShift?.backend_binding_json, 'Refund shift binding');
+  if (!refundShift || refundShift.backend_id !== row.backend_shift_id
+    || binding.serverUrl !== row.server_url || binding.salonId !== row.salon_id
+    || binding.machineId !== row.machine_id || binding.backendShiftId !== row.backend_shift_id) {
+    return refundEventReportInvalid('Refund shift binding mismatch');
+  }
+
+  const order = database.get<any>('SELECT * FROM orders WHERE id = ?', [row.local_order_id]);
+  const context = parseReportObject(order?.refund_event_context_json, 'Canonical order context');
+  if (!order || order.backend_id !== row.backend_order_id
+    || context.serverUrl !== row.server_url || context.salonId !== row.salon_id
+    || context.machineId !== row.machine_id || context.backendOrderId !== row.backend_order_id
+    || !Array.isArray(context.originalTenderCapacities)) {
+    return refundEventReportInvalid('Canonical order context mismatch');
+  }
+
+  const attempt = database.get<any>('SELECT * FROM pos_refund_attempts WHERE request_id = ?', [row.request_id]);
+  if (!attempt || attempt.status !== 'CONFIRMED' || attempt.local_order_id !== row.local_order_id
+    || attempt.backend_order_id !== row.backend_order_id || attempt.shift_id !== row.local_shift_id
+    || attempt.scope_key !== JSON.stringify([row.server_url, row.salon_id, row.operator_id])) {
+    return refundEventReportInvalid('Confirmed refund journal mismatch');
+  }
+  const expected = parseReportObject(attempt.expected_json, 'Frozen refund expectation');
+  parseReportObject(attempt.payload_json, 'Frozen refund payload');
+  parseReportObject(attempt.response_json, 'Canonical refund response');
+  if (expected.protocolVersion !== 1) return refundEventReportInvalid('Frozen refund protocol mismatch');
+  let evidence: ReturnType<typeof validateRefundEventEvidence>;
+  try {
+    evidence = validateRefundEventEvidence(attempt, attempt.response_json);
+  } catch {
+    return refundEventReportInvalid('Frozen request/authority/response evidence mismatch');
+  }
+  const journalProof = validateCanonicalRefundEvent(validated.event, evidence.event);
+  if (!journalProof.ok || evidence.event.occurredAt !== row.occurred_at
+    || evidence.authority.orderTotalGrosze !== order.total
+    || canonicalReportJson(evidence.original) !== canonicalReportJson(context.originalTenderCapacities)) {
+    return refundEventReportInvalid('Canonical event disagrees with frozen journal evidence');
+  }
+  return {
+    event: validated.event,
+    alreadyRefundedGrosze: evidence.authority.alreadyRefundedGrosze,
+    cumulativeGrosze: evidence.validated.cumulativeGrosze,
+    originalTenderCapacities: evidence.original,
+    priorLines: evidence.saved.priorRefundLines,
+    lines: evidence.lines,
+  };
+}
+
+function validateConvertedRefundOrder(database: AndroidDatabase, order: any): void {
+  if (!Number.isSafeInteger(order.refund_amount) || order.refund_amount <= 0
+    || !Number.isSafeInteger(order.total) || order.total <= 0) {
+    return refundEventReportInvalid('Canonical order money is invalid');
+  }
+  const rows = database.all<RefundEventReportRow>(
+    'SELECT * FROM pos_refund_events WHERE local_order_id = ? OR backend_order_id = ? ORDER BY occurred_at, request_id',
+    [order.id, order.backend_id],
+  );
+  if (!rows.length || rows.some(row => row.local_order_id !== order.id || row.backend_order_id !== order.backend_id)) {
+    return refundEventReportInvalid('Canonical order ledger is missing or ambiguous');
+  }
+  const confirmed = database.all<any>(
+    "SELECT * FROM pos_refund_attempts WHERE (local_order_id = ? OR backend_order_id = ?) AND status = 'CONFIRMED'",
+    [order.id, order.backend_id],
+  );
+  if (confirmed.length !== rows.length) return refundEventReportInvalid('Canonical journal/ledger count mismatch');
+
+  const proofs = rows.map(row => validateRefundEventReportRow(database, row))
+    .sort((a, b) => a.alreadyRefundedGrosze - b.alreadyRefundedGrosze);
+  const original = proofs[0].originalTenderCapacities;
+  const localTenders = getOrderPaymentAllocations(order)
+    .map(tender => ({ method: tender.method, amountMinor: tender.amount }))
+    .sort((a, b) => a.method.localeCompare(b.method));
+  if (canonicalReportJson(original) !== canonicalReportJson(localTenders)
+    || proofs.some(proof => canonicalReportJson(proof.originalTenderCapacities) !== canonicalReportJson(original))) {
+    return refundEventReportInvalid('Canonical original tender capacity mismatch');
+  }
+
+  let cumulative = 0;
+  const used = new Map<string, number>();
+  const lines: any[] = [];
+  const byIdentity = (a: any, b: any) => `${a.refundRequestId}/${a.orderItemId}`.localeCompare(`${b.refundRequestId}/${b.orderItemId}`);
+  for (const proof of proofs) {
+    if (proof.alreadyRefundedGrosze !== cumulative) {
+      return refundEventReportInvalid('Canonical refund cumulative chain is incomplete');
+    }
+    if (canonicalReportJson([...proof.priorLines].sort(byIdentity))
+      !== canonicalReportJson([...lines].sort(byIdentity))) {
+      return refundEventReportInvalid('Canonical refund audit chain is incomplete');
+    }
+    cumulative += proof.event.deltaAmountMinor;
+    if (!Number.isSafeInteger(cumulative)) return refundEventReportInvalid('Canonical order total is unsafe');
+    if (proof.cumulativeGrosze !== cumulative) return refundEventReportInvalid('Canonical refund cumulative response mismatch');
+    lines.push(...proof.lines);
+    for (const allocation of proof.event.tenderAllocations) {
+      const next = (used.get(allocation.method) ?? 0) + allocation.amountMinor;
+      if (!Number.isSafeInteger(next)) return refundEventReportInvalid('Canonical tender total is unsafe');
+      used.set(allocation.method, next);
+    }
+  }
+  for (const [method, amount] of used) {
+    const capacity = original.find(row => row.method === method);
+    if (!capacity || amount > capacity.amountMinor) return refundEventReportInvalid('Canonical tender capacity exceeded');
+  }
+  let storedLines: unknown = [];
+  if (order.refund_lines !== null) {
+    try { storedLines = JSON.parse(order.refund_lines); } catch { return refundEventReportInvalid('Canonical order audit is malformed'); }
+  }
+  if (!Array.isArray(storedLines)
+    || canonicalReportJson([...storedLines].sort(byIdentity)) !== canonicalReportJson(lines.sort(byIdentity))) {
+    return refundEventReportInvalid('Canonical order audit projection mismatch');
+  }
+  const expectedStatus = cumulative === order.total ? 'REFUNDED' : 'PARTIAL_REFUND';
+  if (cumulative !== order.refund_amount || cumulative > order.total || order.status !== expectedStatus) {
+    return refundEventReportInvalid('Canonical order cumulative projection mismatch');
+  }
 }
 
 // ─── Line contract (ported from order-line-contract.ts:20-42) ──────────────
@@ -438,8 +628,9 @@ export function createOrderRepo(database: AndroidDatabase) {
       const shift = database.get<any>('SELECT * FROM shifts WHERE id = ?', [shiftId]);
       return shift ? readShiftReportSnapshot(shift) : null;
     },
-    /** Close + Z-report aggregation (split tenders and tips honored). Refunds
-     *  reduce revenue and the matching tender bucket. */
+    /** Close + Z-report aggregation (split tenders and tips honored). Legacy
+     *  cumulative refunds stay on their sale shift. Canonical refunds use
+     *  immutable event deltas and exact tenders from the refund shift. */
     closeShift(shiftId: string, closingCash: number): any {
       const shift = database.get<any>('SELECT * FROM shifts WHERE id = ?', [shiftId]);
       if (!shift) throw new Error(`Shift ${shiftId} not found`);
@@ -447,30 +638,42 @@ export function createOrderRepo(database: AndroidDatabase) {
       if (saved) return saved;
       if (shift.closed_at !== null) throw new ShiftAlreadyClosedError(shiftId);
       if (!Number.isSafeInteger(closingCash) || closingCash < 0) throw new Error('Closing cash must be a nonnegative safe integer in grosze');
-      if (database.get('SELECT id FROM orders WHERE shift_id = ? AND refund_event_context_json IS NOT NULL LIMIT 1', [shiftId])
-        || database.get('SELECT request_id FROM pos_refund_events WHERE local_shift_id = ? LIMIT 1', [shiftId])) {
-        throw new Error('ANDROID_REFUND_EVENT_REPORT_NOT_ENABLED: Canonical event accounting is required before closing this shift.');
-      }
       return database.transaction(() => {
         const orders = database.all<any>('SELECT * FROM orders WHERE shift_id = ?', [shiftId]);
+        const canonicalRows = database.all<RefundEventReportRow>(
+          'SELECT * FROM pos_refund_events WHERE local_shift_id = ? ORDER BY occurred_at, request_id',
+          [shiftId],
+        );
+        const convertedOrders = new Map<string, any>();
+        for (const order of orders) {
+          if (order.refund_event_context_json !== null) convertedOrders.set(order.id, order);
+        }
+        for (const row of canonicalRows) {
+          const order = database.get<any>('SELECT * FROM orders WHERE id = ?', [row.local_order_id]);
+          if (!order) refundEventReportInvalid('Canonical event order is missing');
+          convertedOrders.set(order.id, order);
+        }
+        for (const order of convertedOrders.values()) validateConvertedRefundOrder(database, order);
+
         const accounting = summarizeShiftSales(orders);
         const totalDiscounts = accounting.totalDiscounts;
-        // Per-order cumulative refund_amount for REFUNDED/PARTIAL_REFUND orders
-        // (shift-controller.ts:140-143). Refunds of unsynced orders can't happen
-        // (refundOrder refuses them), so every refund_amount here is backend-confirmed.
-        const totalRefunds = orders.reduce(
-          (sum: number, o: any) => sum + (o.refund_amount && o.refund_amount > 0 ? o.refund_amount : 0),
+        // Unconverted rows keep the old cumulative behavior. Once an order has
+        // canonical context, only its immutable events contribute, potentially
+        // in a different refund shift. Never subtract both projections.
+        const legacyRefunds = orders.reduce(
+          (sum: number, order: any) => sum + (order.refund_event_context_json === null
+            && order.refund_amount && order.refund_amount > 0 ? order.refund_amount : 0),
           0,
         );
+        const canonicalEvents = canonicalRows.map(row => validateRefundEventReportRow(database, row).event);
+        const canonicalRefunds = canonicalEvents.reduce((sum, event) => sum + event.deltaAmountMinor, 0);
+        const totalRefunds = legacyRefunds + canonicalRefunds;
 
         const paymentBuckets = accounting.payments;
 
-        // 2. Subtract each order's refund from the matching tender bucket
-        //    (shift-controller.ts:145-175). Split tenders distribute the refund
-        //    proportionally with the last tender absorbing the rounding remainder;
-        //    a single-method order refunds straight against that method.
+        // Preserve the legacy proportional fallback only for unconverted rows.
         for (const o of orders) {
-          if (!(o.refund_amount > 0)) continue;
+          if (o.refund_event_context_json !== null || !(o.refund_amount > 0)) continue;
           const tenders = getOrderPaymentAllocations(o);
           if (tenders.length > 1) {
             const orderTotal = tenders.reduce((s: number, t: any) => s + (t.amount ?? 0), 0);
@@ -488,6 +691,13 @@ export function createOrderRepo(database: AndroidDatabase) {
             }
           }
           addShiftPayment(paymentBuckets, tenders[0]?.method ?? o.payment_method, o.refund_amount, -1);
+        }
+        // Canonical allocations are already exact minor-unit facts. Applying
+        // them directly avoids cumulative split reallocation and rounding drift.
+        for (const event of canonicalEvents) {
+          for (const allocation of event.tenderAllocations) {
+            addShiftPayment(paymentBuckets, allocation.method, allocation.amountMinor, -1);
+          }
         }
 
         const totalSales = accounting.salesTotal - totalRefunds;

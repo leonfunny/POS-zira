@@ -63,7 +63,7 @@ const fingerprint = (order: any) => JSON.stringify([
 ]);
 
 /** Validate immutable evidence independently for current and historical requests. */
-function evidence(attempt: RefundAttempt, responseJson: string) {
+export function validateRefundEventEvidence(attempt: RefundAttempt, responseJson: string) {
   const saved = parse(attempt.expected_json); const payload = parse(attempt.payload_json); const raw = parse(responseJson);
   if (!object(saved) || saved.protocolVersion !== 1 || !object(saved.authority) || !object(saved.event)
     || typeof saved.localFingerprint !== 'string' || !Array.isArray(parse(saved.localFingerprint))
@@ -124,7 +124,7 @@ export function createRefundEventRepo(database: AndroidDatabase) {
       const attempt = journal.get(input.requestId);
       if (!attempt || attempt.local_order_id !== input.localOrderId
         || attempt.scope_key !== JSON.stringify([scope.serverUrl, scope.salonId, scope.operatorId])) return fail('Original journal scope mismatch');
-      const current = evidence(attempt, input.responseJson);
+      const current = validateRefundEventEvidence(attempt, input.responseJson);
       if (current.event.salonId !== scope.salonId || current.event.operatorId !== scope.operatorId
         || current.event.machineId !== scope.machineId) return fail('Event scope mismatch');
       const context = { serverUrl: scope.serverUrl, salonId: scope.salonId, machineId: scope.machineId,
@@ -164,7 +164,7 @@ export function createRefundEventRepo(database: AndroidDatabase) {
         const histories = ledger.map(row => {
           const savedAttempt = confirmed.find(item => item.request_id === row.request_id);
           if (!savedAttempt || savedAttempt.local_order_id !== input.localOrderId || savedAttempt.backend_order_id !== attempt.backend_order_id) return fail('Ledger journal missing');
-          const proof = evidence(savedAttempt, savedAttempt.response_json!);
+          const proof = validateRefundEventEvidence(savedAttempt, savedAttempt.response_json!);
           const ev = proof.event;
           if (row.server_url !== scope.serverUrl || row.salon_id !== scope.salonId || row.local_order_id !== input.localOrderId
             || row.backend_order_id !== attempt.backend_order_id || row.local_shift_id !== order.shift_id
