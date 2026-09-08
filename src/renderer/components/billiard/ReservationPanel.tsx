@@ -1,3 +1,4 @@
+import { useFeedbackDialog } from '../../hooks/useFeedbackDialog';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { humanizeBilliardError } from './utils';
 import {
@@ -71,6 +72,7 @@ export function ReservationPanel({
   onCheckedIn,
 }: ReservationPanelProps) {
   const { t } = useTranslation(language);
+  const feedback = useFeedbackDialog(t);
   const { bookingsApi } = useBilliardApi();
   const today = localDateKey();
   const reservationLoadFailed = t('billiard.reservationLoadFailed');
@@ -220,7 +222,7 @@ export function ReservationPanel({
   };
 
   const handleCancel = async (booking: NormalizedBilliardBooking) => {
-    if (!window.confirm(t('billiard.cancelReservationConfirm'))) return;
+    if (!await feedback.confirm(t('billiard.cancelReservationConfirm'), true)) return;
     setActionId(booking.id);
     setError(null);
     try {
@@ -234,7 +236,7 @@ export function ReservationPanel({
   };
 
   const handleCheckIn = async (booking: NormalizedBilliardBooking) => {
-    if (!window.confirm(t('billiard.checkInConfirm'))) return;
+    if (!await feedback.confirm(t('billiard.checkInConfirm'))) return;
     setActionId(booking.id);
     setError(null);
     try {
@@ -252,6 +254,7 @@ export function ReservationPanel({
       className="fixed inset-0 z-[70] bg-slate-950/50 p-4 flex items-center justify-center"
       style={{ bottom: 'var(--touch-keyboard-inset, 0px)' }}
     >
+      {feedback.dialog}
       <section className="w-full max-w-5xl max-h-full bg-white rounded-xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden">
         <header className="px-4 py-3 border-b border-slate-200 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 min-w-0">
@@ -327,7 +330,7 @@ export function ReservationPanel({
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="font-semibold text-slate-900 truncate">{booking.customerName}</p>
-                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${statusTone(booking.status)}`}>
+                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${statusTone(booking.status)}`}>
                           {booking.status}
                         </span>
                       </div>

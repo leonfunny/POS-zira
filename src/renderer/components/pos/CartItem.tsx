@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Pencil, PencilLine, Printer, Scale, StickyNote, Trash2 } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { ChevronDown, Pencil, PencilLine, Printer, Scale, StickyNote, Tag, Trash2 } from 'lucide-react';
 import type { CartItem as CartItemType } from '../../hooks/usePosStore';
 import { resolveName } from '../../../shared/catalog-names';
 import { formatSaleQuantity, normalizeSaleUnit, normalizeSellBy } from '../../../shared/pos-sale';
@@ -14,7 +14,8 @@ interface CartItemProps {
   item: CartItemType;
   onUpdateQuantity: (id: string, quantity: number) => void;
   onRemove: (id: string) => void;
-  onSetNotes?: (id: string, notes: string) => void;
+  onSetNotes?: (id: string, notes: string) => void | Promise<void>;
+  onNotesDraftChange?: (id: string, pending: boolean) => void;
   onPrintLabel?: (item: CartItemType) => void | CartItemLabelPrintResult | Promise<void | CartItemLabelPrintResult>;
   onEditProduct?: (item: CartItemType) => void;
   onSelectField?: (id: string, field: 'qty' | 'price') => void;
@@ -32,6 +33,7 @@ interface CartItemProps {
    *  orders/fiscal lines keep canonical item.name while paper receipts
    *  localize separately at print time. */
   lang?: string;
+  compact?: boolean;
 }
 
 export default function CartItemRow({
@@ -39,6 +41,7 @@ export default function CartItemRow({
   onUpdateQuantity,
   onRemove,
   onSetNotes,
+  onNotesDraftChange,
   onPrintLabel,
   onEditProduct,
   onSelectField,
@@ -52,6 +55,7 @@ export default function CartItemRow({
   fresh = false,
   t,
   lang,
+  compact = false,
 }: CartItemProps) {
   const currency = t?.('pos.currency') ?? 'PLN';
   const sellBy = normalizeSellBy(item.sellBy);
@@ -66,10 +70,19 @@ export default function CartItemRow({
   };
 
   const [editingNotes, setEditingNotes] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [notesInput, setNotesInput] = useState(item.notes || '');
+  const [notesSaving, setNotesSaving] = useState(false);
+  const notesSavingRef = useRef(false);
+  const [notesError, setNotesError] = useState<string | null>(null);
+  const notesDirty = editingNotes && notesInput.trim() !== (item.notes || '').trim();
+  useEffect(() => {
+    onNotesDraftChange?.(item.id, notesDirty || notesSaving);
+    return () => onNotesDraftChange?.(item.id, false);
+  }, [item.id, notesDirty, notesSaving, onNotesDraftChange]);
   const [labelState, setLabelState] = useState<'idle' | 'printing' | 'printed' | 'error'>('idle');
   const [labelMessage, setLabelMessage] = useState('');
-  useEffect(() => { setNotesInput(item.notes || ''); }, [item.notes]);
+  useEffect(() => { if (!editingNotes) setNotesInput(item.notes || ''); }, [item.notes, editingNotes]);
   useEffect(() => {
     if (labelState === 'idle' || labelState === 'printing') return;
     const timer = window.setTimeout(() => {
@@ -79,9 +92,20 @@ export default function CartItemRow({
     return () => window.clearTimeout(timer);
   }, [labelState]);
 
-  const handleSaveNotes = () => {
-    if (onSetNotes) onSetNotes(item.id, notesInput.trim());
-    setEditingNotes(false);
+  const handleSaveNotes = async () => {
+    if (!onSetNotes || notesSavingRef.current) return;
+    notesSavingRef.current = true;
+    setNotesSaving(true);
+    setNotesError(null);
+    try {
+      await onSetNotes(item.id, notesInput.trim());
+      setEditingNotes(false);
+    } catch (error) {
+      setNotesError(error instanceof Error ? error.message : String(error));
+    } finally {
+      notesSavingRef.current = false;
+      setNotesSaving(false);
+    }
   };
   const handlePrintLabel = async () => {
     if (!onPrintLabel || labelState === 'printing') return;
@@ -127,33 +151,39 @@ export default function CartItemRow({
   const isActive = !!activeField;
 
   return (
-    <div className={`px-3 py-2 border-b border-slate-100 last:border-b-0 transition-colors ${
+    <div data-compact={compact || undefined} className={`pos-cart-row px-3 py-2 border-b border-slate-100 last:border-b-0 transition-colors ${
       isActive ? 'bg-brand-50' : ''
     } ${fresh ? 'sc-cart-item-fresh pos-cart-item-fresh' : ''}`}>
-      <div className="flex items-start justify-between gap-3">
+      <div className="pos-cart-row-heading flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           {/* Product name doubles as the per-line discount entry point so the
               crowded POS layout gains no extra button (design: 2026-08-16). */}
           <button
             type="button"
-            onClick={() => { if (!item.locked && onEditDiscount) onEditDiscount(item); }}
-            disabled={item.locked || !onEditDiscount}
-            title={tOr('pos.discount.lineTitle', 'Line discount')}
-            className={`block w-full text-left text-sm font-extrabold text-slate-950 leading-snug touch-manipulation ${
+            onClick={() => {
+              if (compact) setExpanded(value => !value);
+              else if (!item.locked && onEditDiscount) onEditDiscount(item);
+            }}
+            disabled={item.locked || (!compact && !onEditDiscount)}
+            aria-expanded={compact ? expanded || editingNotes : undefined}
+            title={compact ? tOr('pos.restaurant.editItem', 'Edit item') : tOr('pos.discount.lineTitle', 'Line discount')}
+            className={`pos-cart-row-name block w-full text-left text-sm font-extrabold text-slate-950 leading-snug touch-manipulation ${
               item.locked || !onEditDiscount ? 'cursor-default' : 'cursor-pointer hover:text-brand-800'
             }`}
           >
+            {compact && <span className="restaurant-line-qty">{formulaQtyText}</span>}
             <span className="line-clamp-2">
               {resolveName(item, lang)}
               {lineDiscountBadge && (
-                <span className="ml-1.5 inline-block rounded-full bg-emerald-100 px-1.5 py-0.5 align-middle text-[10px] font-black text-emerald-800">
+                <span className="ml-1.5 inline-block rounded-full bg-emerald-100 px-1.5 py-0.5 align-middle text-xs font-black text-emerald-800">
                   {lineDiscountBadge}
                 </span>
               )}
             </span>
+            {compact && <ChevronDown size={14} aria-hidden="true" className="restaurant-line-chevron" />}
           </button>
           {item.locked && item.billiard && (
-            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide">
+            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs font-bold uppercase tracking-wide">
               <span className="rounded-full bg-blue-50 px-2 py-0.5 text-blue-700">Billiard · {item.billiard.kind}</span>
               <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">Locked</span>
               {item.billiard.durationMinutes != null && (
@@ -174,6 +204,8 @@ export default function CartItemRow({
         </span>
       </div>
 
+      {compact && !expanded && !editingNotes && <p className="restaurant-line-unit">{unitPriceQtyText}</p>}
+      {(!compact || expanded || editingNotes) && <>
       <div className="mt-0.5 flex items-center justify-between gap-2">
         <button
           type="button"
@@ -190,7 +222,7 @@ export default function CartItemRow({
         </button>
       </div>
 
-      <div className="mt-1.5 flex items-center justify-between gap-2">
+      <div className="pos-cart-row-actions mt-1.5 flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1.5">
           {sellBy === 'WEIGHT' && onReadScale && (
             <button
@@ -269,7 +301,7 @@ export default function CartItemRow({
           ) : !item.locked && onSetNotes && !editingNotes && (
             <button
               type="button"
-              onClick={() => setEditingNotes(true)}
+              onClick={() => { setNotesError(null); setEditingNotes(true); }}
               aria-label={item.notes ? tOr('pos.note', 'Note') : tOr('pos.addNote', 'Add note')}
               className={`h-11 rounded-lg border px-2 text-xs font-bold cursor-pointer touch-manipulation transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 inline-flex items-center gap-1.5 ${
                 item.notes
@@ -278,7 +310,7 @@ export default function CartItemRow({
               }`}
             >
               {item.notes ? <StickyNote size={14} strokeWidth={2.4} aria-hidden="true" /> : <PencilLine size={14} strokeWidth={2.4} aria-hidden="true" />}
-              <span>{item.notes ? tOr('pos.note', 'Note') : tOr('pos.addNoteShort', 'Note')}</span>
+              <span>{tOr('pos.notes', 'Notes')}</span>
             </button>
           )}
           {/* Icon-only on purpose: this row already carries Print and Remove as
@@ -300,13 +332,18 @@ export default function CartItemRow({
             type="button"
             onClick={() => onRemove(item.id)}
             aria-label={tOr('pos.cart.removeItem', 'Remove item')}
-            className="h-11 rounded-lg border border-red-100 bg-white px-2 text-xs font-bold text-red-600 hover:border-red-200 hover:bg-red-50 active:bg-red-100 cursor-pointer touch-manipulation shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-200 inline-flex items-center gap-1.5"
+            className="pos-cart-item-remove h-11 rounded-lg border border-red-100 bg-white px-2 text-xs font-bold text-red-600 hover:border-red-200 hover:bg-red-50 active:bg-red-100 cursor-pointer touch-manipulation shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-200 inline-flex items-center gap-1.5"
           >
             <Trash2 size={14} strokeWidth={2.4} aria-hidden="true" />
             <span>{tOr('pos.cart.remove', 'Remove')}</span>
           </button>}
         </div>
       </div>
+
+      {compact && !item.locked && onEditDiscount && <button type="button" className="restaurant-line-discount" onClick={() => onEditDiscount(item)}>
+        <Tag size={15} aria-hidden="true" />{tOr('pos.discount.lineTitle', 'Line discount')}
+      </button>}
+      </>}
 
       {sellBy === 'WEIGHT' && scaleError && (
         <p className="mt-2 text-xs font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5">
@@ -328,6 +365,8 @@ export default function CartItemRow({
         <div className="mt-3">
           <textarea
             value={notesInput}
+            disabled={notesSaving}
+            aria-label={tOr('pos.notes', 'Notes')}
             onChange={(e) => setNotesInput(e.target.value)}
             rows={2}
             className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm text-slate-950 focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 resize-none"
@@ -338,18 +377,21 @@ export default function CartItemRow({
             <button
               type="button"
               onClick={handleSaveNotes}
-              className="h-10 px-4 text-sm rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer font-bold touch-manipulation"
+              disabled={notesSaving}
+              className="min-h-11 px-4 text-sm rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer font-bold touch-manipulation disabled:opacity-50"
             >
-              {tOr('pos.ok', 'OK')}
+              {notesSaving ? tOr('common.loading', 'Loading…') : tOr('pos.ok', 'OK')}
             </button>
             <button
               type="button"
-              onClick={() => setEditingNotes(false)}
-              className="h-10 px-4 text-sm rounded-lg bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 cursor-pointer font-bold touch-manipulation"
+              disabled={notesSaving}
+              onClick={() => { setNotesInput(item.notes || ''); setNotesError(null); setEditingNotes(false); }}
+              className="min-h-11 px-4 text-sm rounded-lg bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 cursor-pointer font-bold touch-manipulation disabled:opacity-50"
             >
               {tOr('pos.cancel', 'Cancel')}
             </button>
           </div>
+          {notesError && <p role="alert" className="mt-2 text-sm text-red-600">{notesError}</p>}
         </div>
       )}
 

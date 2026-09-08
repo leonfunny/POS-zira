@@ -41,7 +41,7 @@ vi.mock('../src/renderer/android-pos/LoginScreen', () => ({
 import AndroidBootApp from '../src/renderer/android-pos/AndroidBootApp';
 
 /** Build a window.electronAPI mock that boots straight into the POS state. */
-function makeApi(opts: { billiardEnabled: boolean; language?: string }) {
+function makeApi(opts: { billiardEnabled: boolean; language?: string; posMode?: string }) {
   return {
     auth: {
       getUser: () => Promise.resolve({ data: { isAuthenticated: true } }),
@@ -51,7 +51,7 @@ function makeApi(opts: { billiardEnabled: boolean; language?: string }) {
       get: () =>
         Promise.resolve({ features: { billiard: { enabled: opts.billiardEnabled } } }),
     },
-    getConfig: () => Promise.resolve({ language: opts.language ?? 'pl' }),
+    getConfig: () => Promise.resolve({ language: opts.language ?? 'pl', posMode: opts.posMode }),
     pos: {
       getState: () => Promise.resolve({ session: { isOpen: false } }),
       dispatch: () => Promise.resolve(),
@@ -89,7 +89,7 @@ describe('AndroidBootApp — entitlement-gated POS/Bi-a mode tabs', () => {
     (globalThis as any).electronAPI = previousElectronAPI;
   });
 
-  async function boot(opts: { billiardEnabled: boolean; language?: string }) {
+  async function boot(opts: { billiardEnabled: boolean; language?: string; posMode?: string }) {
     (globalThis as any).electronAPI = makeApi(opts);
     // `window` exists in happy-dom; the component reads (window as any).electronAPI.
     (globalThis as any).window = globalThis;
@@ -116,6 +116,15 @@ describe('AndroidBootApp — entitlement-gated POS/Bi-a mode tabs', () => {
     expect(text).not.toContain('Bi-a');
     expect(container.querySelector('[data-testid="pos-app"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="billiard-floor-plan"]')).toBeNull();
+  });
+
+  it('uses the restaurant palette for the Android mode bar, but not the billiard screen', async () => {
+    await boot({ billiardEnabled: true, posMode: 'restaurant' });
+    expect(container.querySelector('.android-pos-shell')?.getAttribute('data-pos-mode')).toBe('restaurant');
+    const billiard = [...container.querySelectorAll('button')].find(button => button.textContent === 'Bi-a')!;
+    await act(async () => billiard.click());
+    expect(container.querySelector('.android-pos-shell')?.getAttribute('data-pos-mode')).toBeNull();
+    expect(billiard.getAttribute('aria-pressed')).toBe('true');
   });
 
   it('switching to Bi-a renders BilliardFloorPlan with the config language and persists the mode', async () => {

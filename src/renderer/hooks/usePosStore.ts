@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import type { RestaurantOrderType } from '../../shared/pos-mode';
 import type { CustomerDisplayCatalogSection, CustomerDisplayProfile } from '../../shared/types';
 import type { SellBy } from '../../shared/pos-sale';
 import type {
@@ -62,6 +63,7 @@ interface CartState {
 }
 
 export interface CheckoutDraftState {
+  restaurant?: { orderType: RestaurantOrderType };
   customerNip?: string;
   customerName?: string;
   requiresInvoice?: boolean;
@@ -149,7 +151,7 @@ type PosAction =
   | { type: 'session/open'; payload: { shiftId: string; staffId: string; staffName: string } }
   | { type: 'session/close' }
   | { type: 'display/setMode'; payload: DisplayState }
-  | { type: 'table/setActive'; payload: { tableId: string | null } }
+  | { type: 'table/setActive'; payload: { tableId: string | null; orderType?: RestaurantOrderType } }
   | { type: 'customer/select'; payload: { id: string; name: string; nip?: string } }
   | { type: 'customer/clear' }
   | { type: 'tip/set'; payload: { amount: number } }
@@ -170,12 +172,17 @@ export function usePosStore() {
     try {
       const result = await window.electronAPI.pos.dispatch(action) as any;
       if (result?.success === false) {
-        setDispatchError(String(result.error || 'POS update was not saved.'));
+        const error = String(result.error || 'POS update was not saved.');
+        setDispatchError(error);
+        return { success: false, error };
       } else {
         setDispatchError(null);
+        return { success: true };
       }
     } catch (error: any) {
-      setDispatchError(String(error?.message || error || 'POS update was not saved.'));
+      const message = String(error?.message || error || 'POS update was not saved.');
+      setDispatchError(message);
+      return { success: false, error: message };
     }
   }, []);
 

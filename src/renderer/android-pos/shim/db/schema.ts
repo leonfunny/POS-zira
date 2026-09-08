@@ -1,3 +1,6 @@
+import { RESTAURANT_CHECK_SCHEMA } from '../../../../shared/restaurant-check';
+import { ANDROID_RESTAURANT_SCHEMA } from './restaurant-table-repo';
+
 /**
  * Android catalog DB schema (v1).
  *
@@ -116,7 +119,8 @@ export const ANDROID_SCHEMA_DDL = `
     refund_amount INTEGER DEFAULT 0,
     refund_reason TEXT,
     refunded_at TEXT,
-    refund_lines TEXT
+    refund_lines TEXT,
+    refund_event_context_json TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_orders_shift ON orders(shift_id);
   CREATE INDEX IF NOT EXISTS idx_orders_synced ON orders(synced);
@@ -137,12 +141,18 @@ export const ANDROID_SCHEMA_DDL = `
     staff_id TEXT,
     staff_name TEXT,
     notes TEXT,
-    course INTEGER DEFAULT 1
+    course INTEGER DEFAULT 1,
+    allocated_discount INTEGER DEFAULT 0,
+    payable_total INTEGER,
+    restaurant_line_id TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
 
   CREATE TABLE IF NOT EXISTS shifts (
     id TEXT PRIMARY KEY,
+    backend_id TEXT,
+    backend_binding_json TEXT,
+    close_report_json TEXT,
     staff_id TEXT,
     staff_name TEXT,
     opening_cash INTEGER DEFAULT 0,
@@ -164,6 +174,42 @@ export const ANDROID_SCHEMA_DDL = `
     name TEXT PRIMARY KEY,
     current_value INTEGER DEFAULT 0
   );
+
+  CREATE TABLE IF NOT EXISTS pos_refund_attempts (
+    request_id TEXT PRIMARY KEY,
+    scope_key TEXT NOT NULL,
+    local_order_id TEXT NOT NULL,
+    backend_order_id TEXT NOT NULL,
+    shift_id TEXT,
+    payload_json TEXT NOT NULL,
+    expected_json TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('PREPARED', 'UNKNOWN', 'CONFIRMED', 'REJECTED')),
+    response_json TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_refund_attempt_unresolved_local
+    ON pos_refund_attempts(local_order_id) WHERE status IN ('PREPARED', 'UNKNOWN');
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_refund_attempt_unresolved_backend
+    ON pos_refund_attempts(backend_order_id) WHERE status IN ('PREPARED', 'UNKNOWN');
+
+  CREATE TABLE IF NOT EXISTS pos_refund_events (
+    request_id TEXT PRIMARY KEY,
+    server_url TEXT NOT NULL,
+    salon_id TEXT NOT NULL,
+    local_order_id TEXT NOT NULL,
+    backend_order_id TEXT NOT NULL,
+    local_shift_id TEXT NOT NULL,
+    backend_shift_id TEXT NOT NULL,
+    machine_id TEXT NOT NULL,
+    operator_id TEXT NOT NULL,
+    occurred_at TEXT NOT NULL,
+    delta_amount_minor INTEGER NOT NULL CHECK (typeof(delta_amount_minor) = 'integer' AND delta_amount_minor > 0),
+    event_json TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_refund_events_order ON pos_refund_events(server_url, salon_id, local_order_id);
+  CREATE INDEX IF NOT EXISTS idx_refund_events_shift ON pos_refund_events(local_shift_id);
 `;
 
 /**
@@ -175,7 +221,7 @@ export const ANDROID_SCHEMA_DDL = `
  * single statement, so multi-statement DDL must be split.
  */
 export function applyAndroidSchema(db: SqlJsDatabase): void {
-  const statements = ANDROID_SCHEMA_DDL
+  const statements = (ANDROID_SCHEMA_DDL + RESTAURANT_CHECK_SCHEMA + ANDROID_RESTAURANT_SCHEMA)
     .split(';')
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
@@ -208,9 +254,32 @@ export function applyAndroidSchema(db: SqlJsDatabase): void {
   if (!orderColumns.has('refund_lines')) {
     db.run('ALTER TABLE orders ADD COLUMN refund_lines TEXT');
   }
+  // Canonical event provenance only; never infer it from legacy cumulative refunds.
+  if (!orderColumns.has('refund_event_context_json')) db.run('ALTER TABLE orders ADD COLUMN refund_event_context_json TEXT');
+  if (!orderColumns.has('sync_payload_json')) db.run('ALTER TABLE orders ADD COLUMN sync_payload_json TEXT');
+  if (!orderColumns.has('sync_metadata_eligible')) db.run('ALTER TABLE orders ADD COLUMN sync_metadata_eligible INTEGER NOT NULL DEFAULT 0');
+  const itemColumns = new Set((db.exec('PRAGMA table_info(order_items)')[0]?.values ?? []).map(row => String(row[1])));
+  if (!itemColumns.has('allocated_discount')) db.run('ALTER TABLE order_items ADD COLUMN allocated_discount INTEGER DEFAULT 0');
+  if (!itemColumns.has('payable_total')) db.run('ALTER TABLE order_items ADD COLUMN payable_total INTEGER');
+  // Verified server snapshot provenance only; legacy/local rows stay unknown.
+  if (!itemColumns.has('restaurant_line_id')) db.run('ALTER TABLE order_items ADD COLUMN restaurant_line_id TEXT');
+  const shiftColumns = new Set((db.exec('PRAGMA table_info(shifts)')[0]?.values ?? []).map(row => String(row[1])));
+  if (!shiftColumns.has('backend_id')) db.run('ALTER TABLE shifts ADD COLUMN backend_id TEXT');
+  // Explicit server/device evidence only; an old backend_id proves no binding.
+  if (!shiftColumns.has('backend_binding_json')) db.run('ALTER TABLE shifts ADD COLUMN backend_binding_json TEXT');
+  if (!shiftColumns.has('close_report_json')) db.run('ALTER TABLE shifts ADD COLUMN close_report_json TEXT');
   db.run(`PRAGMA user_version = ${ANDROID_SCHEMA_VERSION}`);
 }
 
 /** v3 = product_variants.track_inventory (stock-guard parity).
- *  v4 = orders.{refund_amount,refund_reason,refunded_at,refund_lines} (E1b refund). */
-export const ANDROID_SCHEMA_VERSION = 4;
+ *  v4 = orders.{refund_amount,refund_reason,refunded_at,refund_lines} (E1b refund).
+ *  v5 = restaurant checks, local tables/device ID and per-line discount allocation.
+ *  v6 = tenant-scoped validated restaurant layout sync marker (additive).
+ *  v7 = immutable upload snapshot and new-sale metadata provenance (additive).
+ *  v8 = nullable verified server restaurant line provenance (no backfill).
+ *  v9 = durable immutable refund attempts with unresolved per-order locks.
+ *  v10 = nullable verified backend shift identity; no legacy ID guessing.
+ *  v11 = nullable declared backend shift/device binding evidence; no backfill.
+ *  v12 = immutable local close-report snapshot; no historical backfill.
+ *  v13 = canonical refund event storage and nullable context; no legacy backfill. */
+export const ANDROID_SCHEMA_VERSION = 13;

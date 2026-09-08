@@ -1,11 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import banner1 from '../../assets/banners/banner-1.jpg';
-import banner2 from '../../assets/banners/banner-2.jpg';
-import banner3 from '../../assets/banners/banner-3.jpg';
-import banner4 from '../../assets/banners/banner-4.jpg';
-
-const BANNERS = [banner1, banner2, banner3, banner4];
-const ROTATE_MS = 4000;
+import React from 'react';
 
 interface Props {
   t: (key: string) => string;
@@ -16,43 +9,8 @@ interface Props {
 }
 
 export default function EntryScreen({ t, onBooking, onWalkIn, onViewPrices, bookingCount }: Props) {
-  const [activeIdx, setActiveIdx] = useState(0);
-
-  const next = useCallback(() => setActiveIdx((i) => (i + 1) % BANNERS.length), []);
-
-  useEffect(() => {
-    const id = setInterval(next, ROTATE_MS);
-    return () => clearInterval(id);
-  }, [next]);
-
   return (
     <div className="h-full flex flex-col px-6">
-
-      {/* Carousel banner — stays at top */}
-      <div className="w-full relative overflow-hidden rounded-2xl shadow-sm shrink-0" style={{ aspectRatio: '1920 / 300' }}>
-        {BANNERS.map((src, i) => (
-          <img
-            key={i}
-            src={src}
-            alt={`Banner ${i + 1}`}
-            className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-700 ${
-              i === activeIdx ? 'opacity-100' : 'opacity-0'
-            }`}
-          />
-        ))}
-        {/* Dots */}
-        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-2">
-          {BANNERS.map((_, i) => (
-            <button
-              key={i}
-              onClick={() => setActiveIdx(i)}
-              className={`w-2 h-2 rounded-full transition-all duration-300 cursor-pointer ${
-                i === activeIdx ? 'bg-white w-5' : 'bg-white/50'
-              }`}
-            />
-          ))}
-        </div>
-      </div>
 
       {/* Content — close to banner, space below for future use */}
       <div className="flex flex-col items-center gap-6 mt-6">
@@ -77,14 +35,14 @@ export default function EntryScreen({ t, onBooking, onWalkIn, onViewPrices, book
             {/* Text */}
             <div className="relative">
               <h2 className="text-xl font-bold text-slate-800 mb-2">{t('wizard.hasBooking')}</h2>
-              <p className="text-slate-400 text-xs leading-relaxed max-w-[200px] mx-auto">
+              <p className="text-slate-600 text-sm leading-relaxed max-w-[200px] mx-auto">
                 {t('wizard.hasBookingDesc')}
               </p>
             </div>
 
             {/* CTA */}
             <div className="mt-5 flex items-center gap-2 text-brand-500 font-semibold group-hover:translate-x-1.5 transition-transform duration-200">
-              <span className="text-[10px] uppercase tracking-widest">{t('wizard.findMyBooking')}</span>
+              <span className="text-sm uppercase tracking-widest">{t('wizard.findMyBooking')}</span>
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3" />
               </svg>
@@ -94,7 +52,7 @@ export default function EntryScreen({ t, onBooking, onWalkIn, onViewPrices, book
           {/* Choose services (primary) */}
           <button
             onClick={onWalkIn}
-            className="col-span-3 group relative flex flex-col items-center justify-center p-8 bg-brand-600 rounded-3xl border border-brand-700 hover:bg-brand-700 hover:shadow-xl active:scale-[0.97] transition-all duration-300 text-center overflow-hidden"
+            className="col-span-3 group relative flex flex-col items-center justify-center p-8 bg-brand-700 rounded-3xl border border-brand-700 hover:bg-brand-800 hover:shadow-xl active:scale-[0.97] transition-all duration-300 text-center overflow-hidden"
           >
             <div className="absolute inset-0 rounded-3xl border-2 border-transparent group-hover:border-brand-400/30 transition-colors pointer-events-none" />
 
@@ -108,7 +66,7 @@ export default function EntryScreen({ t, onBooking, onWalkIn, onViewPrices, book
             {/* Text */}
             <div className="relative">
               <h2 className="text-2xl font-bold text-white mb-2">{t('wizard.walkIn')}</h2>
-              <p className="text-white/70 text-sm leading-relaxed max-w-[260px] mx-auto">
+              <p className="text-white text-sm leading-relaxed max-w-[260px] mx-auto">
                 {t('wizard.walkInDesc')}
               </p>
             </div>
@@ -143,7 +101,7 @@ export default function EntryScreen({ t, onBooking, onWalkIn, onViewPrices, book
         {bookingCount > 0 && (
           <div className="flex items-center gap-2 px-5 py-2.5 bg-brand-50 rounded-full border border-brand-100">
             <span className="w-2 h-2 rounded-full bg-brand-500 animate-pulse" />
-            <span className="text-[11px] font-bold uppercase tracking-widest text-brand-700">
+            <span className="text-sm font-bold uppercase tracking-widest text-brand-700">
               {bookingCount} {t('wizard.bookingsToday')}
             </span>
           </div>

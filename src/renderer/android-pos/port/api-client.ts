@@ -245,7 +245,9 @@ export class PosApiClient {
     url: string,
     options: RequestInit = {},
     timeout: number = DEFAULT_TIMEOUT,
+    assertContext?: () => Promise<void>,
   ): Promise<Response> {
+    await assertContext?.();
     const initial = await rawFetchWithTimeout(url, options, timeout);
 
     if (initial.status !== 401) return initial;
@@ -257,6 +259,7 @@ export class PosApiClient {
     if (!oldToken) return initial;
     if (isAuthEndpoint(url)) return initial;
 
+    await assertContext?.();
     const refreshed = await this.tokenProvider.refresh();
     if (!refreshed) {
       // Windows: refresh-rejected / no-refresh-token → helper already cleared
@@ -267,6 +270,7 @@ export class PosApiClient {
     }
 
     const newToken = await this.tokenProvider.getAccessToken();
+    await assertContext?.();
     const retryOptions = newToken ? withBearer(options, newToken) : options;
     return rawFetchWithTimeout(url, retryOptions, timeout);
   }
@@ -586,8 +590,13 @@ export class PosApiClient {
    * is passed through unchanged (PLN-decimal fields per SHIM_CONTRACT §2.F
    * note — building it is S8's job, not this client's).
    */
-  async createPosOrder(order: any): Promise<{ id?: string; orderId?: string; [key: string]: any }> {
+  async getPosCapabilities(): Promise<unknown> {
+    return this.request('GET', '/b2b/pos/capabilities');
+  }
+
+  async createPosOrder(order: any, assertContext?: () => void): Promise<{ id?: string; orderId?: string; [key: string]: any }> {
     const token = await this.requireToken('createPosOrder');
+    assertContext?.();
     const url = `${this.baseUrl}/api/v1/b2b/pos/orders`;
 
     const response = await this.fetchWithTimeout(url, {
@@ -804,35 +813,54 @@ export class PosApiClient {
   }
 
   /**
-   * POST /api/v1/b2b/pos/orders/:id/refund. Ported transport from
-   * api-client.ts:2781-2804. The DTO is the renderer-built refund request
-   * (SHIM_CONTRACT §2.G) passed through UNCHANGED — the renderer
-   * (OrderHistoryModal → buildRefundRequest) constructs it; this client does not
-   * rebuild it. Staff JWT. Returns null on 404/501 (endpoint not deployed for
-   * this salon / order not found), matching Windows; throws on other non-2xx.
-   *
-   * Response shape the renderer consumes (OrderHistoryModal getRefundSuccess*):
-   * `{ success, status?, refundAmount?(PLN), totalRefundedAmount?(PLN),
-   * refundedLines?([{...,refundAmount(PLN)}]), restocked?, stockMovementIds?,
-   * refundReason? }`. Amounts are PLN decimals (the renderer grosses them up to
-   * integer grosze via toGrosze) — see the E1b report for the request-unit note.
+   * One monetary POST, never automatic auth refresh/replay. The coordinator
+   * supplies its saved canonical PLN payload and MUST pass assertContext.
+   * A serialized payload is sent byte-for-byte; objects are serialized once.
+   * Every HTTP error throws status/code, including 404/501. A thrown error
+   * after dispatch is not evidence of rollback: the durable attempt owner
+   * must reconcile using the original request ID, never create a fresh retry.
    */
-  async refundOrder(orderId: string, dto: Record<string, any>): Promise<any | null> {
-    const token = await this.requireToken('refundOrder');
+  async refundOrder(
+    orderId: string,
+    dto: Record<string, any> | string,
+    assertContext?: () => Promise<void>,
+  ): Promise<any> {
+    // Snapshot before any await, so a pending token lookup cannot alter the
+    // target/body. No money conversion or request-ID regeneration here.
     const url = `${this.baseUrl}/api/v1/b2b/pos/orders/${encodeURIComponent(orderId)}/refund`;
-    const response = await this.fetchWithTimeout(url, {
+    const body = typeof dto === 'string' ? dto : JSON.stringify(dto);
+    await assertContext?.();
+    const token = await this.requireToken('refundOrder');
+    await assertContext?.();
+    const response = await rawFetchWithTimeout(url, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(dto),
+      body,
+    }, DEFAULT_TIMEOUT).catch(async (error: unknown) => {
+      await assertContext?.();
+      throw error;
     });
-    if (response.status === 404 || response.status === 501) return null;
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      const error = new Error(errorData.message || `HTTP ${response.status}`) as Error & { status?: number };
+    await assertContext?.();
+    let data: any;
+    try {
+      data = await response.json();
+    } catch {
+      await assertContext?.();
+      const error = new Error(response.ok ? 'Invalid refund response JSON' : `HTTP ${response.status}`) as Error & { status?: number; code?: string };
       error.status = response.status;
+      error.code = response.ok ? 'REFUND_INVALID_RESPONSE' : `HTTP_${response.status}`;
       throw error;
     }
-    return response.json();
+    await assertContext?.();
+    if (!response.ok) {
+      const message = typeof data?.message === 'string' ? data.message : `HTTP ${response.status}`;
+      const error = new Error(message) as Error & { status?: number; code?: string };
+      error.status = response.status;
+      error.code = typeof data?.code === 'string' ? data.code
+        : typeof data?.error === 'string' ? data.error : `HTTP_${response.status}`;
+      throw error;
+    }
+    return data;
   }
 
   /**
@@ -913,7 +941,7 @@ export class PosApiClient {
    * exact query string Windows builds and returns the `{ orders, total, page,
    * limit }` slice.
    */
-  async getServerOrders(params: ServerOrderListParams): Promise<ServerOrdersResult> {
+  async getServerOrders(params: ServerOrderListParams, assertContext?: () => Promise<void>): Promise<ServerOrdersResult> {
     const token = await this.requireToken('getServerOrders');
     const qs = new URLSearchParams();
     if (params.period) qs.set('period', params.period);
@@ -933,13 +961,34 @@ export class PosApiClient {
     const url = `${this.baseUrl}/api/v1/b2b/pos/orders?${qs}`;
     const response = await this.fetchWithTimeout(url, {
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    });
+    }, DEFAULT_TIMEOUT, assertContext);
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
       throw new Error(err.message || `HTTP ${response.status}`);
     }
     const data = await response.json();
+    await assertContext?.();
+    if (!data || !Array.isArray(data.orders)) throw new Error('INVALID_SERVER_ORDER_LIST');
     return { orders: data.orders ?? [], total: data.total ?? 0, page: data.page ?? 1, limit: data.limit ?? 20 };
+  }
+
+  /** Existing Windows history detail endpoint; read-only, never a refund authorization. */
+  async getServerOrderDetail(backendOrderId: string, kind: 'cash' | 'invoiced' = 'cash', assertContext?: () => Promise<void>): Promise<any | null> {
+    if (kind !== 'cash' && kind !== 'invoiced') throw new Error('INVALID_ORDER_KIND');
+    const token = await this.requireToken('getServerOrderDetail');
+    const url = `${this.baseUrl}/api/v1/b2b/pos/orders/${kind}/${encodeURIComponent(backendOrderId)}`;
+    const response = await this.fetchWithTimeout(url, {
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    }, DEFAULT_TIMEOUT, assertContext);
+    await assertContext?.();
+    if (response.status === 404) return null;
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.message || `HTTP ${response.status}`);
+    }
+    const body = await response.json();
+    await assertContext?.();
+    return body;
   }
 
   // ════════════════════════════════════════════════════════════════════════
@@ -953,27 +1002,40 @@ export class PosApiClient {
    */
   async openPosShift(
     data: { staffId: string; openingCash: number; machineId?: string | null },
+    assertContext?: () => Promise<void>,
   ): Promise<{ shiftId: string }> {
-    const token = await this.requireToken('openPosShift');
     const url = `${this.baseUrl}/api/v1/pos/shifts/open`;
     const machineId = String(data.machineId ?? this.machineId ?? '').trim();
     const body = machineId ? { ...data, machineId } : data;
+    const bodyJson = JSON.stringify(body);
+    await assertContext?.();
+    const token = await this.requireToken('openPosShift');
+    await assertContext?.();
 
-    const response = await this.fetchWithTimeout(url, {
+    const options = {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(body),
-    });
+      body: bodyJson,
+    };
+    // A guarded shift open must not silently change account and replay a POST
+    // through the generic 401 refresh path. Caller owns later reconciliation.
+    const response = assertContext
+      ? await rawFetchWithTimeout(url, options, DEFAULT_TIMEOUT)
+      : await this.fetchWithTimeout(url, options);
+    await assertContext?.();
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
+      await assertContext?.();
       throw new Error(errorData.message || `HTTP ${response.status}`);
     }
 
-    return response.json();
+    const result = await response.json();
+    await assertContext?.();
+    return result;
   }
 
   /**

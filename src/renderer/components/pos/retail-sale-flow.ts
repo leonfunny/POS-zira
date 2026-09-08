@@ -2,7 +2,7 @@ import type { Product } from '../../hooks/usePosDb';
 import type { CartItem } from '../../hooks/usePosStore';
 import type { ScaleReadResult } from '../../../shared/types';
 import { classifyProductSale, type ProductSaleClassification } from '../../../shared/product-sale-classifier';
-import { calculateLineTotalGrosze } from '../../../shared/pos-sale';
+import { calculateLineTotalGrosze, isValidSaleQuantity } from '../../../shared/pos-sale';
 
 type ScaleRead = (options?: { port?: string }) => Promise<ScaleReadResult>;
 
@@ -70,6 +70,9 @@ async function readWeightWithTimeout(
         }, timeoutMs);
       }),
     ]);
+  } catch (error) {
+    return { success: false, code: 'READ_FAILED', protocol: 'DIBAL_GDPOS', port: options.port,
+      error: error instanceof Error ? error.message : String(error) };
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
   }
@@ -102,7 +105,7 @@ export async function resolveRetailCartItem(
         error: { code: result?.code === 'TIMEOUT' ? 'SCALE_TIMEOUT' : 'SCALE_FAILED', message: result?.error },
       };
     }
-    if (!result.stable || result.weightKg <= 0) {
+    if (!result.stable || !isValidSaleQuantity(result.weightKg, 'WEIGHT') || result.weightKg <= 0) {
       return { ok: false, saleClass, error: { code: 'SCALE_UNSTABLE' } };
     }
     quantity = result.weightKg;

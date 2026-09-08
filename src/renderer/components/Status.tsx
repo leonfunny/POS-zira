@@ -1,3 +1,4 @@
+import { useFeedbackDialog } from '../hooks/useFeedbackDialog';
 import React, { useState, useEffect } from 'react';
 import { AgentConfig, DeviceStatus, ConnectionStatus } from '../../shared/types';
 
@@ -37,6 +38,7 @@ export default function Status({
   onDisconnect,
   onConfigChange,
 }: StatusProps) {
+  const feedback = useFeedbackDialog();
   const [apiKey, setApiKey] = useState('');
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -72,9 +74,9 @@ export default function Status({
   const handleTestPrint = async () => {
     const result = await window.electronAPI.testPrint();
     if (result.success) {
-      alert('Test print sent successfully!');
+      void feedback.message('Test print sent successfully!');
     } else {
-      alert(`Error: ${result.error}`);
+      void feedback.message(`Error: ${result.error}`);
     }
   };
 
@@ -110,6 +112,7 @@ export default function Status({
 
   return (
     <div className="space-y-4">
+      {feedback.dialog}
       <div className="panel p-4">
         <h2 className="text-sm font-semibold text-slate-700 mb-3">
           Server connection

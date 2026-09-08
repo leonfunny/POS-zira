@@ -20,6 +20,8 @@ interface ProductCardProps {
    *  `product.name` is still used for placeholder-color stability and for
    *  persisted order/fiscal lines; paper receipts localize at print time. */
   lang?: string;
+  /** Restaurant-only presentation; shared sale/stock/image behavior is unchanged. */
+  restaurantColor?: string;
 }
 
 const LONG_PRESS_PRINT_DELAY_MS = 1400;
@@ -44,8 +46,8 @@ function formatTemplate(template: string, values: Record<string, string | number
   return template.replace(/\{(\w+)\}/g, (_, key) => String(values[key] ?? ''));
 }
 
-function ProductCard({ product, onAdd, onLongPress, t, allowOversell = false, lang }: ProductCardProps) {
-  const [imgError, setImgError] = useState(false);
+function ProductCard({ product, onAdd, onLongPress, t, allowOversell = false, lang, restaurantColor }: ProductCardProps) {
+  const [failedImageSources, setFailedImageSources] = useState<string[]>([]);
   const [longPressState, setLongPressState] = useState<'idle' | 'printing' | 'printed' | 'error'>('idle');
   const [longPressMessage, setLongPressMessage] = useState('');
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -72,8 +74,9 @@ function ProductCard({ product, onAdd, onLongPress, t, allowOversell = false, la
   // same tile color regardless of operator language.
   const colorClass = placeholderColor(product.name);
   const displayName = resolveName(product, lang);
-  const imgSrc = product.thumbnail_url || product.image_url;
-  const showImage = imgSrc && !imgError;
+  const imgSrc = [product.thumbnail_url, product.image_url].find(source => source && !failedImageSources.includes(source));
+  useEffect(() => { setFailedImageSources([]); }, [product.thumbnail_url, product.image_url]);
+  const showImage = !!imgSrc;
   const clearLongPressTimer = useCallback(() => {
     if (longPressTimerRef.current) {
       clearTimeout(longPressTimerRef.current);
@@ -171,19 +174,21 @@ function ProductCard({ product, onAdd, onLongPress, t, allowOversell = false, la
       onContextMenu={(event) => event.preventDefault()}
       aria-label={soldOut ? `${displayName} — ${t?.('pos.product.soldOut') ?? 'Sold out'}` : `Add ${displayName}`}
       aria-disabled={soldOut || undefined}
-      className={`group bg-white rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 transition-shadow duration-150 flex flex-col p-1.5 h-full min-h-[196px] select-none ${
+      title={displayName}
+      style={restaurantColor ? { '--restaurant-category-color': restaurantColor } as React.CSSProperties : undefined}
+      className={`${restaurantColor ? 'restaurant-product' : 'bg-white rounded-lg p-1.5 min-h-[196px]'} group focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 transition-shadow duration-150 flex flex-col h-full select-none ${
         soldOut
           ? 'opacity-60 cursor-not-allowed'
           : 'hover:shadow-md cursor-pointer touch-manipulation'
       }`}
     >
-      <div className="relative rounded-md overflow-hidden bg-slate-100 shrink-0 aspect-[3/2] w-full">
+      <div className="pos-product-image relative rounded-md overflow-hidden bg-slate-100 shrink-0 aspect-[3/2] w-full">
         {showImage ? (
           <img
             src={imgSrc!}
             alt={displayName}
             loading="lazy"
-            onError={() => setImgError(true)}
+            onError={() => { if (imgSrc) setFailedImageSources(previous => [...previous, imgSrc]); }}
             className={`w-full h-full object-cover ${soldOut ? 'grayscale' : ''}`}
           />
         ) : (
@@ -213,17 +218,17 @@ function ProductCard({ product, onAdd, onLongPress, t, allowOversell = false, la
         )}
         {saleClass.isWeighted && !soldOut && (
           <span className="absolute bottom-2 left-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-300 px-2 py-1 rounded font-extrabold leading-none shadow-sm">
-            {saleClass.saleUnit.toLowerCase() === 'kg' ? 'kg' : 'WEIGHT'}
+            {saleClass.saleUnit.toLowerCase() === 'kg' ? 'kg' : (t?.('pos.product.weightBadge') ?? 'Weight')}
           </span>
         )}
         {product.is_on_sale === 1 && !soldOut && !isDraft && (
           <span className="absolute top-2 right-2 text-xs text-red-700 bg-red-50 border border-red-300 px-2 py-1 rounded font-bold leading-none shadow-sm">
-            SALE
+            {t?.('pos.product.saleBadge') ?? 'Sale'}
           </span>
         )}
         {isDraft && (
           <span className="absolute top-2 right-2 text-xs text-sky-700 bg-sky-50 border border-sky-300 px-2 py-1 rounded font-bold leading-none shadow-sm">
-            DRAFT
+            {t?.('pos.product.draftBadge') ?? 'Draft'}
           </span>
         )}
         {longPressState !== 'idle' && (
@@ -241,11 +246,11 @@ function ProductCard({ product, onAdd, onLongPress, t, allowOversell = false, la
         )}
       </div>
 
-      <div className="flex-1 pt-1.5 pb-1 flex flex-col">
+      <div className="pos-product-name flex-1 pt-1.5 pb-1 flex flex-col">
         <p className="text-sm font-bold text-slate-900 leading-snug line-clamp-2">{displayName}</p>
       </div>
 
-      <div className="flex items-end justify-between gap-1.5 shrink-0">
+      <div className="pos-product-price flex items-end justify-between gap-1.5 shrink-0">
         <span className="text-lg font-extrabold text-slate-900 leading-tight tabular-nums min-w-0">
           {(product.retail_price / 100).toFixed(2)}&nbsp;{currency}{saleClass.priceSuffix}
         </span>

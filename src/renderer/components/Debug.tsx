@@ -1,3 +1,4 @@
+import { useFeedbackDialog } from '../hooks/useFeedbackDialog';
 import React, { useEffect, useState } from 'react';
 import rlog from '../utils/logger';
 import ConfirmActionDialog from './pos/ConfirmActionDialog';
@@ -40,6 +41,7 @@ interface BackupListItem {
 }
 
 export default function Debug() {
+  const feedback = useFeedbackDialog();
   const [diagnostics, setDiagnostics] = useState<DiagnosticsData | null>(null);
   const [backupStatus, setBackupStatus] = useState<BackupStatus | null>(null);
   const [backups, setBackups] = useState<BackupListItem[]>([]);
@@ -119,7 +121,7 @@ export default function Debug() {
     try {
       const result = await window.electronAPI.backup.prepareRestore(backup.path);
       if (!result.success) {
-        window.alert(result.error || 'Restore could not be prepared');
+        void feedback.message(result.error || 'Restore could not be prepared');
         return;
       }
       const status = await window.electronAPI.backup.getStatus();
@@ -178,6 +180,7 @@ Pending Restore: ${backupStatus?.pendingRestoreSourcePath || '-'}`;
 
   return (
     <>
+      {feedback.dialog}
     <div className="space-y-4 pb-12">
       <div className="panel p-4">
         <h2 className="text-sm font-semibold text-slate-800 mb-3">

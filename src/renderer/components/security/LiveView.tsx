@@ -38,11 +38,11 @@ export default function LiveView({ cameraId, cameraName, zone, connected, fps, m
           </span>
         </div>
         <div className="flex items-center gap-1">
-          <span className="text-[10px] text-white/70 bg-black/50 px-1.5 py-0.5 rounded uppercase">
+          <span className="text-xs text-white bg-black/50 px-1.5 py-0.5 rounded uppercase">
             {zone}
           </span>
           {connected && (
-            <span className="text-[10px] text-emerald-400 bg-black/50 px-1.5 py-0.5 rounded">
+            <span className="text-xs text-emerald-400 bg-black/50 px-1.5 py-0.5 rounded">
               {fps} FPS
             </span>
           )}

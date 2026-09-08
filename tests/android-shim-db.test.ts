@@ -77,16 +77,18 @@ function createFakeIndexedDB(): FakeIdb {
     });
   };
 
-  const makeStore = () => ({
+  const makeStore = (complete: () => void = () => {}) => ({
     get: (key: string) => {
       const req: any = { result: blobs.has(key) ? blobs.get(key) : undefined, error: null, onsuccess: null, onerror: null };
       fire(req);
+      Promise.resolve().then(complete);
       return req;
     },
     put: (value: Uint8Array, key: string) => {
       blobs.set(key, value);
       const req: any = { result: key, error: null, onsuccess: null, onerror: null };
       fire(req);
+      Promise.resolve().then(complete);
       return req;
     },
   });
@@ -96,11 +98,9 @@ function createFakeIndexedDB(): FakeIdb {
     version: 1,
     objectStoreNames,
     createObjectStore: () => makeStore(),
-    transaction: (_store: string, mode: string) => {
-      const tx: any = { error: null, oncomplete: null, onerror: null, onabort: null, objectStore: () => makeStore() };
-      if (mode === 'readwrite') {
-        Promise.resolve().then(() => { if (tx.oncomplete) tx.oncomplete({ target: tx }); });
-      }
+    transaction: (_store: string, _mode: string) => {
+      const tx: any = { error: null, oncomplete: null, onerror: null, onabort: null,
+        objectStore: () => makeStore(() => tx.oncomplete?.({ target: tx })) };
       return tx;
     },
     close: () => {},
@@ -132,11 +132,11 @@ function clearIndexedDB(): void {
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe('android shim catalog DB (S5)', () => {
-  beforeEach(() => { clearIndexedDB(); });
+  beforeEach(() => { setFakeIndexedDB(createFakeIndexedDB()); });
   afterEach(() => { clearIndexedDB(); vi.useRealTimers(); });
 
   describe('initialization + schema', () => {
-    test('boots sql.js in node and creates the v1 schema', async () => {
+    test('boots sql.js in node and creates the current schema', async () => {
       const db = await initAndroidDb({ locateFile: NODE_LOCATE_FILE });
 
       const tables = db.all<{ name: string }>(
@@ -148,7 +148,15 @@ describe('android shim catalog DB (S5)', () => {
 
       // user_version stamped at schema apply time.
       const version = db.getRawHandle().exec('PRAGMA user_version')[0].values[0][0];
-      expect(version).toBe(4); // v4 = orders.refund_* (E1b); v3 = track_inventory
+      expect(version).toBe(13); // v13 adds staged canonical refund evidence, without backfill.
+      expect(tables).toContain('pos_refund_attempts');
+      const orderColumns = db.all<{ name: string; dflt_value: string | null }>('PRAGMA table_info(orders)');
+      expect(orderColumns.find(column => column.name === 'sync_payload_json')).toBeDefined();
+      expect(orderColumns.find(column => column.name === 'sync_metadata_eligible')?.dflt_value).toBe('0');
+      const itemColumns = db.all<{ name: string; type: string; notnull: number; dflt_value: string | null }>('PRAGMA table_info(order_items)');
+      expect(itemColumns.find(column => column.name === 'restaurant_line_id')).toMatchObject({
+        type: 'TEXT', notnull: 0, dflt_value: null,
+      });
     });
 
     test('is idempotent — re-init over a persisted image keeps the schema', async () => {
@@ -355,7 +363,7 @@ describe('android shim catalog DB (S5)', () => {
       expect(fake.blobs.has('pos-db-image')).toBe(true);
     });
 
-    test('a corrupt image is quarantined (preserved) and replaced with a fresh DB', async () => {
+    test('a corrupt image is preserved and blocks sales instead of replacing the financial database', async () => {
       const fake = createFakeIndexedDB();
       setFakeIndexedDB(fake);
 
@@ -363,10 +371,8 @@ describe('android shim catalog DB (S5)', () => {
       const corrupt = new Uint8Array(64);
       fake.blobs.set('pos-db-image', corrupt);
 
-      const db = await initAndroidDb({ locateFile: NODE_LOCATE_FILE });
-
-      // Fresh DB → no products.
-      expect(createProductRepo(db).getAll()).toHaveLength(0);
+      await expect(initAndroidDb({ locateFile: NODE_LOCATE_FILE })).rejects.toThrow('ANDROID_DB_RECOVERY_REQUIRED');
+      expect(fake.blobs.get('pos-db-image')).toBe(corrupt);
 
       // The corrupt bytes were NOT silently discarded: a quarantine-keyed
       // record preserves them for inspection.
@@ -387,11 +393,42 @@ describe('android shim catalog DB (S5)', () => {
       expect(isValidSqliteHeader(new Uint8Array(8))).toBe(false); // too short
     });
 
-    test('IndexedDbPersistence no-ops gracefully when IndexedDB is absent', async () => {
+    test('IndexedDbPersistence refuses to pretend persistence when IndexedDB is absent', async () => {
       clearIndexedDB();
       const persistence: AndroidDbPersistence = new IndexedDbPersistence();
-      await expect(persistence.saveImage(new Uint8Array([1, 2, 3]))).resolves.toBeUndefined();
-      await expect(persistence.loadImage()).resolves.toBeNull();
+      await expect(persistence.saveImage(new Uint8Array([1, 2, 3]))).rejects.toThrow('IndexedDB unavailable');
+      await expect(persistence.loadImage()).rejects.toThrow('IndexedDB unavailable');
+    });
+    test('request success is not durability: an abort before transaction completion rejects', async () => {
+      let tx: any; let write: any;
+      const database = { close: vi.fn(), transaction: () => {
+        tx = { error: new Error('Quota exceeded after request'), objectStore: () => ({ put: () => {
+          write = { result: 'pos-db-image' }; return write;
+        } }) }; return tx;
+      } };
+      (globalThis as any).indexedDB = { open: () => {
+        const req: any = { result: database };
+        Promise.resolve().then(() => req.onsuccess()); return req;
+      } };
+      let settled = false;
+      const save = new IndexedDbPersistence().saveImage(new Uint8Array([1])).finally(() => { settled = true; });
+      const rejection = expect(save).rejects.toThrow('Quota exceeded');
+      await vi.waitFor(() => expect(write).toBeDefined());
+      write.onsuccess(); await Promise.resolve();
+      expect(settled).toBe(false);
+      tx.onabort(); await rejection; expect(database.close).toHaveBeenCalled();
+    });
+    test('a storage read error cannot create a fresh empty financial database', async () => {
+      const persistence = { loadImage: vi.fn(async () => { throw new Error('Storage locked'); }),
+        saveImage: vi.fn(), quarantineImage: vi.fn() };
+      await expect(initAndroidDb({ locateFile: null, persistence })).rejects.toThrow('Storage locked');
+      expect(persistence.saveImage).not.toHaveBeenCalled();
+    });
+    test('failure to preserve corrupt bytes cannot replace them with a fresh database', async () => {
+      const persistence = { loadImage: vi.fn(async () => new Uint8Array(64)),
+        saveImage: vi.fn(), quarantineImage: vi.fn(async () => { throw new Error('Quarantine full'); }) };
+      await expect(initAndroidDb({ locateFile: null, persistence })).rejects.toThrow('Quarantine full');
+      expect(persistence.saveImage).not.toHaveBeenCalled();
     });
   });
 });

@@ -77,7 +77,8 @@ describe('POS cart panel redesign', () => {
     expect(CART).toContain('Math.max(0, Math.min(parsedCustomValue, 100))');
     expect(CART).toContain("if (customMode === 'percentage') onApplyPercent(customPercent)");
     expect(CART).toContain('else onApplyFixed(customFixedGrosze)');
-    expect(CART).toContain("e.key === 'Enter' && canApplyCustom");
+    expect(CART).toContain('onKeyDown={event => {');
+    expect(CART).toContain("event.key !== 'Enter' || event.defaultPrevented || event.nativeEvent.isComposing");
     expect(CART).toContain("tOr('pos.apply', 'Apply')");
     expect(CART).toContain('const TOUCH_KEYBOARD_HEIGHT_PX = 300');
     expect(CART).toContain('const [customInputFocused, setCustomInputFocused] = useState(false)');

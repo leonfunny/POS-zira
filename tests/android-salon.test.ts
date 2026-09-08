@@ -1,3 +1,4 @@
+import { MemoryAndroidPersistence } from './helpers/android-persistence';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { createRealTransport } from '../src/renderer/android-pos/shim/real-transport';
@@ -34,7 +35,7 @@ const LOGIN_BODY = {
 function build() {
   const configStore = new ShimConfigStore({ storage: memoryStorage() });
   const tokenStore = new TokenStore({ storage: memoryStorage(), allowInsecureFallback: true });
-  const transport = createRealTransport({ configStore, tokenStore, dbInit: { locateFile: NODE_LOCATE_FILE } });
+  const transport = createRealTransport({ configStore, tokenStore, dbInit: { locateFile: NODE_LOCATE_FILE, persistence: new MemoryAndroidPersistence() } });
   return { configStore, tokenStore, transport };
 }
 
@@ -58,7 +59,8 @@ describe('posMode resolution (E2a)', () => {
     // config wins over entitlement; entitlement is the fallback.
     expect(resolvePosMode({ posMode: 'retail' }, { suggestedPosMode: 'salon' })).toBe('retail');
     expect(resolvePosMode(null, { suggestedPosMode: 'retail' })).toBe('retail');
-    // an unsupported mode (b2b/restaurant) falls through to salon.
+    expect(resolvePosMode({ posMode: 'restaurant' })).toBe('restaurant');
+    // The unsupported b2b mode still falls through to salon.
     expect(resolvePosMode({ posMode: 'b2b' })).toBe('salon');
   });
 

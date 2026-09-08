@@ -3,6 +3,19 @@
 Date: 2026-07-17
 Status: Stage 1 accepted for development after two API 36 runtime passes; production remains locked
 
+## 2026-09-08 supersession: standalone POS networking
+
+The user now requests a standalone Android POS with Windows parity. The old
+static-spike prohibition on `android.permission.INTERNET` is superseded: the
+native manifest requires that permission for real HTTPS login and sync, and the
+merged-manifest gate requires exactly one uncapped declaration while rejecting
+all other unexpected permissions. Executable negative fixtures cover this gate.
+HTTPS-only network policy, backup exclusions, disabled debugging, restricted
+providers/exports, development package identity and unsigned-release guards stay
+unchanged. This networking correction does not approve production identity,
+signing, financial rollout or publication. The July evidence below is historical,
+not proof that the current standalone APK has passed physical-device acceptance.
+
 ## Pinned toolchain
 
 - Node.js `22.22.2`

@@ -1,3 +1,6 @@
+import { RESTAURANT_CHECK_SCHEMA } from '../../shared/restaurant-check';
+import { ORDER_UPLOAD_COLUMNS } from '../../shared/restaurant-order-upload';
+
 export interface Migration {
   version: number;
   name: string;
@@ -1950,5 +1953,16 @@ export const migrations: Migration[] = [
         updated_at TEXT
       );
     `,
+  },
+  {
+    version: 67,
+    name: 'local_restaurant_checks',
+    up: RESTAURANT_CHECK_SCHEMA,
+  },
+  { version: 68, name: 'immutable_order_upload', up: ORDER_UPLOAD_COLUMNS },
+  {
+    version: 69,
+    name: 'restaurant_order_line_provenance',
+    up: 'ALTER TABLE order_items ADD COLUMN restaurant_line_id TEXT;',
   },
 ];

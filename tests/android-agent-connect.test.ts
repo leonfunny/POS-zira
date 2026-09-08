@@ -1,3 +1,4 @@
+import { MemoryAndroidPersistence } from './helpers/android-persistence';
 /**
  * E-PARITY-1 — print-agent connection (pa_ key + /print-agent/connect + socket).
  *
@@ -222,7 +223,7 @@ describe('cross-tenant pa_ key guard on login (E-PARITY-1)', () => {
     const configStore = new ShimConfigStore({ storage });
     configStore.setConfig({ salonId: 'salon-A', salonName: 'Salon A' } as never);
 
-    const transport = createRealTransport({ configStore, tokenStore, dbInit: { locateFile: NODE_LOCATE_FILE } });
+    const transport = createRealTransport({ configStore, tokenStore, dbInit: { locateFile: NODE_LOCATE_FILE, persistence: new MemoryAndroidPersistence() } });
 
     const fetchMock = vi.fn(async (url: unknown) => {
       const u = String(url);
@@ -276,7 +277,7 @@ describe('socket-push is the PRIMARY print signal (E-PARITY-1 ↔ remote-print)'
 
     // Coordinator over a real db + api-client; fetch is stubbed. getPrintJobStatus
     // THROWS so the test fails loudly if the poll path is ever taken.
-    const db = await initAndroidDb({ locateFile: NODE_LOCATE_FILE });
+    const db = await initAndroidDb({ locateFile: NODE_LOCATE_FILE, persistence: new MemoryAndroidPersistence() });
     createOrderRepo(db).create(ORDER, ITEMS);
     const configStore = new ShimConfigStore({ storage: memoryStorage() });
     const client = new PosApiClient({

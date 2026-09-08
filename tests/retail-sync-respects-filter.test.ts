@@ -222,6 +222,7 @@ describe('retail weighted product affordance', () => {
 
   it('badges weighted product cards using the existing small badge style', () => {
     expect(source).toContain('saleClass.isWeighted && !soldOut');
-    expect(source).toContain("saleClass.saleUnit.toLowerCase() === 'kg' ? 'kg' : 'WEIGHT'");
+    expect(source).toContain("saleClass.saleUnit.toLowerCase() === 'kg' ? 'kg'");
+    expect(source).toContain("pos.product.weightBadge");
   });
 });

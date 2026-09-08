@@ -3,6 +3,7 @@ import { Coffee, Package } from 'lucide-react';
 import type { CustomerDisplayCatalogSection } from '../../../../shared/types';
 import { resolveName } from '../../../../shared/catalog-names';
 import type { Language } from '../../../i18n/translations';
+import ImageWithFallback from '../../../components/shared/ImageWithFallback';
 import CustomerDisplayShell from '../components/CustomerDisplayShell';
 import { EmptyState } from '../components/CustomerDisplayPrimitives';
 import {
@@ -83,8 +84,8 @@ export default function CustomerCatalogView({
           description={t('customer.catalog.emptyDesc')}
         />
       ) : (
-        <div className="grid min-h-0 flex-1 grid-cols-[320px_minmax(0,1fr)] gap-5">
-          <aside className="flex min-h-0 flex-col gap-4">
+        <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 grid-rows-[auto_minmax(0,1fr)] gap-3 lg:grid-cols-[minmax(180px,240px)_minmax(0,1fr)] lg:grid-rows-1 xl:grid-cols-[280px_minmax(0,1fr)]">
+          <aside className="flex min-h-0 min-w-0 flex-col gap-2">
             {sections.length > 1 && (
               <div className="grid grid-cols-2 gap-2">
                 {sections.map((section) => (
@@ -96,11 +97,12 @@ export default function CustomerCatalogView({
                       const firstCategory = categories.find((category) => getCategorySection(category) === section);
                       setSelectedCategoryId(firstCategory?.id || '');
                     }}
-                    className={`flex min-h-[68px] items-center justify-center gap-2 rounded-lg border px-3 text-lg font-semibold transition-colors ${
+                    className={`flex min-h-[52px] items-center justify-center gap-2 rounded-lg border px-3 text-lg font-semibold transition-colors ${
                       selectedSection === section
                         ? 'border-brand-300 bg-brand-50 text-brand-700'
                         : 'border-slate-200 bg-white text-slate-600'
                     }`}
+                    aria-pressed={selectedSection === section}
                     data-customer-display-catalog-section={section}
                   >
                     <SectionIcon section={section} />
@@ -110,7 +112,7 @@ export default function CustomerCatalogView({
               </div>
             )}
 
-            <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2 shadow-sm">
+            <div className="flex min-h-0 gap-2 overflow-x-auto rounded-lg border border-slate-200 bg-white p-2 shadow-sm lg:block lg:flex-1 lg:overflow-y-auto">
               {sectionCategories.map((category) => {
                 const active = category.id === selectedCategory?.id;
                 return (
@@ -118,7 +120,8 @@ export default function CustomerCatalogView({
                     key={category.id}
                     type="button"
                     onClick={() => setSelectedCategoryId(category.id)}
-                    className={`mb-2 flex w-full items-center justify-between gap-3 rounded-md px-4 py-4 text-left transition-colors last:mb-0 ${
+                    aria-pressed={active}
+                    className={`flex max-w-[240px] shrink-0 items-center justify-between gap-3 rounded-md px-3 py-3 lg:mb-2 lg:w-full lg:max-w-none text-left transition-colors last:mb-0 ${
                       active
                         ? 'bg-slate-900 text-white'
                         : 'bg-slate-50 text-slate-700 hover:bg-slate-100'
@@ -136,13 +139,13 @@ export default function CustomerCatalogView({
             </div>
           </aside>
 
-          <section className="flex min-h-0 flex-col rounded-lg border border-slate-200 bg-white shadow-sm">
-            <header className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+          <section className="flex min-h-0 min-w-0 flex-col rounded-lg border border-slate-200 bg-white shadow-sm">
+            <header className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
               <div className="min-w-0">
                 <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
                   {sectionLabel(selectedSection, t)}
                 </div>
-                <h2 className="mt-1 truncate text-3xl font-semibold text-slate-950">
+                <h2 className="mt-1 truncate text-xl sm:text-2xl font-semibold text-slate-950">
                   {selectedCategory ? resolveName(selectedCategory, language) : t('customer.catalog.title')}
                 </h2>
               </div>
@@ -151,11 +154,11 @@ export default function CustomerCatalogView({
               </div>
             </header>
 
-            <div className="min-h-0 flex-1 overflow-y-auto p-5" data-customer-display-catalog-grid="true">
+            <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-5" data-customer-display-catalog-grid="true">
               {!selectedCategory ? (
                 <EmptyState title={t('customer.catalog.emptyTitle')} />
               ) : (
-                <div className="grid grid-cols-3 gap-4 xl:grid-cols-4">
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,180px),1fr))] gap-3">
                   {selectedCategory.services.map((item) => (
                     <div
                       key={item.id}
@@ -163,13 +166,13 @@ export default function CustomerCatalogView({
                       data-customer-display-catalog-item="true"
                     >
                       <div className="flex h-24 items-center justify-center bg-white">
-                        {item.imageUrl ? (
-                          <img src={item.imageUrl} alt="" className="h-full w-full object-contain" />
-                        ) : (
-                          <div className="flex h-14 w-14 items-center justify-center rounded-lg bg-slate-100 text-slate-400">
-                            <SectionIcon section={selectedSection} />
-                          </div>
-                        )}
+                        <ImageWithFallback src={item.imageUrl || undefined} alt="" className="h-full w-full object-contain"
+                          fallback={(
+                            <div aria-hidden="true" className="flex h-14 w-14 items-center justify-center rounded-lg bg-slate-100 text-slate-400">
+                              <SectionIcon section={selectedSection} />
+                            </div>
+                          )}
+                        />
                       </div>
                       <div className="flex min-h-0 flex-1 flex-col p-4">
                         <div className="line-clamp-2 min-h-[56px] text-xl font-semibold leading-7 text-slate-950">

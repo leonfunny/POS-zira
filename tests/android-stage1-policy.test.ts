@@ -82,7 +82,7 @@ describe('Android Stage 1 native policy', () => {
     expect(androidIgnore).toMatch(/^google-services\.json$/m);
   });
 
-  test('disables backup, cleartext, release WebView debugging, and network or file bridges', async () => {
+  test('allows standalone POS internet while disabling backup, cleartext, debugging and file bridges', async () => {
     const [manifest, networkPolicy, backupRules, extractionRules, capacitorConfig, cordovaConfig] = await Promise.all([
       source('android-pos/app/src/main/AndroidManifest.xml'),
       source('android-pos/app/src/main/res/xml/network_security_config.xml'),
@@ -97,7 +97,7 @@ describe('Android Stage 1 native policy', () => {
     expect(manifest).toContain('android:dataExtractionRules="@xml/data_extraction_rules"');
     expect(manifest).toContain('android:usesCleartextTraffic="false"');
     expect(manifest).toContain('android:networkSecurityConfig="@xml/network_security_config"');
-    expect(manifest).not.toContain('android.permission.INTERNET');
+    expect(manifest.match(/<uses-permission\s+android:name="android\.permission\.INTERNET"\s*\/>/g)).toHaveLength(1);
     expect(manifest).not.toContain('androidx.core.content.FileProvider');
     expect(manifest).not.toContain('android.support.FILE_PROVIDER_PATHS');
     expect(networkPolicy).toContain('cleartextTrafficPermitted="false"');

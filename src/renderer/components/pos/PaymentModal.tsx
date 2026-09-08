@@ -7,6 +7,7 @@ import {
   type PrintReceiptResponse,
 } from './receipt-outcome';
 import { formatInitialCashAmount } from './format-cash-amount';
+import { useDialogInteraction } from '../../hooks/useDialogInteraction';
 import { useConfig } from '../../hooks/useConfig';
 import {
   resolveFiscalAction,
@@ -45,6 +46,7 @@ interface PaymentModalProps {
   };
   initialPaymentPreflightToken?: string | null;
   extraOrderFields?: Record<string, any>;
+  onBeforeTender?: (orderId: string, token: string) => Promise<void>;
 }
 
 type PaymentSnapshot = {
@@ -114,6 +116,7 @@ export default function PaymentModal({
   scanCommands,
   initialPaymentPreflightToken,
   extraOrderFields,
+  onBeforeTender,
 }: PaymentModalProps) {
   const { config } = useConfig();
   const protectedTender = Boolean(checkoutDraft?.billiard || checkoutDraft?.restoredInterruption);
@@ -125,6 +128,7 @@ export default function PaymentModal({
   // they don't drift out of sync with the canonical cashAmount string.
   const [denomCounts, setDenomCounts] = useState<Record<number, number>>({});
   const [saving, setSaving] = useState(false);
+  const restaurantTenderStartedRef = useRef(false);
   const [savingLabel, setSavingLabel] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [printWarning, setPrintWarning] = useState<string | null>(null);
@@ -468,22 +472,6 @@ export default function PaymentModal({
   useEffect(() => {
     if (initialMethod) setMethod(initialMethod);
   }, [initialMethod]);
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (
-        e.key === 'Escape'
-        && !saving
-        && (
-          !protectedTender
-          || protectedBoundaryStatus === 'failed'
-          || !!completedOrderIdRef.current
-        )
-      ) onClose();
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [onClose, protectedBoundaryStatus, protectedTender, saving]);
 
   // ─── Denomination counters ────────────────────────────────
 
@@ -1021,9 +1009,20 @@ export default function PaymentModal({
       }
 
       const orderId = orderAttemptIdRef.current;
+      if (onBeforeTender) {
+        // A lost IPC reply may still mean the durable boundary was crossed.
+        // Fail closed rather than issue a second payment with a new identity.
+        restaurantTenderStartedRef.current = true;
+        await onBeforeTender(orderId, paymentPreflightToken);
+      }
       await saveOrderAndFinish(orderId, submission);
     } catch (err) {
       rlog.error('[PaymentModal] Failed to complete payment:', err);
+      if (restaurantTenderStartedRef.current && !completedOrderIdRef.current) {
+        completedOrderIdRef.current = orderAttemptIdRef.current;
+        setError(tOr('pos.restaurant.paymentReconciliation', 'Restaurant payment needs reconciliation. Do not charge again. Reopen Checks after verifying Order History.'));
+        return;
+      }
       if (
         protectedTender
         && tenderBoundaryCrossedRef.current
@@ -1052,7 +1051,7 @@ export default function PaymentModal({
       setSaving(false);
       paymentCompleteInFlightRef.current = false;
     }
-  }, [cashAmountGrosze, checkoutDraft, customerNipForOrder, customerNipValid, fiscalPrompt, grandTotal, method, onTenderOutcomeUncertain, paymentPreflightToken, paymentSafetyStatus, protectedTender, receiptRecovery, receiptRetrying, saving, shiftId, splitMode, staffId, staffName, t, tOr, tenders]);
+  }, [cashAmountGrosze, checkoutDraft, customerNipForOrder, customerNipValid, fiscalPrompt, grandTotal, method, onTenderOutcomeUncertain, onBeforeTender, paymentPreflightToken, paymentSafetyStatus, protectedTender, receiptRecovery, receiptRetrying, saving, shiftId, splitMode, staffId, staffName, t, tOr, tenders]);
 
   const handleComplete = useCallback(() => {
     void completePayment();
@@ -1120,6 +1119,25 @@ export default function PaymentModal({
       && protectedBoundaryStatus !== 'failed'
       && !completedOrderIdRef.current
     );
+
+  const requestClose = useCallback(() => {
+    if (!closeBlocked) onClose();
+  }, [closeBlocked, onClose]);
+
+  const paymentPanelRef = useRef<HTMLDivElement>(null);
+  const fiscalPanelRef = useRef<HTMLDivElement>(null);
+  useDialogInteraction(paymentPanelRef, true, 50, requestClose);
+  useDialogInteraction(fiscalPanelRef, !!fiscalPrompt, 60, () => {});
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      event.preventDefault();
+      requestClose();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [requestClose]);
 
   const removeScannedCommandFromActiveInput = useCallback((code: string) => {
     window.setTimeout(() => {
@@ -1271,6 +1289,7 @@ export default function PaymentModal({
             key={key}
           type="button"
           onClick={() => handleKeypadPress(key)}
+          aria-label={key === 'backspace' ? tOr('pos.payment.nipBackspace', 'Delete') : key === 'clear' ? t('pos.clear') : key}
           disabled={tenderPrepared}
             className={`flex min-h-[44px] items-center justify-center rounded-md border text-lg font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 ${
               key === 'backspace' || key === 'clear'
@@ -1312,6 +1331,8 @@ export default function PaymentModal({
   const fiscalPromptOverlay = fiscalPrompt && (
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/70 p-4"
+      ref={fiscalPanelRef}
+      tabIndex={-1}
       role="dialog"
       aria-modal="true"
       aria-labelledby="fiscal-prompt-title"
@@ -1355,10 +1376,14 @@ export default function PaymentModal({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/55 p-2 sm:p-3"
-      onClick={closeBlocked ? undefined : onClose}
+      onClick={requestClose}
     >
       {fiscalPromptOverlay}
       <div
+        ref={paymentPanelRef}
+        tabIndex={-1}
+        {...(fiscalPrompt ? { inert: '' } : {})}
+        aria-hidden={fiscalPrompt ? true : undefined}
         role="dialog"
         aria-modal="true"
         aria-labelledby="payment-modal-title"
@@ -1378,7 +1403,7 @@ export default function PaymentModal({
               aria-pressed={splitMode}
               className={`min-h-[44px] rounded-md border px-4 text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${
                 splitMode
-                  ? 'border-brand-600 bg-brand-600 text-white'
+                  ? 'border-brand-600 bg-brand-700 text-white'
                   : 'border-slate-300 bg-white text-slate-700 hover:border-brand-500 hover:text-brand-700'
               }`}
             >
@@ -1386,9 +1411,9 @@ export default function PaymentModal({
             </button>
             <button
               type="button"
-              onClick={onClose}
+              onClick={requestClose}
               disabled={closeBlocked}
-              aria-label="Close"
+              aria-label={t('common.close')}
               className="flex h-11 w-11 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-950 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
@@ -1870,7 +1895,7 @@ export default function PaymentModal({
                         || Math.round(parseFloat(splitAmount) * 100) > Math.max(remaining, 0)
                       }
                       aria-label="Add tender"
-                      className="mt-0 flex min-h-[48px] min-w-[56px] items-center justify-center rounded-md bg-brand-600 px-5 text-xl font-semibold text-white transition-colors hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40 md:mt-6"
+                      className="mt-0 flex min-h-[48px] min-w-[56px] items-center justify-center rounded-md bg-brand-700 px-5 text-xl font-semibold text-white transition-colors hover:bg-brand-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40 md:mt-6"
                     >
                       +
                     </button>
@@ -2049,7 +2074,7 @@ export default function PaymentModal({
                              onClick={() => updateDenom(denom, -1)}
                              disabled={tenderPrepared}
                             aria-label={`Remove one ${denom / 100} ${currency} bill`}
-                            className="absolute -top-2.5 -right-2.5 w-10 h-10 rounded-full bg-slate-800 text-white text-xl font-bold leading-none flex items-center justify-center shadow-md hover:bg-slate-950 cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
+                            className="absolute -top-2.5 -right-2.5 w-11 h-11 rounded-full bg-slate-800 text-white text-xl font-bold leading-none flex items-center justify-center shadow-md hover:bg-slate-950 cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
                           >
                             −
                           </button>
@@ -2199,7 +2224,7 @@ export default function PaymentModal({
                   type="button"
                   onClick={handleRetryReceipt}
                   disabled={receiptRetrying}
-                  className="min-h-[56px] flex-1 rounded-md bg-brand-600 px-5 text-base font-semibold text-white shadow-sm transition-colors hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600"
+                  className="min-h-[56px] flex-1 rounded-md bg-brand-700 px-5 text-base font-semibold text-white shadow-sm transition-colors hover:bg-brand-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600"
                 >
                   {receiptRetrying ? (savingLabel || tOr('test.printing', 'Printing...')) : tOr('pos.payment.retryReceipt', 'Retry order print')}
                 </button>
@@ -2217,7 +2242,7 @@ export default function PaymentModal({
                 type="button"
                 onClick={handleComplete}
                 disabled={!canComplete}
-                className="min-h-[56px] w-full max-w-full rounded-md bg-brand-600 px-4 text-center text-base font-semibold leading-tight text-white shadow-sm transition-colors hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600 sm:w-auto sm:min-w-[220px] sm:max-w-[320px] whitespace-normal break-words"
+                className="min-h-[56px] w-full max-w-full rounded-md bg-brand-700 px-4 text-center text-base font-semibold leading-tight text-white shadow-sm transition-colors hover:bg-brand-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600 sm:w-auto sm:min-w-[220px] sm:max-w-[320px] whitespace-normal break-words"
               >
                 {completeButtonText}
               </button>

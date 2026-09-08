@@ -354,6 +354,11 @@ const store = new Store<AgentConfig>({
     // POS settings
     posEnabled: { type: 'boolean', default: true },
     posMode: { type: 'string', enum: ['retail', 'salon', 'b2b', 'restaurant'], default: 'retail' },
+    posModeSalonId: { type: 'string', default: '' },
+    posModesBySalon: {
+      type: 'object', default: {},
+      additionalProperties: { type: 'string', enum: ['retail', 'salon', 'b2b', 'restaurant'] },
+    },
     allowOversell: { type: 'boolean', default: false },
     // Fair / market-stall till: one product grid, no categories, no unit filter.
     retailSimpleGrid: { type: 'boolean', default: false },

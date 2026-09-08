@@ -46,6 +46,7 @@ export default function AndroidBootApp() {
   });
   const [billiardEnabled, setBilliardEnabled] = useState(false);
   const [language, setLanguage] = useState<Language>('en');
+  const [restaurantMode, setRestaurantMode] = useState(false);
 
   useEffect(() => {
     const api = (window as any).electronAPI;
@@ -107,6 +108,7 @@ export default function AndroidBootApp() {
       // the next login may be a different salon, and until its entitlements
       // resolve the Bi-a tab must not render on a stale flag.
       setBilliardEnabled(false);
+      setRestaurantMode(false);
       return;
     }
     const api = (window as any).electronAPI;
@@ -131,17 +133,22 @@ export default function AndroidBootApp() {
     const unsubscribeEntitlements = api.entitlements.onChanged?.((e: any) => {
       if (!cancelled) setBilliardEnabled(!!e?.features?.billiard?.enabled);
     });
-    api.getConfig()
+    const refreshConfig = () => api.getConfig()
       .then((c: any) => {
-        if (!cancelled && c?.language) setLanguage((c.language as Language) || 'en');
+        if (cancelled) return;
+        if (c?.language) setLanguage((c.language as Language) || 'en');
+        setRestaurantMode(c?.posMode === 'restaurant');
       })
       .catch(() => { /* default 'en' is fine */ });
+    void refreshConfig();
+    const unsubscribeConfig = api.onConfigUpdated?.(() => { void refreshConfig(); });
     // Cancelled on unmount OR on state flip — a delayed response from a
     // previous session must not win after re-login (stale entitlement race).
     return () => {
       cancelled = true;
       if (retryTimer) clearTimeout(retryTimer);
       unsubscribeEntitlements?.();
+      unsubscribeConfig?.();
     };
   }, [state]);
 
@@ -152,8 +159,8 @@ export default function AndroidBootApp() {
 
   if (state === 'checking') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <div className="text-gray-500 text-lg">Đang khởi động…</div>
+      <div className="min-h-screen flex items-center justify-center bg-slate-100">
+        <div className="text-slate-600 text-lg">Đang khởi động…</div>
       </div>
     );
   }
@@ -163,19 +170,21 @@ export default function AndroidBootApp() {
   // state === 'pos'. When billiard is entitled, mount the POS/Bi-a mode tabs;
   // otherwise render the plain POSApp exactly as before.
   return (
-    <div className="h-screen flex flex-col">
+    <div className="android-pos-shell h-screen flex flex-col" data-pos-mode={restaurantMode && mode === 'pos' ? 'restaurant' : undefined}>
       {billiardEnabled && (
         <nav className="flex shrink-0 border-b bg-white" aria-label="POS mode">
           <button
             type="button"
-            className={`flex-1 py-3 text-sm font-semibold ${mode === 'pos' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
+            aria-pressed={mode === 'pos'}
+            className={`flex-1 py-3 text-sm font-semibold ${mode === 'pos' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-slate-600'}`}
             onClick={() => switchMode('pos')}
           >
             POS
           </button>
           <button
             type="button"
-            className={`flex-1 py-3 text-sm font-semibold ${mode === 'billiard' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
+            aria-pressed={mode === 'billiard'}
+            className={`flex-1 py-3 text-sm font-semibold ${mode === 'billiard' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-slate-600'}`}
             onClick={() => switchMode('billiard')}
           >
             Bi-a

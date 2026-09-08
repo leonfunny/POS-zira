@@ -277,11 +277,15 @@ export function buildPaymentNamespace({ transport }: StubDeps) {
         ? transport.requestFiscalPrint(orderId)
         : Promise.resolve({ success: true, fiscalPrinted: false }),
     reprintReceipt: (orderId: string) => runReceiptPrint(orderId, { isReprint: true }),
-    // Refund receipt = a fresh print job via the E1a coordinator (isReprint
-    // semantics — each refund receipt is its own job, no idempotency key, like a
-    // reprint). A true refund-document job type is beyond E1a's receipt-COPY
-    // coordinator, so this reuses the receipt-reprint path (documented E1b gap).
-    printRefundReceipt: (orderId: string) => runReceiptPrint(orderId, { isReprint: true }),
+    // A sale reprint is NOT a refund document. Until the refund projection and
+    // remote renderer are verified, refuse without creating any print job.
+    printRefundReceipt: async (_orderId: string) => ({
+      success: false,
+      receiptPrinted: false,
+      reason: 'unsupported',
+      code: 'ANDROID_REFUND_RECEIPT_UNSUPPORTED',
+      error: 'Refund receipt printing is not available on Android yet. No receipt was printed.',
+    }),
     getPrintAttempts: async () => ({ success: true, attempts: [] }),
     getLatestFiscalAttempt: async () => ({ success: true, attempt: null, printer: null }),
     getReconcilableFiscalAttempt: async () => ({ success: true, attempt: null }),
@@ -311,10 +315,13 @@ export function buildOrdersNamespace({ transport }: StubDeps) {
       [orderId],
       (): any => null,
     ),
-    getServerList: async () => ({
-      orders: [], items: {}, total: 0, page: 1, limit: 50, source: 'unconfigured' as const,
-    }),
-    getRefundDetail: async () => ({ success: false, error: 'refund-detail-unavailable' }),
+    getServerList: (params: any = {}) => withTransport(transport.getServerOrderList, [params], () => ({
+      orders: [] as any[], items: {} as Record<string, any[]>, total: 0,
+      page: params.page ?? 1, limit: params.limit ?? 50, source: 'unconfigured' as const,
+    })),
+    getRefundDetail: (orderId: string) => withTransport(transport.getRefundDetail, [orderId],
+      () => ({ success: false, error: 'refund-detail-unavailable' })),
+    ...(transport.reconcileRefund ? { reconcileRefund: (orderId: string, requestId: string) => transport.reconcileRefund!(orderId, requestId) } : {}),
     // Delegate to the transport so a shelved order is actually reset + re-drained
     // and the renderer's SyncFailurePanel sees a real {result:{status}}; the S2
     // stub returned bare success and the shelved order stayed stuck forever.
@@ -337,11 +344,12 @@ export function buildOrdersNamespace({ transport }: StubDeps) {
       () => ({ success: false as boolean, restocked: 0 as number | undefined, error: 'delete-unavailable' as string | undefined }),
     ),
     mutate: async () => ({ success: true, localOnly: true }),
-    mirrorFromServer: async () => ({ success: false, error: 'no-server-mirror' }),
-    // Delegate to the transport so a synced order is really refunded server-side
-    // + marked locally + restocked (E1b); the S2 fake-success let a refund look
-    // done without hitting the backend. Without a transport (synthetic install),
-    // refuse rather than lie.
+    mirrorFromServer: (orderId: string, kind: 'cash' | 'invoiced' = 'cash') => withTransport(
+      transport.mirrorOrderFromServer, [orderId, kind],
+      () => ({ success: false, error: 'no-server-mirror' }),
+    ),
+    // Authorization, supported-sale checks and durable recovery live in the
+    // real coordinator. An absent transport never fabricates a refund success.
     refund: (orderId: string, data: any) => withTransport(
       transport.refundOrder,
       [orderId, data],
@@ -508,8 +516,8 @@ export function buildExcludedPosNamespaces(deps: Pick<StubDeps, 'transport'> = {
     },
     kitchenCategories: {
       getAll: async () => [],
-      setPrintEnabled: async () => ({ ok: true }),
-      updateOrder: async () => ({ ok: true, data: { categories: [], updated: 0 } }),
+      setPrintEnabled: async () => ({ ok: false, error: 'Kitchen routing is not configured on this Android POS.' }),
+      updateOrder: async () => ({ ok: false, error: 'Kitchen routing is not configured on this Android POS.' }),
     },
     localVariantImports: {
       listFailed: async () => ({ ok: true, count: 0, imports: [] }),
@@ -540,9 +548,9 @@ export function buildExcludedPosNamespaces(deps: Pick<StubDeps, 'transport'> = {
     tables: {
       getAll: async () => [],
       getActive: async () => [],
-      updateStatus: async () => undefined,
-      clearTable: async () => undefined,
-      setCovers: async () => undefined,
+      updateStatus: async () => { throw new Error('Table service is not configured on this Android POS.'); },
+      clearTable: async () => { throw new Error('Table service is not configured on this Android POS.'); },
+      setCovers: async () => ({ success: false, error: 'Table service is not configured on this Android POS.' }),
     },
     customers: {
       getAll: async () => [],

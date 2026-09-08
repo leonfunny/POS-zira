@@ -156,7 +156,7 @@ function ProductCameraDialog({ open, t, onClose, onCaptured }: ProductCameraDial
             type="button"
             onClick={capture}
             disabled={!ready}
-            className="inline-flex h-11 items-center gap-2 rounded-md bg-brand-600 px-4 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex h-11 items-center gap-2 rounded-md bg-brand-700 px-4 text-sm font-semibold text-white hover:bg-brand-800 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Camera size={17} />
             {tOr(t, 'products.media.capture', 'Take photo')}

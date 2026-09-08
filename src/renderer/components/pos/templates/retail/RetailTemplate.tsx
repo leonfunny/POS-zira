@@ -16,6 +16,7 @@ import type {
 } from '../../../../../shared/billiard-pos-handoff';
 import { formatRetailSaleError, resolveRetailCartItem } from '../../retail-sale-flow';
 import { cartItemsSignature, shouldRefocusSearchAfterCartChange } from '../../cart-refocus';
+import ImageWithFallback from '../../../shared/ImageWithFallback';
 import SearchBar from '../../SearchBar';
 import ProductGrid from '../../ProductGrid';
 import Cart from '../../Cart';
@@ -1243,15 +1244,15 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
         onError={(message) => showToolbarError(message)}
       />
       {/* Main content */}
-      <div className="flex-1 flex overflow-hidden bg-slate-100">
+      <div className="min-h-0 min-w-0 flex-1 flex overflow-hidden bg-slate-100">
         {/* Left: Products */}
-        <div className="flex-1 min-w-0 flex flex-col p-3 gap-3 overflow-hidden">
+        <div className="flex-1 min-h-0 min-w-0 flex flex-col p-3 gap-3 overflow-hidden">
           {/* Toolbar: search + category pills.
               Borderless / no surface — elements float directly on the page bg
               so the eye sees content first, not chrome. */}
           <div className="shrink-0">
-            <div className="flex items-center gap-3">
-              <div className="w-[min(380px,44%)] min-w-[310px] shrink-0">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="min-w-0 flex-[1_1_310px]">
               <SearchBar
                 value={searchQuery}
                 onChange={handleSearchChange}
@@ -1522,24 +1523,23 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
                         className="group relative flex flex-col overflow-hidden rounded-2xl bg-white border-2 border-slate-100 hover:border-brand-500 active:scale-[0.98] transition-all duration-150 cursor-pointer touch-manipulation text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-300"
                       >
                         <div className="relative w-full overflow-hidden bg-slate-100 aspect-[4/3]">
-                          {catImg ? (
-                            <img
-                              src={catImg}
-                              alt={displayName}
-                              loading="lazy"
-                              className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
-                            />
-                          ) : (
-                            <div
-                              className="w-full h-full flex items-center justify-center font-extrabold text-3xl"
-                              style={{ backgroundColor: `${bg}2E`, color: bg }}
-                              aria-hidden="true"
-                            >
-                              {categoryGlyph(cat, displayName)}
-                            </div>
-                          )}
+                          <ImageWithFallback
+                            src={catImg || undefined}
+                            alt={displayName}
+                            loading="lazy"
+                            className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
+                            fallback={(
+                              <div
+                                className="w-full h-full flex items-center justify-center font-extrabold text-3xl"
+                                style={{ backgroundColor: `${bg}2E`, color: bg }}
+                                aria-hidden="true"
+                              >
+                                {categoryGlyph(cat, displayName)}
+                              </div>
+                            )}
+                          />
                           {noBarcode > 0 && (
-                            <span className="absolute top-2 left-2 text-[10px] font-extrabold leading-none px-2 py-1 rounded-md bg-amber-500 text-white shadow-sm tabular-nums">
+                            <span className="absolute top-2 left-2 text-xs font-extrabold leading-none px-2 py-1 rounded-md bg-amber-100 text-amber-950 shadow-sm tabular-nums">
                               {noBarcode} {tOr('pos.categories.mustTap', 'cần bấm')}
                             </span>
                           )}
@@ -1596,7 +1596,7 @@ export default function RetailTemplate({ state, dispatch, t, language, session, 
         </div>
 
         {/* Right: Cart sidebar */}
-        <div className="w-80 xl:w-96 border-l border-slate-300 flex flex-col bg-white shrink-0">
+        <div className="min-h-0 w-80 xl:w-96 border-l border-slate-300 flex flex-col bg-white shrink-0">
           {restoredCart && (
             <div className="bg-amber-50 border-b border-amber-200 px-3 py-2 text-xs text-amber-700 flex items-center gap-1.5">
               <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M12 2a10 10 0 100 20 10 10 0 000-20z" /></svg>

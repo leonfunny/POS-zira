@@ -4,8 +4,9 @@ import { orderRepo } from '../database/repos/order-repo';
 import { billiardPosHandoffRepo } from '../database/repos/billiard-pos-handoff-repo';
 import { localVariantImportsRepo } from '../database/repos/local-variant-imports-repo';
 import { database } from '../database/database';
-import { getSecureAuthToken } from '../config/store';
+import { getSecureAuthToken, getConfigValue } from '../config/store';
 import { buildBackendOrderItem } from '../pos/order-line-contract';
+import { orderUploadScope, prepareOrderUpload } from '../../shared/restaurant-order-upload';
 import logger from '../logger';
 
 /** Max sync attempts for transient (network/5xx) failures before shelving. */
@@ -64,6 +65,7 @@ export class OrderSync {
   private retryTimer: ReturnType<typeof setInterval> | null = null;
   private retryJitterTimer: ReturnType<typeof setTimeout> | null = null;
   private syncInFlight: Promise<OrderSyncSummary> | null = null;
+  private storageFailed = false;
 
   constructor() {
     this.recoverStrandedSyncingOrders();
@@ -99,13 +101,27 @@ export class OrderSync {
     const summary: OrderSyncSummary = { attempted: 0, synced: 0, failed: 0, results: [] };
     const token = getSecureAuthToken();
     if (!token) return summary;
+    if (this.storageFailed) throw new Error('ORDER_SYNC_STORAGE_RESTART_REQUIRED');
 
     const pending = orderRepo.getUnsynced();
     if (pending.length === 0) return summary;
+    const scope = orderUploadScope(getConfigValue('salonId'), apiClient.getOrderUploadServerUrl());
+    const assertContext = () => {
+      const configuredUrl = String(getConfigValue('serverUrl') || 'https://api.enail.pro').replace(/\/+$/, '');
+      if (getConfigValue('salonId') !== scope.salonId || configuredUrl !== scope.serverUrl
+        || apiClient.getOrderUploadServerUrl().replace(/\/+$/, '') !== scope.serverUrl || getSecureAuthToken() !== token) {
+        throw new Error('ORDER_SYNC_CONTEXT_CHANGED');
+      }
+    };
 
     summary.attempted = pending.length;
 
-    for (const order of pending) {
+    for (const pendingOrder of pending) {
+      assertContext();
+      // Previous uploads awaited network I/O: later rows may have been edited
+      // or deleted. Capture their current contents before acquiring the guard.
+      const order = orderRepo.getById(pendingOrder.id);
+      if (!order || order.synced !== 0) continue;
       // Check retry cap — shelve orders that keep failing
       const attempts = order.sync_attempts ?? 0;
       if (attempts >= MAX_SYNC_ATTEMPTS) {
@@ -198,15 +214,6 @@ export class OrderSync {
           continue;
         }
 
-        // Mark as syncing only after the persisted order passes local
-        // validation. Invalid rows must remain visible as failed, not in-flight.
-        orderRepo.markSyncing(order.id);
-        database.run(
-          'UPDATE orders SET sync_attempts = sync_attempts + 1 WHERE id = ?',
-          [order.id],
-        );
-        database.markDirty();
-
         // Payment — split or single
         const PM_MAP: Record<string, string> = {
           'CASH': 'CASH', 'CARD': 'CARD', 'BLIK': 'BLIK',
@@ -247,7 +254,29 @@ export class OrderSync {
         if (order.change_amount > 0) dto.changeAmount = order.change_amount / 100;
         if (order.tip && order.tip > 0) dto.tip = order.tip / 100;
 
-        const result = await apiClient.createPosOrder(token, dto);
+        // Acquire the existing local edit/delete guard before capability I/O.
+        // The immutable DTO is persisted before POST, not before negotiation.
+        assertContext();
+        orderRepo.markSyncing(order.id);
+        const upload = await prepareOrderUpload({
+          order, scope, buildLegacy: () => dto,
+          lines: items.filter(item => item.variant_id || item.id),
+          readCapabilities: () => apiClient.getPosCapabilities(token), assertContext,
+          persist: async snapshot => {
+            database.run('UPDATE orders SET sync_payload_json = ?, synced = 2, sync_attempts = sync_attempts + 1 WHERE id = ?', [snapshot, order.id]);
+            database.markDirty();
+            try {
+              const flush = await database.saveCoalesced();
+              if (!flush.success) throw new Error(flush.error || 'database flush failed');
+            } catch (error) {
+              this.storageFailed = true;
+              throw new Error(`ORDER_SYNC_STORAGE_RESTART_REQUIRED: ${String(error)}`);
+            }
+          },
+        });
+        assertContext();
+        const result = await apiClient.createPosOrder(token, upload);
+        assertContext();
         const backendId = result.id ?? result.orderId ?? order.id;
         const backendOrderNumber = getBackendOrderNumber(result);
 
@@ -262,12 +291,17 @@ export class OrderSync {
         }
         database.run('UPDATE orders SET sync_error = NULL WHERE id = ?', [order.id]);
         database.markDirty();
-        if (billiardHandoff) {
-          const flush = await database.saveCoalesced();
-          if (!flush.success) {
-            throw new Error(`Billiard settlement was accepted but local durability failed: ${flush.error || 'database flush failed'}`);
+        {
+          // Success is not observable until the accepted state is durable.
+          try {
+            const flush = await database.saveCoalesced();
+            if (!flush.success) throw new Error(flush.error || 'database flush failed');
+          } catch (error) {
+            this.storageFailed = true;
+            throw new Error(`ORDER_SYNC_STORAGE_RESTART_REQUIRED: ${String(error)}`);
           }
         }
+        assertContext();
         summary.synced++;
         summary.results.push({ orderId: order.id, orderNumber: backendOrderNumber ?? order.order_number, status: 'synced', backendId });
         logger.info(`[OrderSync] Synced order ${order.order_number} → backend ${backendId}`);
@@ -277,8 +311,16 @@ export class OrderSync {
           }
         }
       } catch (err: any) {
+        // A late response belongs to the captured database/session, never the
+        // newly logged-in salon. Abort before any catch-path state mutation.
+        assertContext();
         const errMsg = (err.message || String(err)).substring(0, 500);
         const classified = classifyError(errMsg);
+        if (this.storageFailed) {
+          summary.failed++;
+          summary.results.push({ orderId: order.id, orderNumber: order.order_number, status: 'failed', error: errMsg });
+          break;
+        }
 
         if (classified.kind === 'business') {
           // Business-rule rejection — don't retry. Shelve immediately.

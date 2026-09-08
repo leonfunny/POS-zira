@@ -44,6 +44,8 @@ export default function TableMap({ tables, activeTableId, onSelectTable, t }: Ta
               return (
                 <button
                   key={table.id}
+                  type="button"
+                  aria-pressed={isActive}
                   onClick={() => onSelectTable(table.id)}
                   className={`
                     p-2 rounded border text-center transition-all text-xs

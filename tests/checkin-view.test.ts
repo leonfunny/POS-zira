@@ -100,7 +100,7 @@ describe('CheckInView hub category summary', () => {
     expect(markup).toContain('lg:h-[var(--hub-actions-height)] lg:max-h-[var(--hub-actions-height)]');
     expect(markup).toContain('data-customer-display-main="content"');
     expect(markup).toContain('grid min-h-0 flex-1 gap-6 lg:items-start lg:grid-cols-[minmax(0,1.15fr)_380px]');
-    expect(markup).toContain('relative z-10 flex min-h-0 flex-1 overflow-hidden px-8 py-8');
+    expect(markup).toContain('relative z-10 flex min-h-0 flex-1 overflow-hidden px-4 py-4 sm:px-6 sm:py-6 lg:px-8 lg:py-8');
     expect(markup).toContain('mx-auto flex min-h-0 w-full max-w-[1440px] flex-1 flex-col overflow-hidden');
     expect(markup).not.toContain('pointer-events-none absolute inset-0 rounded-[28px] border border-white/80 bg-white/88 shadow-[0_20px_60px_rgba(15,23,42,0.08)] backdrop-blur');
     expect(markup).not.toContain('relative min-h-0 lg:h-full');

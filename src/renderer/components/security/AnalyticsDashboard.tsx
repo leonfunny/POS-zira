@@ -86,19 +86,19 @@ export default function AnalyticsDashboard({ cameras, t }: AnalyticsDashboardPro
           {/* Summary cards */}
           <div className="grid grid-cols-3 gap-3">
             <div className="bg-white border border-slate-200 rounded-lg p-3">
-              <div className="text-[10px] text-slate-400 uppercase">{t?.('security.totalVisitors') ?? 'Total Visitors'}</div>
+              <div className="text-xs text-slate-600 uppercase">{t?.('security.totalVisitors') ?? 'Total Visitors'}</div>
               <div className="text-2xl font-semibold text-slate-800">
                 {analytics.hourlyCustomerCount.reduce((a, b) => a + b, 0)}
               </div>
             </div>
             <div className="bg-white border border-slate-200 rounded-lg p-3">
-              <div className="text-[10px] text-slate-400 uppercase">{t?.('security.peakHour') ?? 'Peak Hour'}</div>
+              <div className="text-xs text-slate-600 uppercase">{t?.('security.peakHour') ?? 'Peak Hour'}</div>
               <div className="text-2xl font-semibold text-slate-800">
                 {analytics.peakHour}:00
               </div>
             </div>
             <div className="bg-white border border-slate-200 rounded-lg p-3">
-              <div className="text-[10px] text-slate-400 uppercase">{t?.('security.avgWait') ?? 'Avg Wait'}</div>
+              <div className="text-xs text-slate-600 uppercase">{t?.('security.avgWait') ?? 'Avg Wait'}</div>
               <div className="text-2xl font-semibold text-slate-800">
                 {Math.round(analytics.avgWaitTimeSeconds / 60)}m
               </div>

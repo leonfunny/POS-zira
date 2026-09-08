@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useDialogInteraction } from '../../hooks/useDialogInteraction';
 import type { CartState, CartItem, PosAction } from '../../hooks/usePosStore';
 import CartItemRow, { type CartItemLabelPrintResult } from './CartItem';
 import POSNumpad from './POSNumpad';
@@ -9,7 +10,8 @@ import { resolveName } from '../../../shared/catalog-names';
 
 interface CartProps {
   cart: CartState;
-  dispatch: (action: PosAction) => void;
+  dispatch: (action: PosAction) => void | Promise<void | { success: boolean; error?: string }>;
+  onNotesDraftStateChange?: (pending: boolean) => void;
   onPay: (prefillCashGrosze?: number) => void;
   t: (key: string) => string;
   shiftOpen?: boolean;
@@ -25,6 +27,8 @@ interface CartProps {
   onPrintItemLabel?: (item: CartItem) => void | CartItemLabelPrintResult | Promise<void | CartItemLabelPrintResult>;
   onEditProduct?: (item: CartItem) => void;
   showOrderActionChips?: boolean;
+  /** Restaurant check-style rows expand on tap; other modes keep their current controls. */
+  compactItems?: boolean;
 }
 
 interface OverflowMenuProps {
@@ -150,7 +154,7 @@ function formatCartQuantityTotal(quantity: number): string {
   return quantity.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
 }
 
-function DiscountPopup({
+export function DiscountPopup({
   subtotal,
   currentDiscount,
   currency,
@@ -224,18 +228,8 @@ function DiscountPopup({
 
   useEffect(() => () => clearCustomBlurTimer(), [clearCustomBlurTimer]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-      if (e.key === 'Enter' && canApplyCustom) {
-        if (!(e.target instanceof HTMLInputElement)) return;
-        e.preventDefault();
-        applyCustomDiscount();
-      }
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [applyCustomDiscount, canApplyCustom, onClose]);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialogInteraction(dialogRef, true, 50, onClose);
 
   const handleCustomValueChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const nextValue = e.target.value.trim();
@@ -252,6 +246,8 @@ function DiscountPopup({
     <>
       <div className="fixed inset-0 z-40 bg-slate-950/20" onClick={onClose} aria-hidden="true" />
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-label={title ?? tOr('pos.numpad.discount', 'Discount')}
@@ -331,6 +327,11 @@ function DiscountPopup({
                 inputMode="decimal"
                 value={customValue}
                 onChange={handleCustomValueChange}
+                onKeyDown={event => {
+                  if (event.key !== 'Enter' || event.defaultPrevented || event.nativeEvent.isComposing) return;
+                  event.preventDefault();
+                  applyCustomDiscount();
+                }}
                 onFocus={handleCustomInputFocus}
                 onBlur={handleCustomInputBlur}
                 placeholder={customMode === 'fixed' ? '0.00' : '10'}
@@ -406,30 +407,28 @@ export function applyPricePopupBufferKey(buffer: string, key: string, replaceOnN
   return appendDigit(buffer, key);
 }
 
-function PricePopup({ item, currency, onApply, onUpdateBackendPrice, onClose, tOr }: PricePopupProps) {
+export function PricePopup({ item, currency, onApply, onUpdateBackendPrice, onClose, tOr }: PricePopupProps) {
   const initialBuffer = (item.price / 100).toFixed(2);
   const [buffer, setBuffer] = useState(initialBuffer);
   const [replaceOnNextInput, setReplaceOnNextInput] = useState(true);
+  const backendPriceLock = useRef(false);
   const [backendPriceBusy, setBackendPriceBusy] = useState(false);
   const [backendPriceError, setBackendPriceError] = useState<string | null>(null);
   const parsedPrice = parseBufferGrosze(buffer);
   const canApply = buffer.trim().length > 0 && Number.isFinite(parsedPrice) && parsedPrice >= 0;
 
   useEffect(() => {
+    if (backendPriceLock.current) return;
     setBuffer(initialBuffer);
     setReplaceOnNextInput(true);
-    setBackendPriceBusy(false);
     setBackendPriceError(null);
   }, [initialBuffer, item.id]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-      if (e.key === 'Enter' && canApply) onApply(parsedPrice);
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [canApply, onApply, onClose, parsedPrice]);
+  const requestClose = useCallback(() => {
+    if (!backendPriceLock.current) onClose();
+  }, [onClose]);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialogInteraction(dialogRef, true, 50, requestClose);
 
   const pressKey = (key: string) => {
     setBuffer((value) => applyPricePopupBufferKey(value, key, replaceOnNextInput));
@@ -438,7 +437,8 @@ function PricePopup({ item, currency, onApply, onUpdateBackendPrice, onClose, tO
   };
 
   const handleUpdateBackendPrice = async () => {
-    if (!canApply || backendPriceBusy) return;
+    if (!canApply || backendPriceLock.current) return;
+    backendPriceLock.current = true;
     setBackendPriceBusy(true);
     setBackendPriceError(null);
     try {
@@ -446,6 +446,8 @@ function PricePopup({ item, currency, onApply, onUpdateBackendPrice, onClose, tO
       onClose();
     } catch (err: any) {
       setBackendPriceError(err?.message || tOr('pos.price.backendUpdateFailed', 'Could not update backend price'));
+    } finally {
+      backendPriceLock.current = false;
       setBackendPriceBusy(false);
     }
   };
@@ -454,12 +456,15 @@ function PricePopup({ item, currency, onApply, onUpdateBackendPrice, onClose, tO
 
   return (
     <>
-      <div className="fixed inset-0 z-40 bg-slate-950/20" onClick={onClose} aria-hidden="true" />
+      <div className="fixed inset-0 z-40 bg-slate-950/20" onClick={requestClose} aria-hidden="true" />
       <div
+        ref={dialogRef}
+        tabIndex={-1}
+        aria-busy={backendPriceBusy}
         role="dialog"
         aria-modal="true"
         aria-label={tOr('pos.price.edit', 'Edit price')}
-        className="fixed left-1/2 top-1/2 z-50 w-[min(360px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-slate-200 bg-white shadow-2xl"
+        className="fixed left-1/2 top-1/2 z-50 max-h-[calc(100dvh-2rem)] overflow-y-auto w-[min(360px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-slate-200 bg-white shadow-2xl"
       >
         <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
           <div className="min-w-0">
@@ -468,7 +473,8 @@ function PricePopup({ item, currency, onApply, onUpdateBackendPrice, onClose, tO
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
+            disabled={backendPriceBusy}
             aria-label={tOr('pos.cancel', 'Cancel')}
             className="h-11 w-11 shrink-0 rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"
           >
@@ -478,7 +484,7 @@ function PricePopup({ item, currency, onApply, onUpdateBackendPrice, onClose, tO
           </button>
         </div>
 
-        <div className="p-4">
+        <fieldset disabled={backendPriceBusy} className="min-w-0 p-4">
           <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3">
             <p className="text-xs font-bold text-slate-600">{tOr('pos.price.new', 'New price')}</p>
             <div className="mt-1 flex items-baseline justify-between gap-3">
@@ -529,7 +535,7 @@ function PricePopup({ item, currency, onApply, onUpdateBackendPrice, onClose, tO
           </div>
 
           {backendPriceError && (
-            <p className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
+            <p role="alert" className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
               {backendPriceError}
             </p>
           )}
@@ -537,21 +543,21 @@ function PricePopup({ item, currency, onApply, onUpdateBackendPrice, onClose, tO
           <div className="mt-3 flex gap-2">
             <button
               type="button"
-              onClick={onClose}
+              onClick={requestClose}
               className="h-12 flex-1 rounded-lg border border-slate-300 bg-white px-3 text-sm font-extrabold text-slate-700 hover:bg-slate-50"
             >
               {tOr('pos.cancel', 'Cancel')}
             </button>
             <button
               type="button"
-              onClick={() => canApply && onApply(parsedPrice)}
-              disabled={!canApply}
-              className="h-12 flex-1 rounded-lg bg-brand-600 px-3 text-sm font-extrabold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-45"
+              onClick={() => { if (canApply && !backendPriceLock.current) onApply(parsedPrice); }}
+              disabled={!canApply || backendPriceBusy}
+              className="h-12 flex-1 rounded-lg bg-brand-700 px-3 text-sm font-extrabold text-white hover:bg-brand-800 disabled:cursor-not-allowed disabled:opacity-45"
             >
               {tOr('pos.price.apply', 'Apply price')}
             </button>
           </div>
-        </div>
+        </fieldset>
       </div>
     </>
   );
@@ -571,6 +577,8 @@ export default function Cart({
   onPrintItemLabel,
   onEditProduct,
   showOrderActionChips = true,
+  compactItems = false,
+  onNotesDraftStateChange,
 }: CartProps) {
   const currency = t('pos.currency');
   const { config } = useConfig();
@@ -584,6 +592,15 @@ export default function Cart({
   const itemsScrollRef = useRef<HTMLDivElement>(null);
   const previousItemQtyRef = useRef<Record<string, number> | null>(null);
   const freshItemTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const noteDraftsRef = useRef(new Set<string>());
+  const [notesWarning, setNotesWarning] = useState(false);
+  const handleNotesDraftChange = useCallback((id: string, pending: boolean) => {
+    if (pending) noteDraftsRef.current.add(id);
+    else noteDraftsRef.current.delete(id);
+    const hasDrafts = noteDraftsRef.current.size > 0;
+    onNotesDraftStateChange?.(hasDrafts);
+    if (!hasDrafts) setNotesWarning(false);
+  }, [onNotesDraftStateChange]);
 
   const tOr = useCallback((key: string, fallback: string) => {
     const value = t(key);
@@ -593,6 +610,7 @@ export default function Cart({
   const requestPayment = useCallback(
     (prefillCashGrosze?: number) => {
       if (cart.items.length === 0 || !shiftOpen) return;
+      if (noteDraftsRef.current.size > 0) { setNotesWarning(true); return; }
       onPay(prefillCashGrosze && prefillCashGrosze > 0 ? prefillCashGrosze : undefined);
     },
     [cart.items.length, onPay, shiftOpen],
@@ -783,6 +801,8 @@ export default function Cart({
   useEffect(() => {
     const el = itemsScrollRef.current;
     if (!el || cart.items.length === 0) return;
+    const previous = previousItemQtyRef.current;
+    if (previous && !cart.items.some(item => previous[item.id] == null)) return;
     const frame = requestAnimationFrame(() => {
       el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
     });
@@ -823,14 +843,14 @@ export default function Cart({
   }, []);
 
   return (
-    <div className="flex flex-col h-full bg-white">
+    <div className="pos-cart flex min-h-0 flex-col h-full bg-white">
       {/* ─── HEADER ───────────────────────────────────────────────
           Compact summary line replaces the old plain "Cart [N]"
           header so the cashier always sees count + subtotal at a
           glance. Held-cart count surfaces here too (sourced from
           RetailTemplate). Destructive actions live behind the
           overflow menu to keep the strip clean. */}
-      <div className="px-3 py-2 border-b border-slate-200 shrink-0 flex items-center justify-between gap-2">
+      <div className="pos-cart-header px-3 py-2 border-b border-slate-200 shrink-0 flex items-center justify-between gap-2">
         <div className="min-w-0 flex-1">
           <h2 className="flex min-w-0 items-baseline gap-1.5 text-sm font-extrabold text-slate-950">
             <span className="shrink-0">{t('pos.cart')}</span>
@@ -868,10 +888,13 @@ export default function Cart({
         />
       </div>
 
+      {notesWarning && <p role="alert" className="px-4 py-2 text-sm text-amber-700">
+        {tOr('pos.cart.saveNotesFirst', 'Save or cancel the edited notes before continuing.')}
+      </p>}
       {/* ─── ITEMS LIST ──────────────────────────────────────────── */}
       <div
         ref={itemsScrollRef}
-        className="flex-1 overflow-y-auto bg-white"
+        className="pos-cart-scroll min-h-0 flex-1 overflow-y-auto bg-white"
         onClick={(e) => {
           // Tap empty area inside the cart list deselects whichever field
           // the operator was editing so the numpad collapses.
@@ -897,7 +920,11 @@ export default function Cart({
                 item={item}
                 onUpdateQuantity={(id, qty) => dispatch({ type: 'cart/updateQuantity', payload: { id, quantity: qty } })}
                 onRemove={(id) => dispatch({ type: 'cart/removeItem', payload: { id } })}
-                onSetNotes={(id, notes) => dispatch({ type: 'cart/setItemNotes', payload: { id, notes } })}
+                onSetNotes={async (id, notes) => {
+                  const result = await dispatch({ type: 'cart/setItemNotes', payload: { id, notes } });
+                  if (result?.success === false) throw new Error(result.error || tOr('common.error', 'Could not save notes'));
+                }}
+                onNotesDraftChange={handleNotesDraftChange}
                 onPrintLabel={onPrintItemLabel}
                 onEditProduct={onEditProduct}
                 onSelectField={handleSelectField}
@@ -911,6 +938,7 @@ export default function Cart({
                 t={t}
                 lang={lang}
                 fresh={freshItemId === item.id}
+                compact={compactItems}
               />
               {renderItemExtra?.(item)}
             </div>
@@ -953,7 +981,7 @@ export default function Cart({
           (industry pattern: Square / Shopify POS / Toast). Discount
           opens a preset popup instead of the inline numpad. */}
       {hasItems && showOrderActionChips && (
-        <div className="relative shrink-0 px-2 py-1.5 flex items-center gap-1.5 border-t border-slate-200 bg-white overflow-x-auto scrollbar-hide">
+        <div className="relative shrink-0 px-2 py-1.5 flex items-center gap-1.5 border-t border-slate-200 bg-white overflow-x-auto">
           <button
             type="button"
             onClick={() => {
@@ -961,7 +989,7 @@ export default function Cart({
               setDiscountPopupOpen(true);
             }}
             aria-pressed={discountPopupOpen || isDiscountActive || cart.discount > 0}
-            className={`shrink-0 h-10 px-2.5 rounded-lg border text-xs font-bold transition-colors cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 flex items-center gap-1.5 ${
+            className={`shrink-0 min-h-11 px-2.5 rounded-lg border text-xs font-bold transition-colors cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 flex items-center gap-1.5 ${
               discountPopupOpen || isDiscountActive || cart.discount > 0
                 ? 'bg-brand-50 text-brand-800 border-brand-400'
                 : 'bg-white text-slate-700 border-slate-300 hover:border-brand-400 hover:bg-brand-50 hover:text-brand-700'
@@ -1002,7 +1030,7 @@ export default function Cart({
             <button
               type="button"
               onClick={onHold}
-              className="shrink-0 h-10 px-2.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-xs font-bold hover:border-amber-400 hover:bg-amber-50 hover:text-amber-800 transition-colors cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-200 flex items-center gap-1.5"
+              className="shrink-0 min-h-11 px-2.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-xs font-bold hover:border-amber-400 hover:bg-amber-50 hover:text-amber-800 transition-colors cursor-pointer touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-200 flex items-center gap-1.5"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -1015,7 +1043,7 @@ export default function Cart({
 
       {/* ─── NUMPAD (visible only while editing a line/discount) ── */}
       {showNumpad && (
-        <div className="shrink-0 border-t border-slate-200">
+        <div className="max-h-[40dvh] shrink-0 overflow-y-auto border-t border-slate-200">
           <POSNumpad
             mode={controller.mode}
             buffer={controller.buffer}
@@ -1043,7 +1071,7 @@ export default function Cart({
           sits in the same sticky shadow surface so the cashier's
           eye drops from total → button without re-scanning. */}
       {hasItems && (
-        <div className="shrink-0 border-t border-slate-200 bg-white px-3 pt-2 pb-2.5 shadow-[0_-8px_20px_-14px_rgba(15,23,42,0.16)]">
+        <div className="pos-cart-totals shrink-0 border-t border-slate-200 bg-white px-3 pt-2 pb-2.5 shadow-[0_-8px_20px_-14px_rgba(15,23,42,0.16)]">
           <div className="space-y-1 text-xs mb-2">
             <div className="flex justify-between text-slate-700">
               <span className="font-bold">{t('pos.cart.subtotal')}</span>
@@ -1070,8 +1098,8 @@ export default function Cart({
                   <button
                     type="button"
                     onClick={() => dispatch({ type: 'cart/clearDiscount' })}
-                    aria-label="Remove discount"
-                    title="Remove discount"
+                    aria-label={tOr('pos.discount.clear', 'Remove discount')}
+                    title={tOr('pos.discount.clear', 'Remove discount')}
                     className="w-11 h-11 flex items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600 transition-colors touch-manipulation"
                   >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -1089,7 +1117,7 @@ export default function Cart({
             )}
           </div>
 
-          <div className="flex items-baseline justify-between pt-2 mb-2 border-t border-slate-200">
+          <div className="flex flex-wrap items-baseline justify-between gap-2 pt-2 mb-2 border-t border-slate-200">
             <span className="text-xs font-black uppercase text-slate-700 tracking-[0.1em]">{t('pos.cart.total')}</span>
             <span className="text-slate-950 leading-none tabular-nums">
               <span className="text-3xl font-black">{totalStr}</span>
@@ -1110,7 +1138,7 @@ export default function Cart({
             type="button"
             onClick={handlePayClick}
             disabled={!hasItems || !shiftOpen}
-            className="w-full h-14 rounded-xl bg-slate-950 text-base font-black text-white shadow-xl shadow-slate-950/20 transition-colors hover:bg-black active:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-45 touch-manipulation cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2"
+            className="pos-pay-button w-full h-14 rounded-xl bg-slate-950 text-base font-black text-white shadow-xl shadow-slate-950/20 transition-colors hover:bg-black active:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-45 touch-manipulation cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2"
           >
             {tOr('pos.payCta', 'PAY')} {totalStr} {currency}
           </button>

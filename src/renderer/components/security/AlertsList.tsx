@@ -85,12 +85,12 @@ export default function AlertsList({ limit = 50, cameraId, t }: AlertsListProps)
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="font-medium">{alert.algorithm}</span>
-                  <span className="text-[10px] opacity-70">
+                  <span className="text-xs">
                     {new Date(alert.timestamp).toLocaleTimeString()}
                   </span>
                 </div>
                 <p className="text-xs opacity-80 truncate">{alert.message}</p>
-                <p className="text-[10px] opacity-60">{alert.cameraName}</p>
+                <p className="text-xs">{alert.cameraName}</p>
               </div>
             </div>
           ))}

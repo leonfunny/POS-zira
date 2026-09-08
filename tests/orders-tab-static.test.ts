@@ -11,7 +11,8 @@ const translations = readSource('../src/renderer/i18n/translations.ts');
 const apiClient = readSource('../src/main/network/api-client.ts');
 const posModule = readSource('../src/main/modules/pos.module.ts');
 const electronDts = readSource('../src/shared/electron.d.ts');
-const orderAdapter = readSource('../src/main/sync/pos-order-adapter.ts');
+const orderAdapter = readSource('../src/shared/pos-order-adapter.ts');
+const windowsOrderAdapter = readSource('../src/main/sync/pos-order-adapter.ts');
 
 function translationBlock(lang: string): string {
   const match = translations.match(new RegExp(`\\n  ${lang}: \\{([\\s\\S]*?)(?=\\n  [a-z]{2}: \\{|\\n\\};)`));
@@ -82,6 +83,8 @@ describe('Orders tab localization and contract', () => {
   });
 
   it('adapts inline server order item quantities from weighted-aware fields', () => {
+    expect(windowsOrderAdapter).toContain("from '../../shared/pos-order-adapter'");
+    expect(windowsOrderAdapter).toContain('adaptSharedServerOrder(s, warnOnce)');
     expect(orderAdapter).toContain('item.saleQuantity ?? item.sale_quantity ?? item.quantity ?? item.totalUnits ?? item.packQuantity ?? 1');
     expect(orderAdapter).toContain('item.variantSku ?? item.variant_sku ?? item.productSku ?? item.product_sku ?? item.product?.sku ?? null');
     expect(orderAdapter).toContain('calculateLineTotalGrosze(rawUnitPrice, quantity, sellBy)');

@@ -1,6 +1,7 @@
 export type RefundType = 'FULL' | 'PARTIAL';
 
 export interface RefundLineInput {
+  orderItemId?: string;
   billiardLineKey?: string;
   variantId?: string;
   sku?: string;

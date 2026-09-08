@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import CameraGrid from './CameraGrid';
 import AlertsList from './AlertsList';
 import CameraSettings from './CameraSettings';
@@ -37,6 +37,11 @@ export default function SecurityTab({ config }: SecurityTabProps) {
   const { t } = useTranslation((config?.language as Language) || 'en');
   const [subView, setSubView] = useState<SubView>('cameras');
   const [securityConfig, setSecurityConfig] = useState<SecurityConfig>(defaultSecurityConfig);
+  const [globalDraft, setGlobalDraft] = useState<SecurityConfig>(defaultSecurityConfig);
+  const [globalDirty, setGlobalDirty] = useState(false);
+  const [operationPending, setOperationPending] = useState(false);
+  const [operationError, setOperationError] = useState<string | null>(null);
+  const operationLock = useRef(false);
   const [status, setStatus] = useState<SecurityStatus>({
     running: false,
     cameras: [],
@@ -45,24 +50,36 @@ export default function SecurityTab({ config }: SecurityTabProps) {
   });
   const [loading, setLoading] = useState(true);
 
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+
   // Load config + status
   useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setLoadFailed(false);
     const load = async () => {
       try {
         const [cfg, sts] = await Promise.all([
           window.electronAPI.security.getConfig(),
           window.electronAPI.security.getStatus(),
         ]);
-        if (cfg) setSecurityConfig(cfg);
-        if (sts) setStatus(sts);
+        if (cancelled) return;
+        if (!cfg || !sts) throw new Error('Security status unavailable');
+        setSecurityConfig(cfg);
+        setGlobalDraft(cfg);
+        setGlobalDirty(false);
+        setStatus(sts);
       } catch (err) {
+        if (!cancelled) setLoadFailed(true);
         rlog.error('[SecurityTab] Load error:', err);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
-    load();
-  }, []);
+    void load();
+    return () => { cancelled = true; };
+  }, [loadAttempt]);
 
   // Subscribe to status changes
   useEffect(() => {
@@ -84,35 +101,72 @@ export default function SecurityTab({ config }: SecurityTabProps) {
     return () => clearInterval(interval);
   }, [status.running]);
 
-  const handleStart = useCallback(async () => {
-    const result = await window.electronAPI.security.start();
-    if (result.success) {
-      const s = await window.electronAPI.security.getStatus();
-      if (s) setStatus(s);
+  const runOperation = useCallback(async (operation: () => Promise<void>, failureKey: string) => {
+    if (operationLock.current) return;
+    operationLock.current = true;
+    setOperationPending(true);
+    setOperationError(null);
+    try {
+      await operation();
+    } catch (error) {
+      setOperationError(`${t(failureKey)}${error instanceof Error && error.message ? ` ${error.message}` : ''}`);
+    } finally {
+      operationLock.current = false;
+      setOperationPending(false);
     }
-  }, []);
+  }, [t]);
 
-  const handleStop = useCallback(async () => {
-    await window.electronAPI.security.stop();
-    setStatus(prev => ({ ...prev, running: false }));
-  }, []);
+  const handleStart = () => runOperation(async () => {
+    const result = await window.electronAPI.security.start();
+    if (!result?.success) throw new Error(result?.error || '');
+    const next = await window.electronAPI.security.getStatus();
+    if (!next?.running) throw new Error('');
+    setStatus(next);
+  }, 'security.startFailed');
 
-  const handleSaveCameras = useCallback(async (cameras: CameraConfig[]) => {
+  const handleStop = () => runOperation(async () => {
+    const result = await window.electronAPI.security.stop();
+    if (!result?.success) throw new Error(result?.error || '');
+    setStatus(previous => ({ ...previous, running: false }));
+  }, 'security.stopFailed');
+
+  const handleSaveCameras = (cameras: CameraConfig[]) => runOperation(async () => {
     const updated = { ...securityConfig, cameras };
+    const result = await window.electronAPI.security.setConfig(updated);
+    if (!result?.success) throw new Error(result?.error || '');
     setSecurityConfig(updated);
-    await window.electronAPI.security.setConfig(updated);
-  }, [securityConfig]);
+  }, 'security.saveFailed');
 
-  const handleSaveGlobalConfig = useCallback(async (updates: Partial<SecurityConfig>) => {
-    const updated = { ...securityConfig, ...updates };
+  const updateGlobalDraft = (updates: Partial<SecurityConfig>) => {
+    setGlobalDraft(previous => ({ ...previous, ...updates }));
+    setGlobalDirty(true);
+  };
+
+  const handleSaveGlobalConfig = () => runOperation(async () => {
+    // Camera edits have their own Save All action; never overwrite them with an older draft.
+    const updated = { ...globalDraft, cameras: securityConfig.cameras };
+    const result = await window.electronAPI.security.setConfig(updated);
+    if (!result?.success) throw new Error(result?.error || '');
     setSecurityConfig(updated);
-    await window.electronAPI.security.setConfig(updated);
-  }, [securityConfig]);
+    setGlobalDraft(updated);
+    setGlobalDirty(false);
+  }, 'security.saveFailed');
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-brand-600" />
+      </div>
+    );
+  }
+
+  if (loadFailed) {
+    return (
+      <div role="alert" className="space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+        <p>{t('security.loadFailed')}</p>
+        <button type="button" className="min-h-11 rounded-lg border border-amber-700 px-4 font-semibold" onClick={() => setLoadAttempt(value => value + 1)}>
+          {t('common.retry')}
+        </button>
       </div>
     );
   }
@@ -129,6 +183,8 @@ export default function SecurityTab({ config }: SecurityTabProps) {
 
   return (
     <div className="space-y-4">
+      {operationError && <p role="alert" className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-900">{operationError}</p>}
+      {operationPending && <p role="status" className="text-sm text-slate-600">{t('security.working')}</p>}
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -143,6 +199,7 @@ export default function SecurityTab({ config }: SecurityTabProps) {
         <div className="flex items-center gap-2">
           {status.running ? (
             <button
+              disabled={operationPending}
               onClick={handleStop}
               aria-label={t('security.stop')}
               className="flex items-center gap-1.5 px-3 py-2 text-xs bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors touch-manipulation"
@@ -152,14 +209,14 @@ export default function SecurityTab({ config }: SecurityTabProps) {
           ) : (
             <button
               onClick={handleStart}
-              disabled={totalCameras === 0}
+              disabled={operationPending || totalCameras === 0}
               aria-label={t('security.start')}
               className="flex items-center gap-1.5 px-3 py-2 text-xs bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
             >
               <span>&#x25B6;</span> {t('security.start')}
             </button>
           )}
-          <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-medium ${
+          <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium ${
             status.running ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'
           }`}>
             <span className={`w-1.5 h-1.5 rounded-full ${status.running ? 'bg-emerald-500' : 'bg-slate-400'}`} />
@@ -211,7 +268,7 @@ export default function SecurityTab({ config }: SecurityTabProps) {
       )}
 
       {subView === 'settings' && (
-        <div className="space-y-4">
+        <fieldset disabled={operationPending} className="min-w-0 space-y-4">
           <CameraSettings
             cameras={securityConfig.cameras}
             onSave={handleSaveCameras}
@@ -219,15 +276,15 @@ export default function SecurityTab({ config }: SecurityTabProps) {
           />
 
           {/* Global settings */}
-          <div className="border border-slate-200 rounded-lg p-3 space-y-3">
+          <form onSubmit={event => { event.preventDefault(); void handleSaveGlobalConfig(); }} className="border border-slate-200 rounded-lg p-3 space-y-3">
             <h3 className="text-sm font-medium text-slate-700">{t('security.globalSettings')}</h3>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs text-slate-500 block mb-1">{t('security.yoloModel')}</label>
                 <select
-                  value={securityConfig.modelSize}
-                  onChange={(e) => handleSaveGlobalConfig({ modelSize: e.target.value })}
+                  value={globalDraft.modelSize}
+                  onChange={(e) => updateGlobalDraft({ modelSize: e.target.value })}
                   className="w-full text-sm border border-slate-200 rounded px-2 py-1.5"
                 >
                   <option value="yolov8n">{t('security.yoloNano')}</option>
@@ -238,8 +295,8 @@ export default function SecurityTab({ config }: SecurityTabProps) {
                 <label className="text-xs text-slate-500 block mb-1">{t('security.cooldown')}</label>
                 <input
                   type="number"
-                  value={securityConfig.cooldownSeconds}
-                  onChange={(e) => handleSaveGlobalConfig({ cooldownSeconds: Number(e.target.value) })}
+                  value={globalDraft.cooldownSeconds}
+                  onChange={(e) => updateGlobalDraft({ cooldownSeconds: Number(e.target.value) })}
                   className="w-full text-sm border border-slate-200 rounded px-2 py-1.5"
                   min={30} max={3600}
                 />
@@ -251,8 +308,8 @@ export default function SecurityTab({ config }: SecurityTabProps) {
                 <label className="text-xs text-slate-500 block mb-1">{t('security.mjpegPort')}</label>
                 <input
                   type="number"
-                  value={securityConfig.mjpegPort}
-                  onChange={(e) => handleSaveGlobalConfig({ mjpegPort: Number(e.target.value) })}
+                  value={globalDraft.mjpegPort}
+                  onChange={(e) => updateGlobalDraft({ mjpegPort: Number(e.target.value) })}
                   className="w-full text-sm border border-slate-200 rounded px-2 py-1.5"
                   min={8000} max={65535}
                 />
@@ -261,8 +318,8 @@ export default function SecurityTab({ config }: SecurityTabProps) {
                 <label className="text-xs text-slate-500 block mb-1">{t('security.evidenceRetention')}</label>
                 <input
                   type="number"
-                  value={securityConfig.evidenceRetentionDays}
-                  onChange={(e) => handleSaveGlobalConfig({ evidenceRetentionDays: Number(e.target.value) })}
+                  value={globalDraft.evidenceRetentionDays}
+                  onChange={(e) => updateGlobalDraft({ evidenceRetentionDays: Number(e.target.value) })}
                   className="w-full text-sm border border-slate-200 rounded px-2 py-1.5"
                   min={1} max={365}
                 />
@@ -274,8 +331,8 @@ export default function SecurityTab({ config }: SecurityTabProps) {
                 <label className="text-xs text-slate-500 block mb-1">{t('security.businessHoursStart')}</label>
                 <input
                   type="time"
-                  value={securityConfig.businessHoursStart}
-                  onChange={(e) => handleSaveGlobalConfig({ businessHoursStart: e.target.value })}
+                  value={globalDraft.businessHoursStart}
+                  onChange={(e) => updateGlobalDraft({ businessHoursStart: e.target.value })}
                   className="w-full text-sm border border-slate-200 rounded px-2 py-1.5"
                 />
               </div>
@@ -283,8 +340,8 @@ export default function SecurityTab({ config }: SecurityTabProps) {
                 <label className="text-xs text-slate-500 block mb-1">{t('security.businessHoursEnd')}</label>
                 <input
                   type="time"
-                  value={securityConfig.businessHoursEnd}
-                  onChange={(e) => handleSaveGlobalConfig({ businessHoursEnd: e.target.value })}
+                  value={globalDraft.businessHoursEnd}
+                  onChange={(e) => updateGlobalDraft({ businessHoursEnd: e.target.value })}
                   className="w-full text-sm border border-slate-200 rounded px-2 py-1.5"
                 />
               </div>
@@ -294,43 +351,49 @@ export default function SecurityTab({ config }: SecurityTabProps) {
               <label className="flex items-center gap-1.5 text-xs">
                 <input
                   type="checkbox"
-                  checked={securityConfig.snapshotOnAlert}
-                  onChange={(e) => handleSaveGlobalConfig({ snapshotOnAlert: e.target.checked })}
+                  checked={globalDraft.snapshotOnAlert}
+                  onChange={(e) => updateGlobalDraft({ snapshotOnAlert: e.target.checked })}
                 />
                 {t('security.snapshotOnAlert')}
               </label>
               <label className="flex items-center gap-1.5 text-xs">
                 <input
                   type="checkbox"
-                  checked={securityConfig.clipOnAlert}
-                  onChange={(e) => handleSaveGlobalConfig({ clipOnAlert: e.target.checked })}
+                  checked={globalDraft.clipOnAlert}
+                  onChange={(e) => updateGlobalDraft({ clipOnAlert: e.target.checked })}
                 />
                 {t('security.clipOnAlert')}
               </label>
               <label className="flex items-center gap-1.5 text-xs">
                 <input
                   type="checkbox"
-                  checked={securityConfig.telegramAlertEnabled}
-                  onChange={(e) => handleSaveGlobalConfig({ telegramAlertEnabled: e.target.checked })}
+                  checked={globalDraft.telegramAlertEnabled}
+                  onChange={(e) => updateGlobalDraft({ telegramAlertEnabled: e.target.checked })}
                 />
                 {t('security.telegramAlerts')}
               </label>
             </div>
 
-            {securityConfig.telegramAlertEnabled && (
+            {globalDraft.telegramAlertEnabled && (
               <div>
                 <label className="text-xs text-slate-500 block mb-1">{t('security.telegramChatId')}</label>
                 <input
                   type="text"
-                  value={securityConfig.telegramChatId}
-                  onChange={(e) => handleSaveGlobalConfig({ telegramChatId: e.target.value })}
+                  value={globalDraft.telegramChatId}
+                  onChange={(e) => updateGlobalDraft({ telegramChatId: e.target.value })}
                   className="w-full text-sm border border-slate-200 rounded px-2 py-1.5"
                   placeholder={t('security.telegramChatIdPlaceholder')}
                 />
               </div>
             )}
-          </div>
-        </div>
+            <div className="flex items-center gap-3">
+              <button type="submit" disabled={!globalDirty || operationPending} className="min-h-11 rounded-lg bg-brand-700 px-4 text-sm font-semibold text-white hover:bg-brand-800 disabled:opacity-50">
+                {t('common.save')}
+              </button>
+              <span role="status" className="text-sm text-slate-600">{t(globalDirty ? 'security.unsaved' : 'security.saved')}</span>
+            </div>
+          </form>
+        </fieldset>
       )}
     </div>
   );

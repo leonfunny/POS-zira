@@ -108,7 +108,7 @@ describe('refund breakdown helpers', () => {
     expect(events[1]).toMatchObject({ refundRequestId: 'request-b', refundAmount: 500 });
   });
 
-  it('uses one sold row when a server item id differs and the same variant appears twice', () => {
+  it('does not assign an unknown explicit server item id to either same-product local row', () => {
     const items = [
       { id: 'local-item-1', variant_id: 'shared-variant', sku: 'SKU', name: 'Same product', quantity: 1, total: 500 },
       { id: 'local-item-2', variant_id: 'shared-variant', sku: 'SKU', name: 'Same product', quantity: 1, total: 500 },
@@ -120,7 +120,7 @@ describe('refund breakdown helpers', () => {
     };
 
     const fallbackBreakdowns = getItemRefundBreakdowns(fallbackOrder, items);
-    expect(fallbackBreakdowns.map((entry) => entry.refundedQty)).toEqual([1, 0]);
+    expect(fallbackBreakdowns.map((entry) => entry.refundedQty)).toEqual([0, 0]);
 
     const exactOrder = {
       refund_lines: JSON.stringify([

@@ -185,6 +185,10 @@ export interface RemotePrinterStatus {
  * directly; it receives one via `installShim({ transport })`.
  */
 export interface ShimTransport {
+  /** Internal local-runtime port; never exposed on window.electronAPI. */
+  getRestaurantDatabase?: () => Promise<import('./db/db').AndroidDatabase>;
+  /** Internal read-only layout fetch, authenticated with the staff JWT. */
+  getRestaurantLayout?: () => Promise<unknown>;
   /** Product/stock/category admin surface (E-PARITY-3, owner-only). */
   productAdmin?: ProductAdminSurface;
 
@@ -208,16 +212,24 @@ export interface ShimTransport {
   /** Order history (local + server) — S9. */
   getOrderHistory?(filters: any): Promise<{ orders: any[]; total: number; page: number; limit: number }>;
   getOrderDetail?(orderId: string): Promise<{ order: any; items: any[] } | null>;
+  getRefundDetail?(orderId: string): Promise<{ success: boolean; detail?: { order: any; items: any[] }; error?: string; reconciliation?: { requestId: string; status: string } }>;
+  reconcileRefund?(orderId: string, requestId: string): Promise<{ success: boolean; reconciled?: boolean; requiresReconciliation?: boolean; refundRequestId?: string; stockRefreshRequired?: boolean; error?: string }>;
+  getServerOrderList?(params: import('../port/api-client').ServerOrderListParams): Promise<{
+    orders: any[]; items: Record<string, any[]>; total: number; page: number; limit: number;
+    source: 'server' | 'unconfigured' | 'network-error'; error?: string;
+  }>;
+  mirrorOrderFromServer?(orderId: string, kind?: 'cash' | 'invoiced'): Promise<{
+    success: boolean; localOrderId?: string; wasSplit?: boolean; error?: string;
+  }>;
   /** Cancel/delete a not-yet-synced local order (+restock) so it never syncs. */
   cancelOrder?(orderId: string): Promise<{ success: boolean; restocked?: number; error?: string }>;
   deleteLocalOrder?(orderId: string): Promise<{ success: boolean; restocked?: number; error?: string }>;
   /** Reset a shelved order and re-drain (recover from a business rejection). */
   retryOrderSync?(orderId: string): Promise<{ success: boolean; result?: { status: string; error?: string }; error?: string }>;
   /**
-   * Refund a SYNCED order (E1b). POSTs the renderer-built refund DTO to the
-   * backend (POST /b2b/pos/orders/:id/refund, staff JWT), then marks the local
-   * order refunded + restocks the restock:true lines. An UNSYNCED order is
-   * refused (refund a not-yet-synced order = cancel it, not a server refund).
+   * Durable ordinary-sale refund surface. The coordinator enforces original
+   * account/order/open-shift scope and refuses unsupported pricing/tenders.
+   * Never infer confirmation or mutate stock from the renderer's request.
    * Returns the renderer-shaped result OrderHistoryModal consumes
    * ({success, refundedLines?, refundAmount?, receiptPrinted?, mutationDetected?,
    * requiresRefresh?, error?}).
@@ -229,6 +241,9 @@ export interface ShimTransport {
     receiptPrinted?: boolean;
     mutationDetected?: boolean;
     requiresRefresh?: boolean;
+    requiresReconciliation?: boolean;
+    refundRequestId?: string;
+    stockRefreshRequired?: boolean;
     error?: string;
   }>;
 

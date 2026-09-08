@@ -467,6 +467,41 @@ describe('Display state transitions', () => {
 });
 
 describe('Table and customer selection', () => {
+  it('rejects changing table or order type while items belong to the current table', () => {
+    const store = new PosStore();
+    store.dispatch({ type: 'table/setActive', payload: { tableId: 'A', orderType: 'dine_in' } });
+    store.dispatch({ type: 'cart/addItem', payload: sampleItem() });
+    const original = store.getState();
+    store.dispatch({ type: 'table/setActive', payload: { tableId: 'B', orderType: 'dine_in' } });
+    expect(store.getState()).toBe(original);
+    store.dispatch({ type: 'table/setActive', payload: { tableId: null, orderType: 'delivery' } });
+    expect(store.getState()).toBe(original);
+    store.dispatch({ type: 'cart/clear' });
+    store.dispatch({ type: 'table/setActive', payload: { tableId: 'B', orderType: 'dine_in' } });
+    expect(store.getState().activeTable).toBe('B');
+    store.destroy();
+  });
+
+  it('keeps restaurant context when payment details are reset and restores it with a held snapshot', () => {
+    const store = new PosStore();
+    store.dispatch({ type: 'table/setActive', payload: { tableId: null, orderType: 'delivery' } });
+    store.dispatch({ type: 'cart/addItem', payload: sampleItem() });
+    store.dispatch({ type: 'checkoutDraft/update', payload: { customerNip: '1234567890' } });
+    store.dispatch({ type: 'checkoutDraft/clear' });
+    expect(store.getState().checkoutDraft).toEqual({ restaurant: { orderType: 'delivery' } });
+    store.dispatch({ type: 'customer/select', payload: { id: 'customer', name: 'Customer' } });
+    store.dispatch({ type: 'customer/clear' });
+    expect(store.getState().checkoutDraft).toEqual({ restaurant: { orderType: 'delivery' } });
+    const snapshot = { state: structuredClone(store.getState()) };
+    store.dispatch({ type: 'cart/clear' });
+    store.dispatch({ type: 'table/setActive', payload: { tableId: 'other', orderType: 'dine_in' } });
+    store.dispatch({ type: 'state/replaceCheckoutSnapshot', payload: { snapshot } } as any);
+    expect(store.getState().activeTable).toBeNull();
+    expect(store.getState().checkoutDraft.restaurant?.orderType).toBe('delivery');
+    expect(store.getState().cart.items).toHaveLength(1);
+    store.destroy();
+  });
+
   it('sets active table', () => {
     const store = new PosStore();
     store.dispatch({ type: 'table/setActive', payload: { tableId: 'table-5' } });

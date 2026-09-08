@@ -21,6 +21,7 @@ import {
   type RefundBreakdownLine,
 } from './refund-breakdown';
 import ConfirmActionDialog from './ConfirmActionDialog';
+import { RestaurantHistoryHeader, RestaurantHistoryLine, type RestaurantHistoryOrder, type RestaurantHistoryItem } from './RestaurantHistoryMetadata';
 import Modal from '../shared/Modal';
 import { buildConfirmCopy, type ConfirmActionKind } from './confirm-action-copy';
 import {
@@ -38,8 +39,9 @@ import {
   isBilliardCorrectionInvoiceLinked,
 } from './billiard-owner-correction';
 
-interface OrderRow {
+interface OrderRow extends RestaurantHistoryOrder {
   id: string;
+  source?: string | null;
   order_number: string | null;
   status: string;
   subtotal: number;
@@ -69,7 +71,7 @@ interface OrderRow {
   _origin?: 'server';
 }
 
-interface OrderItemRow {
+interface OrderItemRow extends RestaurantHistoryItem {
   id: string;
   order_id: string;
   variant_id?: string | null;
@@ -100,6 +102,7 @@ interface OrderHistoryModalProps {
 type RefundStatus = 'none' | 'full' | 'partial';
 type ReprintStatus = { type: 'ok' | 'error'; message: string } | null;
 type RefundPanelCompleteOptions = { keepRefundOpen?: boolean };
+type RefundReconciliationState = { orderId: string; requestId: string; status: string; error?: string };
 type OrderConfirmAction = Extract<ConfirmActionKind, 'void' | 'cancel' | 'deleteLocal'>;
 type PendingOrderConfirm = {
   action: OrderConfirmAction;
@@ -114,9 +117,11 @@ type RefundSuccessSummary = {
   hasRemainingItems: boolean;
   receiptPrinted: boolean;
   printWarning: string | null;
+  stockRefreshRequired: boolean;
 };
 
 const PAGE_SIZE = 20;
+const REFUND_STOCK_REFRESH_WARNING = 'Refund confirmed, but stock has not refreshed. Sync stock before trusting the counts. Do not retry the refund.';
 
 const PAYMENT_METHODS = [
   { value: 'CASH', label: 'Cash' },
@@ -495,6 +500,7 @@ function RefundPanel({
   t,
   onCancel,
   onComplete,
+  onRequiresReconciliation,
 }: {
   order: OrderRow;
   items: OrderItemRow[];
@@ -502,6 +508,7 @@ function RefundPanel({
   t: (key: string) => string;
   onCancel: () => void;
   onComplete: (options?: RefundPanelCompleteOptions) => void;
+  onRequiresReconciliation: (requestId?: string, error?: string) => void;
 }) {
   const hasForbiddenBilliardLines = items.some(isBilliardRefundForbidden);
   const isBilliardOrder = Boolean(order.billiard_origin_json) || items.some((item) => Boolean(getBilliardLineMetadata(item)));
@@ -518,6 +525,11 @@ function RefundPanel({
   const [reprintingRefundReceipt, setReprintingRefundReceipt] = useState(false);
   const [refundReprintStatus, setRefundReprintStatus] = useState<ReprintStatus>(null);
   const refundRequestIdRef = useRef<string | null>(null);
+  const refundPanelMountedRef = useRef(true);
+  useEffect(() => {
+    refundPanelMountedRef.current = true;
+    return () => { refundPanelMountedRef.current = false; };
+  }, []);
 
   const resetRefundRequestId = () => {
     refundRequestIdRef.current = null;
@@ -560,6 +572,7 @@ function RefundPanel({
     .map(item => {
       const refundAmountItem = getRefundAmountItem(item);
       return {
+        orderItemId: item.id,
         billiardLineKey: getBilliardLineMetadata(item)?.lineKey ?? undefined,
         variantId: item.variant_id ?? undefined,
         sku: item.sku ?? undefined,
@@ -645,6 +658,7 @@ function RefundPanel({
         refundItems = refundableItems.filter(item => item.maxQty > 0).map(item => {
           const refundAmountItem = getRefundAmountItem(item);
           return {
+            orderItemId: item.id,
             billiardLineKey: getBilliardLineMetadata(item)?.lineKey ?? undefined,
             variantId: item.variant_id ?? undefined,
             sku: item.sku ?? undefined,
@@ -668,6 +682,11 @@ function RefundPanel({
         computedRefundTotal,
         lines: refundItems,
       }));
+      if (!refundPanelMountedRef.current) return;
+      if (result.requiresReconciliation) {
+        onRequiresReconciliation(result.refundRequestId, result.error);
+        return;
+      }
       if (result.success) {
         resetRefundRequestId();
         const refundLines = getRefundSuccessLines(result, refundItems);
@@ -683,6 +702,7 @@ function RefundPanel({
           hasRemainingItems,
           receiptPrinted: outcome.receiptPrinted,
           printWarning: outcome.warning,
+          stockRefreshRequired: result.stockRefreshRequired === true,
         });
       } else if ((result as any).mutationDetected || (result as any).requiresRefresh) {
         resetRefundRequestId();
@@ -710,7 +730,7 @@ function RefundPanel({
         setSuccessSummary(prev => prev ? { ...prev, receiptPrinted: true, printWarning: null } : prev);
         setRefundReprintStatus({ type: 'ok', message: tOr(t, 'pos.history.reprinted', 'Receipt sent to printer') });
       } else {
-        setRefundReprintStatus({ type: 'error', message: outcome.warning || tOr(t, 'pos.history.reprintFailed', 'Printer not connected') });
+        setRefundReprintStatus({ type: 'error', message: result?.error || outcome.warning || tOr(t, 'pos.history.reprintFailed', 'Printer not connected') });
       }
     } catch (e: any) {
       setRefundReprintStatus({ type: 'error', message: e?.message || tOr(t, 'pos.history.reprintFailed', 'Printer not connected') });
@@ -762,6 +782,10 @@ function RefundPanel({
             </div>
           </div>
         )}
+
+        {successSummary.stockRefreshRequired && <p data-testid="refund-stock-refresh-warning" role="alert" className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-950">
+          {tOr(t, 'pos.refund.stockRefreshRequired', REFUND_STOCK_REFRESH_WARNING)}
+        </p>}
 
         <div className="mt-4 flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-3">
           <span className="text-sm font-bold text-slate-600">{tOr(t, 'pos.history.remainingTotal', 'Remaining')}</span>
@@ -891,8 +915,9 @@ function RefundPanel({
               <div key={item.id} className="grid min-h-[72px] grid-cols-[minmax(0,1fr)_170px_120px] items-center gap-4 px-4 py-3">
                 <div className="min-w-0">
                   <div className="whitespace-normal break-words text-sm font-bold leading-5 text-slate-950">{item.name}</div>
+                  <RestaurantHistoryLine mode={order.mode} requireVerifiedLink={order.source === 'SERVER' || order._origin === 'server'} item={item} t={t} />
                   {billiardMetadata && (
-                    <div className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${refundForbidden ? 'bg-slate-200 text-slate-700' : 'bg-blue-50 text-blue-700'}`}>
+                    <div className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-xs font-bold uppercase ${refundForbidden ? 'bg-slate-200 text-slate-700' : 'bg-blue-50 text-blue-700'}`}>
                       {billiardMetadata.kind}{refundForbidden ? ' · Non-refundable' : ' · No restock'}
                     </div>
                   )}
@@ -1720,6 +1745,15 @@ export default function OrderHistoryModal({
   const [fiscalPrint, setFiscalPrint] = useState<{ status: string; name: string | null; target: string | null } | null>(null);
   const [printBadgeNonce, setPrintBadgeNonce] = useState(0);
   const [showRefund, setShowRefund] = useState(false);
+  // Only getRefundDetail can populate this snapshot. Ordinary history/sync
+  // refreshes retain local line IDs and must never become refund identities.
+  const [refundDetail, setRefundDetail] = useState<{ order: OrderRow; items: OrderItemRow[] } | null>(null);
+  const [refundReconciliation, setRefundReconciliation] = useState<RefundReconciliationState | null>(null);
+  const [refundReconciling, setRefundReconciling] = useState(false);
+  const refundReconcileBusyRef = useRef(false);
+  const [refundReconcileNotice, setRefundReconcileNotice] = useState<string | null>(null);
+  const [refundStockRefreshRequired, setRefundStockRefreshRequired] = useState(false);
+  const refundStateReadSeqRef = useRef(0);
   const [cancelling, setCancelling] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteStatus, setDeleteStatus] = useState<ReprintStatus>(null);
@@ -1733,6 +1767,8 @@ export default function OrderHistoryModal({
   const [mirrorSplit, setMirrorSplit] = useState(false);
   const detailIdRef = useRef<string | undefined>(undefined);
   const loadSeqRef = useRef(0);
+  const detailRequestSeqRef = useRef(0);
+  useEffect(() => () => { detailRequestSeqRef.current += 1; }, []);
 
   const currency = tOr(t, 'pos.currency', 'zl');
   const hideNonFiscalOrders = config?.showNonFiscalOrders !== true;
@@ -1817,6 +1853,8 @@ export default function OrderHistoryModal({
         merged = localOrders;
         total = localResult.value?.total || localOrders.length;
       }
+    } else if (source !== 'local+server') {
+      setLoadError(localResult.reason?.message || tOr(t, 'pos.history.mirrorError', 'Could not load order history'));
     }
 
     merged = merged.filter((o) => o.status !== 'DRAFT' && o.status !== 'POS-DRA');
@@ -1846,16 +1884,22 @@ export default function OrderHistoryModal({
     const unsubSynced = window.electronAPI.pos.sync.onOrderSynced?.((data: any) => {
       loadOrders();
       if (detail && detail.order.id === data.orderId) {
+        const requestSeq = detailRequestSeqRef.current;
         window.electronAPI.pos.orders.getDetail(data.orderId).then((result: any) => {
-          if (result) setDetail(result);
+          if (requestSeq === detailRequestSeqRef.current && result?.order.id === data.orderId) {
+            setDetail(current => current?.order.id === data.orderId ? result : current);
+          }
         });
       }
     });
     const unsubFailed = window.electronAPI.pos.sync.onOrderSyncFailed?.((data: any) => {
       loadOrders();
       if (detail && detail.order.id === data.orderId) {
+        const requestSeq = detailRequestSeqRef.current;
         window.electronAPI.pos.orders.getDetail(data.orderId).then((result: any) => {
-          if (result) setDetail(result);
+          if (requestSeq === detailRequestSeqRef.current && result?.order.id === data.orderId) {
+            setDetail(current => current?.order.id === data.orderId ? result : current);
+          }
         });
       }
     });
@@ -1863,41 +1907,47 @@ export default function OrderHistoryModal({
   }, [detail, loadOrders]);
 
   const handleSelectOrder = async (orderId: string) => {
+    const requestSeq = ++detailRequestSeqRef.current;
+    refundStateReadSeqRef.current += 1;
+    setRefundReconciliation(null);
+    setRefundReconcileNotice(null);
+    setRefundStockRefreshRequired(false);
+    setShowRefund(false);
+    setRefundDetail(null);
     setDetailLoadingId(orderId);
     setReprintStatus(null);
     setDeleteStatus(null);
     setCancelStatus(null);
     try {
       const order = orders.find((candidate) => candidate.id === orderId);
-      const serverItems = serverItemsMap[orderId]
-        || (order?.backend_id ? serverItemsMap[order.backend_id] : undefined);
-      if (serverItems && serverItems.length > 0) {
-        if (order) {
-          setDetail({ order, items: serverItems });
-          setShowRefund(false);
-          return;
-        }
+      // A local row owns its local item IDs and notes, including after sync.
+      // Never pair a local order with server items by backend_id.
+      if (order?._origin === 'server' && serverItemsMap[orderId]) {
+        setDetail({ order, items: serverItemsMap[orderId] });
+        setShowRefund(false);
+        return;
       }
       const result = await window.electronAPI.pos.orders.getDetail(orderId);
-      if (result) {
+      if (requestSeq === detailRequestSeqRef.current && result?.order.id === orderId) {
         setDetail(result);
         setShowRefund(false);
       }
     } finally {
-      setDetailLoadingId(null);
+      if (requestSeq === detailRequestSeqRef.current) setDetailLoadingId(null);
     }
   };
 
   const refreshLocalOrderDetail = async (orderId: string) => {
+    const requestSeq = detailRequestSeqRef.current;
     setDetailLoadingId(orderId);
     setReprintStatus(null);
     try {
       const result = await window.electronAPI.pos.orders.getDetail(orderId);
-      if (result) {
+      if (requestSeq === detailRequestSeqRef.current && detailIdRef.current === orderId && result?.order.id === orderId) {
         setDetail(result);
       }
     } finally {
-      setDetailLoadingId(null);
+      if (requestSeq === detailRequestSeqRef.current) setDetailLoadingId(null);
     }
   };
 
@@ -2067,33 +2117,41 @@ export default function OrderHistoryModal({
   const ensureMirrored = async (order: OrderRow): Promise<boolean> => {
     if (order._origin !== 'server') return true;
     const startId = order.id;
+    const requestSeq = detailRequestSeqRef.current;
+    const stillFocused = () => requestSeq === detailRequestSeqRef.current && detailIdRef.current === startId;
     setMirroringId(startId);
     setMirrorError(null);
     setMirrorSplit(false);
     try {
       const kind: 'cash' | 'invoiced' = order.customer_nip ? 'invoiced' : 'cash';
       const res = await window.electronAPI.pos.orders.mirrorFromServer(startId, kind);
-      const stillFocused = () => detailIdRef.current === startId;
+      if (!stillFocused()) return false;
       if (!res.success) {
         if (stillFocused()) setMirrorError(res.error || tOr(t, 'pos.history.mirrorError', 'Could not load order from server'));
         return false;
       }
       if (res.wasSplit && stillFocused()) setMirrorSplit(true);
+      const localOrderId = res.localOrderId || startId;
+      const fresh = await window.electronAPI.pos.orders.getDetail(localOrderId);
+      if (!stillFocused()) return false;
+      if (fresh?.order.id !== localOrderId) {
+        setMirrorError(tOr(t, 'pos.history.mirrorError', 'Could not load order from server'));
+        return false;
+      }
       setServerItemsMap((prev) => {
         const next = { ...prev };
         delete next[startId];
         return next;
       });
       setOrders((prev) =>
-        prev.map((o) => (o.id === startId ? { ...o, _origin: undefined, synced: 1, backend_id: o.backend_id ?? startId } : o)),
+        prev.filter(o => o.id !== startId && o.id !== localOrderId).concat(fresh.order),
       );
-      const fresh = await window.electronAPI.pos.orders.getDetail(startId);
-      if (fresh) {
-        setDetail((current) => (current?.order.id === startId ? fresh : current));
-      }
-      return true;
+      setDetail((current) => (current?.order.id === startId ? fresh : current));
+      // Show a preserved local sale or changed refund state first; an old
+      // server closure must not print a sale for a now-refunded local order.
+      return localOrderId === startId && fresh.order.source === 'SERVER' && fresh.order.status === order.status;
     } catch (err: any) {
-      if (detailIdRef.current === startId) {
+      if (stillFocused()) {
         setMirrorError(err?.message || tOr(t, 'pos.history.mirrorError', 'Could not load order from server'));
       }
       return false;
@@ -2103,25 +2161,79 @@ export default function OrderHistoryModal({
   };
 
   const loadAuthoritativeRefundDetail = async (order: OrderRow): Promise<boolean> => {
-    if (!(await ensureMirrored(order))) return false;
-
+    setRefundDetail(null);
     const orderId = order.id;
+    const requestSeq = detailRequestSeqRef.current;
+    const stillFocused = () => requestSeq === detailRequestSeqRef.current && detailIdRef.current === orderId;
+    if (!(await ensureMirrored(order)) || !stillFocused()) return false;
     setMirroringId(orderId);
     setMirrorError(null);
+    const refundReadSeq = ++refundStateReadSeqRef.current;
     try {
       const result = await window.electronAPI.pos.orders.getRefundDetail(orderId);
-      if (!result?.success || !result.detail || result.detail.items.length === 0) {
+      if (!stillFocused() || refundReadSeq !== refundStateReadSeqRef.current) return false;
+      if (result.reconciliation?.requestId?.trim()) {
+        setRefundReconciliation({ orderId, ...result.reconciliation, error: result.error });
+        return false;
+      }
+      if (!result?.success || result.detail?.order.id !== orderId || !Array.isArray(result.detail.items) || result.detail.items.length === 0) {
         setMirrorError(result?.error || tOr(t, 'pos.history.mirrorError', 'Could not load order from server'));
         return false;
       }
+      setRefundDetail(result.detail);
       setDetail(result.detail);
+      setRefundReconciliation(null);
       return true;
     } catch (err: any) {
-      setMirrorError(err?.message || tOr(t, 'pos.history.mirrorError', 'Could not load order from server'));
+      if (stillFocused()) setMirrorError(err?.message || tOr(t, 'pos.history.mirrorError', 'Could not load order from server'));
       return false;
     } finally {
       setMirroringId((current) => (current === orderId ? null : current));
     }
+  };
+
+  // Android-only optional recovery surface. This is a read, never a refund POST.
+  useEffect(() => {
+    const orderId = detail?.order.id;
+    if (!orderId || !window.electronAPI.pos.orders.reconcileRefund) return;
+    const requestSeq = detailRequestSeqRef.current;
+    const readSeq = ++refundStateReadSeqRef.current;
+    let cancelled = false;
+    window.electronAPI.pos.orders.getRefundDetail(orderId).then((result: { reconciliation?: { requestId: string; status: string }; error?: string }) => {
+      if (cancelled || requestSeq !== detailRequestSeqRef.current || readSeq !== refundStateReadSeqRef.current) return;
+      if (result.reconciliation?.requestId?.trim()) {
+        setRefundReconciliation({ orderId, ...result.reconciliation, error: result.error });
+      }
+    }).catch(() => { /* Explicit refund/reconcile action surfaces the detailed error. */ });
+    return () => { cancelled = true; };
+  }, [detail?.order.id]);
+
+  const handleReconcileRefund = async () => {
+    const pending = refundReconciliation;
+    const reconcile = window.electronAPI.pos.orders.reconcileRefund;
+    if (!pending?.requestId.trim() || !reconcile || refundReconcileBusyRef.current || detailIdRef.current !== pending.orderId) return;
+    const requestSeq = detailRequestSeqRef.current;
+    const stillFocused = () => requestSeq === detailRequestSeqRef.current && detailIdRef.current === pending.orderId;
+    refundStateReadSeqRef.current += 1;
+    refundReconcileBusyRef.current = true;
+    setRefundReconciling(true);
+    try {
+      // Only the durable original request ID. Never create a replacement or pay/print here.
+      const result = await reconcile(pending.orderId, pending.requestId);
+      if (!stillFocused()) return;
+      if (!result.success) {
+        setRefundReconciliation({ ...pending, error: result.error || tOr(t, 'pos.refund.reconcileFailed', 'Reconciliation is still pending. Verify the original request before trying again.') });
+        return;
+      }
+      setRefundReconciliation(null);
+      setShowRefund(false);
+      setRefundReconcileNotice(tOr(t, 'pos.refund.reconciledNotice', 'Original refund reconciled. No cash was paid and no receipt was printed by this check. Verify any previous cash payout before paying again.'));
+      setRefundStockRefreshRequired(result.stockRefreshRequired === true);
+      if (detail?.order.id === pending.orderId) await loadAuthoritativeRefundDetail(detail.order);
+      if (stillFocused()) await loadOrders();
+    } catch (error: any) {
+      if (stillFocused()) setRefundReconciliation({ ...pending, error: error?.message || 'Reconciliation failed' });
+    } finally { refundReconcileBusyRef.current = false; setRefundReconciling(false); }
   };
 
   const requestOrderConfirm = (request: PendingOrderConfirm) => {
@@ -2247,7 +2359,7 @@ export default function OrderHistoryModal({
         <div className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4">
           <div className="flex min-w-0 items-center gap-3">
             <button
-              onClick={() => { setDetail(null); setShowRefund(false); setReprintStatus(null); setDeleteStatus(null); setCancelStatus(null); }}
+              onClick={() => { detailRequestSeqRef.current += 1; setDetail(null); setShowRefund(false); setReprintStatus(null); setDeleteStatus(null); setCancelStatus(null); }}
               className="flex h-11 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-sm font-extrabold text-slate-700 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-200"
             >
               <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -2306,6 +2418,8 @@ export default function OrderHistoryModal({
               </div>
             </div>
 
+            <RestaurantHistoryHeader order={order} t={t} />
+
             <section className="mt-4 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
               <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-3">
                 <h3 className="text-sm font-extrabold text-slate-900">{tOr(t, 'pos.history.items', 'Items')}</h3>
@@ -2327,6 +2441,7 @@ export default function OrderHistoryModal({
                     <div key={item.id} className={`grid min-h-14 grid-cols-[minmax(0,1fr)_180px_70px_120px] items-center gap-3 px-4 py-3 ${hasItemRefund ? 'bg-amber-50/45' : ''}`}>
                       <div className="min-w-0">
                         <div className="whitespace-normal break-words text-sm font-bold leading-5 text-slate-950">{item.name}</div>
+                        <RestaurantHistoryLine mode={order.mode} requireVerifiedLink={order.source === 'SERVER' || order._origin === 'server'} item={item} t={t} />
                         <div className="mt-0.5 truncate text-xs font-medium text-slate-500">{item.sku || 'No SKU'} - {formatMoney(item.price, currency)}</div>
                       </div>
                       <div className="text-right">
@@ -2514,18 +2629,29 @@ export default function OrderHistoryModal({
                 />
               )}
 
-              {showRefund && canRefund && (
+              {showRefund && canRefund && refundDetail?.order.id === order.id && (
                 <RefundPanel
-                  order={order}
-                  items={items}
+                  order={refundDetail.order}
+                  items={refundDetail.items}
                   currency={currency}
                   t={t}
-                  onCancel={() => setShowRefund(false)}
+                  onCancel={() => { setShowRefund(false); setRefundDetail(null); }}
+                  onRequiresReconciliation={(requestId, error) => {
+                    setShowRefund(false);
+                    setRefundDetail(null);
+                    setRefundReconciliation({ orderId: order.id, requestId: requestId?.trim() ? requestId : '', status: 'UNKNOWN', error });
+                    loadAuthoritativeRefundDetail(order);
+                  }}
                   onComplete={(options) => {
                     setShowRefund(false);
-                    refreshLocalOrderDetail(order.id).finally(() => {
-                      if (options?.keepRefundOpen) setShowRefund(true);
-                    });
+                    setRefundDetail(null);
+                    if (options?.keepRefundOpen) {
+                      loadAuthoritativeRefundDetail(order).then((ready) => {
+                        if (ready) setShowRefund(true);
+                      });
+                    } else {
+                      refreshLocalOrderDetail(order.id);
+                    }
                     loadOrders();
                   }}
                 />
@@ -2536,6 +2662,22 @@ export default function OrderHistoryModal({
                   {tOr(t, 'pos.history.mirroring', 'Loading order details from server...')}
                 </div>
               )}
+              {refundReconciliation?.orderId === order.id && (
+                <section data-testid="refund-reconciliation" role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+                  <h3 className="font-extrabold">{tOr(t, 'pos.refund.reconciliationRequired', 'Refund outcome needs verification')}</h3>
+                  <p className="mt-2">{tOr(t, 'pos.refund.reconcilePayoutWarning', 'Do not submit a new refund. Verify whether cash was already returned before paying again. This check does not pay cash or print a receipt.')}</p>
+                  <p className="mt-2 break-all font-mono text-xs">{refundReconciliation.requestId} · {refundReconciliation.status}</p>
+                  {refundReconciliation.error && <p className="mt-2">{refundReconciliation.error}</p>}
+                  {window.electronAPI.pos.orders.reconcileRefund && refundReconciliation.requestId.trim() && <button type="button" disabled={refundReconciling}
+                    onClick={handleReconcileRefund} className="mt-3 min-h-12 w-full rounded-lg bg-amber-900 px-4 font-bold text-white disabled:opacity-50">
+                    {refundReconciling ? tOr(t, 'pos.refund.reconciling', 'Checking original refund...') : tOr(t, 'pos.refund.reconcileOriginal', 'Check original refund')}
+                  </button>}
+                </section>
+              )}
+              {refundReconcileNotice && <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">{refundReconcileNotice}</p>}
+              {refundStockRefreshRequired && <p data-testid="refund-stock-refresh-warning" role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-bold text-amber-950">
+                {tOr(t, 'pos.refund.stockRefreshRequired', REFUND_STOCK_REFRESH_WARNING)}
+              </p>}
               {mirrorError && (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-bold text-red-800">
                   {mirrorError}
@@ -2637,7 +2779,7 @@ export default function OrderHistoryModal({
               {canRefund && !showRefund && (
                 <button
                   onClick={async () => { if (await loadAuthoritativeRefundDetail(order)) setShowRefund(true); }}
-                  disabled={isMirroring}
+                  disabled={isMirroring || refundReconciling || refundReconciliation?.orderId === order.id}
                   className="flex min-h-12 w-full items-center justify-center rounded-lg border border-red-300 bg-red-50 px-4 text-sm font-extrabold text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-200"
                 >
                   {tOr(t, 'pos.refund.title', 'Refund Order')}
