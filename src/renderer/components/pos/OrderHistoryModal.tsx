@@ -2272,6 +2272,19 @@ export default function OrderHistoryModal({
           <CloseButton onClose={onClose} />
         </div>
 
+        {!isSplit(order) && (
+          <div className="shrink-0 border-b border-brand-200 bg-brand-50 px-5 py-3">
+            <PaymentMethodCorrectionPanel
+              key={order.id}
+              orderId={order.id}
+              currentMethod={order.payment_method}
+              t={t}
+              ensureMirrored={() => ensureMirrored(order)}
+              onUpdated={() => { refreshLocalOrderDetail(order.id); loadOrders(); }}
+            />
+          </div>
+        )}
+
         <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_360px] overflow-hidden bg-slate-50">
           <main className="min-h-0 overflow-y-auto p-5">
             <div className="grid grid-cols-4 gap-3">
@@ -2443,14 +2456,10 @@ export default function OrderHistoryModal({
                     );
                   }
                   return (
-                    <PaymentMethodCorrectionPanel
-                      key={order.id}
-                      orderId={order.id}
-                      currentMethod={order.payment_method}
-                      t={t}
-                      ensureMirrored={() => ensureMirrored(order)}
-                      onUpdated={() => { refreshLocalOrderDetail(order.id); loadOrders(); }}
-                    />
+                    <div className="flex justify-between gap-4">
+                      <span className="font-medium text-slate-500">{tOr(t, 'pos.history.method', 'Method')}</span>
+                      <span className="font-bold text-slate-900">{paymentLabel(order.payment_method, t)}</span>
+                    </div>
                   );
                 })()}
                 <div className="flex justify-between gap-4">
