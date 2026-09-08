@@ -42,7 +42,9 @@ function packageVersion(name) {
 
 requireEqual('node', process.version, EXPECTED.node);
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-requireEqual('npm', execFileSync(npmCommand, ['--version'], { encoding: 'utf8' }).trim(), EXPECTED.npm);
+// Windows .cmd files require a shell; the executable and argument are fixed,
+// never user input. Without this the preflight crashes before reporting JDK/SDK.
+requireEqual('npm', execFileSync(npmCommand, ['--version'], { encoding: 'utf8', shell: process.platform === 'win32' }).trim(), EXPECTED.npm);
 
 const javaVersion = spawnSync('java', ['-version'], { encoding: 'utf8' });
 if (javaVersion.status !== 0) failures.push(`java -version failed with status ${javaVersion.status}`);
