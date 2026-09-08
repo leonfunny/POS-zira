@@ -12,13 +12,18 @@ type Props = {
 
 export default function PaymentMethodCorrectionPanel({ orderId, currentMethod, t, ensureMirrored, onUpdated }: Props) {
   const [method, setMethod] = useState(normalize(currentMethod));
+  const [selectedMethod, setSelectedMethod] = useState(normalize(currentMethod));
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [pending, setPending] = useState<Record<string, unknown> | null>(null);
   const inFlight = useRef(false);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  useEffect(() => setMethod(normalize(currentMethod)), [currentMethod]);
+  useEffect(() => {
+    const next = normalize(currentMethod);
+    setMethod(next);
+    setSelectedMethod(next);
+  }, [currentMethod]);
   const label = (key: string) => t(`pos.paymentCorrection.${key}`);
   const errorMessage = (code?: string) => {
     const key = `pos.paymentCorrection.${code || 'FAILED'}`;
@@ -41,17 +46,26 @@ export default function PaymentMethodCorrectionPanel({ orderId, currentMethod, t
         const fresh = await preview();
         if (normalize(fresh.paymentMethod) !== method) {
           setMethod(normalize(fresh.paymentMethod));
+          setSelectedMethod(normalize(fresh.paymentMethod));
           if (mounted.current) onUpdated();
           throw new Error('STALE_PAYMENT');
         }
-        if (!fresh.allowed) throw new Error(fresh.blockedCode || 'FAILED');
+        if (!fresh.allowed) {
+          setSelectedMethod(method);
+          throw new Error(fresh.blockedCode || 'FAILED');
+        }
         request = { type: 'payment', mutationId: crypto.randomUUID(), expectedVersion: fresh.version,
           paymentMethod: selected, reason: 'Quick payment method correction (POS)' };
         setPending(request);
       }
       const result = await window.electronAPI.pos.orders.mutate(orderId, request);
-      if (!result.success) throw new Error(result.code || 'FAILED');
-      setMethod(selected); setPending(null); setMessage(label('saved'));
+      if (!result.success) {
+        setPending(null);
+        setSelectedMethod(method);
+        setMessage(errorMessage(result.code));
+        return;
+      }
+      setMethod(selected); setSelectedMethod(selected); setPending(null); setMessage(label('saved'));
       if (mounted.current) onUpdated();
     } catch (error) { setMessage(errorMessage(error instanceof Error ? error.message : undefined)); }
     finally { inFlight.current = false; setBusy(false); }
@@ -61,21 +75,27 @@ export default function PaymentMethodCorrectionPanel({ orderId, currentMethod, t
     inFlight.current = true; setBusy(true);
     try {
       const fresh = await preview();
-      setMethod(normalize(fresh.paymentMethod)); setPending(null); setMessage('');
+      setMethod(normalize(fresh.paymentMethod)); setSelectedMethod(normalize(fresh.paymentMethod));
+      setPending(null); setMessage('');
       if (mounted.current) onUpdated();
     } catch (error) { setMessage(errorMessage(error instanceof Error ? error.message : undefined)); }
     finally { inFlight.current = false; setBusy(false); }
   };
-  return <section className="rounded-lg border border-slate-200 bg-white p-3">
+  return <section className="col-span-2 rounded-lg border-2 border-brand-300 bg-brand-50 p-3">
     <label className="flex items-center justify-between gap-3 text-sm font-bold">
       {label('method')}
-      <select aria-label={label('title')} aria-busy={busy} value={method}
-        onChange={event => void save(event.target.value)} disabled={busy || !!pending || !METHODS.includes(method)}
+      <select aria-label={label('title')} aria-busy={busy} value={selectedMethod}
+        onChange={event => { setSelectedMethod(event.target.value); setMessage(''); }} disabled={busy || !!pending || !METHODS.includes(method)}
         className="min-h-12 rounded-lg border border-slate-300 bg-white px-3 text-base disabled:opacity-50">
         {!METHODS.includes(method) && <option value={method}>{method || label('method')}</option>}
         {METHODS.map(value => <option key={value} value={value}>{methodLabel(value)}</option>)}
       </select>
     </label>
+    <button type="button" onClick={() => void save(selectedMethod)}
+      disabled={busy || !!pending || selectedMethod === method}
+      className="mt-3 min-h-12 w-full rounded-lg bg-blue-700 px-4 font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">
+      {busy ? label('working') : label('save')}
+    </button>
     {message && <p role="status" className="mt-2 text-sm font-medium">{message}</p>}
     {pending && <div className="mt-2 flex gap-3">
       <button type="button" onClick={() => void save(String(pending.paymentMethod), pending)} disabled={busy} className="min-h-12 rounded-lg bg-blue-700 px-4 font-bold text-white">{label('retry')}</button>
