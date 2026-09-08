@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import { Simulate } from 'react-dom/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import OrderHistoryModal from '../src/renderer/components/pos/OrderHistoryModal';
 import { RestaurantHistoryHeader, RestaurantHistoryLine } from '../src/renderer/components/pos/RestaurantHistoryMetadata';
@@ -75,6 +76,33 @@ describe('restaurant history metadata', () => {
 });
 
 describe('actual shared history screen', () => {
+  it('saves the selected method from the compact header without printing, then reflects inbound sync', async () => {
+    vi.useFakeTimers();
+    try {
+      let current = order();
+      api.pos.orders.getDetail.mockImplementation(async () => ({ order: current, items: [item('line-a', '')] }));
+      api.pos.orders.mutate = vi.fn(async (_id: string, request: any) => {
+        if (request.type === 'payment-preview') return { success: true, preview: { allowed: true, version: 'snapshot', paymentMethod: current.payment_method } };
+        current = { ...current, payment_method: request.paymentMethod };
+        return { success: true };
+      });
+      api.pos.payment.reprintReceipt = vi.fn();
+      await render(<OrderHistoryModal onClose={vi.fn()} t={t} shiftOpen={false} />);
+      await clickOrder('local-a');
+      const panel = host.querySelector('section[aria-label="Change payment method"]')!;
+      expect(panel).toBeTruthy();
+      expect(panel.closest('div.flex.shrink-0.items-center')?.parentElement?.textContent).toContain('local-a');
+      await act(async () => Simulate.change(panel.querySelector('select')!, { target: { value: 'CARD' } } as any));
+      const save = [...panel.querySelectorAll('button')].find(b => b.textContent === 'Save')!;
+      await act(async () => save.click());
+      expect(api.pos.orders.mutate.mock.calls[1][1].paymentMethod).toBe('CARD');
+      expect(panel.querySelector('select')!.value).toBe('CARD');
+      expect(api.pos.payment.reprintReceipt).not.toHaveBeenCalled();
+      current = { ...current, payment_method: 'BLIK' };
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+      expect(panel.querySelector('select')!.value).toBe('BLIK');
+    } finally { vi.useRealTimers(); }
+  });
   it('reports unavailable local history instead of presenting a failure as an empty result', async () => {
     api.pos.orders.getHistory.mockRejectedValue(new Error('Fiscal-only history is not supported on this Android device.'));
     await render(<OrderHistoryModal onClose={vi.fn()} t={t} shiftOpen={false} />);

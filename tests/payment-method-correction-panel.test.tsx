@@ -34,7 +34,7 @@ describe('history payment correction', () => {
     expect(host.querySelector('button')!.disabled).toBe(true);
     await edit();
     expect(mutate).not.toHaveBeenCalled();
-    await click('Confirm change');
+    await click('Save');
     expect(mutate.mock.calls[1]).toEqual(['order-1', {
       type: 'payment', mutationId: expect.any(String), expectedVersion: 'server-snapshot',
       paymentMethod: 'CARD', reason: 'Quick payment method correction (POS)',
@@ -45,7 +45,7 @@ describe('history payment correction', () => {
   it('retries the identical request after an uncertain response', async () => {
     mutate.mockResolvedValueOnce({success:true,preview:{allowed:true,version:'v',paymentMethod:'CASH'}})
       .mockRejectedValueOnce(new Error('network'));
-    await edit(); await click('Confirm change');
+    await edit(); await click('Save');
     const original = mutate.mock.calls[1][1];
     expect(host.querySelector('select')!.disabled).toBe(true);
     mutate.mockResolvedValueOnce({success:true}); await click('Retry same change');
@@ -53,20 +53,29 @@ describe('history payment correction', () => {
   });
   it('blocks protected payments without issuing a write', async () => {
     mutate.mockResolvedValueOnce({success:true,preview:{version:'v',paymentMethod:'CASH',allowed:false,blockedCode:'TERMINAL_PAYMENT'}});
-    await edit(); await click('Confirm change');
+    await edit(); await click('Save');
     expect(host.textContent).toContain('terminal or gateway');
     expect(mutate).toHaveBeenCalledTimes(1); expect(updated).not.toHaveBeenCalled();
   });
+  it('retries the same mutation when the backend committed but local persistence needs refresh', async () => {
+    mutate.mockResolvedValueOnce({success:true,preview:{allowed:true,version:'v',paymentMethod:'CASH'}})
+      .mockResolvedValueOnce({success:false,code:'REFRESH_REQUIRED'});
+    await edit(); await click('Save');
+    const original = mutate.mock.calls[1][1];
+    expect(host.querySelector('select')!.disabled).toBe(true);
+    mutate.mockResolvedValueOnce({success:true}); await click('Retry same change');
+    expect(mutate.mock.calls[2][1]).toEqual(original);
+  });
   it('does not overwrite a method already changed on the web', async () => {
     mutate.mockResolvedValueOnce({success:true,preview:{version:'v',paymentMethod:'BLIK',allowed:true}});
-    await edit(); await click('Confirm change');
+    await edit(); await click('Save');
     expect(host.textContent).toContain('another device');
     expect(mutate).toHaveBeenCalledTimes(1); expect(host.querySelector('select')!.value).toBe('BLIK');
   });
   it('retains the old method if the server rejects a concurrent update', async () => {
     mutate.mockResolvedValueOnce({success:true,preview:{version:'v',paymentMethod:'CASH',allowed:true}})
       .mockResolvedValueOnce({success:false,code:'STALE_PAYMENT'});
-    await edit(); await click('Confirm change');
+    await edit(); await click('Save');
     expect(host.textContent).toContain('another device'); expect(updated).not.toHaveBeenCalled();
     expect(host.querySelector('select')!.value).toBe('CASH');
   });

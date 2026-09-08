@@ -1873,6 +1873,24 @@ export default function OrderHistoryModal({
   }, [selectedPeriod, filterMethod, filterStaff, page, hideNonFiscalOrders]);
 
   useEffect(() => { loadOrders(); }, [loadOrders]);
+  useEffect(() => {
+    // Inbound sync changes SQLite without emitting the upload-only
+    // onOrderSynced event. Refresh retained history while this modal is open.
+    let active = true;
+    const timer = window.setInterval(() => {
+      void loadOrders();
+      const id = detailIdRef.current;
+      if (!id) return;
+      void window.electronAPI.pos.orders.getDetail(id).then((result: { order: OrderRow; items: OrderItemRow[] } | null) => {
+        if (!active || detailIdRef.current !== id || result?.order.id !== id) return;
+        setDetail(current => current?.order.id === id && (
+          current.order.payment_method !== result.order.payment_method ||
+          current.order.payment_tenders !== result.order.payment_tenders
+        ) ? result : current);
+      }).catch(() => { /* Keep the displayed order when a background read fails. */ });
+    }, 15_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [loadOrders]);
   useEffect(() => { setPage(1); }, [selectedPeriod, filterMethod, filterStaff, hideNonFiscalOrders]);
   useEffect(() => {
     detailIdRef.current = detail?.order.id;
@@ -2381,11 +2399,8 @@ export default function OrderHistoryModal({
               </p>
             </div>
           </div>
-          <CloseButton onClose={onClose} />
-        </div>
-
-        {!isSplit(order) && (
-          <div className="shrink-0 border-b border-brand-200 bg-brand-50 px-5 py-3">
+          <div className="flex shrink-0 items-center gap-3">
+          {!isSplit(order) && (
             <PaymentMethodCorrectionPanel
               key={order.id}
               orderId={order.id}
@@ -2394,8 +2409,10 @@ export default function OrderHistoryModal({
               ensureMirrored={() => ensureMirrored(order)}
               onUpdated={() => { refreshLocalOrderDetail(order.id); loadOrders(); }}
             />
+          )}
+          <CloseButton onClose={onClose} />
           </div>
-        )}
+        </div>
 
         <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_360px] overflow-hidden bg-slate-50">
           <main className="min-h-0 overflow-y-auto p-5">

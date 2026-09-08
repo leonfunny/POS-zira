@@ -60,8 +60,12 @@ export default function PaymentMethodCorrectionPanel({ orderId, currentMethod, t
       }
       const result = await window.electronAPI.pos.orders.mutate(orderId, request);
       if (!result.success) {
-        setPending(null);
-        setSelectedMethod(method);
+        // A timeout/local persistence failure can follow a committed server
+        // correction. Keep its mutation identity for an idempotent retry.
+        if (result.code === 'STALE_PAYMENT') {
+          setPending(null);
+          setSelectedMethod(method);
+        }
         setMessage(errorMessage(result.code));
         return;
       }
@@ -81,25 +85,24 @@ export default function PaymentMethodCorrectionPanel({ orderId, currentMethod, t
     } catch (error) { setMessage(errorMessage(error instanceof Error ? error.message : undefined)); }
     finally { inFlight.current = false; setBusy(false); }
   };
-  return <section className="col-span-2 rounded-lg border-2 border-brand-300 bg-brand-50 p-3">
-    <label className="flex items-center justify-between gap-3 text-sm font-bold">
-      {label('method')}
+  return <section className="max-w-xs" aria-label={label('title')}>
+    <div className="flex items-center gap-2">
       <select aria-label={label('title')} aria-busy={busy} value={selectedMethod}
         onChange={event => { setSelectedMethod(event.target.value); setMessage(''); }} disabled={busy || !!pending || !METHODS.includes(method)}
-        className="min-h-12 rounded-lg border border-slate-300 bg-white px-3 text-base disabled:opacity-50">
+        className="h-10 min-w-0 rounded-md border border-slate-300 bg-white px-2 text-sm disabled:opacity-50">
         {!METHODS.includes(method) && <option value={method}>{method || label('method')}</option>}
         {METHODS.map(value => <option key={value} value={value}>{methodLabel(value)}</option>)}
       </select>
-    </label>
     <button type="button" onClick={() => void save(selectedMethod)}
       disabled={busy || !!pending || selectedMethod === method}
-      className="mt-3 min-h-12 w-full rounded-lg bg-blue-700 px-4 font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">
-      {busy ? label('working') : label('save')}
+      className="h-10 shrink-0 rounded-md bg-blue-700 px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
+      {busy ? label('working') : t('common.save')}
     </button>
-    {message && <p role="status" className="mt-2 text-sm font-medium">{message}</p>}
+    </div>
+    {message && <p role="status" className="mt-1 text-xs">{message}</p>}
     {pending && <div className="mt-2 flex gap-3">
-      <button type="button" onClick={() => void save(String(pending.paymentMethod), pending)} disabled={busy} className="min-h-12 rounded-lg bg-blue-700 px-4 font-bold text-white">{label('retry')}</button>
-      <button type="button" onClick={() => void refresh()} disabled={busy} className="min-h-12 px-3 underline">{label('refresh')}</button>
+      <button type="button" onClick={() => void save(String(pending.paymentMethod), pending)} disabled={busy} className="min-h-9 text-xs underline">{label('retry')}</button>
+      <button type="button" onClick={() => void refresh()} disabled={busy} className="min-h-9 text-xs underline">{label('refresh')}</button>
     </div>}
   </section>;
 }

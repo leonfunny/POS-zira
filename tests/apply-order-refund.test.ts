@@ -559,6 +559,14 @@ describe('payment correction sync', () => {
     vi.resetAllMocks();
     vi.mocked(orderRepo.getById).mockReturnValue({ id: 'local-order-1' } as any);
   });
+  it('acknowledges historical corrections without recreating purged local orders', () => {
+    vi.mocked(orderRepo.getById).mockReturnValue(undefined);
+    vi.mocked(database.get).mockReturnValue(undefined);
+    const correction = { ...entry({ id: 'local-order-1', paymentMethod: 'CARD', tenders: [{ method: 'CARD', amount: 41.15 }], updatedAt: '2026-09-08T12:00:00Z' }), source: 'pos-payment-correction' };
+    expect(applyEntry(correction)).toBe(true);
+    expect(orderRepo.upsertFromServer).not.toHaveBeenCalled();
+    expect(database.run).not.toHaveBeenCalled();
+  });
   it('updates payment amounts and tenders from the authoritative server snapshot', () => {
     expect(applyEntry(entry({ id: 'local-order-1', total:12, paidAmount:12, cashReceived:null, changeAmount:0,
       paymentMethod:'CARD', tenders:[{method:'CARD',amount:12}],updatedAt:'2026-09-08T12:00:00Z' }))).toBe(true);

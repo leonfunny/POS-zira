@@ -315,6 +315,9 @@ function applyOrder(
   }
 
   if (!localId) {
+    // Payment corrections only update retained history. Acknowledge corrections
+    // for purged/other-device orders without recreating them on this POS.
+    if (entry.source === 'pos-payment-correction' || entry.source === 'payment-correction') return true;
     // The order does not yet exist locally — this is the cross-session
     // mirror path (machine A creates a POS order, machine B receives
     // the sync_log entry without ever having owned the order). Adapt
