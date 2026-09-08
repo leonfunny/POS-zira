@@ -29,6 +29,10 @@ Event-aware shift reporting is now implemented in the follow-up branch: canonica
 
 Guarded V1 coordinator integration now preserves capability/auth context and immutable journal bytes, performs complete pre-dispatch device/shift/history/tender checks, and atomically confirms canonical event/order/journal state. Local evidence after independent-audit fixes: full serial suite 398 files passed, 1 skipped (4,378 tests passed, 13 skipped, including Electron smoke 13/13); final focused refund run 193/193; full build; Android boundary scan 162 source files / 5 bundles; policy checks passed. Production readiness remains an explicit NO-GO with 22 blockers.
 
-Production remains NO-GO pending recoverable remote close acknowledgement, separate backend completion/landing/deployment, native device/offline/restart/refund/printer tests, signed artifact validation and release approval. Backend work in its separate checkout is not included in this repository's commits.
+PR #4 merged this guarded source into `main` at `2669d79084600dd2c560f52aab01331939085c6e` after all three applicable CI checks passed; the Windows installer validation gate was non-applicable and skipped. No release artifact was published.
+
+Read-only backend inspection found that remote close is not yet safely replayable: the close service only selects an open shift, a committed close replay becomes `Open shift not found`, the request has no idempotency key, and there is no per-shift reconciliation read. The Android client must not convert 404 into an acknowledgement or blindly replay an UNKNOWN close. The additive server contract is specified in `docs/plans/android-shift-close-idempotency-server-request-2026-09-09.md`; runtime outbox wiring remains gated on that contract.
+
+Production remains NO-GO pending the server-supported recoverable remote-close acknowledgement, separate backend completion/landing/deployment, native device/offline/restart/refund/printer tests, signed artifact validation and release approval. Backend work in its separate checkout is not included in this repository's commits.
 
 See `docs/plans/SESSION_HANDOFF_ANDROID_POS.md` for continuation context. CI must pass on the pushed head before merge; local results above do not substitute for that gate.

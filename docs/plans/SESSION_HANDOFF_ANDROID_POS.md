@@ -4,16 +4,17 @@
 
 Continue making Android a standalone selling POS with Windows functional parity. Do not describe it as a companion display or claim production acceptance from web tests.
 
-Working checkout: `C:/Users/maxis/enail/POS-zira-release-foundation`, repository `leonfunny/POS-zira`. PR #2 merged at `ce19a83d29516ba2b1ac18ae4b33900c3555526a`; event-aware reporting PR #3 merged at `e38f5213e4ee12796ae620262dca5c93880be97d`. Guarded V1 coordinator work continues on `codex/android-refund-v1-coordinator`. The user authorized source commit/push/merge, not production release or activation without acceptance. Preserve dirty work. The clone fetch refspec originally included only a feature branch; fetch `main` explicitly when needed.
+Working checkout: `C:/Users/maxis/enail/POS-zira-release-foundation`, repository `leonfunny/POS-zira`. PR #2 merged at `ce19a83d29516ba2b1ac18ae4b33900c3555526a`; event-aware reporting PR #3 merged at `e38f5213e4ee12796ae620262dca5c93880be97d`; guarded V1 coordinator PR #4 merged at `2669d79084600dd2c560f52aab01331939085c6e` (source commit `1dee4cc462062dcf5751110fb39ea6a6aad322f0`). Remote-close contract work continues on `codex/android-remote-close-outbox`. The user authorized source commit/push/merge, not production release or activation without acceptance. Preserve dirty work. The clone fetch refspec originally included only a feature branch; fetch `main` explicitly when needed.
 
 ## Read first
 
 - Repository AGENTS.md and CLAUDE.md.
 - `android-windows-pos-parity-master-2026-09-08.md` and `android-windows-production-rollout-2026-09-08.md` in this directory.
-- `android-refund-event-client-2026-09-08.md` for current Stage 4 contracts and restrictions.
+- `android-refund-event-client-2026-09-08.md` for current refund contracts and restrictions.
 - `android-refund-event-accounting-server-request-2026-09-08.md` for separate backend evidence.
+- `android-shift-close-idempotency-server-request-2026-09-09.md` for the remote-close ACK-loss blocker and required server contract.
 
-Use graph discovery and path coverage first. The previously available graph generation was `2026-09-08T08:50:16Z`, stale for this work; read current source for changed/untracked paths. Subagent use is authorized, with disjoint ownership and independent review.
+Use graph discovery and path coverage first. The latest verified graph generation was `2026-09-08T23:11:40Z`; source paths still reported metadata changes and tests/docs are excluded by the fast index, so read current source for changed/untracked paths. Subagent use is authorized, with disjoint ownership and independent review.
 
 ## Completed implementation, not production activation
 
@@ -27,15 +28,15 @@ Use graph discovery and path coverage first. The previously available graph gene
 
 ## Next implementation order
 
-1. Recoverable remote-close acknowledgement/outbox; current remote close remains best-effort.
-2. Land and verify the separate backend V1 work in its DEV checkout before any environment can advertise the capability.
+1. Add the idempotent server close/reconciliation contract described in `android-shift-close-idempotency-server-request-2026-09-09.md`, verify it separately, then implement the capability-gated Android outbox. Current remote close remains best-effort; do not treat 404 as an acknowledgement.
+2. Land and verify the separate backend V1 work in its DEV checkout before any environment can advertise the refund capability.
 3. Full Windows/Android regression checks plus real Android restart, offline, tenant switch, payment/refund and printer acceptance. Only then prepare production artifacts and rollout.
 
 No guessing missing canonical history, no silently mapping OTHER to cash, no disabling split/cross-shift gates early. Missing server behavior requires a server change request, not a brittle client workaround.
 
 ## Evidence and release limits
 
-For guarded V1 coordination, the full serial suite passed 398 files with 1 skipped (4,378 tests passed, 13 skipped), including Electron smoke 13/13. The final focused refund run passed 193/193. Renderer/main/Windows build, Android web build, production-readiness policy, build-only CI policy and boundary checks passed (162 reachable source files / 5 bundle files). The production gate remains NO-GO with 22 blockers. These are not native Android, real backend or printer acceptance. Inspect fresh PR CI before merge. Old APKs do not represent this source. Do not publish a release tag, auto-update artifact or production APK just because a source PR merged.
+For guarded V1 coordination, the full serial suite passed 398 files with 1 skipped (4,378 tests passed, 13 skipped), including Electron smoke 13/13. The final focused refund run passed 193/193. Renderer/main/Windows build, Android web build, production-readiness policy, build-only CI policy and boundary checks passed (162 reachable source files / 5 bundle files). PR #4 CI then completed with three successful checks and one non-applicable Windows installer gate skipped. The production gate remains NO-GO with 22 blockers. These are not native Android, real backend or printer acceptance. Old APKs do not represent this source. Do not publish a release tag, auto-update artifact or production APK just because a source PR merged.
 
 Separate backend DEV work was reported in `/var/www/www/enail/.worktrees/android-pos-restaurant-parity-20260908` on netcup, branch `feat/android-pos-restaurant-parity-20260908-20260908`, base HEAD `c6576a518311b81171d566c4c919f7e2355bce85`, with uncommitted changes. Verify separately; POS repository commit/merge does not save or deploy that work. Do not build on live Contabo or run real financial mutations as tests.
 
