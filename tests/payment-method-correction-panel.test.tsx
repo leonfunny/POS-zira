@@ -15,10 +15,8 @@ describe('history payment correction', () => {
     await act(async () => { button.click(); });
   };
   const edit = async () => {
-    await click('Change payment method');
     await act(async () => {
       Simulate.change(host.querySelector('select')!, { target: { value: 'CARD' } } as any);
-      Simulate.change(host.querySelector('input')!, { target: { value: 'Wrong button' } } as any);
     });
   };
   beforeEach(async () => {
@@ -27,42 +25,48 @@ describe('history payment correction', () => {
     mutate.mockReset(); updated.mockReset();
     mutate.mockResolvedValue({success:true,preview:{allowed:true,version:'server-snapshot',paymentMethod:'CASH'}});
     (window as any).electronAPI = {pos:{orders:{mutate}}};
-    await act(async () => root.render(<PaymentMethodCorrectionPanel orderId="order-1" t={k => translations.en[k] || k} ensureMirrored={async()=>true} onUpdated={updated} />));
+    await act(async () => root.render(<PaymentMethodCorrectionPanel orderId="order-1" currentMethod="CASH" t={k => translations.en[k] || k} ensureMirrored={async()=>true} onUpdated={updated} />));
   });
   afterEach(async () => { await act(async () => root.unmount()); host.remove(); });
 
-  it('requires a reason and sends only the method and server version, never new amounts', async () => {
-    await click('Change payment method');
-    expect([...host.querySelectorAll('button')].find(b=>b.textContent==='Confirm change')?.disabled).toBe(true);
-    await act(async () => {
-      Simulate.change(host.querySelector('select')!,{target:{value:'CARD'}} as any);
-      Simulate.change(host.querySelector('input')!,{target:{value:'Wrong button'}} as any);
-    });
-    mutate.mockResolvedValueOnce({success:true});
-    await click('Confirm change');
-    expect(mutate.mock.calls[1]).toEqual(['order-1',{
-      type:'payment',mutationId:expect.any(String),expectedVersion:'server-snapshot',paymentMethod:'CARD',reason:'Wrong button',
+  it('saves immediately without reason input or confirmation, using a fresh server version', async () => {
+    expect(host.querySelector('input')).toBeNull();
+    expect(host.querySelector('button')).toBeNull();
+    await edit();
+    expect(mutate.mock.calls[1]).toEqual(['order-1', {
+      type: 'payment', mutationId: expect.any(String), expectedVersion: 'server-snapshot',
+      paymentMethod: 'CARD', reason: 'Quick payment method correction (POS)',
     }]);
     expect(updated).toHaveBeenCalledTimes(1);
-    expect(host.textContent).toContain('updated and synchronized');
+    expect(host.querySelector('select')!.value).toBe('CARD');
   });
-  it('keeps the same mutation ID and freezes inputs after an uncertain response', async () => {
-    await edit(); mutate.mockRejectedValueOnce(new Error('network'));
-    await click('Confirm change');
+  it('retries the identical request after an uncertain response', async () => {
+    mutate.mockResolvedValueOnce({success:true,preview:{allowed:true,version:'v',paymentMethod:'CASH'}})
+      .mockRejectedValueOnce(new Error('network'));
+    await edit();
     const original = mutate.mock.calls[1][1];
-    expect(host.querySelector('input')!.disabled).toBe(true);
+    expect(host.querySelector('select')!.disabled).toBe(true);
     mutate.mockResolvedValueOnce({success:true}); await click('Retry same change');
     expect(mutate.mock.calls[2][1]).toEqual(original);
   });
-  it('shows a protected-payment reason and provides no save action',async()=>{
-    mutate.mockResolvedValueOnce({success:true,preview:{version:'v',allowed:false,blockedCode:'TERMINAL_PAYMENT'}});
-    await click('Change payment method');
+  it('blocks protected payments without issuing a write', async () => {
+    mutate.mockResolvedValueOnce({success:true,preview:{version:'v',paymentMethod:'CASH',allowed:false,blockedCode:'TERMINAL_PAYMENT'}});
+    await edit();
     expect(host.textContent).toContain('terminal or gateway');
-    expect(host.querySelector('select')).toBeNull();
+    expect(mutate).toHaveBeenCalledTimes(1); expect(updated).not.toHaveBeenCalled();
   });
-  it('requires refresh after a stale version without reporting success',async()=>{
-    await edit();mutate.mockResolvedValueOnce({success:false,code:'STALE_PAYMENT'});await click('Confirm change');
-    expect(host.textContent).toContain('another device');expect(updated).not.toHaveBeenCalled();
+  it('does not overwrite a method already changed on the web', async () => {
+    mutate.mockResolvedValueOnce({success:true,preview:{version:'v',paymentMethod:'BLIK',allowed:true}});
+    await edit();
+    expect(host.textContent).toContain('another device');
+    expect(mutate).toHaveBeenCalledTimes(1); expect(host.querySelector('select')!.value).toBe('BLIK');
+  });
+  it('retains the old method if the server rejects a concurrent update', async () => {
+    mutate.mockResolvedValueOnce({success:true,preview:{version:'v',paymentMethod:'CASH',allowed:true}})
+      .mockResolvedValueOnce({success:false,code:'STALE_PAYMENT'});
+    await edit();
+    expect(host.textContent).toContain('another device'); expect(updated).not.toHaveBeenCalled();
+    expect(host.querySelector('select')!.value).toBe('CASH');
   });
   it('has translated correction messages in every supported POS locale',()=>{
     const keys=Object.keys(translations.en).filter(k=>k.startsWith('pos.paymentCorrection.'));

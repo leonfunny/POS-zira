@@ -2443,10 +2443,14 @@ export default function OrderHistoryModal({
                     );
                   }
                   return (
-                    <div className="flex justify-between gap-4">
-                      <span className="font-medium text-slate-500">{tOr(t, 'pos.history.method', 'Method')}</span>
-                      <span className="font-bold text-slate-900">{paymentLabel(order.payment_method, t)}</span>
-                    </div>
+                    <PaymentMethodCorrectionPanel
+                      key={order.id}
+                      orderId={order.id}
+                      currentMethod={order.payment_method}
+                      t={t}
+                      ensureMirrored={() => ensureMirrored(order)}
+                      onUpdated={() => { refreshLocalOrderDetail(order.id); loadOrders(); }}
+                    />
                   );
                 })()}
                 <div className="flex justify-between gap-4">
@@ -2629,16 +2633,6 @@ export default function OrderHistoryModal({
                 >
                   {tOr(t, 'pos.refund.title', 'Refund Order')}
                 </button>
-              )}
-
-              {!showRefund && (
-                <PaymentMethodCorrectionPanel
-                  key={order.id}
-                  orderId={order.id}
-                  t={t}
-                  ensureMirrored={() => ensureMirrored(order)}
-                  onUpdated={() => { refreshLocalOrderDetail(order.id); loadOrders(); }}
-                />
               )}
 
               {!showRefund && (
