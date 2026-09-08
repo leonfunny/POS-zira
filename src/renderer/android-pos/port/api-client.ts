@@ -590,8 +590,28 @@ export class PosApiClient {
    * is passed through unchanged (PLN-decimal fields per SHIM_CONTRACT §2.F
    * note — building it is S8's job, not this client's).
    */
-  async getPosCapabilities(): Promise<unknown> {
-    return this.request('GET', '/b2b/pos/capabilities');
+  async getPosCapabilities(assertContext?: () => Promise<void>): Promise<unknown> {
+    await assertContext?.();
+    const token = await this.requireToken('getPosCapabilities');
+    await assertContext?.();
+    const response = await this.fetchWithTimeout(`${this.baseUrl}/api/v1/b2b/pos/capabilities`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    }, DEFAULT_TIMEOUT, assertContext);
+    await assertContext?.();
+    let data: unknown;
+    try { data = await response.json(); }
+    catch {
+      await assertContext?.();
+      throw new Error(response.ok ? 'Invalid POS capabilities response JSON' : `HTTP ${response.status}`);
+    }
+    await assertContext?.();
+    if (!response.ok) {
+      const error = new Error((data as any)?.message || `HTTP ${response.status}`) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
+    }
+    return data;
   }
 
   async createPosOrder(order: any, assertContext?: () => void): Promise<{ id?: string; orderId?: string; [key: string]: any }> {

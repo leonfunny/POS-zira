@@ -18,7 +18,7 @@
 ## Migration and runtime impact
 
 - Additive Android local schema stages 11–13 cover device identity, immutable shift-close snapshots, and refund event storage/context. No production database migration is performed by this source integration.
-- V1 refund events remain staged, not enabled for live HTTP dispatch. Existing capability and safety gates remain in place.
+- V1 refund events are conditionally wired in the Android coordinator, but only an exact authenticated `refundEventVersion: 1` capability can select them. Existing attempts retain their frozen protocol, converted orders cannot downgrade, and same-shift/single-tender/OTHER gates remain. The required backend capability is not landed or deployed.
 - No new production environment variables or credentials are introduced by this ship operation.
 
 ## Release boundary
@@ -27,6 +27,8 @@ This is a source-only integration, not a production release. Version remains 1.0
 
 Event-aware shift reporting is now implemented in the follow-up branch: canonical deltas are attributed to their refund shift, converted cumulative refunds are excluded, full frozen journal evidence and tender/audit chains are revalidated, and finalized reports remain immutable. Local follow-up evidence after rebasing onto `main@438bb81`: 111 focused tests; 396 non-browser test files passed with 1 skipped (4,319 tests passed, 13 skipped); Electron smoke 13/13; full build; Android boundary scan 162 source files / 5 bundles; production-readiness and build-only CI policy checks passed.
 
-Production remains NO-GO pending capability negotiation and guarded V1 dispatch, recoverable remote close acknowledgement, native device/offline/restart/printer tests, signed artifact validation, and separate backend completion. Backend work in its separate checkout is not included in this repository's commits.
+Guarded V1 coordinator integration now preserves capability/auth context and immutable journal bytes, performs complete pre-dispatch device/shift/history/tender checks, and atomically confirms canonical event/order/journal state. Local evidence after independent-audit fixes: full serial suite 398 files passed, 1 skipped (4,378 tests passed, 13 skipped, including Electron smoke 13/13); final focused refund run 193/193; full build; Android boundary scan 162 source files / 5 bundles; policy checks passed. Production readiness remains an explicit NO-GO with 22 blockers.
+
+Production remains NO-GO pending recoverable remote close acknowledgement, separate backend completion/landing/deployment, native device/offline/restart/refund/printer tests, signed artifact validation and release approval. Backend work in its separate checkout is not included in this repository's commits.
 
 See `docs/plans/SESSION_HANDOFF_ANDROID_POS.md` for continuation context. CI must pass on the pushed head before merge; local results above do not substitute for that gate.
