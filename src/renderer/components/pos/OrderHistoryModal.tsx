@@ -1,3 +1,4 @@
+import PaymentMethodCorrectionPanel from './PaymentMethodCorrectionPanel';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getHistoryDisplayNumber, getRealHistoryOrderNumber } from './order-fiscal-visibility';
 import { translations } from '../../i18n/translations';
@@ -1567,13 +1568,6 @@ function OrderMutationPanel({
     }
   };
 
-  const savePayment = () => runMutation('payment', {
-    type: 'payment',
-    paymentMethod,
-    paymentAmount: parseMoneyInput(paidText),
-    changeAmount: parseMoneyInput(changeText),
-  });
-
   const saveItems = () => runMutation('items', {
     type: 'items',
     paymentMethod,
@@ -1626,49 +1620,6 @@ function OrderMutationPanel({
           className="mt-1.5 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm font-bold text-slate-900 disabled:bg-slate-100 disabled:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
         />
       </label>
-
-      <div className="mt-3 grid grid-cols-2 gap-2">
-        <label className="text-xs font-bold uppercase tracking-wide text-slate-500">
-          Method
-          <select
-            value={paymentMethod}
-            onChange={(e) => setPaymentMethod(e.target.value)}
-            disabled={isFinal || busy !== null}
-            className="mt-1.5 h-10 w-full rounded-lg border border-slate-300 bg-white px-2 text-sm font-bold text-slate-900 disabled:bg-slate-100 disabled:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
-          >
-            {PAYMENT_METHODS.filter((method) => method.value !== 'SPLIT').map((method) => (
-              <option key={method.value} value={method.value}>{method.label}</option>
-            ))}
-          </select>
-        </label>
-        <label className="text-xs font-bold uppercase tracking-wide text-slate-500">
-          Paid
-          <input
-            value={paidText}
-            onChange={(e) => setPaidText(e.target.value)}
-            inputMode="decimal"
-            disabled={isFinal || busy !== null}
-            className="mt-1.5 h-10 w-full rounded-lg border border-slate-300 bg-white px-2 text-right text-sm font-bold tabular-nums text-slate-900 disabled:bg-slate-100 disabled:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
-          />
-        </label>
-      </div>
-      <label className="mt-2 block text-xs font-bold uppercase tracking-wide text-slate-500">
-        Change
-        <input
-          value={changeText}
-          onChange={(e) => setChangeText(e.target.value)}
-          inputMode="decimal"
-          disabled={isFinal || busy !== null}
-          className="mt-1.5 h-10 w-full rounded-lg border border-slate-300 bg-white px-2 text-right text-sm font-bold tabular-nums text-slate-900 disabled:bg-slate-100 disabled:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100"
-        />
-      </label>
-      <button
-        onClick={savePayment}
-        disabled={!canSubmit || busy !== null}
-        className="mt-3 flex min-h-10 w-full items-center justify-center rounded-lg bg-slate-900 px-4 text-sm font-extrabold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
-      >
-        {busy === 'payment' ? 'Saving...' : 'Save payment'}
-      </button>
 
       <div className="mt-4 border-t border-slate-200 pt-3">
         <div className="text-xs font-bold uppercase tracking-wide text-slate-500">Items</div>
@@ -2678,6 +2629,16 @@ export default function OrderHistoryModal({
                 >
                   {tOr(t, 'pos.refund.title', 'Refund Order')}
                 </button>
+              )}
+
+              {!showRefund && (
+                <PaymentMethodCorrectionPanel
+                  key={order.id}
+                  orderId={order.id}
+                  t={t}
+                  ensureMirrored={() => ensureMirrored(order)}
+                  onUpdated={() => { refreshLocalOrderDetail(order.id); loadOrders(); }}
+                />
               )}
 
               {!showRefund && (
