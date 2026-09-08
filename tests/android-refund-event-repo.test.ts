@@ -55,10 +55,37 @@ function prepare(f: Fixture, p = proof(f)) {
   return p;
 }
 const input = (p: ReturnType<typeof proof>): ConfirmCanonicalRefundInput => ({ requestId: p.requestId, localOrderId: localId, responseJson: JSON.stringify(p.response), scope: { ...scope } });
+const preparationInput = (p: ReturnType<typeof proof>) => ({ requestId: p.requestId, localOrderId: localId,
+  backendOrderId: backendId, localShiftId: localShift, backendShiftId: backendShift, scope: { ...scope },
+  authority: p.saved.authority, priorRefundLines: p.saved.priorRefundLines });
 const state = (f: Fixture) => ({ order: order(f), journal: f.db.all('SELECT * FROM pos_refund_attempts ORDER BY request_id'),
   events: f.db.all('SELECT * FROM pos_refund_events ORDER BY request_id') });
 
 describe('Android canonical refund confirmation storage', () => {
+  it('preflights the exact durable device, shift, order, audit and remaining tender capacities without mutation', async () => {
+    const f = await setup(); const first = proof(f); const before = state(f);
+    expect(f.repo.inspectCanonicalRefundPreparation(preparationInput(first))).toEqual({
+      originalTenderCapacities: capacities,
+      remainingTenderCapacities: capacities,
+    });
+    expect(state(f)).toEqual(before);
+    prepare(f, first); f.repo.confirmCanonicalRefund(input(first));
+    const second = proof(f, 21, 400);
+    expect(f.repo.inspectCanonicalRefundPreparation(preparationInput(second))).toEqual({
+      originalTenderCapacities: capacities,
+      remainingTenderCapacities: [{ method: 'CARD', amountMinor: 400 }, { method: 'CASH', amountMinor: 400 }],
+    });
+  });
+
+  it('preflight fails closed on incomplete history or another unresolved request', async () => {
+    const f = await setup(); const first = prepare(f); f.repo.confirmCanonicalRefund(input(first));
+    const second = proof(f, 21, 400); f.db.run('DELETE FROM pos_refund_events');
+    expect(() => f.repo.inspectCanonicalRefundPreparation(preparationInput(second))).toThrow(/ledger|history/i);
+    const clean = await setup(); const blocker = proof(clean, 30); prepare(clean, blocker);
+    const candidate = proof(clean, 31);
+    expect(() => clean.repo.inspectCanonicalRefundPreparation(preparationInput(candidate))).toThrow(/unresolved/i);
+  });
+
   it('atomically saves event, immutable context, cumulative audit and journal without flushing or touching stock', async () => {
     const f = await setup(); const p = prepare(f); const flush = vi.spyOn(f.db, 'flush');
     const original = f.journal.get(p.requestId)!;

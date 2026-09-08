@@ -51,7 +51,8 @@ async function setup() {
     replies.set(request.refundRequestId, structuredClone(response));
     return response;
   };
-  const client = { getServerOrderDetail: vi.fn(async () => structuredClone(server)),
+  const client = { getPosCapabilities: vi.fn(async () => ({})),
+    getServerOrderDetail: vi.fn(async () => structuredClone(server)),
     refundOrder: vi.fn(async (_id: string, body: any, guard?: () => Promise<void>) => { await guard?.(); return applyServer(body); }) };
   const refreshStock = vi.fn(async () => {});
   const make = (db = database) => createAndroidRefundCoordinator({ client, configStore, tokenStore,

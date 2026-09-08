@@ -40,7 +40,8 @@ async function setup() {
     authUser: { id: 'owner', salonId: 'salon', role: 'OWNER' } } as any });
   const tokenStore = new TokenStore({ storage: storage(), allowInsecureFallback: true });
   await tokenStore.setTokens('owner-token', 'refresh-token');
-  const client = { getServerOrderDetail: vi.fn(async () => rawOrder()), refundOrder: vi.fn(async () => confirmed()) };
+  const client = { getPosCapabilities: vi.fn(async () => ({})),
+    getServerOrderDetail: vi.fn(async () => rawOrder()), refundOrder: vi.fn(async () => confirmed()) };
   const refreshStock = vi.fn(async () => {});
   const coordinator = createAndroidRefundCoordinator({ client, configStore, tokenStore, db: async () => database,
     serverUrl, currentServerUrl: () => serverUrl, isTransitioning: () => false, refreshStock });
@@ -116,6 +117,17 @@ describe('Android canonical event isolation from legacy refund accounting', () =
     const restored = await initAndroidDb({ locateFile: null, persistence: h.persistence }); databases.push(restored);
     expect(restored.get<any>('SELECT payload_json, expected_json, status FROM pos_refund_attempts WHERE request_id = ?', [requestId]))
       .toEqual({ payload_json: payload, expected_json: expected, status: 'UNKNOWN' });
+  });
+  it('never dispatches V1 payload fields from an UNKNOWN journal whose protocol tag is absent', async () => {
+    const h = await setup(); const repo = createRefundAttemptRepo(h.database);
+    const payload = `{ "refundRequestId": "${requestId}", "refundEventVersion": 1, "machineId": "${machineId}", "amount": 10 }`;
+    const expected = '{ "authority": {}, "inputJson": {} }';
+    repo.prepare({ request_id: requestId, scope_key: JSON.stringify([serverUrl, 'salon', 'owner']),
+      local_order_id: 'local-order', backend_order_id: backendId, shift_id: 'local-shift', payload_json: payload, expected_json: expected });
+    repo.markUnknown(requestId); await h.database.flush(); const before = state(h);
+    expect(await h.coordinator.reconcileRefund('local-order', requestId))
+      .toMatchObject({ success: false, error: expect.stringMatching(/Legacy refund journal.*V1/i) });
+    noExternal(h); expect(state(h)).toEqual(before);
   });
   it.each(['marker', 'event'] as const)('does not bypass %s protection through legacy CONFIRMED reconciliation after shift closure', async kind => {
     const h = await setup();

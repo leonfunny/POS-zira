@@ -14,6 +14,30 @@ const json = (data: unknown, status = 200) => new Response(JSON.stringify(data),
 const payload = () => ({ type: 'PARTIAL', amount: 20.25, refundRequestId: 'immutable-request', items: [{ orderItemId: 'item-a', quantity: 0.5, restock: false }] });
 
 describe('Android monetary refund HTTP boundary', () => {
+  it('reads refund capabilities through the guarded authenticated context', async () => {
+    const { client, fetch, guard } = setup();
+    fetch.mockResolvedValue(json({ refundEventVersion: 1 }));
+    await expect(client.getPosCapabilities(guard)).resolves.toEqual({ refundEventVersion: 1 });
+    expect(fetch).toHaveBeenCalledWith('https://refund.test/api/v1/b2b/pos/capabilities', expect.objectContaining({
+      method: 'GET', headers: expect.objectContaining({ Authorization: 'Bearer token-original' }),
+    }));
+    expect(guard.mock.calls.length).toBeGreaterThanOrEqual(5);
+  });
+
+  it('does not send a capability probe after the authenticated context changes during token lookup', async () => {
+    const { client, provider, fetch } = setup(); let current = true;
+    provider.getAccessToken.mockImplementation(async () => { current = false; return 'token-new'; });
+    const guard = async () => { if (!current) throw new Error('CONTEXT_CHANGED'); };
+    await expect(client.getPosCapabilities(guard)).rejects.toThrow('CONTEXT_CHANGED');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('does not accept malformed capability JSON after a successful response', async () => {
+    const { client, fetch, guard } = setup();
+    fetch.mockResolvedValue(new Response('not-json', { status: 200 }));
+    await expect(client.getPosCapabilities(guard)).rejects.toThrow('Invalid POS capabilities response JSON');
+  });
+
   it('preserves saved JSON byte-for-byte without rewriting PLN or request IDs', async () => {
     const { client, fetch, guard } = setup();
     const saved = ' {"amount":20.25,"refundRequestId":"saved-id","items":[]} ';

@@ -3,7 +3,11 @@
 Ngày: 08/09/2026. Trạng thái: ĐANG THỰC HIỆN, chưa nghiệm thu 100%.
 Phê duyệt: người dùng yêu cầu lập kế hoạch chi tiết và triển khai, bao gồm phần backend đã nêu ở lượt trước.
 
-### Trạng thái mới nhất — sổ hoàn tiền Android, chưa bật luồng mới (08/09)
+### Trạng thái mới nhất — capability và coordinator hoàn tiền V1 có guard (09/09)
+
+Android chỉ chọn V1 khi capability trực tiếp có số `refundEventVersion: 1`; giữ nguyên protocol/payload/request ID của journal cũ, không downgrade đơn đã chuyển sang event. Trước POST kiểm tra bền vững máy/ca/salon/server, toàn bộ history/audit/tender và frozen request; response hợp lệ mới cập nhật event/đơn/journal trong một transaction rồi flush có latch. Vẫn chặn khác ca, split và OTHER. Full serial **4.378 tests đạt / 13 skip**, Electron smoke 13/13, build Windows, Android web, boundary162/5 và policy đạt; production gate vẫn **NO-GO 22 blocker**. Backend V1 riêng chưa commit/deploy, không APK/phát hành/nghiệm thu máy thật. [Chi tiết và giới hạn](android-refund-event-client-2026-09-08.md).
+
+### Trạng thái trước — sổ hoàn tiền Android, chưa bật luồng mới (08/09)
 
 Schema13 và repository lưu sự kiện/đơn/journal nguyên tử đã hoàn tất; kiểm tra tiền thực thu, phương thức, ca/máy/salon và toàn bộ lịch sử trước khi ghi. Chặn luồng cũ đọc/ghi nhầm dữ liệu mới và giữ nguyên UNKNOWN. Parent **1.087 tests / 49 suites đạt**, typecheck/Android web/boundary159/5 đạt. [Chi tiết và giới hạn](android-refund-event-client-2026-09-08.md). Chưa nối V1 HTTP hoặc báo cáo ca theo sự kiện; remote-close recovery/native còn mở. Không APK/deploy, chưa 100% parity.
 

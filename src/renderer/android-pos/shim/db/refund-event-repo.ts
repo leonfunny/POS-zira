@@ -1,6 +1,6 @@
 import type { AndroidDatabase } from './db';
 import { createRefundAttemptRepo, type RefundAttempt } from './refund-attempt-repo';
-import { validateAuthoritativeRefundResult } from '../../../../shared/refund-authority';
+import { validateAuthoritativeRefundResult, type RefundAuthorityExpected } from '../../../../shared/refund-authority';
 import { validateCanonicalRefundEvent, type RefundEventTenderAllocation } from '../../../../shared/refund-event';
 
 export interface ConfirmCanonicalRefundInput {
@@ -8,6 +8,20 @@ export interface ConfirmCanonicalRefundInput {
   localOrderId: string;
   responseJson: string;
   scope: { serverUrl: string; salonId: string; operatorId: string; machineId: string };
+}
+export interface InspectCanonicalRefundPreparationInput {
+  requestId: string;
+  localOrderId: string;
+  backendOrderId: string;
+  localShiftId: string;
+  backendShiftId: string;
+  scope: { serverUrl: string; salonId: string; operatorId: string; machineId: string };
+  authority: RefundAuthorityExpected;
+  priorRefundLines: unknown[];
+}
+export interface CanonicalRefundPreparation {
+  originalTenderCapacities: RefundEventTenderAllocation[];
+  remainingTenderCapacities: RefundEventTenderAllocation[];
 }
 const fail = (reason: string): never => { throw new Error(`ANDROID_REFUND_EVENT_INVALID: ${reason}`); };
 const object = (v: unknown): v is Record<string, any> => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -34,6 +48,11 @@ function pln(value: unknown): number {
   const scaled = Number(value) * 100; const rounded = Math.round(scaled);
   if (!minor(rounded) || !Number.isFinite(scaled) || Math.abs(scaled - rounded) > 0.000001) return fail('Invalid PLN precision');
   return rounded;
+}
+function timestamp(value: unknown): boolean {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return false;
+  const time = Date.parse(value);
+  return Number.isFinite(time) && new Date(time).toISOString() === value;
 }
 function tenders(raw: unknown): RefundEventTenderAllocation[] {
   if (!Array.isArray(raw) || !raw.length || raw.length > 4) return fail('Tender capacities required');
@@ -62,29 +81,158 @@ const fingerprint = (order: any) => JSON.stringify([
   order.payment_method, order.payment_tenders ?? null,
 ]);
 
-/** Validate immutable evidence independently for current and historical requests. */
-export function validateRefundEventEvidence(attempt: RefundAttempt, responseJson: string) {
-  const saved = parse(attempt.expected_json); const payload = parse(attempt.payload_json); const raw = parse(responseJson);
+function validateScope(scope: ConfirmCanonicalRefundInput['scope']): void {
+  let url: URL;
+  try { url = new URL(scope.serverUrl); } catch { return fail('Invalid server scope'); }
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash
+    || scope.serverUrl !== scope.serverUrl.trim() || scope.serverUrl.endsWith('/')
+    || !uuid(scope.salonId) || !uuid(scope.operatorId) || !uuid(scope.machineId)) return fail('Invalid confirmation scope');
+}
+
+function localTenderCapacities(order: any): RefundEventTenderAllocation[] {
+  const payments = order.payment_tenders === null
+    ? [{ method: order.payment_method, amountMinor: order.total }]
+    : (() => {
+      const rows = parse(order.payment_tenders);
+      if (!Array.isArray(rows)) return fail('Invalid local tenders');
+      return rows.map(row => ({ method: row?.method, amountMinor: row?.amount }));
+    })();
+  const result = tenders(payments);
+  if (order.payment_method !== (result.length > 1 ? 'SPLIT' : result[0].method)) return fail('Local original tenders mismatch');
+  return result;
+}
+
+/**
+ * Read-only V1 preflight. It proves that the complete local canonical history,
+ * current order projection, device and open shift binding can accept one more
+ * event before any request bytes are frozen or dispatched.
+ */
+function inspectCanonicalRefundPreparation(
+  database: AndroidDatabase,
+  input: InspectCanonicalRefundPreparationInput,
+): CanonicalRefundPreparation {
+  if (!object(input) || !uuid(input.requestId) || !uuid(input.localOrderId) || !uuid(input.backendOrderId)
+    || !uuid(input.localShiftId) || !uuid(input.backendShiftId) || !object(input.scope)
+    || !object(input.authority) || !Array.isArray(input.priorRefundLines)) return fail('Invalid preparation identity');
+  validateScope(input.scope);
+  const { scope, authority } = input;
+  if (authority.requestId !== input.requestId || authority.backendOrderId !== input.backendOrderId
+    || !minor(authority.orderTotalGrosze) || authority.orderTotalGrosze === 0
+    || !minor(authority.alreadyRefundedGrosze) || !minor(authority.expectedDeltaGrosze)
+    || authority.expectedDeltaGrosze === 0
+    || authority.alreadyRefundedGrosze + authority.expectedDeltaGrosze > authority.orderTotalGrosze) {
+    return fail('Invalid preparation authority');
+  }
+  if (!Array.isArray(authority.items) || authority.items.length === 0) return fail('Invalid preparation items');
+  const itemIds = new Set<string>();
+  for (const item of authority.items) {
+    const quantity = item?.quantity;
+    const milli = typeof quantity === 'number' && Number.isFinite(quantity) ? Math.round(quantity * 1000) : 0;
+    if (!object(item) || !uuid(item.orderItemId) || itemIds.has(item.orderItemId)
+      || milli <= 0 || !Number.isSafeInteger(milli) || Math.abs(quantity * 1000 - milli) > 0.000001
+      || typeof item.restock !== 'boolean') return fail('Invalid preparation items');
+    itemIds.add(item.orderItemId);
+  }
+
+  const order = database.get<any>('SELECT * FROM orders WHERE id = ?', [input.localOrderId]);
+  const device = database.get<any>('SELECT id FROM pos_device_identity WHERE singleton = 1');
+  if (!order || order.backend_id !== input.backendOrderId || order.shift_id !== input.localShiftId
+    || order.source !== 'POS' || order.synced !== 1 || order.mode === 'billiard' || order.billiard_origin_json
+    || order.total !== authority.orderTotalGrosze || device?.id !== scope.machineId) return fail('Local order/device mismatch');
+  if (database.all('SELECT id FROM orders WHERE backend_id = ?', [input.backendOrderId]).length !== 1) return fail('Ambiguous local backend mapping');
+  if (order.tip !== 0 || order.discount !== 0 || !minor(order.payment_amount) || !minor(order.change_amount)
+    || order.payment_amount - order.change_amount !== order.total) return fail('Unsupported or unsettled local money');
+
+  const shift = database.get<any>('SELECT * FROM shifts WHERE id = ?', [input.localShiftId]);
+  const binding = shift?.backend_binding_json ? parse(shift.backend_binding_json) : null;
+  if (!shift || shift.backend_id !== input.backendShiftId || shift.closed_at !== null || shift.close_report_json !== null
+    || !object(binding) || canonical(binding) !== canonical({ serverUrl: scope.serverUrl, salonId: scope.salonId,
+      machineId: scope.machineId, backendShiftId: input.backendShiftId })
+    || database.all('SELECT id FROM shifts WHERE closed_at IS NULL').length !== 1) return fail('Original shift binding mismatch');
+
+  const original = localTenderCapacities(order);
+  if (sum(original.map(row => row.amountMinor)) !== order.total) return fail('Original tender sum mismatch');
+  const ledger = database.all<any>('SELECT * FROM pos_refund_events WHERE local_order_id = ? OR backend_order_id = ?',
+    [input.localOrderId, input.backendOrderId]);
+  const confirmed = database.all<RefundAttempt>("SELECT * FROM pos_refund_attempts WHERE (local_order_id = ? OR backend_order_id = ?) AND status = 'CONFIRMED'",
+    [input.localOrderId, input.backendOrderId]);
+  if (confirmed.length !== ledger.length) return fail('Missing ledger or legacy confirmed history');
+  const unresolved = database.all<RefundAttempt>("SELECT * FROM pos_refund_attempts WHERE (local_order_id = ? OR backend_order_id = ?) AND status IN ('PREPARED','UNKNOWN')",
+    [input.localOrderId, input.backendOrderId]);
+  if (unresolved.some(row => row.request_id !== input.requestId)) return fail('Other unresolved refund');
+
+  const histories = ledger.map(row => {
+    const savedAttempt = confirmed.find(item => item.request_id === row.request_id);
+    if (!savedAttempt || savedAttempt.local_order_id !== input.localOrderId || savedAttempt.backend_order_id !== input.backendOrderId) return fail('Ledger journal missing');
+    const proof = validateRefundEventEvidence(savedAttempt, savedAttempt.response_json!);
+    const event = proof.event;
+    if (row.server_url !== scope.serverUrl || row.salon_id !== scope.salonId || row.local_order_id !== input.localOrderId
+      || row.backend_order_id !== input.backendOrderId || row.local_shift_id !== input.localShiftId
+      || row.backend_shift_id !== input.backendShiftId || row.machine_id !== scope.machineId
+      || event.shiftId !== input.backendShiftId || event.machineId !== scope.machineId || event.salonId !== scope.salonId
+      || row.operator_id !== event.operatorId || savedAttempt.shift_id !== input.localShiftId
+      || savedAttempt.scope_key !== JSON.stringify([scope.serverUrl, scope.salonId, event.operatorId])
+      || row.occurred_at !== event.occurredAt || row.delta_amount_minor !== event.deltaAmountMinor
+      || canonical(parse(row.event_json)) !== canonical(event) || canonical(proof.original) !== canonical(original)
+      || proof.authority.orderTotalGrosze !== order.total) return fail('Persisted event disagrees with journal');
+    return proof;
+  }).sort((a, b) => a.authority.alreadyRefundedGrosze - b.authority.alreadyRefundedGrosze);
+
+  let cumulative = 0; let allLines: any[] = []; const used = new Map<string, number>();
+  for (const history of histories) {
+    if (history.authority.alreadyRefundedGrosze !== cumulative
+      || canonical(audit(history.saved.priorRefundLines)) !== canonical(audit(allLines))) return fail('Incomplete cumulative/audit chain');
+    cumulative = sum([cumulative, history.validated.deltaGrosze]);
+    if (history.validated.cumulativeGrosze !== cumulative) return fail('Invalid cumulative chain');
+    allLines = audit([...allLines, ...history.lines]);
+    for (const row of history.allocated) used.set(row.method, sum([used.get(row.method) ?? 0, row.amountMinor]));
+  }
+  const localAudit = order.refund_lines === null ? [] : parse(order.refund_lines);
+  if (order.refund_amount !== cumulative || canonical(audit(localAudit)) !== canonical(audit(allLines))
+    || order.status !== (cumulative === 0 ? 'COMPLETED' : cumulative === order.total ? 'REFUNDED' : 'PARTIAL_REFUND')) {
+    return fail('Local cumulative projection mismatch');
+  }
+  const expectedContext = { serverUrl: scope.serverUrl, salonId: scope.salonId, machineId: scope.machineId,
+    backendOrderId: input.backendOrderId, originalTenderCapacities: original };
+  if (order.refund_event_context_json === null) {
+    if (ledger.length || cumulative !== 0) return fail('Zero-refund first conversion required');
+  } else if (canonical(parse(order.refund_event_context_json)) !== canonical(expectedContext) || ledger.length === 0) {
+    return fail('Invalid immutable event context');
+  }
+  if (authority.alreadyRefundedGrosze !== cumulative
+    || canonical(audit(input.priorRefundLines)) !== canonical(audit(allLines))) return fail('Frozen prior accounting mismatch');
+  const remainingTenderCapacities = original.map(row => {
+    const remaining = row.amountMinor - (used.get(row.method) ?? 0);
+    if (!minor(remaining)) return fail('Historical tender capacity exceeded');
+    return { method: row.method, amountMinor: remaining };
+  });
+  return { originalTenderCapacities: original, remainingTenderCapacities };
+}
+
+/** Validate the frozen V1 request before any network dispatch or replay. */
+export function validateFrozenRefundEventRequest(attempt: RefundAttempt) {
+  const saved = parse(attempt.expected_json); const payload = parse(attempt.payload_json);
   if (!object(saved) || saved.protocolVersion !== 1 || !object(saved.authority) || !object(saved.event)
     || typeof saved.localFingerprint !== 'string' || !Array.isArray(parse(saved.localFingerprint))
     || !object(parse(saved.inputJson)) || !Array.isArray(saved.priorRefundLines) || !object(payload)) return fail('Invalid frozen V1 evidence');
   const authority = saved.authority; const expected = saved.event;
-  const validated = validateAuthoritativeRefundResult(raw, authority as any);
-  const eventResult = validateCanonicalRefundEvent(raw?.refundEvent, expected as any);
-  if (!validated.ok || !eventResult.ok) return fail('Unconfirmed authoritative response/event');
-  const event = eventResult.event;
+  const eventKeys = new Set(['schemaVersion', 'occurredAt', 'refundRequestId', 'orderId', 'salonId', 'shiftId', 'machineId', 'operatorId', 'deltaAmountMinor', 'tenderAllocations']);
+  if (Object.keys(expected).some(key => !eventKeys.has(key))
+    || (expected.schemaVersion !== undefined && expected.schemaVersion !== 1)
+    || (expected.occurredAt !== undefined && !timestamp(expected.occurredAt))) return fail('Invalid frozen event fields');
+  const eventShape = validateCanonicalRefundEvent({ ...expected, schemaVersion: 1, occurredAt: '2000-01-01T00:00:00.000Z' }, expected as any);
+  if (!eventShape.ok) return fail('Invalid frozen event expectation');
   if (authority.requestId !== attempt.request_id || authority.backendOrderId !== attempt.backend_order_id
-    || event.refundRequestId !== attempt.request_id || event.orderId !== attempt.backend_order_id
-    || validated.deltaGrosze !== authority.expectedDeltaGrosze || validated.deltaGrosze !== event.deltaAmountMinor
-    || sum(validated.lines.map(line => line.refundAmount)) !== validated.deltaGrosze) return fail('Exact response delta/line sum mismatch');
+    || expected.refundRequestId !== attempt.request_id || expected.orderId !== attempt.backend_order_id
+    || authority.expectedDeltaGrosze !== expected.deltaAmountMinor) return fail('Frozen request authority mismatch');
   const original = tenders(saved.originalTenderCapacities);
-  const allocated = tenders(event.tenderAllocations);
+  const allocated = tenders(expected.tenderAllocations);
   if (sum(original.map(row => row.amountMinor)) !== authority.orderTotalGrosze) return fail('Original tender sum mismatch');
   const allowed = new Set(['refundEventVersion', 'machineId', 'refundRequestId', 'shiftId', 'type', 'amount', 'items', 'tenderAllocations', 'reason', 'refundMethod']);
   if (Object.keys(payload).some(key => !allowed.has(key)) || payload.refundEventVersion !== 1
-    || payload.machineId !== event.machineId || payload.refundRequestId !== event.refundRequestId || payload.shiftId !== event.shiftId
-    || !['FULL', 'PARTIAL'].includes(payload.type) || pln(payload.amount) !== event.deltaAmountMinor
-    || (payload.type === 'FULL' && validated.status !== 'FULL')
+    || payload.machineId !== expected.machineId || payload.refundRequestId !== expected.refundRequestId || payload.shiftId !== expected.shiftId
+    || !['FULL', 'PARTIAL'].includes(payload.type) || pln(payload.amount) !== expected.deltaAmountMinor
+    || (payload.type === 'FULL' && authority.expectedDeltaGrosze !== authority.orderTotalGrosze - authority.alreadyRefundedGrosze)
     || (payload.reason !== undefined && typeof payload.reason !== 'string')
     || (payload.refundMethod !== undefined && typeof payload.refundMethod !== 'string')
     || !Array.isArray(payload.items) || payload.items.length !== authority.items.length
@@ -95,32 +243,49 @@ export function validateRefundEventEvidence(attempt: RefundAttempt, responseJson
       || Object.keys(item).some(key => !['orderItemId', 'quantity', 'restock', 'unit', 'saleUnit'].includes(key))) return fail('Invalid payload item');
     ids.add(item.orderItemId);
     const selected = authority.items.find((line: any) => line.orderItemId === item.orderItemId);
-    const returned = validated.lines.find(line => line.orderItemId === item.orderItemId);
-    if (!selected || !returned || item.quantity !== selected.quantity || item.restock !== selected.restock
-      || (item.unit !== undefined && item.unit !== returned.unit) || (item.saleUnit !== undefined && item.saleUnit !== returned.saleUnit)) return fail('Payload item mismatch');
+    if (!selected || item.quantity !== selected.quantity || item.restock !== selected.restock
+      || (item.unit !== undefined && (typeof item.unit !== 'string' || !item.unit.trim()))
+      || (item.saleUnit !== undefined && (typeof item.saleUnit !== 'string' || !item.saleUnit.trim()))) return fail('Payload item mismatch');
   }
   const payloadTenders = tenders(payload.tenderAllocations.map((row: any) => {
     if (!object(row)) return fail('Invalid payload tender');
     return { method: row.method, amountMinor: pln(row.amount) };
   }));
   if (canonical(payloadTenders) !== canonical(allocated)) return fail('Payload tender mismatch');
-  const lines = audit(validated.lines);
   audit(saved.priorRefundLines);
-  return { saved, payload, authority, event, original, allocated, validated, lines };
+  return { saved, payload, authority, expected, original, allocated };
+}
+
+/** Validate immutable evidence independently for current and historical requests. */
+export function validateRefundEventEvidence(attempt: RefundAttempt, responseJson: string) {
+  const frozen = validateFrozenRefundEventRequest(attempt); const raw = parse(responseJson);
+  const validated = validateAuthoritativeRefundResult(raw, frozen.authority as any);
+  const eventResult = validateCanonicalRefundEvent(raw?.refundEvent, frozen.expected as any);
+  if (!validated.ok || !eventResult.ok) return fail('Unconfirmed authoritative response/event');
+  const event = eventResult.event;
+  if (validated.deltaGrosze !== frozen.authority.expectedDeltaGrosze || validated.deltaGrosze !== event.deltaAmountMinor
+    || sum(validated.lines.map(line => line.refundAmount)) !== validated.deltaGrosze
+    || (frozen.payload.type === 'FULL' && validated.status !== 'FULL')) return fail('Exact response delta/line sum mismatch');
+  for (const item of frozen.payload.items) {
+    const returned = validated.lines.find(line => line.orderItemId === item.orderItemId);
+    if (!returned || (item.unit !== undefined && item.unit !== returned.unit)
+      || (item.saleUnit !== undefined && item.saleUnit !== returned.saleUnit)) return fail('Payload item mismatch');
+  }
+  const lines = audit(validated.lines);
+  return { ...frozen, event, validated, lines };
 }
 
 /** Storage only: caller owns authenticated access, final context guard and a latched flush barrier. */
 export function createRefundEventRepo(database: AndroidDatabase) {
   const journal = createRefundAttemptRepo(database);
   return {
+    inspectCanonicalRefundPreparation(input: InspectCanonicalRefundPreparationInput): CanonicalRefundPreparation {
+      return inspectCanonicalRefundPreparation(database, input);
+    },
     confirmCanonicalRefund(input: ConfirmCanonicalRefundInput): { applied: boolean; deltaGrosze: number; cumulativeGrosze: number } {
       if (!object(input) || !uuid(input.requestId) || !uuid(input.localOrderId) || !object(input.scope)) return fail('Invalid confirmation identity');
       const scope = input.scope;
-      let url: URL;
-      try { url = new URL(scope.serverUrl); } catch { return fail('Invalid server scope'); }
-      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash
-        || scope.serverUrl !== scope.serverUrl.trim() || scope.serverUrl.endsWith('/')
-        || !uuid(scope.salonId) || !uuid(scope.operatorId) || !uuid(scope.machineId)) return fail('Invalid confirmation scope');
+      validateScope(scope);
       const attempt = journal.get(input.requestId);
       if (!attempt || attempt.local_order_id !== input.localOrderId
         || attempt.scope_key !== JSON.stringify([scope.serverUrl, scope.salonId, scope.operatorId])) return fail('Original journal scope mismatch');
