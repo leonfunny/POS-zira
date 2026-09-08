@@ -43,7 +43,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'pos.paymentCorrection.SYNC_REQUIRED': "Wait until the order is synchronized before correcting it.",
     'pos.paymentCorrection.BACKEND_UNSUPPORTED': "Update the backend to enable payment corrections.",
     'pos.paymentCorrection.ORDER_NOT_EDITABLE': "Only completed, fully paid orders without refunds can be corrected.",
-    'pos.paymentCorrection.TERMINAL_PAYMENT': "This payment has a terminal or gateway transaction. Use its correction/refund process.",
+    'pos.paymentCorrection.TERMINAL_PAYMENT': "This payment has a terminal or gateway transaction. Use its correction/refund workflow.",
     'pos.paymentCorrection.INVOICE_LINKED': "This order is linked to an issued invoice. Correct the invoice first.",
     'pos.paymentCorrection.BILLIARD_PAYMENT': "Use the dedicated billiard correction flow for this order.",
     'pos.paymentCorrection.SPLIT_OR_PROTECTED_PAYMENT': "Split, credit and protected payments require a separate correction.",
