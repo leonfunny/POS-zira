@@ -372,6 +372,24 @@ function applyOrder(
     }
   }
 
+  // HTTP corrections may precede older queued sync events. Never roll their
+  // payment values or server_updated_at watermark backwards. Other fields in
+  // an older event must still apply: a correction is only a payment snapshot.
+  const current = p.updatedAt ? database.get<{ server_updated_at: string | null }>(
+    'SELECT server_updated_at FROM orders WHERE id = ?', [localId],
+  ) : undefined;
+  const incomingTime = Date.parse(p.updatedAt || '');
+  const existingTime = Date.parse(current?.server_updated_at || '');
+  const olderPayment = Number.isFinite(incomingTime) && Number.isFinite(existingTime) && incomingTime < existingTime;
+  if (!olderPayment && p.paymentMethod && Array.isArray(p.tenders) && Number.isFinite(incomingTime)) {
+    const payment = adaptServerOrder(p);
+    database.run(
+      'UPDATE orders SET payment_method = ?, payment_amount = ?, change_amount = ?, payment_tenders = ?, server_updated_at = ? WHERE id = ?',
+      [payment.payment_method, payment.payment_amount, payment.change_amount, payment.payment_tenders, p.updatedAt, localId],
+    );
+    database.markDirty();
+  }
+
   // Enrich an existing locally-created order with first-class Billiard
   // origin/line policy fields from the canonical server mirror. Match lines
   // by stable lineKey inside orderRepo; never by variant or local UUID.
@@ -400,7 +418,7 @@ function applyOrder(
   if (p.status) {
     database.run(
       'UPDATE orders SET server_status = ?, server_updated_at = ? WHERE id = ?',
-      [p.status, p.updatedAt ?? entry.created_at, localId],
+      [p.status, olderPayment ? current!.server_updated_at : p.updatedAt ?? entry.created_at, localId],
     );
     if (shouldMirrorLocalStatus) {
       database.run(

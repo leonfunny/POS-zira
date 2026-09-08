@@ -553,3 +553,22 @@ describe('applyOrder refund normalisation', () => {
     expect(adaptedItems).toHaveLength(1);
   });
 });
+
+describe('payment correction sync', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(orderRepo.getById).mockReturnValue({ id: 'local-order-1' } as any);
+  });
+  it('updates payment amounts and tenders from the authoritative server snapshot', () => {
+    expect(applyEntry(entry({ id: 'local-order-1', total:12, paidAmount:12, cashReceived:null, changeAmount:0,
+      paymentMethod:'CARD', tenders:[{method:'CARD',amount:12}],updatedAt:'2026-09-08T12:00:00Z' }))).toBe(true);
+    const update=findRunCall(/UPDATE orders SET payment_method/);
+    expect(update?.[1]).toEqual(['CARD',1200,0,JSON.stringify([{method:'CARD',amount:1200}]),'2026-09-08T12:00:00Z','local-order-1']);
+  });
+  it('does not restore an older payment or its timestamp after a newer HTTP result',()=>{
+    vi.mocked(database.get).mockReturnValue({server_updated_at:'2026-09-08T12:01:00Z'} as any);
+    expect(applyEntry(entry({id:'local-order-1',paymentMethod:'CASH',tenders:[{method:'CASH',amount:12}],status:'DELIVERED',updatedAt:'2026-09-08T12:00:00Z'}))).toBe(true);
+    expect(findRunCall(/UPDATE orders SET payment_method/)).toBeUndefined();
+    expect(findRunCall(/UPDATE orders SET server_status/)?.[1]).toEqual(['DELIVERED','2026-09-08T12:01:00Z','local-order-1']);
+  });
+});

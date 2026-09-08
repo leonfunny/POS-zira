@@ -898,7 +898,7 @@ interface ElectronAPI {
       getHistory: (filters: { from: string; to: string; paymentMethod?: string; staffName?: string; page?: number; limit?: number; fiscalOnly?: boolean }) => Promise<{ orders: PosOrderRow[]; total: number; page: number; limit: number }>;
       getDetail: (orderId: string) => Promise<{ order: PosOrderRow; items: PosOrderItemRow[] } | null>;
       deleteLocal: (orderId: string) => Promise<{ success: boolean; restocked?: number; error?: string }>;
-      mutate: (orderId: string, data: any) => Promise<{ success: boolean; localOnly?: boolean; order?: any; mutation?: any; restocked?: number; error?: string }>;
+      mutate: (orderId: string, data: any) => Promise<{ success: boolean; localOnly?: boolean; preview?: any; code?: string; order?: any; mutation?: any; restocked?: number; error?: string }>;
       refund: (orderId: string, data: {
         type: 'FULL' | 'PARTIAL';
         refundRequestId?: string;

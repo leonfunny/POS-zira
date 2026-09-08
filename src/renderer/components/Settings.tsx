@@ -1,3 +1,4 @@
+import { DEFAULT_SCALE_SHARE_PORT, DEFAULT_REMOTE_SCALE_TIMEOUT_MS } from '../../shared/scale-network-settings';
 import React, { useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect, useSyncExternalStore } from 'react';
 import { AgentConfig, PrinterProtocol, PrinterConfig, PrintersConfig, SshTunnelStatus, UpdateStatus, Tab, ALLOWED_PROTOCOLS_BY_TYPE, PrinterType, LiveCustomerDisplayProfile, PosnetDiagnoseResult, charsPerLineFor, ServerPrinterMapping, LocalPrinterMirrorRow, SalonPrinterMapping, SalonPrinterAssignment, SalonPrinterRole, ScaleConnectionMode, ScaleDiagnoseStep, FiscalDailyReportPrintResponse, LanFirstKitchenNetworkInfo, LanFirstKitchenPairingStatus, LanFirstKitchenTestRouteResponse } from '../../shared/types';
 import { resolveCustomerDisplayProfile } from '../../shared/customer-display-profile';
@@ -105,8 +106,6 @@ type PrinterTypeValue = typeof PRINTER_TYPES[number];
 type SettingsTab = 'general' | 'pos' | 'printers' | 'modules';
 const SELF_CHECKOUT_RECEIPT_ROLE: SalonPrinterRole = 'SELF_CHECKOUT_RECEIPT';
 const PAPER_CONTROL_PRINTER_TYPES = ['RECEIPT', 'TICKET', 'KITCHEN'] as const;
-const DEFAULT_SCALE_SHARE_PORT = 17891;
-const DEFAULT_REMOTE_SCALE_TIMEOUT_MS = 2000;
 const FISCAL_DAILY_REPORT_CONFIRM_BODY = 'This will close the current fiscal day on the ELZAB printer now. Continue only if you are physically beside the printer and ready to collect the report.';
 type FiscalOnCashSaleMode = NonNullable<AgentConfig['fiscalOnCashSale']>;
 const FISCAL_ON_CASH_SALE_OPTIONS: Array<{
@@ -5289,8 +5288,8 @@ export default function Settings({ config: savedConfig, onConfigChange, isModule
                           <label className="block text-sm font-medium text-slate-600 mb-1">
                             {tOr('settings.thisMachineIp', 'This machine IP')}
                           </label>
-                          <div className="h-[38px] flex items-center px-3 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-700">
-                            {scaleNetworkInfo?.suggestedHost || 'Detecting...'}
+                          <div className="min-h-[38px] break-all px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-700">
+                            {scaleNetworkInfo?.ips?.length ? scaleNetworkInfo.ips.join(' / ') : scaleNetworkInfo?.suggestedHost || 'Detecting...'}
                           </div>
                         </div>
                         <div>

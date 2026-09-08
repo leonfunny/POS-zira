@@ -3336,6 +3336,15 @@ export class ApiClient {
    * Update POS order payment fields.
    * PATCH /api/v1/b2b/pos/orders/:id/payment
    */
+  async getOrderPayment(token: string, backendOrderId: string): Promise<any | null> {
+    const response = await fetchWithTimeout(`${this.baseUrl}/api/v1/b2b/pos/orders/${encodeURIComponent(backendOrderId)}/payment`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (response.status === 404 || response.status === 501) return null;
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return response.json();
+  }
+
   async updateOrderPayment(token: string, backendOrderId: string, data: any): Promise<any | null> {
     const url = `${this.baseUrl}/api/v1/b2b/pos/orders/${encodeURIComponent(backendOrderId)}/payment`;
     const response = await fetchWithTimeout(url, {
@@ -3346,7 +3355,7 @@ export class ApiClient {
     if (response.status === 404 || response.status === 501) return null;
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
-      throw new Error(err.message || `HTTP ${response.status}`);
+      throw Object.assign(new Error(err.message || `HTTP ${response.status}`), { code: err.code });
     }
     return response.json();
   }

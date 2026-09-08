@@ -1,3 +1,4 @@
+import { applyEntry } from '../sync/entity-applicators';
 /**
  * PosModule
  *
@@ -6103,6 +6104,38 @@ export class PosModule extends BaseModule {
       try {
         const order = orderRepo.getById(orderId);
         if (!order) return { success: false, error: 'Order not found' };
+        if (data?.type === 'payment' || data?.type === 'payment-preview') {
+          const auth = this.capturePosAuthContext();
+          const token = getSecureAuthToken();
+          if (!token) return { success: false, code: 'AUTH_REQUIRED' };
+          if (!order.backend_id || order.synced !== 1) return { success: false, code: 'SYNC_REQUIRED' };
+          if (data.type === 'payment-preview') {
+            const preview = await apiClient.getOrderPayment(token, order.backend_id);
+            if (!this.isPosAuthContextCurrent(auth)) return { success: false, code: 'AUTH_CHANGED' };
+            return preview ? { success: true, preview } : { success: false, code: 'BACKEND_UNSUPPORTED' };
+          }
+          // Stable renderer request ID + server snapshot are required, including retries.
+          if (!data.mutationId || !data.expectedVersion) return { success: false, code: 'REFRESH_REQUIRED' };
+          const response = await apiClient.updateOrderPayment(token, order.backend_id, {
+            mutationId: data.mutationId,
+            expectedVersion: data.expectedVersion,
+            paymentMethod: data.paymentMethod,
+            reason: data.reason,
+            terminalId: getConfigValue('agentId') || 'pos-device',
+          });
+          if (!response) return { success: false, code: 'BACKEND_UNSUPPORTED' };
+          if (!this.isPosAuthContextCurrent(auth)) return { success: false, code: 'AUTH_CHANGED' };
+          if (response.order?.id !== order.backend_id || !response.order?.paymentMethod || !response.order?.updatedAt || !Array.isArray(response.order?.tenders)) {
+            return { success: false, code: 'REFRESH_REQUIRED' };
+          }
+          const applied = applyEntry({ seq: 0, entity_type: 'order', entity_id: order.backend_id,
+            event: 'updated', payload: response.order, source: 'payment-correction',
+            source_tx: data.mutationId, created_at: response.order.updatedAt });
+          if (!applied) return { success: false, code: 'REFRESH_REQUIRED' };
+          const saved = await database.saveCoalesced();
+          if (!saved.success) return { success: false, code: 'REFRESH_REQUIRED' };
+          return { success: true, order: response.order, mutation: response.mutation };
+        }
         const mutationId = data?.mutationId || randomUUID();
 
         if (!order.backend_id && order.synced !== 1) {
@@ -6135,7 +6168,7 @@ export class PosModule extends BaseModule {
         const mutationAuthContext = this.capturePosAuthContext();
         const token = getSecureAuthToken();
         if (!token) return { success: false, error: 'Not authenticated' };
-        if (!['payment', 'items', 'void'].includes(String(data?.type || ''))) {
+        if (!['items', 'void'].includes(String(data?.type || ''))) {
           return { success: false, error: 'Unknown order mutation type' };
         }
         await this.prepareInitialReceiptForExternalOrderMutation(
@@ -6159,15 +6192,7 @@ export class PosModule extends BaseModule {
         };
         let response: any | null = null;
 
-        if (data?.type === 'payment') {
-          response = await apiClient.updateOrderPayment(token, order.backend_id, {
-            ...basePayload,
-            paymentMethod: data.paymentMethod,
-            paidAmount: (Number(data.paymentAmount) || 0) / 100,
-            changeAmount: (Number(data.changeAmount) || 0) / 100,
-            tenders: [{ method: data.paymentMethod, amount: (Number(data.paymentAmount) || 0) / 100 }],
-          });
-        } else if (data?.type === 'items') {
+        if (data?.type === 'items') {
           response = await apiClient.updateOrder(token, order.backend_id, {
             ...basePayload,
             items: (data.items || []).map((item: any) => ({
@@ -6197,33 +6222,14 @@ export class PosModule extends BaseModule {
         }
 
         const canonical = response.order ?? response;
-        if (data?.type === 'payment') {
-          database.run(
-            'UPDATE orders SET payment_method = ?, payment_amount = ?, change_amount = ?, payment_tenders = ? WHERE id = ?',
-            [
-              canonical.paymentMethod ?? data.paymentMethod,
-              Math.round(Number(canonical.paidAmount ?? data.paymentAmount / 100) * 100),
-              Math.round(Number(canonical.changeAmount ?? data.changeAmount / 100) * 100),
-              JSON.stringify([{ method: canonical.paymentMethod ?? data.paymentMethod, amount: Math.round(Number(canonical.paidAmount ?? data.paymentAmount / 100) * 100) }]),
-              orderId,
-            ],
-          );
-        } else if (data?.type === 'void') {
+        if (data?.type === 'void') {
           database.run("UPDATE orders SET status = 'CANCELLED' WHERE id = ?", [orderId]);
         }
         database.markDirty();
-        // ERP-AI outbox: a synced order paid via this mutation path. Idempotent
-        // emit (no-op if create() already emitted it when paid).
-        if (data?.type === 'payment') {
-          const paidOrder = orderRepo.getById(orderId);
-          if (paidOrder && (paidOrder.payment_method || paidOrder.payment_tenders)) {
-            posEventEmitter.emitOrderFinalized(paidOrder, orderRepo.getItemsByOrderId(orderId));
-          }
-        }
         return { success: true, order: canonical, mutation: response.mutation ?? null };
       } catch (e: any) {
         logger.error(`[PosModule] Order mutation failed for ${orderId}: ${e.message}`);
-        return { success: false, error: e.message };
+        return { success: false, code: e.code, error: e.message };
       }
     });
 

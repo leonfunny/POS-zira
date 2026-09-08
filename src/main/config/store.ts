@@ -1,3 +1,4 @@
+import { DEFAULT_REMOTE_SCALE_TIMEOUT_MS } from '../../shared/scale-network-settings';
 import Store from 'electron-store';
 import { AgentConfig, TelegramConfig, BooksySyncConfig, SecurityConfig, AuthUser } from '../../shared/types';
 import { AD_DISPLAY_DEFAULTS } from '../ad-display/ad-types';
@@ -47,7 +48,7 @@ const defaultConfig: AgentConfig = {
       host: '',
       port: 17891,
       token: '',
-      timeoutMs: 2000,
+      timeoutMs: DEFAULT_REMOTE_SCALE_TIMEOUT_MS,
     },
   },
   lanFirstReceiver: {
@@ -142,7 +143,7 @@ const scaleConfigSchema = {
         host: { type: 'string', default: '' },
         port: { type: 'number', default: 17891 },
         token: { type: 'string', default: '' },
-        timeoutMs: { type: 'number', default: 2000 },
+        timeoutMs: { type: 'number', default: DEFAULT_REMOTE_SCALE_TIMEOUT_MS },
       },
       default: {},
     },

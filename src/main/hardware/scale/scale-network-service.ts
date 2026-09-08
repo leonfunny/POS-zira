@@ -4,8 +4,8 @@ import { networkInterfaces } from 'os';
 import type { AgentConfig, ScaleConnectionMode, ScaleReadResult } from '../../../shared/types';
 import logger from '../../logger';
 
-export const DEFAULT_SCALE_SHARE_PORT = 17891;
-export const DEFAULT_REMOTE_SCALE_TIMEOUT_MS = 2000;
+import { DEFAULT_SCALE_SHARE_PORT, DEFAULT_REMOTE_SCALE_TIMEOUT_MS, SCALE_CONNECT_TIMEOUT_MS } from '../../../shared/scale-network-settings';
+export { DEFAULT_SCALE_SHARE_PORT, DEFAULT_REMOTE_SCALE_TIMEOUT_MS } from '../../../shared/scale-network-settings';
 
 type ScaleReadLocal = () => Promise<ScaleReadResult>;
 
@@ -162,12 +162,31 @@ export async function readRemoteScaleWeight(config: AgentConfig): Promise<ScaleR
   const token = String(remote?.token || '').trim();
   if (!token) return remoteScaleFailure('REMOTE_TOKEN_MISSING', 'Remote scale pairing code is not configured', target.host);
 
-  const timeoutMs = Math.max(500, Math.min(Number(remote?.timeoutMs) || DEFAULT_REMOTE_SCALE_TIMEOUT_MS, 10_000));
+  // Older installations persist 2000ms. Apply the read budget there as well.
+  const timeoutMs = Math.max(DEFAULT_REMOTE_SCALE_TIMEOUT_MS, Math.min(Number(remote?.timeoutMs) || DEFAULT_REMOTE_SCALE_TIMEOUT_MS, 30_000));
   const targetLabel = remoteScaleTargetLabel(target.host, target.port);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let stage: 'connection' | 'read' = 'connection';
+  let timer = setTimeout(() => controller.abort(), SCALE_CONNECT_TIMEOUT_MS);
 
   try {
+    // This endpoint exists on older sharing POS versions and never touches COM.
+    const statusResponse = await fetch(`http://${targetLabel}/scale/status`, { signal: controller.signal });
+    if (!statusResponse.ok) {
+      return remoteScaleFailure(
+        statusResponse.status === 403 ? 'REMOTE_FORBIDDEN' : 'REMOTE_HTTP_ERROR',
+        `${targetLabel}: scale service check returned HTTP ${statusResponse.status}. ${statusResponse.status === 403 ? 'Use the sharing POS local network IP.' : 'Check the sharing POS address and port.'}`,
+        target.host,
+      );
+    }
+    const status = await statusResponse.json();
+    if (status?.running !== true) {
+      return remoteScaleFailure('REMOTE_NOT_SHARING', `${targetLabel}: scale sharing is not running. Enable sharing on the POS connected to the scale.`, target.host);
+    }
+
+    clearTimeout(timer);
+    stage = 'read';
+    timer = setTimeout(() => controller.abort(), timeoutMs);
     const response = await fetch(`http://${targetLabel}/scale/read`, {
       method: 'POST',
       headers: {
@@ -184,24 +203,33 @@ export async function readRemoteScaleWeight(config: AgentConfig): Promise<ScaleR
         ? `${targetLabel}: ${text.slice(0, 200)}`
         : `Remote scale at ${targetLabel} returned HTTP ${response.status}`;
       return remoteScaleFailure(
-        response.status === 401 ? 'REMOTE_UNAUTHORIZED' : 'REMOTE_HTTP_ERROR',
+        response.status === 401 ? 'REMOTE_UNAUTHORIZED' : response.status === 403 ? 'REMOTE_FORBIDDEN' : 'REMOTE_HTTP_ERROR',
         message,
         target.host,
       );
     }
 
-    return normalizeRemoteScalePayload(await response.json(), target.host);
+    const result = normalizeRemoteScalePayload(await response.json(), target.host);
+    if (!result.success) {
+      result.error = `${targetLabel}: scale service connected; ${result.port ? `${result.port}: ` : ''}${result.error}`;
+    }
+    return result;
   } catch (error: any) {
     if (error?.name === 'AbortError') {
       return remoteScaleFailure(
-        'REMOTE_TIMEOUT',
-        `Remote scale at ${targetLabel} did not answer within ${timeoutMs} ms. Check the host IP, Wi-Fi scale sharing, and Windows Firewall on the POS connected to the scale.`,
+        stage === 'connection' ? 'REMOTE_TIMEOUT' : 'REMOTE_READ_TIMEOUT',
+        stage === 'connection'
+          ? `${targetLabel}: scale service did not answer within ${SCALE_CONNECT_TIMEOUT_MS} ms. Check the host IP, scale sharing, and Windows Firewall.`
+          : `${targetLabel}: scale service connected, but no weight arrived within ${timeoutMs} ms. Test the scale on the sharing POS and select its COM port explicitly.`,
         target.host,
       );
     }
+    if (error instanceof SyntaxError) {
+      return remoteScaleFailure('REMOTE_PARSE_FAILED', `${targetLabel}: invalid scale service response during ${stage}. Check the host IP and port.`, target.host);
+    }
     return remoteScaleFailure(
       'REMOTE_NETWORK_ERROR',
-      `Remote scale at ${targetLabel} is unreachable: ${error?.message || 'network error'}. Check the host IP, Wi-Fi scale sharing, and Windows Firewall on the POS connected to the scale.`,
+      `${targetLabel}: ${stage === 'read' ? 'connection lost while reading the scale' : 'scale service is unreachable'} (${error?.cause?.code || error?.message || 'network error'}). Check the host IP, scale sharing, and Windows Firewall.`,
       target.host,
     );
   } finally {
@@ -214,6 +242,7 @@ export class ScaleNetworkService {
   private activePort: number | null = null;
   private activeToken = '';
   private lastError: string | undefined;
+  private pendingRead: Promise<ScaleReadResult> | null = null;
 
   constructor(
     private readonly getConfig: () => AgentConfig,
@@ -328,7 +357,13 @@ export class ScaleNetworkService {
       return;
     }
 
-    const result = await this.readLocal();
+    // Concurrent POS requests share one physical reading instead of competing for COM.
+    if (!this.pendingRead) {
+      this.pendingRead = Promise.resolve().then(() => this.readLocal()).finally(() => {
+        this.pendingRead = null;
+      });
+    }
+    const result = await this.pendingRead;
     sendJson(res, 200, result);
   }
 }
