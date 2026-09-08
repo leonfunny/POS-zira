@@ -130,7 +130,8 @@ describe('POS embedded numpad → PaymentModal wiring', () => {
     expect(SALON_TEMPLATE).toContain('shiftPaymentOpen');
     expect(SALON_TEMPLATE).toContain('const shiftPaymentOpen = session.isOpen');
     expect(B2B_TEMPLATE).toContain('shiftOpen={shiftPaymentOpen}');
-    expect(RESTAURANT_TEMPLATE).toContain('shiftOpen={shiftPaymentOpen}');
+    expect(RESTAURANT_TEMPLATE).toContain('const shiftPaymentOpen = session.isOpen && !protectedCartBlocked');
+    expect(RESTAURANT_TEMPLATE).toContain('shiftOpen={shiftPaymentOpen && !weightReading && !manualWeight}');
   });
 
   it('requires POS orders to belong to a local open shift', () => {
