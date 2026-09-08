@@ -46,6 +46,7 @@ interface PaymentModalProps {
   };
   initialPaymentPreflightToken?: string | null;
   extraOrderFields?: Record<string, any>;
+  onBeforeTender?: (orderId: string, token: string) => Promise<void>;
 }
 
 type PaymentSnapshot = {
@@ -115,6 +116,7 @@ export default function PaymentModal({
   scanCommands,
   initialPaymentPreflightToken,
   extraOrderFields,
+  onBeforeTender,
 }: PaymentModalProps) {
   const { config } = useConfig();
   const protectedTender = Boolean(checkoutDraft?.billiard || checkoutDraft?.restoredInterruption);
@@ -126,6 +128,7 @@ export default function PaymentModal({
   // they don't drift out of sync with the canonical cashAmount string.
   const [denomCounts, setDenomCounts] = useState<Record<number, number>>({});
   const [saving, setSaving] = useState(false);
+  const restaurantTenderStartedRef = useRef(false);
   const [savingLabel, setSavingLabel] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [printWarning, setPrintWarning] = useState<string | null>(null);
@@ -1006,9 +1009,20 @@ export default function PaymentModal({
       }
 
       const orderId = orderAttemptIdRef.current;
+      if (onBeforeTender) {
+        // A lost IPC reply may still mean the durable boundary was crossed.
+        // Fail closed rather than issue a second payment with a new identity.
+        restaurantTenderStartedRef.current = true;
+        await onBeforeTender(orderId, paymentPreflightToken);
+      }
       await saveOrderAndFinish(orderId, submission);
     } catch (err) {
       rlog.error('[PaymentModal] Failed to complete payment:', err);
+      if (restaurantTenderStartedRef.current && !completedOrderIdRef.current) {
+        completedOrderIdRef.current = orderAttemptIdRef.current;
+        setError(tOr('pos.restaurant.paymentReconciliation', 'Restaurant payment needs reconciliation. Do not charge again. Reopen Checks after verifying Order History.'));
+        return;
+      }
       if (
         protectedTender
         && tenderBoundaryCrossedRef.current
@@ -1037,7 +1051,7 @@ export default function PaymentModal({
       setSaving(false);
       paymentCompleteInFlightRef.current = false;
     }
-  }, [cashAmountGrosze, checkoutDraft, customerNipForOrder, customerNipValid, fiscalPrompt, grandTotal, method, onTenderOutcomeUncertain, paymentPreflightToken, paymentSafetyStatus, protectedTender, receiptRecovery, receiptRetrying, saving, shiftId, splitMode, staffId, staffName, t, tOr, tenders]);
+  }, [cashAmountGrosze, checkoutDraft, customerNipForOrder, customerNipValid, fiscalPrompt, grandTotal, method, onTenderOutcomeUncertain, onBeforeTender, paymentPreflightToken, paymentSafetyStatus, protectedTender, receiptRecovery, receiptRetrying, saving, shiftId, splitMode, staffId, staffName, t, tOr, tenders]);
 
   const handleComplete = useCallback(() => {
     void completePayment();

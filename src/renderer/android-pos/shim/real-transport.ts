@@ -39,8 +39,9 @@
 
 import type { AgentConfig, AuthUser } from '../../../shared/types';
 import { isShiftAlreadyClosedError } from '../../../shared/shift-close';
-import { resolvePosMode } from './config-store';
+import { resolveAndroidSalonMode } from './config-store';
 import { PosApiClient, type TokenProvider } from '../../android-pos/port/api-client';
+import { orderUploadScope, prepareOrderUpload } from '../../../shared/restaurant-order-upload';
 import type {
   ShimGetUserResult,
   ShimLoginResult,
@@ -54,11 +55,14 @@ import { initAndroidDb, type AndroidDatabase, type AndroidDbInitOptions } from '
 import { createProductRepo, type AndroidProductRow } from './db/product-repo';
 import { createCategoryRepo, type AndroidCategoryRow } from './db/category-repo';
 import { createSyncMeta } from './db/sync-meta';
+import { getOrCreateAndroidDeviceId } from './db/device-identity';
 import { createRemotePrintCoordinator } from './remote-print';
 import { createAgentConnection, type AgentConnection } from './agent-connect';
 import { createProductAdminSurface } from './product-admin';
 import { createBilliardTransport } from './billiard-transport';
 import { createEntitlementsController } from './entitlements';
+import { createServerHistoryTransport } from './server-history';
+import { createAndroidRefundCoordinator } from './refund-coordinator';
 import {
   buildBackendOrderItem,
   createOrderRepo,
@@ -560,6 +564,7 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
   const nailTurnsUpdatedListeners = new Set<(data: { orderId?: string; checkedOut?: number }) => void>();
   let lastRefreshOutcome: RefreshOutcome = 'none';
   let orderSyncInFlight: Promise<void> | null = null;
+  let orderSyncStorageFailed = false;
   // Single-flight refresh (Windows auth-refresh.ts:73-91): the backend ROTATES
   // the refresh token on every success, so two concurrent 401s must NOT each
   // POST the same token — the loser would 401 and clear the just-rotated pair,
@@ -755,7 +760,49 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
     }
   };
 
+  let financialTransition: { kind: string; cancellable?: boolean } | null = null;
+  let shiftStorageFailed = false;
+  const shiftStorageError = 'Shift storage failed. Restart POS before continuing.';
+  const flushShift = async (database: AndroidDatabase) => {
+    try { await database.flush(); }
+    catch {
+      // Memory may already contain a closed/new shift while disk has the old
+      // image. Do not allow a retry to report a ghost close or make a new sale.
+      shiftStorageFailed = true;
+      throw new Error(shiftStorageError);
+    }
+  };
+  const refunds = createAndroidRefundCoordinator({ client, configStore, tokenStore, db,
+    serverUrl: baseUrl, currentServerUrl: () => resolveApiUrl(configStore),
+    isTransitioning: () => shiftStorageFailed || Boolean(financialTransition) || Boolean(orderSyncInFlight),
+    async refreshStock(variantIds, assertContext) {
+      const database = await db();
+      await assertContext();
+      const before = variantIds.map(id => database.get<any>('SELECT id, in_stock, available_qty FROM product_variants WHERE id = ?', [id]));
+      const result = await client.getPosProducts(undefined, { cursorV2: true });
+      await assertContext();
+      const rows = (result.products ?? []).map(normalizeProductRow).filter((row): row is AndroidProductRow => Boolean(row));
+      database.transaction(() => {
+        for (let i = 0; i < variantIds.length; i++) {
+          const row = rows.find(product => product.id === variantIds[i]);
+          const previous = before[i];
+          if (!row || !previous) throw new Error('Refund stock refresh missing canonical product');
+          database.run('UPDATE product_variants SET in_stock = ?, available_qty = ? WHERE id = ? AND in_stock IS ? AND available_qty IS ?',
+            [row.in_stock, row.available_qty, row.id, previous.in_stock, previous.available_qty]);
+          if (database.get<{ count: number }>('SELECT changes() AS count')?.count !== 1) throw new Error('Stock changed during refund refresh');
+        }
+      });
+      await database.flush();
+      await assertContext();
+      for (const listener of [...productsSyncedListeners]) { try { listener(); } catch { /* listener isolation */ } }
+    },
+  });
+
   const transport: ShimTransport & RealTransportEvents = {
+    ...createServerHistoryTransport({ client, configStore, tokenStore, db, serverUrl: baseUrl,
+      currentServerUrl: () => resolveApiUrl(configStore) }),
+    getRestaurantDatabase: db,
+    getRestaurantLayout: () => client.request('GET', '/restaurant/tables'),
     // ── Billiard (Bi-a) online-only (T4) — reads + 10s poll, direct mutate,
     //    allowlisted apiCall. Spread in (no key collides with the ports below).
     ...billiard,
@@ -772,7 +819,10 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
     // ── Auth (S1 §2.B) ─────────────────────────────────────────────────────
     async loginWithEmail(email, password): Promise<ShimLoginResult> {
       try {
+        const loginTransition = financialTransition;
+        if (orderSyncInFlight) throw new Error('ORDER_SYNC_BUSY');
         const result = await client.loginWithEmail(email, password);
+        if (orderSyncInFlight) throw new Error('ORDER_SYNC_BUSY');
         if (!result?.access_token) {
           return { success: false, error: 'No access token received' };
         }
@@ -780,12 +830,18 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         if (!authUser.salonId) {
           return { success: false, error: 'Login response missing salon id' };
         }
+        const refundDatabase = await db();
+        const targetRefundScope = JSON.stringify([baseUrl.replace(/\/+$/, ''), authUser.salonId, authUser.id]);
+        if (refundDatabase.get("SELECT request_id FROM pos_refund_attempts WHERE status IN ('PREPARED','UNKNOWN') AND scope_key != ? LIMIT 1", [targetRefundScope])) {
+          return { success: false, error: 'Sign in with the original refund account and reconcile its pending refund before switching accounts.' };
+        }
         // Tenant switch: if a DIFFERENT salon was previously bound to this
         // device, wipe its local mirror before adopting the new identity —
         // otherwise the cashier could sell the previous salon's catalog or sync
         // its queued orders under the new salon (cross-tenant leak). Parity with
         // the Windows archive-then-clear on salon change (auth.module.ts:767-800).
-        const previousSalonId = configStore.getRawConfig().salonId;
+        const previousConfig = configStore.getRawConfig();
+        const previousSalonId = previousConfig.salonId;
         if (previousSalonId && previousSalonId !== authUser.salonId) {
           // E-PARITY-1 cross-tenant guard: the PREVIOUS salon's pa_ key must
           // never connect THIS new salon's terminal to the old salon's
@@ -805,6 +861,10 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
           // the next boot. Do NOT swallow the flush error here.
           try {
             const database = await db();
+            if (database.get("SELECT id FROM pos_restaurant_checks WHERE status NOT IN ('PAID','CANCELLED') LIMIT 1")
+              || database.get('SELECT id FROM orders WHERE synced != 1 LIMIT 1')) {
+              return { success: false, error: 'Finish/reconcile restaurant checks and sync pending orders before switching salons.' };
+            }
             database.clearSalonData();
             await database.flush();
           } catch {
@@ -815,19 +875,27 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
         await tokenStore.setTokens(result.access_token, result.refresh_token ?? null);
         const salonSlug = resolveAuthSalonSlug(result);
         // setConfig side-effect (auth.module.ts:795), minus the print-agent auto-connect.
-        // E2a: do NOT hard-seed 'retail' on every login — resolve the POS mode so a
-        // salon boots salon (the Windows default) and a retail-configured device
-        // stays retail. The resolved value reflects the config the cashier already
-        // has (device/driver choice authoritative); SHIM_CONTRACT_SALON_E2 §0.1.
+        // Remember the device choice per salon, not across unrelated tenants.
         configStore.setConfig({
           authUser,
           salonId: authUser.salonId,
           salonName: authUser.salonName ?? '',
           salonSlug,
           posEnabled: true,
-          posMode: resolvePosMode(configStore.getRawConfig()),
+          ...resolveAndroidSalonMode(previousConfig, authUser.salonId),
         } as Partial<AgentConfig>);
         client.salonSlug = salonSlug || client.salonSlug;
+        // Identity is now published; logout may cancel the read-only entitlement
+        // wait. The identity-reference check below rejects its late response.
+        if (loginTransition && financialTransition === loginTransition) loginTransition.cancellable = true;
+        // Resolve the same existing entitlement contract as Windows before the
+        // POS mounts. A late result must not alter a logged-out/new identity.
+        const plan = await entitlements.get().catch(() => null);
+        if (configStore.getRawConfig().authUser !== authUser) {
+          return { success: false, error: 'POS account changed during login. Please sign in again.' };
+        }
+        configStore.setConfig(resolveAndroidSalonMode(previousConfig, authUser.salonId,
+          plan?.salonId === authUser.salonId ? plan.suggestedPosMode : null));
         // Seed the staff picker with the logged-in cashier (documented
         // divergence: Windows fills `staff` via its staff sync worker; the
         // Android staff-sync packet lands later).
@@ -894,6 +962,7 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
     },
 
     async logout() {
+      if (orderSyncInFlight) return { success: false, error: 'ORDER_SYNC_BUSY' };
       // E-PARITY-1: tear down the print-agent socket + drop the pa_ key before
       // clearing the session (mirror Windows disconnect-on-logout).
       await agentConnection.disconnect();
@@ -1121,14 +1190,30 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
      *  Windows local-variant-import deferral, which has no Android source). */
     async syncOrders(): Promise<void> {
       if (orderSyncInFlight) return orderSyncInFlight;
+      if (orderSyncStorageFailed) throw new Error('ORDER_SYNC_STORAGE_RESTART_REQUIRED');
       orderSyncInFlight = (async () => {
         const token = await tokenStore.getAccessToken();
         if (!token) return;
+        const scope = orderUploadScope(configStore.getRawConfig().salonId, baseUrl);
+        const userId = configStore.getRawConfig().authUser?.id;
+        const assertIdentity = () => {
+          const current = configStore.getRawConfig();
+          if (current.salonId !== scope.salonId || resolveApiUrl(configStore).replace(/\/+$/, '') !== scope.serverUrl
+            || current.authUser?.id !== userId) throw new Error('ORDER_SYNC_CONTEXT_CHANGED');
+        };
+        const assertContext = async () => {
+          if (!await tokenStore.getAccessToken()) throw new Error('ORDER_SYNC_CONTEXT_CHANGED');
+          assertIdentity();
+        };
         const database = await db();
+        await assertContext();
         const orderRepo = createOrderRepo(database);
         orderRepo.recoverStrandedSyncing();
         const pending = orderRepo.getUnsynced();
-        for (const order of pending) {
+        for (const pendingOrder of pending) {
+          await assertContext();
+          const order = orderRepo.getById(pendingOrder.id);
+          if (!order || order.synced !== 0) continue;
           const attempts = order.sync_attempts ?? 0;
           if (attempts >= MAX_SYNC_ATTEMPTS) {
             orderRepo.shelve(order.id, order.sync_error ?? 'Max retries exceeded');
@@ -1153,19 +1238,41 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
               }
               continue;
             }
+            // Prevent local deletion while capability negotiation is pending.
+            assertIdentity();
             orderRepo.markSyncing(order.id);
-            database.run('UPDATE orders SET sync_attempts = sync_attempts + 1 WHERE id = ?', [order.id]);
-            const result = await client.createPosOrder(dto);
+            const upload = await prepareOrderUpload({
+              order, scope, buildLegacy: () => dto,
+              lines: items.filter(item => item.variant_id || item.id),
+              readCapabilities: () => client.getPosCapabilities(), assertContext,
+              persist: async snapshot => {
+                database.run('UPDATE orders SET sync_payload_json = ?, synced = 2, sync_attempts = sync_attempts + 1 WHERE id = ?', [snapshot, order.id]);
+                try { await database.flush(); } catch (error) {
+                  orderSyncStorageFailed = true;
+                  throw new Error(`ORDER_SYNC_STORAGE_RESTART_REQUIRED: ${String(error)}`);
+                }
+              },
+            });
+            await assertContext();
+            const result = await client.createPosOrder(upload, assertIdentity);
+            await assertContext();
             const backendId = String(result.id ?? result.orderId ?? order.id);
             const backendOrderNumber = getBackendOrderNumber(result);
             // createPosOrder is the authoritative finalization transaction;
             // current clients never call the legacy /finish endpoint.
             orderRepo.markSynced(order.id, backendId, backendOrderNumber);
             database.run('UPDATE orders SET sync_error = NULL WHERE id = ?', [order.id]);
+            try { await database.flush(); } catch (error) {
+              orderSyncStorageFailed = true;
+              throw new Error(`ORDER_SYNC_STORAGE_RESTART_REQUIRED: ${String(error)}`);
+            }
+            await assertContext();
             for (const cb of [...orderSyncedListeners]) {
               try { cb({ orderId: order.id, backendId }); } catch { /* listener isolation */ }
             }
           } catch (err: any) {
+            await assertContext();
+            if (orderSyncStorageFailed) throw err;
             const errMsg = String(err?.message || err).substring(0, 500);
             const classified = classifyError(errMsg);
             if (classified.kind === 'business') {
@@ -1181,7 +1288,11 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
             }
           }
         }
-        await database.flush().catch(() => { /* debounced flush still pending */ });
+        await assertContext();
+        try { await database.flush(); } catch (error) {
+          orderSyncStorageFailed = true;
+          throw new Error(`ORDER_SYNC_STORAGE_RESTART_REQUIRED: ${String(error)}`);
+        }
       })().finally(() => { orderSyncInFlight = null; });
       return orderSyncInFlight;
     },
@@ -1229,104 +1340,9 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
       return { success: true, restocked: result.restocked };
     },
 
-    // ── Refund (E1b — ported pos.module.ts:3727-3892, minus the Windows DTO
-    //    rebuild + response validator). The renderer-built refund DTO is POSTed
-    //    VERBATIM (the renderer builds it — see the E1b report for the
-    //    request-unit note); on success the local order is marked refunded and
-    //    the restock:true lines are restocked (track_inventory=1 only).
-    async refundOrder(orderId: string, dto: any): Promise<{
-      success: boolean;
-      refundedLines?: any[];
-      refundAmount?: number;
-      receiptPrinted?: boolean;
-      mutationDetected?: boolean;
-      requiresRefresh?: boolean;
-      error?: string;
-    }> {
-      try {
-        const database = await db();
-        const orderRepo = createOrderRepo(database);
-
-        // Order must exist + be synced (pos.module.ts:3729-3732). An unsynced
-        // order has no backend identity to refund against — cancelling it
-        // locally (cancelOrder) is the correct action, not a server refund.
-        const order = orderRepo.getById(orderId);
-        if (!order) return { success: false, error: 'Order not found' };
-        if (!order.backend_id) return { success: false, error: 'Order not synced to server yet' };
-        if (order.status === 'REFUNDED') return { success: false, error: 'Order already fully refunded' };
-
-        // Refunds are shift-scoped — an active shift is required (pos.module.ts:3743-3746).
-        if (!orderRepo.getActiveShift()) {
-          return { success: false, error: 'Cannot refund without an active shift. Open a shift first.' };
-        }
-
-        const token = await tokenStore.getAccessToken();
-        if (!token) return { success: false, error: 'Not authenticated' };
-
-        // POST the renderer-built refund DTO verbatim (pass-through).
-        const result: any = await client.refundOrder(order.backend_id, dto);
-        if (result === null) return { success: false, error: 'Refund endpoint not available' };
-
-        // Resolve the cumulative refunded grosze + FULL/PARTIAL status. Windows
-        // derives these from validateRefundBackendResponse; the Android port does
-        // not rebuild that validator. Prefer the backend's cumulative
-        // totalRefundedAmount (PLN→grosze), else alreadyRefunded + the requested
-        // delta, else the cashier-requested amount.
-        const alreadyRefunded = order.refund_amount ?? 0;
-        const orderTotal = order.total ?? 0;
-        const linesTotalGrosze = Array.isArray(dto?.lines)
-          ? dto.lines.reduce((s: number, l: any) => s + (Number(l?.refundAmount) || 0), 0)
-          : 0;
-        const requestedAmountGrosze = dto?.type === 'FULL'
-          ? Math.max(0, orderTotal - alreadyRefunded)
-          : (Number(dto?.amount) || linesTotalGrosze);
-        const plnToGrosze = (v: unknown): number | null => {
-          if (v == null) return null;
-          const n = typeof v === 'number' ? v : parseFloat(String(v));
-          return Number.isFinite(n) ? Math.round(n * 100) : null;
-        };
-        const cumulativeFromBackend = plnToGrosze(result?.totalRefundedAmount);
-        const refundedAmount = cumulativeFromBackend ?? (alreadyRefunded + requestedAmountGrosze);
-        const status: 'FULL' | 'PARTIAL' =
-          result?.status === 'REFUNDED' || (requestedAmountGrosze >= orderTotal && orderTotal > 0)
-            ? 'FULL'
-            : 'PARTIAL';
-        const refundReason = result?.refundReason || dto?.reason || '';
-
-        // Mark refunded locally + restock the restock:true lines (track_inventory=1
-        // only — the local mirror; the backend deducts server-side too). One
-        // transaction so a partial failure cannot leave the order marked refunded
-        // with un-restocked stock.
-        database.transaction(() => {
-          orderRepo.markRefunded(orderId, refundedAmount, refundReason, status, dto?.lines);
-          if (Array.isArray(dto?.lines)) {
-            for (const line of dto.lines) {
-              const qty = Number(line?.quantity) || 0;
-              if (line?.restock && line.variantId && qty > 0) {
-                database.run(
-                  'UPDATE product_variants SET in_stock = in_stock + ?, available_qty = available_qty + ? WHERE id = ? AND track_inventory = 1',
-                  [qty, qty, line.variantId],
-                );
-              }
-            }
-          }
-        });
-        await database.flush().catch(() => { /* debounced flush still pending */ });
-
-        // Renderer-shaped result. refundAmount is PLN (the renderer grosses it up
-        // via toGrosze); fall back to the requested grosze/100. No auto-print —
-        // the cashier prints the refund receipt via printRefundReceipt (E1a).
-        return {
-          success: true,
-          refundedLines: Array.isArray(result?.refundedLines) ? result.refundedLines : undefined,
-          refundAmount: result?.refundAmount ?? requestedAmountGrosze / 100,
-          receiptPrinted: false,
-        };
-      } catch (e: any) {
-        const detail = e?.message || e?.code || (typeof e === 'string' ? e : '') || 'Refund failed';
-        return { success: false, error: detail };
-      }
-    },
+    getRefundDetail: refunds.getRefundDetail,
+    refundOrder: refunds.refundOrder,
+    reconcileRefund: refunds.reconcileRefund,
 
     // ── Invoicing (E3a — ported pos.module.ts:3924-3981, minus the Windows
     //    logger). NIP/GUS lookup + attach-invoice + generate-proforma, all
@@ -1420,13 +1436,48 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
     //    pos.module.ts:4650-4666) ────────────────────────────────────────────
     async openShift(data: { staffId: string; staffName: string; openingCash: number }): Promise<{ success: boolean; shiftId?: string; error?: string }> {
       try {
+        const { staffId, staffName, openingCash } = data;
+        const config = configStore.getRawConfig();
+        const token = await tokenStore.getAccessToken();
         const database = await db();
         const orderRepo = createOrderRepo(database);
+        if (orderRepo.getActiveShift()) return { success: false, error: 'A shift is already open. Close it before opening another.' };
+        const serverUrl = baseUrl.replace(/\/+$/, '');
+        const assertOpenContext = async () => {
+          const currentToken = await tokenStore.getAccessToken();
+          if (configStore.getRawConfig() !== config || currentToken !== token
+            || resolveApiUrl(configStore).replace(/\/+$/, '') !== serverUrl) {
+            throw new Error('Shift authentication context changed');
+          }
+        };
+        await assertOpenContext();
+        const machineId = getOrCreateAndroidDeviceId(database);
         const shiftId = (globalThis.crypto?.randomUUID?.() ?? `shift-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-        orderRepo.openShift(shiftId, data.staffId, data.staffName, data.openingCash);
-        await database.flush().catch(() => { /* debounced flush still pending */ });
+        orderRepo.openShift(shiftId, staffId, staffName, openingCash);
+        await flushShift(database);
+        await assertOpenContext();
         // Async backend sync, non-blocking (shift-controller.ts:88).
-        void client.openPosShift({ staffId: data.staffId, openingCash: data.openingCash })
+        void client.openPosShift({ staffId, openingCash, machineId }, assertOpenContext)
+          .then(async response => {
+            await assertOpenContext();
+            if (!response || typeof response !== 'object' || Array.isArray(response)) return;
+            const backendId = (response as any)?.id ?? response?.shiftId;
+            if (('id' in response && (response as any).id !== backendId)
+              || ('shiftId' in response && response.shiftId !== backendId)
+              || ((response as any)?.salonId !== undefined && (response as any).salonId !== config.salonId)
+              || ((response as any)?.machineId !== undefined && (response as any).machineId !== machineId)
+              || ((response as any)?.closedAt !== undefined && (response as any).closedAt !== null)
+              || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(backendId ?? '')) return;
+            // Legacy ID-only responses remain usable by the legacy path, but
+            // never manufacture verified machine/tenant evidence for V1.
+            const binding = (response as any)?.id === backendId
+              && typeof config.salonId === 'string' && config.salonId.length > 0
+              && (response as any)?.salonId === config.salonId
+              && (response as any)?.machineId === machineId && (response as any)?.closedAt === null
+              ? JSON.stringify({ serverUrl, salonId: config.salonId, machineId, backendShiftId: backendId }) : null;
+            database.run('UPDATE shifts SET backend_id = ?, backend_binding_json = ? WHERE id = ? AND closed_at IS NULL AND backend_id IS NULL', [backendId, binding, shiftId]);
+            await flushShift(database);
+          })
           .catch(() => { /* backend outage never blocks the local shift */ });
         return { success: true, shiftId };
       } catch (e: any) {
@@ -1435,20 +1486,28 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
     },
     async closeShift(data: { shiftId: string; closingCash: number; fiscalOnly?: boolean }): Promise<{ success: boolean; report?: any; error?: string }> {
       try {
+        const { shiftId, closingCash } = data;
         const database = await db();
         const orderRepo = createOrderRepo(database);
         // Ghost shift → clear gracefully (pos.module.ts:4663-4676).
-        if (!orderRepo.getOpenShiftById(data.shiftId)) {
-          void client.closePosShift(data.shiftId, { closingCash: data.closingCash })
+        const closingShift = orderRepo.getOpenShiftById(shiftId);
+        if (!closingShift) {
+          if (database.get('SELECT id FROM shifts WHERE id = ?', [shiftId])) {
+            const report = orderRepo.getClosedShiftReport(shiftId);
+            await flushShift(database);
+            return { success: true, report };
+          }
+          if (!Number.isSafeInteger(closingCash) || closingCash < 0) throw new Error('Invalid closing cash');
+          void client.closePosShift(shiftId, { closingCash })
             .catch(() => { /* best-effort server ghost close */ });
           return { success: true, report: null };
         }
         // Pre-close order drain, never blocking (pos.module.ts:4680-4700 —
         // Windows races a 2s timeout; the Android drain is awaited best-effort).
         await (transport.syncOrders?.() ?? Promise.resolve()).catch(() => { /* offline close is fine */ });
-        const report = orderRepo.closeShift(data.shiftId, data.closingCash);
-        await database.flush().catch(() => { /* debounced flush still pending */ });
-        void client.closePosShift(data.shiftId, { closingCash: data.closingCash })
+        const report = orderRepo.closeShift(shiftId, closingCash);
+        await flushShift(database);
+        void client.closePosShift(closingShift.backend_id ?? shiftId, { closingCash })
           .catch(() => { /* backend outage never blocks the local Z-report */ });
         return { success: true, report };
       } catch (e: any) {
@@ -1578,5 +1637,31 @@ export function createRealTransport(options: RealTransportOptions): ShimTranspor
     },
   };
 
+  // One synchronous reservation covers every await in a session/shift change.
+  // Conversely, the refund coordinator checks this before dispatch/projection.
+  const transition = (kind: string, operation: (...args: any[]) => Promise<any>, mustReconcile = false) => async (...args: any[]) => {
+    if (shiftStorageFailed) return { success: false, error: shiftStorageError };
+    const cancellingLogin = kind === 'logout' && financialTransition?.kind === 'login' && financialTransition.cancellable;
+    if ((financialTransition && !cancellingLogin) || refunds.busy || refunds.storageFailed) {
+      return { success: false, error: refunds.storageFailed ? 'Refund storage failed. Restart POS before continuing.' : 'A financial operation is in progress' };
+    }
+    const reservation = { kind };
+    financialTransition = reservation;
+    try {
+      if (mustReconcile && (await db()).get("SELECT request_id FROM pos_refund_attempts WHERE status IN ('PREPARED','UNKNOWN') LIMIT 1")) {
+        return { success: false, error: 'Reconcile the pending refund before closing the shift.' };
+      }
+      return await operation(...args);
+    } catch (error: any) { return { success: false, error: error?.message || String(error) }; }
+    finally { if (financialTransition === reservation) financialTransition = null; }
+  };
+  transport.loginWithEmail = transition('login', transport.loginWithEmail!);
+  transport.logout = transition('logout', transport.logout!);
+  transport.openShift = transition('open-shift', transport.openShift!);
+  const closeShiftTransition = transition('close-shift', transport.closeShift!, true);
+  // Freeze before the pending-refund guard's first await, not just inside
+  // the operation after that guard has yielded to the renderer.
+  transport.closeShift = data => closeShiftTransition({ ...data });
+  transport.createOrder = transition('create-order', transport.createOrder!);
   return transport;
 }

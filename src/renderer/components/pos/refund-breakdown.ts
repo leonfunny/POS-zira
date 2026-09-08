@@ -112,7 +112,7 @@ function lineMatchesStableIdentity(line: RefundBreakdownLine, item: RefundBreakd
 }
 
 function lineMatchesItem(line: RefundBreakdownLine, item: RefundBreakdownItem): boolean {
-  if (line.orderItemId) return line.orderItemId === item.id;
+  if (line.orderItemId != null) return line.orderItemId === item.id;
   return lineMatchesStableIdentity(line, item);
 }
 
@@ -120,13 +120,9 @@ function resolveLineItem(
   line: RefundBreakdownLine,
   items: RefundBreakdownItem[],
 ): RefundBreakdownItem | undefined {
-  // Prefer an exact local row id. Only if the server id is not present in the
-  // mirrored items do we fall back to product identity, so two sold rows of
-  // the same variant cannot both receive the same refund line.
-  if (line.orderItemId) {
-    const exactItem = items.find((item) => item.id === line.orderItemId);
-    if (exactItem) return exactItem;
-  }
+  // Explicit server identity must never be rebound to a different local row,
+  // including when multiple sold rows share the same product or name.
+  if (line.orderItemId != null) return items.find((item) => item.id === line.orderItemId);
   return items.find((item) => lineMatchesStableIdentity(line, item));
 }
 

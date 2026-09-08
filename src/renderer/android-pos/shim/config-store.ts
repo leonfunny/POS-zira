@@ -23,22 +23,23 @@
  */
 
 import type { AgentConfig, AuthUser } from '../../../shared/types';
+import { resolveSalonPosMode } from '../../../shared/pos-mode';
 
 const CONFIG_STORAGE_KEY = 'zira-android-pos-config';
 
 // ─── posMode resolution (packet E2a — salon mode) ───────────────────────────
 
 /**
- * The two POS modes the Android shell drives on the unmodified Windows
- * `POSLayout` (PosMode = 'retail'|'salon'|'b2b'|'restaurant', types.ts:586, but
- * Android only renders retail + salon — b2b/restaurant are EXCLUDE). Per
+ * Android uses the shared retail, salon and restaurant templates. Restaurant
+ * currently supports direct counter sales; table/check service is a separate
+ * capability, not inferred from an empty table stub. Per
  * SHIM_CONTRACT_SALON_E2 §0.1 / §9.1 the Windows default is **'salon'**
  * (`POSLayout.tsx:294`); the S1 retail port seeded 'retail' because it only
  * shipped the retail template. E2a makes the salon template render, so the
  * Android shell must boot a salon in salon mode while keeping a
  * retail-configured device on retail.
  */
-export type AndroidPosMode = 'retail' | 'salon';
+export type AndroidPosMode = 'retail' | 'salon' | 'restaurant';
 
 /**
  * Resolve the effective POS mode. Precedence (SHIM_CONTRACT_SALON_E2 task #1):
@@ -56,10 +57,23 @@ export function resolvePosMode(
   entitlement?: { suggestedPosMode?: string | null } | null,
 ): AndroidPosMode {
   const fromConfig = String(config?.posMode ?? '').trim().toLowerCase();
-  if (fromConfig === 'retail' || fromConfig === 'salon') return fromConfig;
+  if (fromConfig === 'retail' || fromConfig === 'salon' || fromConfig === 'restaurant') return fromConfig;
   const suggested = String(entitlement?.suggestedPosMode ?? '').trim().toLowerCase();
-  if (suggested === 'retail' || suggested === 'salon') return suggested;
+  if (suggested === 'retail' || suggested === 'salon' || suggested === 'restaurant') return suggested;
   return 'salon';
+}
+
+/** Same tenant ownership rules as Windows, retaining Android's salon fallback.
+ * An offline fallback is not remembered as the cashier's explicit choice. */
+export function resolveAndroidSalonMode(previous: AgentConfig, salonId: string, suggested?: unknown) {
+  const supported = ['retail', 'salon', 'restaurant'].includes(String(suggested)) ? suggested : null;
+  // The old Android boot forced even restaurant devices to its default salon
+  // mode. Without an explicit per-salon choice, do not preserve that coercion
+  // over a verified restaurant entitlement. Legacy retail choices still win.
+  const legacyDefault = previous.posMode === 'salon' && !previous.posModeSalonId;
+  const resolved = resolveSalonPosMode(legacyDefault ? { ...previous, posMode: undefined } : previous, salonId, supported);
+  if (!Object.prototype.hasOwnProperty.call(resolved.posModesBySalon, salonId)) resolved.posMode = 'salon';
+  return { ...resolved, posMode: resolvePosMode(resolved) };
 }
 
 /**

@@ -16,19 +16,15 @@ const OPTIONS: { value: OrderType; key: string }[] = [
 
 export default function DiningOptions({ orderType, onChange, t }: DiningOptionsProps) {
   return (
-    <div className="p-2 border-t border-slate-700">
-      <div className="flex gap-1">
+    <div className="restaurant-dining-options">
+      <div role="group" aria-label={t('pos.restaurant.orderType')}>
         {OPTIONS.map((opt) => (
           <button
             key={opt.value}
+            type="button"
+            aria-pressed={orderType === opt.value}
             onClick={() => onChange(opt.value)}
-            className={`
-              flex-1 px-1 py-1 text-xs rounded transition-colors
-              ${orderType === opt.value
-                ? 'bg-brand-600 text-white'
-                : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-              }
-            `}
+            className="restaurant-dining-option"
           >
             {t(opt.key)}
           </button>

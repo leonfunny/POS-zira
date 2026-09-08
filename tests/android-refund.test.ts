@@ -1,25 +1,12 @@
+import { MemoryAndroidPersistence } from './helpers/android-persistence';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { createRealTransport } from '../src/renderer/android-pos/shim/real-transport';
 import { ShimConfigStore } from '../src/renderer/android-pos/shim/config-store';
 import { TokenStore, type TokenStoreStorage } from '../src/renderer/android-pos/shim/token-store';
+import { buildPaymentNamespace } from '../src/renderer/android-pos/shim/stubs';
 
-/**
- * Packet E1b — refund flow + Z-report refund/discount subtraction.
- *
- * Covers the four behaviors the packet enumerates:
- *  1. full refund of a SYNCED order → POST /refund with the passed DTO verbatim,
- *     local status REFUNDED, restock of restock:true lines (track_inventory=1
- *     only), and the Z-report totalRefunds + reduced cashTotal.
- *  2. partial refund → PARTIAL_REFUND.
- *  3. unsynced order refund refused (refund a not-yet-synced order = cancel it).
- *
- * The transport owns its lazily-initialized SQL.js DB, so products are seeded
- * through the public surface (syncProducts) and read back through getProducts —
- * the same path the renderer uses. Order money is integer grosze throughout;
- * the backend /refund response carries PLN decimals (the renderer grosses them
- * up via toGrosze), matching Windows.
- */
+/** Invalid/unauthorized requests remain fail-closed with the durable coordinator. */
 
 /** Node-friendly sql.js load — mirrors tests/android-real-transport.test.ts. */
 const NODE_LOCATE_FILE = null;
@@ -72,7 +59,7 @@ function build() {
   const transport = createRealTransport({
     configStore,
     tokenStore,
-    dbInit: { locateFile: NODE_LOCATE_FILE },
+    dbInit: { locateFile: NODE_LOCATE_FILE, persistence: new MemoryAndroidPersistence() },
   });
   return { configStore, tokenStore, transport };
 }
@@ -150,169 +137,65 @@ async function syncOrder(transport: ReturnType<typeof build>['transport'], backe
 }
 
 describe('android refund (E1b)', () => {
-  test('full refund of a synced order: POSTs the DTO verbatim, marks REFUNDED, restocks track_inventory=1 only, Z-report subtracts', async () => {
-    const { transport, shiftId } = await bootstrap();
-    await transport.createOrder!(ORDER(shiftId, 'order-full'), ITEMS('order-full'));
-    await syncOrder(transport);
-
-    // Stock after the sale: p1 (track_inventory=1) decremented 5→2; p2 (=0) untouched.
-    let products = await transport.getProducts!();
-    const p1Before = products.find((p) => p.id === 'p1')!;
-    const p2Before = products.find((p) => p.id === 'p2')!;
-    expect(p1Before.in_stock).toBe(3);
-    expect((p1Before as any).track_inventory).toBe(1);
-    expect(p2Before.in_stock).toBe(5);
-    expect((p2Before as any).track_inventory).toBe(0);
-
-    const dto = {
-      type: 'FULL' as const,
-      refundRequestId: 'refund-1',
-      reason: 'customer-request',
-      amount: 4900, // grosze — the renderer builds this; transport passes it through
-      lines: [
-        { variantId: 'p1', sku: 'SKU-1', name: 'Gel Polish', quantity: 2, unit: 'szt', unitPrice: 2000, refundAmount: 4000, restock: true, vatRate: 23 },
-        { variantId: 'p2', sku: 'SKU-2', name: 'Nail File', quantity: 1, unit: 'szt', unitPrice: 900, refundAmount: 900, restock: true, vatRate: 23 },
-      ],
-    };
-
-    const requests: Array<{ url: string; body: any }> = [];
-    fetchMock.mockImplementation(async (url: unknown, init?: RequestInit) => {
-      const target = String(url);
-      if (init?.body) requests.push({ url: target, body: JSON.parse(String(init.body)) });
-      if (target.endsWith('/api/v1/b2b/pos/orders/backend-1/refund')) {
-        // Backend response: PLN decimals (renderer grosses up via toGrosze).
-        return jsonResponse({ status: 'REFUNDED', refundAmount: 49, totalRefundedAmount: 49, refundedLines: [] });
-      }
-      if (target.endsWith('/api/v1/b2b/pos/orders/backend-1/finish')) return jsonResponse({});
-      if (target.endsWith('/api/v1/b2b/pos/orders')) return jsonResponse({ id: 'backend-1' });
-      if (target.includes('/api/v1/warehouse/public/products/sync-v2')) return jsonResponse(CATALOG_PAGE);
-      if (target.endsWith('/api/v1/warehouse/public/categories')) return jsonResponse([]);
-      if (target.endsWith('/api/v1/pos/shifts/server-shift/close')) return jsonResponse({});
-      throw new Error(`unexpected fetch: ${target}`);
+  test.each([true, false])('refund print reports unsupported without a sale reprint or network (real port=%s)', async realPort => {
+    const { configStore, transport } = build();
+    const requestReceiptPrint = vi.fn(async () => ({ success: true, receiptPrinted: true }));
+    const payment = buildPaymentNamespace({
+      configStore,
+      transport: realPort ? { ...transport, requestReceiptPrint } : {},
     });
 
-    const result = await transport.refundOrder!('order-full', dto);
-    expect(result.success).toBe(true);
+    const result = await payment.printRefundReceipt('refunded-order');
 
-    // The DTO is passed through VERBATIM (the renderer builds it; no rebuild).
-    const refundCall = requests.find((r) => r.url.endsWith('/api/v1/b2b/pos/orders/backend-1/refund'));
-    expect(refundCall).toBeDefined();
-    expect(refundCall!.body).toEqual(dto);
-
-    // Local order marked REFUNDED with the cumulative refund_amount (grosze).
-    const detail = await transport.getOrderDetail!('order-full');
-    expect(detail?.order.status).toBe('REFUNDED');
-    expect(detail?.order.refund_amount).toBe(4900);
-
-    // Restock: p1 (track_inventory=1) restocked +2 → 5; p2 (=0) NOT restocked → 5.
-    products = await transport.getProducts!();
-    expect(products.find((p) => p.id === 'p1')!.in_stock).toBe(5);
-    expect(products.find((p) => p.id === 'p2')!.in_stock).toBe(5);
-
-    // Z-report: the refund is subtracted from totalSales AND the cash bucket.
-    const closed = await transport.closeShift!({ shiftId, closingCash: 10000 });
-    expect(closed.success).toBe(true);
-    expect(closed.report).toMatchObject({
-      totalRefunds: 4900,
-      totalDiscounts: 0,
-      totalSales: 0, // gross 4900 − refunds 4900 − discounts 0
-      cashTotal: 0, // sale 4900 CASH − refund 4900 CASH
-      cardTotal: 0,
-      totalOrders: 1,
+    expect(result).toEqual({
+      success: false,
+      receiptPrinted: false,
+      reason: 'unsupported',
+      code: 'ANDROID_REFUND_RECEIPT_UNSUPPORTED',
+      error: 'Refund receipt printing is not available on Android yet. No receipt was printed.',
     });
-  });
-
-  test('partial refund → PARTIAL_REFUND, restocks only the refunded stockable line', async () => {
-    const { transport, shiftId } = await bootstrap();
-    await transport.createOrder!(ORDER(shiftId, 'order-partial'), ITEMS('order-partial'));
-    await syncOrder(transport);
-
-    // p1 is 3 after the sale (5 − 2).
-    expect((await transport.getProducts!()).find((p) => p.id === 'p1')!.in_stock).toBe(3);
-
-    const dto = {
-      type: 'PARTIAL' as const,
-      refundRequestId: 'refund-2',
-      reason: 'one-item-returned',
-      amount: 2000, // grosze — refund 1× p1
-      lines: [
-        { variantId: 'p1', sku: 'SKU-1', name: 'Gel Polish', quantity: 1, unit: 'szt', unitPrice: 2000, refundAmount: 2000, restock: true, vatRate: 23 },
-      ],
-    };
-
-    fetchMock.mockImplementation(async (url: unknown) => {
-      const target = String(url);
-      if (target.endsWith('/api/v1/b2b/pos/orders/backend-1/refund')) {
-        return jsonResponse({ status: 'PARTIAL_REFUND', refundAmount: 20, totalRefundedAmount: 20, refundedLines: [] });
-      }
-      if (target.endsWith('/api/v1/b2b/pos/orders/backend-1/finish')) return jsonResponse({});
-      if (target.endsWith('/api/v1/b2b/pos/orders')) return jsonResponse({ id: 'backend-1' });
-      if (target.includes('/api/v1/warehouse/public/products/sync-v2')) return jsonResponse(CATALOG_PAGE);
-      if (target.endsWith('/api/v1/warehouse/public/categories')) return jsonResponse([]);
-      if (target.endsWith('/api/v1/pos/shifts/server-shift/close')) return jsonResponse({});
-      throw new Error(`unexpected fetch: ${target}`);
-    });
-
-    const result = await transport.refundOrder!('order-partial', dto);
-    expect(result.success).toBe(true);
-
-    const detail = await transport.getOrderDetail!('order-partial');
-    expect(detail?.order.status).toBe('PARTIAL_REFUND');
-    expect(detail?.order.refund_amount).toBe(2000);
-
-    // p1 restocked +1 → 4 (partial refund of 1 of the 2 sold units).
-    expect((await transport.getProducts!()).find((p) => p.id === 'p1')!.in_stock).toBe(4);
-
-    const closed = await transport.closeShift!({ shiftId, closingCash: 10000 });
-    expect(closed.report).toMatchObject({
-      totalRefunds: 2000,
-      totalSales: 2900, // gross 4900 − refunds 2000
-      cashTotal: 2900, // sale 4900 CASH − refund 2000 CASH
-    });
-  });
-
-  test('an unsynced order is refused — refund a not-yet-synced order = cancel it', async () => {
-    const { transport, shiftId } = await bootstrap();
-    await transport.createOrder!(ORDER(shiftId, 'order-unsynced'), ITEMS('order-unsynced'));
-    // NOTE: deliberately NOT synced — no backend_id.
-
-    fetchMock.mockClear();
-    const result = await transport.refundOrder!('order-unsynced', { type: 'FULL', amount: 4900, lines: [] });
-    expect(result.success).toBe(false);
-    expect(result.error).toMatch(/not synced/i);
-
-    // No refund request should have touched the backend.
+    expect(requestReceiptPrint).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('/refund'))).toBe(false);
   });
 
-  test('an already-fully-refunded order is refused', async () => {
+  test('ordinary sale reprint still delegates to the sale receipt coordinator', async () => {
+    const { configStore } = build();
+    const requestReceiptPrint = vi.fn(async () => ({ success: true, receiptPrinted: true }));
+    const payment = buildPaymentNamespace({ configStore, transport: { requestReceiptPrint } });
+    expect(await payment.reprintReceipt('sale-order')).toMatchObject({ receiptPrinted: true });
+    expect(requestReceiptPrint).toHaveBeenCalledExactlyOnceWith('sale-order', { isReprint: true });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test.each(['FULL', 'PARTIAL'])('STAFF cannot %s refund or mutate orders, stock, or reports', async type => {
     const { transport, shiftId } = await bootstrap();
-    await transport.createOrder!(ORDER(shiftId, 'order-twice'), ITEMS('order-twice'));
+    await transport.createOrder!(ORDER(shiftId, 'order-gated'), ITEMS('order-gated'));
     await syncOrder(transport);
+    const before = await transport.getOrderDetail!('order-gated');
+    const stockBefore = await transport.getProducts!();
+    fetchMock.mockClear();
+    const dto = { type, refundRequestId: '11111111-1111-4111-8111-111111111111', amount: 4900,
+      lines: [{ orderItemId: 'backend-item', variantId: 'p1', quantity: 2,
+        unitPrice: 2000, refundAmount: 4000, restock: true }] };
+    const first = await transport.refundOrder!('order-gated', dto);
+    const replay = await transport.refundOrder!('order-gated', dto);
+    expect(first).toMatchObject({ success: false, receiptPrinted: false });
+    expect(first.error).toMatch(/authenticated owner or manager/i);
+    expect(replay).toEqual(first);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(await transport.getOrderDetail!('order-gated')).toEqual(before);
+    expect(await transport.getProducts!()).toEqual(stockBefore);
+    fetchMock.mockImplementation(async () => jsonResponse({}));
+    const closed = await transport.closeShift!({ shiftId, closingCash: 14900 });
+    expect(closed.success).toBe(true);
+    expect(closed.report).toMatchObject({ totalRefunds: 0, totalSales: 4900, cashTotal: 4900 });
+  });
 
-    fetchMock.mockImplementation(async (url: unknown) => {
-      const target = String(url);
-      if (target.endsWith('/api/v1/b2b/pos/orders/backend-1/refund')) {
-        return jsonResponse({ status: 'REFUNDED', refundAmount: 49, totalRefundedAmount: 49 });
-      }
-      if (target.endsWith('/api/v1/b2b/pos/orders/backend-1/finish')) return jsonResponse({});
-      if (target.endsWith('/api/v1/b2b/pos/orders')) return jsonResponse({ id: 'backend-1' });
-      if (target.includes('/api/v1/warehouse/public/products/sync-v2')) return jsonResponse(CATALOG_PAGE);
-      if (target.endsWith('/api/v1/warehouse/public/categories')) return jsonResponse([]);
-      throw new Error(`unexpected fetch: ${target}`);
-    });
-
-    const first = await transport.refundOrder!('order-twice', {
-      type: 'FULL', amount: 4900,
-      lines: [{ variantId: 'p1', name: 'Gel Polish', quantity: 2, unitPrice: 2000, refundAmount: 4000, restock: true, vatRate: 23 }],
-    });
-    expect(first.success).toBe(true);
-
-    const second = await transport.refundOrder!('order-twice', {
-      type: 'FULL', amount: 4900, lines: [],
-    });
-    expect(second.success).toBe(false);
-    expect(second.error).toMatch(/already fully refunded/i);
+  test.each([null, {}, { type: 'FULL', amount: 4900, lines: [] }])('refuses malformed and unauthenticated direct calls with no HTTP', async dto => {
+    const { transport } = build();
+    const result = await transport.refundOrder!('unknown-order', dto);
+    expect(result).toMatchObject({ success: false, receiptPrinted: false });
+    expect(result.error).toMatch(/stable UUID refund request ID/);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

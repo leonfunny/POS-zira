@@ -1,4 +1,5 @@
 import { BrowserWindow } from 'electron';
+import { canMergeCartLines } from '../../shared/cart-line-identity';
 import logger from '../logger';
 import { PromoLoader } from './promo-loader';
 import { getConfigValue } from '../config/store';
@@ -10,6 +11,7 @@ import type {
   SelectedService,
 } from '../../shared/types';
 import { resolveCustomerDisplayProfile } from '../../shared/customer-display-profile';
+import { canChangeRestaurantContext, type RestaurantOrderType } from '../../shared/pos-mode';
 import { calculateLineTotalGrosze, isValidSaleQuantity, normalizeSaleUnit, normalizeSellBy, roundSaleQuantity, type SellBy } from '../../shared/pos-sale';
 import { findLinePriceAnomaly, formatPriceAnomalyMessage } from '../../shared/pos-price-guard';
 import type {
@@ -65,6 +67,7 @@ export interface CartState {
 }
 
 export interface CheckoutDraftState {
+  restaurant?: { orderType: RestaurantOrderType };
   customerNip?: string;
   customerName?: string;
   requiresInvoice?: boolean;
@@ -152,7 +155,7 @@ export interface PosState {
   session: PosSessionState;
   display: DisplayState;
   // Mode-specific (no tables array - tables are in SQLite)
-  activeTable?: string | null;          // Restaurant: selected table ID (for display sync)
+  activeTable?: string | null;          // Restaurant: table owned by the shared checkout
   activeCustomer?: {                     // B2B: selected customer
     id: string;
     name: string;
@@ -182,7 +185,7 @@ export type PosAction =
   | { type: 'session/open'; payload: { shiftId: string; staffId: string | null; staffName: string | null; openedAt?: string } }
   | { type: 'session/close' }
   | { type: 'display/setMode'; payload: DisplayState }
-  | { type: 'table/setActive'; payload: { tableId: string | null } }
+  | { type: 'table/setActive'; payload: { tableId: string | null; orderType?: RestaurantOrderType } }
   | { type: 'customer/select'; payload: { id: string; name: string; nip?: string } }
   | { type: 'customer/clear' }
   | { type: 'tip/set'; payload: { amount: number } }
@@ -356,15 +359,10 @@ function posReducer(
         logger.warn(`[PosStore] Rejected invalid ${incomingSellBy} cart quantity: ${action.payload.quantity}`);
         return state;
       }
-      // Merge only if same variant AND same staff AND same course
-      // (salon mode: different staff = separate entry; restaurant: different course = separate entry)
+      // Keep instructions and sale terms intact when adding the same product again.
       const p = normalizedCartItem(action.payload);
       if (!validateCartItemCatalogPrice(p)) return state;
-      const existing = state.cart.items.find(
-        (i) => i.variantId === p.variantId
-          && (i.staffId ?? null) === (p.staffId ?? null)
-          && (i.course ?? null) === (p.course ?? null),
-      );
+      const existing = state.cart.items.find((i) => canMergeCartLines(i, p));
       let items: CartItem[];
       if (existing) {
         items = state.cart.items.map((i) =>
@@ -463,9 +461,12 @@ function posReducer(
       if (state.checkoutDraft.billiard) return state;
       return {
         ...state,
-        checkoutDraft: state.checkoutDraft.restoredInterruption
+        checkoutDraft: { ...(state.checkoutDraft.restoredInterruption
           ? { restoredInterruption: state.checkoutDraft.restoredInterruption }
-          : createInitialState().checkoutDraft,
+          : createInitialState().checkoutDraft),
+          ...(state.checkoutDraft.restaurant
+            ? { restaurant: state.checkoutDraft.restaurant } : {}),
+        },
       };
 
     case 'cart/applyDiscount': {
@@ -588,8 +589,16 @@ function posReducer(
     case 'display/setMode':
       return { ...state, display: { ...state.display, ...action.payload } };
 
-    case 'table/setActive':
-      return { ...state, activeTable: action.payload.tableId };
+    case 'table/setActive': {
+      const { tableId, orderType } = action.payload;
+      if (!canChangeRestaurantContext(state, tableId, orderType)) return state;
+      return {
+        ...state, activeTable: tableId,
+        checkoutDraft: orderType
+          ? { ...state.checkoutDraft, restaurant: { orderType } }
+          : state.checkoutDraft,
+      };
+    }
 
     case 'customer/select':
       return {
@@ -609,9 +618,11 @@ function posReducer(
       return {
         ...state,
         activeCustomer: null,
-        checkoutDraft: state.checkoutDraft.restoredInterruption
+        checkoutDraft: { ...(state.checkoutDraft.restoredInterruption
           ? { restoredInterruption: state.checkoutDraft.restoredInterruption }
-          : createInitialState().checkoutDraft,
+          : createInitialState().checkoutDraft),
+          ...(state.checkoutDraft.restaurant ? { restaurant: state.checkoutDraft.restaurant } : {}),
+        },
       };
 
     case 'tip/set':

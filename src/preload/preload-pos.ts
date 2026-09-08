@@ -298,6 +298,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
       setActive: (id: string, active: boolean) => ipcRenderer.invoke('pos:staff:setActive', id, active),
     },
     // Hold Orders (park/recall)
+    restaurantChecks: {
+      list: () => ipcRenderer.invoke('pos:restaurant-checks:list'),
+      saveCurrent: () => ipcRenderer.invoke('pos:restaurant-checks:save-current'),
+      open: (id: string) => ipcRenderer.invoke('pos:restaurant-checks:open', id),
+      beginPayment: (orderId: string, token: string) => ipcRenderer.invoke('pos:restaurant-checks:begin-payment', orderId, token),
+    },
     hold: {
       create: (id: string, title: string, payload: any) => ipcRenderer.invoke('pos:hold:create', id, title, payload),
       createCurrent: (id: string, title: string) => ipcRenderer.invoke('pos:hold:create-current', id, title),

@@ -10,6 +10,8 @@ vi.mock('../src/main/network/api-client', () => ({
   apiClient: {
     createPosOrder: vi.fn(),
     finishOrder: vi.fn(),
+    getPosCapabilities: vi.fn(),
+    getOrderUploadServerUrl: vi.fn(() => 'https://api.enail.pro'),
   },
 }));
 
@@ -53,6 +55,7 @@ vi.mock('../src/main/database/database', () => ({
 
 vi.mock('../src/main/config/store', () => ({
   getSecureAuthToken: vi.fn(),
+  getConfigValue: vi.fn((key: string) => key === 'salonId' ? 'salon-1' : key === 'serverUrl' ? 'https://api.enail.pro' : undefined),
 }));
 
 vi.mock('../src/main/logger', () => ({
@@ -68,7 +71,7 @@ import { apiClient } from '../src/main/network/api-client';
 import { orderRepo } from '../src/main/database/repos/order-repo';
 import { database } from '../src/main/database/database';
 import { billiardPosHandoffRepo } from '../src/main/database/repos/billiard-pos-handoff-repo';
-import { getSecureAuthToken } from '../src/main/config/store';
+import { getSecureAuthToken, getConfigValue } from '../src/main/config/store';
 import { OrderSync } from '../src/main/sync/order-sync';
 
 function makeOrder(overrides: Record<string, unknown> = {}) {
@@ -111,6 +114,10 @@ function makeOrder(overrides: Record<string, unknown> = {}) {
 
 function mockNoStrandedSyncingOrders() {
   vi.mocked(database.get).mockReturnValue({ cnt: 0 } as any);
+  vi.mocked(orderRepo.getById).mockImplementation(id => {
+    const results = vi.mocked(orderRepo.getUnsynced).mock.results;
+    return results[results.length - 1]?.value?.find((row: any) => row.id === id) ?? null;
+  });
 }
 
 function makeItem(overrides: Record<string, unknown> = {}) {
@@ -295,8 +302,103 @@ describe('OrderSync DTO mapping', () => {
 
     expect(apiClient.finishOrder).not.toHaveBeenCalled();
     expect(billiardPosHandoffRepo.markState).toHaveBeenCalledWith('checkout-1', 'SETTLED');
-    expect(database.saveCoalesced).toHaveBeenCalledTimes(1);
+    expect(database.saveCoalesced).toHaveBeenCalledTimes(2);
     expect(summary).toMatchObject({ synced: 1, failed: 0 });
+  });
+});
+
+describe('Windows immutable restaurant upload', () => {
+  let order: any;
+  let items: any[];
+  beforeEach(() => {
+    vi.resetAllMocks();
+    order = makeOrder({ mode: 'restaurant', order_type: 'dine_in', table_id: 'A', covers: 2, sync_metadata_eligible: 1 });
+    items = [makeItem({ notes: 'No onions', course: 2 })];
+    vi.mocked(getSecureAuthToken).mockReturnValue('secure-token');
+    vi.mocked(getConfigValue).mockImplementation((key: any) => (key === 'salonId' ? 'salon-1' : key === 'serverUrl' ? 'https://api.enail.pro' : undefined) as any);
+    vi.mocked(apiClient.getOrderUploadServerUrl).mockReturnValue('https://api.enail.pro');
+    vi.mocked(apiClient.getPosCapabilities).mockResolvedValue({ restaurantMetadataVersion: 1 });
+    vi.mocked(apiClient.createPosOrder).mockResolvedValue({ id: 'backend-1' });
+    vi.mocked(database.get).mockReturnValue({ cnt: 0 } as any);
+    vi.mocked(database.saveCoalesced).mockResolvedValue({ success: true } as any);
+    vi.mocked(orderRepo.getUnsynced).mockImplementation(() => [order]);
+    vi.mocked(orderRepo.getById).mockImplementation(id => id === order.id ? order : null);
+    vi.mocked(orderRepo.getItemsByOrderId).mockImplementation(() => items);
+    vi.mocked(database.run).mockImplementation((sql: string, params?: any[]) => {
+      if (sql.includes('SET sync_payload_json')) { order.sync_payload_json = params![0]; order.sync_attempts++; }
+    });
+  });
+
+  it('persists before POST and replays exact metadata after lost reply, local mutation and counter reset', async () => {
+    let sent: any;
+    vi.mocked(apiClient.createPosOrder).mockImplementationOnce(async (_token, dto) => {
+      sent = dto; expect(JSON.parse(order.sync_payload_json).payload).toEqual(dto);
+      expect(database.saveCoalesced).toHaveBeenCalled(); throw new Error('response lost');
+    });
+    await new OrderSync().syncPendingOrders();
+    expect(sent.restaurant).toEqual({ schemaVersion: 1, tableId: 'A', covers: 2 });
+    expect(sent.items[0].restaurant).toEqual({ localLineId: 'item-1', notes: 'No onions', course: 2 });
+    items = [makeItem({ price: 9999, notes: 'Changed', course: 4 })]; order.covers = 99; order.sync_attempts = 0;
+    vi.mocked(apiClient.getPosCapabilities).mockRejectedValue({ status: 404 });
+    await new OrderSync().syncPendingOrders();
+    expect(apiClient.createPosOrder).toHaveBeenLastCalledWith('secure-token', sent);
+    expect(apiClient.getPosCapabilities).toHaveBeenCalledTimes(1);
+  });
+
+  it('acquires edit/delete guard before capability I/O', async () => {
+    vi.mocked(apiClient.getPosCapabilities).mockImplementation(async () => {
+      expect(orderRepo.markSyncing).toHaveBeenCalledWith('order-1'); return { restaurantMetadataVersion: 1 };
+    });
+    await new OrderSync().syncPendingOrders();
+  });
+
+  it('rereads later batch rows after HTTP so stale headers cannot override edits or resurrect deletions', async () => {
+    const edited = { ...order, id: 'edited-order', covers: 4 };
+    const removed = { ...order, id: 'removed-order' };
+    const rows = new Map([[order.id, order], [removed.id, removed], [edited.id, edited]]);
+    vi.mocked(orderRepo.getUnsynced).mockReturnValue([...rows.values()].map(row => ({ ...row })));
+    vi.mocked(orderRepo.getById).mockImplementation(id => rows.get(id) ?? null);
+    vi.mocked(database.run).mockImplementation(() => {});
+    const sent: any[] = [];
+    vi.mocked(apiClient.createPosOrder).mockImplementation(async (_token, dto) => {
+      sent.push(dto);
+      if (dto.id === order.id) { rows.delete(removed.id); rows.set(edited.id, { ...edited, covers: 8 }); }
+      return { id: dto.id };
+    });
+    await new OrderSync().syncPendingOrders();
+    expect(sent.map(dto => dto.id)).toEqual(['order-1', 'edited-order']);
+    expect(sent[1].restaurant.covers).toBe(8);
+  });
+
+  it('storage failure before POST poisons uploader until restart', async () => {
+    vi.mocked(database.saveCoalesced).mockResolvedValue({ success: false, error: 'disk full' } as any);
+    const uploader = new OrderSync(); const result = await uploader.syncPendingOrders();
+    expect(result.synced).toBe(0); expect(result.failed).toBe(1);
+    expect(apiClient.createPosOrder).not.toHaveBeenCalled(); expect(orderRepo.markSynced).not.toHaveBeenCalled();
+    await expect(uploader.syncPendingOrders()).rejects.toThrow('STORAGE_RESTART_REQUIRED');
+  });
+
+  it('does not report success when accepted state durability rejects', async () => {
+    vi.mocked(database.saveCoalesced).mockResolvedValueOnce({ success: true } as any).mockRejectedValueOnce(new Error('disk failed'));
+    const result = await new OrderSync().syncPendingOrders();
+    expect(apiClient.createPosOrder).toHaveBeenCalledTimes(1); expect(result.synced).toBe(0); expect(result.results[0].status).toBe('failed');
+  });
+
+  it('late reply after salon change causes no catch-path writes or success', async () => {
+    let writesAtSwitch = -1;
+    vi.mocked(apiClient.createPosOrder).mockImplementation(async () => {
+      vi.mocked(getConfigValue).mockImplementation((key: any) => (key === 'salonId' ? 'salon-2' : 'https://api.enail.pro') as any);
+      writesAtSwitch = vi.mocked(database.run).mock.calls.length; return { id: 'backend-1' };
+    });
+    await expect(new OrderSync().syncPendingOrders()).rejects.toThrow('CONTEXT_CHANGED');
+    expect(database.run).toHaveBeenCalledTimes(writesAtSwitch);
+    expect(orderRepo.markSyncFailed).not.toHaveBeenCalled(); expect(orderRepo.markSynced).not.toHaveBeenCalled();
+  });
+
+  it('refuses changed config URL when API singleton still targets old server', async () => {
+    vi.mocked(getConfigValue).mockImplementation((key: any) => (key === 'salonId' ? 'salon-1' : 'https://other.test') as any);
+    await expect(new OrderSync().syncPendingOrders()).rejects.toThrow('CONTEXT_CHANGED');
+    expect(apiClient.createPosOrder).not.toHaveBeenCalled(); expect(database.run).not.toHaveBeenCalled();
   });
 });
 
@@ -336,6 +438,8 @@ describe('OrderSync concurrency and recovery', () => {
     mockNoStrandedSyncingOrders();
     vi.mocked(getSecureAuthToken).mockReturnValue('secure-token');
     vi.mocked(apiClient.finishOrder).mockResolvedValue({});
+    vi.mocked(getConfigValue).mockImplementation((key: any) => (key === 'salonId' ? 'salon-1' : 'https://api.enail.pro') as any);
+    vi.mocked(database.saveCoalesced).mockResolvedValue({ success: true } as any);
   });
 
   it('reuses an in-flight sync so concurrent triggers do not create duplicate backend orders', async () => {
@@ -352,7 +456,8 @@ describe('OrderSync concurrency and recovery', () => {
     const second = sync.syncPendingOrders();
 
     expect(orderRepo.getUnsynced).toHaveBeenCalledTimes(1);
-    expect(orderRepo.markSyncing).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(apiClient.createPosOrder).toHaveBeenCalledTimes(1));
+    expect(database.run).toHaveBeenCalledWith(expect.stringContaining('sync_payload_json = ?'), expect.any(Array));
     expect(apiClient.createPosOrder).toHaveBeenCalledTimes(1);
 
     resolveCreate({ id: 'backend-order-1', orderNumber: 'POS260609-0013' });

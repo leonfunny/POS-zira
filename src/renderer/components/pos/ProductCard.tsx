@@ -20,6 +20,8 @@ interface ProductCardProps {
    *  `product.name` is still used for placeholder-color stability and for
    *  persisted order/fiscal lines; paper receipts localize at print time. */
   lang?: string;
+  /** Restaurant-only presentation; shared sale/stock/image behavior is unchanged. */
+  restaurantColor?: string;
 }
 
 const LONG_PRESS_PRINT_DELAY_MS = 1400;
@@ -44,7 +46,7 @@ function formatTemplate(template: string, values: Record<string, string | number
   return template.replace(/\{(\w+)\}/g, (_, key) => String(values[key] ?? ''));
 }
 
-function ProductCard({ product, onAdd, onLongPress, t, allowOversell = false, lang }: ProductCardProps) {
+function ProductCard({ product, onAdd, onLongPress, t, allowOversell = false, lang, restaurantColor }: ProductCardProps) {
   const [failedImageSources, setFailedImageSources] = useState<string[]>([]);
   const [longPressState, setLongPressState] = useState<'idle' | 'printing' | 'printed' | 'error'>('idle');
   const [longPressMessage, setLongPressMessage] = useState('');
@@ -172,13 +174,15 @@ function ProductCard({ product, onAdd, onLongPress, t, allowOversell = false, la
       onContextMenu={(event) => event.preventDefault()}
       aria-label={soldOut ? `${displayName} — ${t?.('pos.product.soldOut') ?? 'Sold out'}` : `Add ${displayName}`}
       aria-disabled={soldOut || undefined}
-      className={`group bg-white rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 transition-shadow duration-150 flex flex-col p-1.5 h-full min-h-[196px] select-none ${
+      title={displayName}
+      style={restaurantColor ? { '--restaurant-category-color': restaurantColor } as React.CSSProperties : undefined}
+      className={`${restaurantColor ? 'restaurant-product' : 'bg-white rounded-lg p-1.5 min-h-[196px]'} group focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 transition-shadow duration-150 flex flex-col h-full select-none ${
         soldOut
           ? 'opacity-60 cursor-not-allowed'
           : 'hover:shadow-md cursor-pointer touch-manipulation'
       }`}
     >
-      <div className="relative rounded-md overflow-hidden bg-slate-100 shrink-0 aspect-[3/2] w-full">
+      <div className="pos-product-image relative rounded-md overflow-hidden bg-slate-100 shrink-0 aspect-[3/2] w-full">
         {showImage ? (
           <img
             src={imgSrc!}
@@ -242,11 +246,11 @@ function ProductCard({ product, onAdd, onLongPress, t, allowOversell = false, la
         )}
       </div>
 
-      <div className="flex-1 pt-1.5 pb-1 flex flex-col">
+      <div className="pos-product-name flex-1 pt-1.5 pb-1 flex flex-col">
         <p className="text-sm font-bold text-slate-900 leading-snug line-clamp-2">{displayName}</p>
       </div>
 
-      <div className="flex items-end justify-between gap-1.5 shrink-0">
+      <div className="pos-product-price flex items-end justify-between gap-1.5 shrink-0">
         <span className="text-lg font-extrabold text-slate-900 leading-tight tabular-nums min-w-0">
           {(product.retail_price / 100).toFixed(2)}&nbsp;{currency}{saleClass.priceSuffix}
         </span>

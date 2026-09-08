@@ -21,7 +21,8 @@
  *  - corrupt-image recovery mirrors `tryLoadOrQuarantine` (database.ts:40-100):
  *    a buffer that fails the SQLite header check or `PRAGMA quick_check` is
  *    quarantined (preserved under a quarantine key — never silently discarded)
- *    and a fresh empty DB is created on top.
+ *    and boot is blocked until explicit recovery; no fresh financial DB is
+ *    silently substituted for possibly unpaid checks/orders.
  *
  * This module is browser-side: it imports no Node/Electron API and no
  * `src/main/**`. `sql.js` is allowlisted for the shim graph; its WASM is loaded
@@ -75,8 +76,8 @@ function getIndexedDB(): IDBFactory | undefined {
 /**
  * Default persistence: the live DB image as a single IndexedDB blob record,
  * with corrupt images preserved under `pos-db-image.corrupted-<ts>` keys.
- * Gracefully no-ops (load → null, save → noop) when IndexedDB is absent, so the
- * engine still boots in-memory in environments without it.
+ * No silent in-memory fallback: a register cannot claim a saved order/check
+ * when persistent storage is unavailable. Tests inject a persistence adapter.
  */
 export class IndexedDbPersistence implements AndroidDbPersistence {
   private open(): Promise<IDBDatabase> {
@@ -101,33 +102,31 @@ export class IndexedDbPersistence implements AndroidDbPersistence {
   private async withStore<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
     const database = await this.open();
     return new Promise<T>((resolve, reject) => {
-      const tx = database.transaction(IDB_STORE, mode);
-      const store = tx.objectStore(IDB_STORE);
-      const req = fn(store);
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-      tx.oncomplete = () => database.close();
-      tx.onerror = () => reject(tx.error);
+      try {
+        const tx = database.transaction(IDB_STORE, mode);
+        let result: T;
+        const req = fn(tx.objectStore(IDB_STORE));
+        req.onsuccess = () => { result = req.result; };
+        req.onerror = () => reject(req.error ?? new Error('IndexedDB request failed'));
+        // Request success is NOT a commit. Quota errors/aborts may follow it.
+        tx.oncomplete = () => { database.close(); resolve(result!); };
+        const fail = () => { database.close(); reject(tx.error ?? new Error('IndexedDB transaction aborted')); };
+        tx.onerror = fail;
+        tx.onabort = fail;
+      } catch (error) { database.close(); reject(error); }
     });
   }
 
   async loadImage(): Promise<Uint8Array | null> {
-    if (!getIndexedDB()) return null;
-    try {
-      const record = await this.withStore<Uint8Array | undefined>('readonly', (store) => store.get(IDB_IMAGE_KEY));
-      return record ?? null;
-    } catch {
-      return null;
-    }
+    const record = await this.withStore<Uint8Array | undefined>('readonly', (store) => store.get(IDB_IMAGE_KEY));
+    return record ?? null;
   }
 
   async saveImage(image: Uint8Array): Promise<void> {
-    if (!getIndexedDB()) return;
     await this.withStore<IDBValidKey>('readwrite', (store) => store.put(image, IDB_IMAGE_KEY));
   }
 
   async quarantineImage(image: Uint8Array): Promise<void> {
-    if (!getIndexedDB()) return;
     // Preserve the corrupt bytes under a timestamped quarantine key (mirrors
     // Windows renaming pos.db → pos.db.corrupted-<ts>, database.ts).
     const key = `${IDB_QUARANTINE_PREFIX}${new Date().toISOString().replace(/[:.]/g, '-')}`;
@@ -238,7 +237,7 @@ export class AndroidDatabase {
     if (this.flushTimer !== null) clearTimeout(this.flushTimer);
     this.flushTimer = setTimeout(() => {
       this.flushTimer = null;
-      void this.drain();
+      void this.drain().catch(() => { /* Remains dirty; explicit barriers report the failure. */ });
     }, DEBOUNCE_MS);
   }
 
@@ -285,9 +284,12 @@ export class AndroidDatabase {
    */
   clearSalonData(): void {
     this.transaction(() => {
+      if (this.get("SELECT request_id FROM pos_refund_attempts WHERE status IN ('PREPARED', 'UNKNOWN') LIMIT 1")) {
+        throw new Error('ANDROID_REFUND_ATTEMPT_UNRESOLVED');
+      }
       for (const table of [
         'product_variants', 'categories', 'orders', 'order_items',
-        'shifts', 'staff', 'sequence_counters', 'sync_meta',
+        'shifts', 'staff', 'sequence_counters', 'sync_meta', 'pos_refund_attempts', 'pos_refund_events',
       ]) {
         this.db.run(`DELETE FROM ${table}`);
       }
@@ -338,18 +340,18 @@ function loadSqlJs(locateFile?: ((file: string) => string) | null): Promise<SqlJ
 
 /**
  * Initialize the Android catalog DB: load sql.js, restore the persisted image
- * (or create a fresh DB when none/empty/corrupt — corrupt images are
- * quarantined, not discarded), apply the schema, and return a handle bound to
+ * (or create a fresh DB only when no image exists — corrupt images are
+ * quarantined and require explicit recovery), apply the schema, and return a handle bound to
  * its persistence layer.
  */
 export async function initAndroidDb(options: AndroidDbInitOptions = {}): Promise<AndroidDatabase> {
   const SQL = await loadSqlJs(options.locateFile);
   const persistence = options.persistence ?? new IndexedDbPersistence();
 
-  const image = await persistence.loadImage().catch(() => null);
+  const image = await persistence.loadImage();
   let db: SqlJsDatabase;
 
-  if (image && image.byteLength > 0) {
+  if (image !== null) {
     if (isValidSqliteHeader(image)) {
       try {
         const candidate = new SQL.Database(image);
@@ -363,16 +365,14 @@ export async function initAndroidDb(options: AndroidDbInitOptions = {}): Promise
         }
         db = candidate;
       } catch {
-        // Page-level corruption — quarantine the bytes and start fresh
-        // (database.ts:64-78 tryLoadOrQuarantine catch branch).
-        await persistence.quarantineImage(image).catch(() => {});
-        db = new SQL.Database();
+        // Preserve evidence, but never silently lose a payment/check journal.
+        await persistence.quarantineImage(image);
+        throw new Error('ANDROID_DB_RECOVERY_REQUIRED: Saved POS data is damaged and has been preserved. Recover the database before selling.');
       }
     } else {
-      // Header corruption (e.g. an all-zero buffer from a failed flush) —
-      // quarantine and start fresh (database.ts:54-55).
-      await persistence.quarantineImage(image).catch(() => {});
-      db = new SQL.Database();
+      // Empty images are corruption too, not a first-run signal.
+      await persistence.quarantineImage(image);
+      throw new Error('ANDROID_DB_RECOVERY_REQUIRED: Saved POS data is damaged and has been preserved. Recover the database before selling.');
     }
   } else {
     // First run: no persisted image.

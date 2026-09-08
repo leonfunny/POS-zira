@@ -7,7 +7,8 @@ import { useConfig } from '../../hooks/useConfig';
 import { useBarcodeForwarder } from '../../hooks/useBarcodeForwarder';
 import { getTranslation, Language, languageNames } from '../../i18n/translations';
 import { resolveName, resolveProductLabelNameResult } from '../../../shared/catalog-names';
-import { isValidManualWeightQuantity, normalizeSellBy } from '../../../shared/pos-sale';
+import { normalizeSellBy } from '../../../shared/pos-sale';
+import ManualWeightModal, { type ManualWeightPrompt } from './ManualWeightModal';
 import { classifyProductSale, type ProductSaleClassification } from '../../../shared/product-sale-classifier';
 import { isSaleBlockedByStock } from '../../../shared/product-stock-tracking';
 import {
@@ -167,10 +168,6 @@ function labelCopiesForCartItem(item: CartItem): number {
   return Math.max(1, Math.min(999, Math.round(Number(item.quantity) || 1)));
 }
 
-function parseManualWeightInput(value: string): number {
-  const parsed = Number.parseFloat(value.replace(',', '.'));
-  return Number.isFinite(parsed) ? parsed : 0;
-}
 
 function formatManualWeight(value: number, unit: string): string {
   const text = value.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
@@ -179,97 +176,6 @@ function formatManualWeight(value: number, unit: string): string {
 
 type TOr = (key: string, fallback: string) => string;
 
-interface ManualWeightPrompt {
-  product: Product;
-  saleClass: ProductSaleClassification;
-  displayName: string;
-  error?: string;
-}
-
-interface ManualWeightModalProps {
-  prompt: ManualWeightPrompt;
-  tOr: TOr;
-  onClose: () => void;
-  onSubmit: (weightKg: number) => void;
-}
-
-function ManualWeightModal({ prompt, tOr, onClose, onSubmit }: ManualWeightModalProps) {
-  const [value, setValue] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const unit = prompt.saleClass.saleUnit || 'kg';
-
-  const submit = (event: React.FormEvent) => {
-    event.preventDefault();
-    const weightKg = parseManualWeightInput(value);
-    if (!isValidManualWeightQuantity(weightKg)) {
-      setError(tOr('pos.scale.manualWeightInvalid', 'Enter a valid weight'));
-      return;
-    }
-    onSubmit(weightKg);
-  };
-
-  return (
-    <div
-      className="fixed inset-0 z-50 bg-slate-950/45 flex items-center justify-center p-4"
-      style={{ paddingBottom: 'calc(var(--touch-keyboard-inset, 0px) + 1rem)' }}
-    >
-      <form
-        onSubmit={submit}
-        className="w-full max-w-sm rounded-lg bg-white shadow-xl border border-slate-200 p-4 overflow-y-auto"
-        style={{ maxHeight: 'calc(100dvh - var(--touch-keyboard-inset, 0px) - 2rem)' }}
-      >
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="text-base font-extrabold text-slate-900">{tOr('pos.scale.manualWeightTitle', 'Manual weight')}</h2>
-            <p className="mt-1 text-sm font-semibold text-slate-700 truncate">{prompt.displayName}</p>
-            {prompt.error && <p className="mt-1 text-xs text-amber-700">{prompt.error}</p>}
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-11 h-11 rounded-md text-slate-500 hover:bg-slate-100 flex items-center justify-center shrink-0"
-            aria-label={tOr('common.close', 'Close')}
-          >
-            &times;
-          </button>
-        </div>
-
-        <label className="block mt-4">
-          <span className="text-xs font-bold uppercase text-slate-600">{unit}</span>
-          <input
-            autoFocus
-            value={value}
-            onChange={(event) => {
-              setValue(event.target.value);
-              if (error) setError(null);
-            }}
-            inputMode="decimal"
-            placeholder="0.000"
-            className="mt-1 w-full h-12 rounded-md border border-slate-300 px-3 text-lg font-black tabular-nums outline-none focus:ring-2 focus:ring-emerald-200 focus:border-emerald-400"
-          />
-        </label>
-
-        {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
-
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="h-10 px-4 rounded-md border border-slate-200 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50"
-          >
-            {tOr('common.cancel', 'Cancel')}
-          </button>
-          <button
-            type="submit"
-            className="h-10 px-4 rounded-md bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700"
-          >
-            {tOr('pos.scale.addManualWeight', 'Add')}
-          </button>
-        </div>
-      </form>
-    </div>
-  );
-}
 
 interface POSLayoutProps {
   onFullscreen?: () => void;
@@ -323,6 +229,7 @@ export default function POSLayout({
   onRestoredCartTenderOutcomeUncertain,
 }: POSLayoutProps = {}) {
   useBarcodeForwarder();
+  const restaurantBarcodeHandlerRef = useRef<((barcode: string) => Promise<void>) | null>(null);
   const { state, dispatch, dispatchError, clearDispatchError } = usePosStore();
   const { config, saveConfig } = useConfig();
   const allowOversell = config?.allowOversell === true;
@@ -1362,6 +1269,10 @@ export default function POSLayout({
         return;
       }
       if (code.length >= 3 && dispatch) {
+        if (posMode === 'restaurant') {
+          await restaurantBarcodeHandlerRef.current?.(code);
+          return;
+        }
         document.dispatchEvent(new CustomEvent('pos:manual-cart-action'));
         try {
           const product = await window.electronAPI.pos.products.getByBarcode(code);
@@ -1405,7 +1316,7 @@ export default function POSLayout({
         }
       }
     }
-  }, [allowOversell, barcodeBuffer, config?.scale?.enabled, config?.scale?.port, dispatch, handlePrintLastCartLabelCommand, handleScannedPickupRef, handleScannedKioskOrder, rememberLastLabelVariant, showScanToast, language, t, tOr, openManualWeightPrompt, openScanImport, validateCartLinePrice]);
+  }, [allowOversell, barcodeBuffer, config?.scale?.enabled, config?.scale?.port, dispatch, handlePrintLastCartLabelCommand, handleScannedPickupRef, handleScannedKioskOrder, rememberLastLabelVariant, showScanToast, language, t, tOr, openManualWeightPrompt, openScanImport, validateCartLinePrice, posMode]);
 
   const handleUnknownBarcodeScanned = useCallback(async (code: string) => {
     const pickupRef = decodeKitchenSelfOrderRefQr(code);
@@ -1567,7 +1478,7 @@ export default function POSLayout({
   const visiblePickups = pickupOrders.filter((o) => o.id !== activePickup?.id);
 
   return (
-    <div className="h-screen bg-slate-50 text-slate-900 flex flex-col overflow-hidden">
+    <div data-pos-mode={posMode} className="pos-layout h-screen bg-slate-50 text-slate-900 flex flex-col overflow-hidden">
       {/* Hidden barcode capture input for USB HID scanners */}
       <input
         ref={barcodeRef}
@@ -1733,7 +1644,7 @@ export default function POSLayout({
         </div>
       )}
       {/* Header - shared across all modes */}
-      <div className="flex items-center justify-between px-5 py-2.5 border-b border-slate-200 bg-white shrink-0">
+      <div className="pos-header flex items-center justify-between px-5 py-2.5 border-b border-slate-200 bg-white shrink-0">
         <div className="flex items-center gap-3">
           <button
             type="button"
@@ -2015,6 +1926,8 @@ export default function POSLayout({
         )}
         {posMode === 'restaurant' && (
           <RestaurantTemplate
+            barcodeHandlerRef={restaurantBarcodeHandlerRef}
+            scaleConfig={config?.scale}
             state={state}
             dispatch={dispatch}
             t={t}

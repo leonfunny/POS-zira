@@ -20,12 +20,14 @@
  */
 
 import type { AgentConfig } from '../../../shared/types';
+import { canChangeRestaurantContext, hasActivePosCheckout, matchesRestaurantSaleContext } from '../../../shared/pos-mode';
 import { ShimConfigStore, sanitizeConfigForRenderer } from './config-store';
 import { ShimPosStore } from './pos-store';
 import type { PosAction, PosState } from './pos-store';
 import { TokenStore } from './token-store';
 import type { TokenStoreStorage } from './token-store';
 import type { ShimTransport } from './transport';
+import { AndroidRestaurantRuntime } from './restaurant-runtime';
 import { SYNTHETIC_TRANSPORT } from './stubs';
 import {
   buildApiCall,
@@ -66,6 +68,7 @@ export interface InstalledShim {
   configStore: ShimConfigStore;
   posStore: ShimPosStore;
   transport: ShimTransport;
+  restaurant?: AndroidRestaurantRuntime;
 }
 
 let installed: InstalledShim | null = null;
@@ -85,19 +88,44 @@ export function installShim(options: InstallShimOptions = {}): InstalledShim {
     return installed;
   }
 
+  installed?.restaurant?.dispose();
   const transport = options.transport ?? SYNTHETIC_TRANSPORT;
   const configStore = options.configStore ?? new ShimConfigStore({ seed: options.config });
   const posStore = new ShimPosStore();
 
   const stubDeps = { configStore, transport, posStore };
+  const restaurant = transport.getRestaurantDatabase
+    ? new AndroidRestaurantRuntime({ configStore, posStore, db: transport.getRestaurantDatabase, fetchLayout: transport.getRestaurantLayout }) : undefined;
+  const orders = buildOrdersNamespace(stubDeps);
+  const shift = buildShiftNamespace(stubDeps);
+  const auth = buildAuthNamespace(stubDeps);
+  const payment = buildPaymentNamespace(stubDeps);
+  const boundary = async (operation: () => Promise<any>) => {
+    try { return restaurant ? await restaurant.contextBoundary(operation) : await operation(); }
+    catch (error) { return { success: false, error: error instanceof Error ? error.message : String(error) }; }
+  };
 
   // The `pos` namespace = authoritative store (S1 §2.C) + catalog/orders/shift/
   // sync/staff + the EXCLUDE surfaces the POS window boot path still references.
   const posNamespace = {
+    ...(restaurant ? { restaurantChecks: restaurant.checks } : { restaurantService: 'counter-only' as const }),
     getState: (): Promise<PosState> => Promise.resolve(posStore.getState()),
-    dispatch: (action: PosAction): Promise<void> => {
+    dispatch: async (action: PosAction): Promise<{ success: boolean; error?: string }> => {
+      if (restaurant) return restaurant.dispatch(action);
+      if (action.type === 'state/replaceCheckoutSnapshot') return { success: false, error: 'Runtime-owned restore action.' };
+      const state = posStore.getState();
+      if (action.type === 'table/setActive') {
+        if (action.payload.tableId !== null) return { success: false, error: 'Table service is not configured on this Android POS.' };
+        if (!canChangeRestaurantContext(state, action.payload.tableId, action.payload.orderType)) {
+          return { success: false, error: 'Finish the current sale before changing its service type.' };
+        }
+      }
+      if (action.type === 'cart/addItem' && action.restaurantContext
+        && !matchesRestaurantSaleContext(state, action.restaurantContext)) {
+        return { success: false, error: 'Restaurant sale context changed. Scan or select the product again.' };
+      }
       posStore.dispatch(action);
-      return Promise.resolve();
+      return { success: true };
     },
     onStateChanged: (cb: (state: PosState) => void): (() => void) => posStore.onStateChanged(cb),
     billiardCheckout: {
@@ -112,19 +140,38 @@ export function installShim(options: InstallShimOptions = {}): InstalledShim {
     },
     products: buildProductsNamespace(stubDeps),
     categories: buildCategoriesNamespace(stubDeps),
-    payment: buildPaymentNamespace(stubDeps),
-    orders: buildOrdersNamespace(stubDeps),
-    shift: buildShiftNamespace(stubDeps),
+    payment: { ...payment, preflight: (orderId: string) => restaurant && configStore.getRawConfig().posMode === 'restaurant'
+      ? restaurant.paymentPreflight(orderId) : payment.preflight(orderId) },
+    orders: { ...orders, create: (order: any, items: any[]) => restaurant
+      ? restaurant.createOrder(order, items, () => orders.create(order, items)) : orders.create(order, items) },
+    shift: { ...shift, open: (data: Parameters<typeof shift.open>[0]) => boundary(() => shift.open(data)),
+      close: (data: Parameters<typeof shift.close>[0]) => boundary(() => shift.close(data)) },
     staff: buildStaffNamespace(stubDeps),
     sync: buildSyncNamespace(stubDeps),
     ...buildExcludedPosNamespaces(stubDeps),
+    ...(restaurant ? { tables: restaurant.tables } : {}),
+  };
+
+  const updateRendererConfig = (partial: Partial<AgentConfig>): AgentConfig => {
+    const current = configStore.getRawConfig();
+    if (partial.posMode && partial.posMode !== current.posMode) restaurant?.assertContextChange();
+    // Identity is owned by auth, not by renderer settings.
+    if (restaurant && ('authUser' in partial || 'salonId' in partial)) throw new Error('Use login to change POS account.');
+    if (partial.posMode && partial.posMode !== current.posMode && hasActivePosCheckout(posStore.getState())) {
+      throw new Error('Finish the current sale before changing POS mode.');
+    }
+    // A device choice belongs to this salon only, never to the next login.
+    return configStore.setConfig({ ...partial, ...(partial.posMode && current.salonId ? {
+      posModeSalonId: current.salonId,
+      posModesBySalon: { ...current.posModesBySalon, [current.salonId]: partial.posMode },
+    } : {}) });
   };
 
   const api = {
     // Config (S1 §2.A)
     getConfig: (): Promise<AgentConfig> => Promise.resolve(configStore.getConfig()),
-    setConfig: (partial: Partial<AgentConfig>): Promise<AgentConfig> => Promise.resolve(configStore.setConfig(partial)),
-    saveConfig: (partial: Partial<AgentConfig>): Promise<AgentConfig> => Promise.resolve(configStore.saveConfig(partial)),
+    setConfig: async (partial: Partial<AgentConfig>): Promise<AgentConfig> => updateRendererConfig(partial),
+    saveConfig: async (partial: Partial<AgentConfig>): Promise<AgentConfig> => updateRendererConfig(partial),
     onConfigUpdated: (cb: () => void): (() => void) => configStore.onConfigUpdated(cb),
 
     // Connection + hardware + scanner (S1 §2.A, §2.J, §2.K)
@@ -132,7 +179,8 @@ export function installShim(options: InstallShimOptions = {}): InstalledShim {
     ...buildTopLevelHardwareStubs(),
 
     // Namespaces
-    auth: buildAuthNamespace(stubDeps),
+    auth: { ...auth, loginWithEmail: (email: string, password: string) => boundary(() => auth.loginWithEmail(email, password)),
+      logout: () => boundary(() => auth.logout()) },
     entitlements: buildEntitlementsNamespace(stubDeps),
     billiard: buildBilliardNamespace(stubDeps),
     apiCall: buildApiCall(stubDeps),
@@ -140,7 +188,7 @@ export function installShim(options: InstallShimOptions = {}): InstalledShim {
     pos: posNamespace,
   };
 
-  installed = { api, configStore, posStore, transport };
+  installed = { api, configStore, posStore, transport, restaurant };
 
   const g = globalThis as unknown as { window?: { electronAPI?: unknown } };
   if (g.window) {
@@ -152,6 +200,7 @@ export function installShim(options: InstallShimOptions = {}): InstalledShim {
 
 /** Test helper: reset the singleton + clear persisted config. */
 export function __resetShimForTest(): void {
+  installed?.restaurant?.dispose();
   installed = null;
 }
 

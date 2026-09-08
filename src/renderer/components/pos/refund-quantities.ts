@@ -15,6 +15,7 @@ export interface RefundQuantityItem {
 }
 
 export interface RefundLineLike {
+  orderItemId?: string | null;
   billiardLineKey?: string | null;
   variantId?: string | null;
   variant_id?: string | null;
@@ -41,6 +42,7 @@ function lineMatchesItem(line: RefundLineLike, item: RefundQuantityItem): boolea
       if (JSON.parse(item.billiard_json)?.lineKey === line.billiardLineKey) return true;
     } catch { /* fall through to legacy identities */ }
   }
+  if (line.orderItemId != null) return line.orderItemId === item.id;
   const lineVariantId = line.variantId ?? line.variant_id;
   if (lineVariantId && item.variant_id) return lineVariantId === item.variant_id;
   if (line.sku && item.sku) return line.sku === item.sku;

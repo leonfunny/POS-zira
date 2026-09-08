@@ -28,6 +28,9 @@
  * data-correctness bug, not a crash.
  */
 
+import { canMergeCartLines } from '../../../shared/cart-line-identity';
+import type { PosCheckoutSnapshot } from '../../../shared/billiard-pos-handoff';
+import { canChangeRestaurantContext, type RestaurantOrderType, type RestaurantSaleContext } from '../../../shared/pos-mode';
 import {
   calculateLineTotalGrosze,
   isValidSaleQuantity,
@@ -82,6 +85,7 @@ export interface CheckoutDraftState {
   customerName?: string;
   requiresInvoice?: boolean;
   kitchenSelfOrder?: Record<string, unknown>;
+  restaurant?: { orderType: RestaurantOrderType };
 }
 
 export interface PosSessionState {
@@ -110,10 +114,12 @@ export interface PosState {
 // ── Actions (mirror src/main/pos/pos-store.ts) ──────────────────────────────
 
 export type PosAction =
-  | { type: 'cart/addItem'; payload: CartItem }
+  | { type: 'cart/addItem'; payload: CartItem; restaurantContext?: RestaurantSaleContext }
   | { type: 'cart/removeItem'; payload: { id: string } }
   | { type: 'cart/updateQuantity'; payload: { id: string; quantity: number } }
   | { type: 'cart/clear' }
+  | { type: 'cart/completeCheckout' }
+  | { type: 'state/replaceCheckoutSnapshot'; payload: { snapshot: PosCheckoutSnapshot } }
   | { type: 'cart/applyDiscount'; payload: { amount: number; discountType?: 'fixed' | 'percentage' } }
   | { type: 'cart/clearDiscount' }
   | { type: 'cart/applyItemDiscount'; payload: { id: string; amount: number; discountType?: 'fixed' | 'percentage' } }
@@ -127,7 +133,7 @@ export type PosAction =
   | { type: 'session/open'; payload: { shiftId: string; staffId: string | null; staffName: string | null; openedAt?: string } }
   | { type: 'session/close' }
   | { type: 'display/setMode'; payload: DisplayState }
-  | { type: 'table/setActive'; payload: { tableId: string | null } }
+  | { type: 'table/setActive'; payload: { tableId: string | null; orderType?: RestaurantOrderType } }
   | { type: 'customer/select'; payload: { id: string; name: string; nip?: string } }
   | { type: 'customer/clear' }
   | { type: 'tip/set'; payload: { amount: number } }
@@ -225,11 +231,7 @@ export function posReducer(
       }
       const p = normalizedCartItem(action.payload);
       if (!validateCartItemCatalogPrice(p)) return state;
-      const existing = state.cart.items.find(
-        (i) => i.variantId === p.variantId
-          && (i.staffId ?? null) === (p.staffId ?? null)
-          && (i.course ?? null) === (p.course ?? null),
-      );
+      const existing = state.cart.items.find((i) => canMergeCartLines(i, p));
       let items: CartItem[];
       if (existing) {
         items = state.cart.items.map((i) =>
@@ -274,7 +276,18 @@ export function posReducer(
       return { ...state, cart: recalcCart({ ...state.cart, items }), checkoutDraft, display };
     }
 
-    case 'cart/clear': {
+    case 'state/replaceCheckoutSnapshot': {
+      const saved = action.payload.snapshot;
+      if (saved.schemaVersion !== 1 || saved.posMode !== 'restaurant') return state;
+      // Scope/content was checked by the runtime + shared durable store.
+      // A recalled check never reopens the shift captured in its old snapshot.
+      const checkout = saved.state;
+      return { ...state, cart: recalcCart(checkout.cart), checkoutDraft: checkout.checkoutDraft,
+        activeTable: checkout.activeTable ?? null, activeCustomer: checkout.activeCustomer ?? null,
+        tip: checkout.tip ?? 0, display: { ...state.display, mode: 'cart' } };
+    }
+    case 'cart/clear':
+    case 'cart/completeCheckout': {
       const display = state.display?.mode === 'cart' ? { ...state.display, mode: 'idle' as const } : state.display;
       return { ...state, cart: createInitialState().cart, checkoutDraft: createInitialState().checkoutDraft, tip: 0, display };
     }
@@ -396,8 +409,12 @@ export function posReducer(
     case 'display/setMode':
       return { ...state, display: { ...state.display, ...action.payload } };
 
-    case 'table/setActive':
-      return { ...state, activeTable: action.payload.tableId };
+    case 'table/setActive': {
+      const { tableId, orderType } = action.payload;
+      if (!canChangeRestaurantContext(state, tableId, orderType)) return state;
+      return { ...state, activeTable: tableId,
+        checkoutDraft: orderType ? { ...state.checkoutDraft, restaurant: { orderType } } : state.checkoutDraft };
+    }
 
     case 'customer/select':
       return {

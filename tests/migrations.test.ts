@@ -3,6 +3,16 @@ import initSqlJs from 'sql.js';
 import { migrations } from '../src/main/database/migrations';
 
 describe('database migrations', () => {
+  it('adds nullable restaurant line provenance without guessing a legacy backfill', () => {
+    const migration = migrations.find((entry) => entry.version === 69);
+    expect(migration).toEqual({
+      version: 69,
+      name: 'restaurant_order_line_provenance',
+      up: 'ALTER TABLE order_items ADD COLUMN restaurant_line_id TEXT;',
+    });
+    expect(migrations.filter((entry) => entry.version === 69)).toHaveLength(1);
+  });
+
   it('keeps pos_staff_user_id compatible with the semicolon-based runner', () => {
     const migration = migrations.find((m) => m.name === 'pos_staff_user_id');
 

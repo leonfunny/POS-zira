@@ -9,6 +9,8 @@ const {
   setSecureApiKeyMock,
   apiConnectWithKeyMock,
   apiApplyConnectResponseMock,
+  loginWithEmailMock,
+  checkTelegramLoginTokenMock,
   browserWindows,
   fetchMock,
 } = vi.hoisted(() => ({
@@ -19,6 +21,8 @@ const {
   setSecureApiKeyMock: vi.fn(),
   apiConnectWithKeyMock: vi.fn(),
   apiApplyConnectResponseMock: vi.fn(),
+  loginWithEmailMock: vi.fn(),
+  checkTelegramLoginTokenMock: vi.fn(),
   browserWindows: [] as Array<{ isDestroyed: () => boolean; webContents: { send: (...args: any[]) => void } }>,
   fetchMock: vi.fn(),
 }));
@@ -80,6 +84,8 @@ vi.mock('../src/main/network/api-client', () => ({
   ApiClient: class {
     connectWithApiKey = apiConnectWithKeyMock;
     applyConnectResponse = apiApplyConnectResponseMock;
+    loginWithEmail = loginWithEmailMock;
+    checkTelegramLoginToken = checkTelegramLoginTokenMock;
   },
   normalizeServerPrinterRows: vi.fn((rows) => rows),
 }));
@@ -118,6 +124,110 @@ import { AuthModule } from '../src/main/modules/auth.module';
 import { database } from '../src/main/database/database';
 import { resolveCurrentUser } from '../src/main/network/auth-get-user';
 import { SERVICE_TOKENS } from '../src/main/core/tokens';
+import { fetchEntitlementsFromBackend } from '../src/main/entitlements/entitlements-controller';
+import { setSecureAuthToken, setSecureRefreshToken } from '../src/main/config/store';
+
+describe('AuthModule tenant-specific POS modes', () => {
+  let config: AgentConfig;
+  let state: any;
+  let module: any;
+  let store: any;
+  beforeEach(() => {
+    vi.clearAllMocks();
+    handlers.clear();
+    config = { ...baseConfig(), posMode: 'retail', salonId: '' };
+    state = { cart: { items: [] }, checkoutDraft: {}, activeTable: null };
+    store = { getState: () => state, dispatch: vi.fn() };
+    getConfigMock.mockImplementation(() => config);
+    setConfigMock.mockImplementation((patch: Partial<AgentConfig>) => (config = { ...config, ...patch }));
+    vi.mocked(setSecureAuthToken).mockReturnValue(true);
+    vi.mocked(setSecureRefreshToken).mockReturnValue(true);
+    vi.mocked(database.assertNoActiveReceiptPrintOutcomes).mockImplementation(() => undefined);
+    vi.mocked(fetchEntitlementsFromBackend).mockResolvedValue({ salonId: 'nail', suggestedPosMode: 'salon' } as any);
+    const login = { access_token: 'test-token', user: { id: 'staff', salonId: 'nail' } };
+    loginWithEmailMock.mockResolvedValue(login);
+    checkTelegramLoginTokenMock.mockResolvedValue({ ...login, status: 'VERIFIED' });
+    module = new AuthModule({ getOptional: (token: string) => token === SERVICE_TOKENS.POS_STORE ? store : undefined } as any);
+    vi.spyOn(module, 'connectWithAvailablePrintAgentKey').mockResolvedValue(undefined);
+    module.registerIpcHandlers();
+  });
+  it.each([IPC_CHANNELS.AUTH_LOGIN_EMAIL, IPC_CHANNELS.AUTH_CHECK_TOKEN])('applies the industry suggestion on the first login via %s', async (channel) => {
+    const result = await handlers.get(channel)!({}, 'staff@example.test', 'test-password');
+    expect(result).toMatchObject({ success: true });
+    expect(config).toMatchObject({ salonId: 'nail', posMode: 'salon', posModesBySalon: { nail: 'salon' } });
+  });
+  it('repairs first-login mode through session recovery too', async () => {
+    vi.mocked(resolveCurrentUser).mockResolvedValueOnce({ success: true, data: {
+      isAuthenticated: true, user: { id: 'staff', salonId: 'nail' },
+    } } as any);
+    await handlers.get(IPC_CHANNELS.AUTH_GET_USER)!({});
+    expect(config.posMode).toBe('salon');
+  });
+  it('remembers a manual mode only for the active salon', async () => {
+    config = { ...config, salonId: 'nail', posModesBySalon: { grocery: 'retail' } };
+    await handlers.get(IPC_CHANNELS.SET_CONFIG)!({}, { posMode: 'salon', posModesBySalon: { grocery: 'b2b' }, posModeSalonId: 'grocery' });
+    expect(config).toMatchObject({ posMode: 'salon', posModeSalonId: 'nail', posModesBySalon: { nail: 'salon', grocery: 'retail' } });
+    expect(store.dispatch.mock.calls.map((call: any[]) => call[0].type)).toEqual(['cart/clear', 'table/setActive', 'customer/clear']);
+  });
+  it('restores the chosen mode when returning to a salon instead of applying its suggestion again', async () => {
+    const previous = { ...config, salonId: 'grocery', posMode: 'retail', posModesBySalon: { nail: 'b2b' } };
+    config = { ...previous, salonId: 'nail' } as AgentConfig;
+    await module.reconcilePosModeAfterSalonSwitch('nail', previous);
+    expect(config.posMode).toBe('b2b');
+  });
+  it('uses a temporary retail fallback on failed first suggestion and retries on relogin', async () => {
+    const previous = { ...config, salonId: 'restaurant', posMode: 'restaurant' };
+    config = { ...previous, salonId: 'nail' } as AgentConfig;
+    vi.mocked(fetchEntitlementsFromBackend).mockRejectedValueOnce(new Error('offline'));
+    await module.reconcilePosModeAfterSalonSwitch('nail', previous);
+    expect(config.posMode).toBe('retail');
+    expect(config.posModesBySalon?.nail).toBeUndefined();
+    expect(config.posModesBySalon?.restaurant).toBe('restaurant');
+    await module.reconcilePosModeAfterSalonSwitch('nail', config);
+    expect(config.posMode).toBe('salon');
+  });
+  it.each(['items', 'billiard', 'restoredInterruption', 'holdRecallPending', 'kitchenSelfOrder'])('rejects mode changes with active %s', async (busy) => {
+    config = { ...config, salonId: 'nail' };
+    if (busy === 'items') state.cart.items = [{}];
+    else state.checkoutDraft[busy] = {};
+    await expect(handlers.get(IPC_CHANNELS.SET_CONFIG)!({}, { posMode: 'restaurant' })).rejects.toThrow('Finish or hold');
+    expect(setConfigMock).not.toHaveBeenCalled();
+    expect(store.dispatch).not.toHaveBeenCalled();
+  });
+  it('allows ordinary settings saves with an unchanged mode while selling', async () => {
+    state.cart.items = [{}];
+    await handlers.get(IPC_CHANNELS.SET_CONFIG)!({}, { posMode: 'retail', language: 'vi' });
+    expect(config.language).toBe('vi');
+    expect(store.dispatch).not.toHaveBeenCalled();
+  });
+  it('rejects switching mode while receipt outcome is unresolved', async () => {
+    config.salonId = 'nail';
+    vi.mocked(database.assertNoActiveReceiptPrintOutcomes).mockImplementationOnce(() => { throw new Error('receipt pending'); });
+    await expect(handlers.get(IPC_CHANNELS.SET_CONFIG)!({}, { posMode: 'salon' })).rejects.toThrow('receipt pending');
+    expect(setConfigMock).not.toHaveBeenCalled();
+  });
+  it('does not let a delayed mode suggestion overwrite a sale started while waiting', async () => {
+    config = { ...config, salonId: 'nail', posModeSalonId: 'nail' };
+    let resolve!: (value: any) => void;
+    vi.mocked(fetchEntitlementsFromBackend).mockReturnValueOnce(new Promise((done) => { resolve = done; }));
+    const pending = module.reconcilePosModeAfterSalonSwitch('nail', config);
+    state.cart.items = [{}];
+    resolve({ salonId: 'nail', suggestedPosMode: 'salon' });
+    await pending;
+    expect(config.posMode).toBe('retail');
+    expect(setConfigMock).not.toHaveBeenCalled();
+  });
+  it('ignores a suggestion belonging to a previous tenant after a newer login', async () => {
+    config.salonId = 'nail';
+    let resolve!: (value: any) => void;
+    vi.mocked(fetchEntitlementsFromBackend).mockReturnValueOnce(new Promise((done) => { resolve = done; }));
+    const pending = module.reconcilePosModeAfterSalonSwitch('nail', config);
+    config = { ...config, salonId: 'grocery' };
+    resolve({ salonId: 'nail', suggestedPosMode: 'salon' });
+    await pending;
+    expect(setConfigMock).not.toHaveBeenCalled();
+  });
+});
 
 function baseConfig(): AgentConfig {
   return {

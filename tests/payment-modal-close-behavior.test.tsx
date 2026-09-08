@@ -25,9 +25,9 @@ describe('payment close guard', () => {
     };
   });
   afterEach(async () => { await act(async () => root.unmount()); host.remove(); });
-  const mount = async () => {
+  const mount = async (onBeforeTender?: (orderId: string, token: string) => Promise<void>) => {
     const cart: any = { items: [{ id: 'item', variantId: 'item', name: 'Item', price: 1000, quantity: 1, lineTotal: 1000, vatRate: 23 }], subtotal: 1000, total: 1000, discount: 0, tax: 0 };
-    await act(async () => root.render(<PaymentModal cart={cart} dispatch={() => {}} onClose={close} t={t} shiftId="shift" staffId="staff" staffName="Cashier" initialCashAmountGrosze={1000} initialPaymentPreflightToken="preflight" />));
+    await act(async () => root.render(<PaymentModal cart={cart} dispatch={() => {}} onClose={close} t={t} shiftId="shift" staffId="staff" staffName="Cashier" initialCashAmountGrosze={1000} initialPaymentPreflightToken="preflight" onBeforeTender={onBeforeTender} />));
   };
   const escape = async () => { await act(async () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); }); };
   const pay = async () => {
@@ -38,6 +38,32 @@ describe('payment close guard', () => {
   it('allows Escape before submitting a payment', async () => {
     await mount(); await escape();
     expect(close).toHaveBeenCalledOnce(); expect(create).not.toHaveBeenCalled();
+  });
+  it('waits for the durable restaurant boundary before creating an order and ignores duplicate clicks', async () => {
+    let release!: () => void;
+    const boundary = vi.fn(() => new Promise<void>(resolve => { release = resolve; }));
+    await mount(boundary);
+    await pay();
+    expect(boundary).toHaveBeenCalledOnce();
+    expect(boundary.mock.calls[0]).toEqual([expect.any(String), 'preflight']);
+    expect(create).not.toHaveBeenCalled();
+    await escape();
+    expect(close).not.toHaveBeenCalled();
+    const button = [...host.querySelectorAll('button')].find(node => node.textContent?.startsWith(t('pos.payment.complete')));
+    if (button) await act(async () => button.click());
+    expect(boundary).toHaveBeenCalledOnce();
+    await act(async () => release());
+    expect(create).toHaveBeenCalledOnce();
+  });
+  it('does not retry or create an order after an uncertain restaurant boundary reply', async () => {
+    const boundary = vi.fn(async () => { throw new Error('IPC reply lost'); });
+    await mount(boundary); await pay();
+    expect(create).not.toHaveBeenCalled();
+    expect(host.textContent).toContain(t('pos.restaurant.paymentReconciliation'));
+    const button = [...host.querySelectorAll('button')].find(node => node.textContent?.startsWith(t('pos.payment.complete')));
+    if (button) await act(async () => button.click());
+    expect(boundary).toHaveBeenCalledOnce();
+    expect(create).not.toHaveBeenCalled();
   });
   it('blocks Escape while the fiscal decision is pending', async () => {
     await mount(); await pay();

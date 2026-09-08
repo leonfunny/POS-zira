@@ -21,6 +21,18 @@ function product(overrides: Partial<Product> = {}): Product {
 }
 
 describe('retail sale flow', () => {
+  it('returns a recoverable failure when the scale reader throws', async () => {
+    const result = await resolveRetailCartItem(product({ sell_by: 'WEIGHT' }), {
+      scaleEnabled: true, readWeight: vi.fn().mockRejectedValue(new Error('Cable disconnected')),
+    });
+    expect(result).toMatchObject({ ok: false, error: { code: 'SCALE_FAILED', message: 'Cable disconnected' } });
+  });
+  it.each([NaN, Infinity, -1, 0, 0.1234])('rejects invalid measured quantity %s', async weightKg => {
+    const result = await resolveRetailCartItem(product({ sell_by: 'WEIGHT' }), {
+      scaleEnabled: true, readWeight: vi.fn().mockResolvedValue({ success: true, stable: true, weightKg }),
+    });
+    expect(result.ok).toBe(false);
+  });
   it('adds normal products as one piece without reading the scale', async () => {
     const readWeight = vi.fn();
 

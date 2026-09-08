@@ -286,10 +286,11 @@ describe('Refund payload passes lines[] end-to-end', () => {
     expect(orderHistoryModal).not.toContain('&& hasRefundableItem');
   });
 
-  it('resolves server item maps by backend ID for a local synced order', () => {
+  it('keeps local item identity separate from server history previews', () => {
     expect(orderHistoryModal).toContain(
-      'order?.backend_id ? serverItemsMap[order.backend_id] : undefined',
+      "order?._origin === 'server' && serverItemsMap[orderId]",
     );
+    expect(orderHistoryModal).not.toContain('order?.backend_id ? serverItemsMap[order.backend_id] : undefined');
   });
 
   it('renderer generates refundRequestId only inside the actual refund attempt', () => {
@@ -308,8 +309,9 @@ describe('Refund payload passes lines[] end-to-end', () => {
     expect(orderHistoryModal).toContain('} else if ((result as any).mutationDetected || (result as any).requiresRefresh) {\n        resetRefundRequestId();');
   });
 
-  it('renderer does NOT send local item.id as orderItemId', () => {
-    expect(orderHistoryModal).not.toContain('orderItemId: item.id');
+  it('renderer retains authoritative item.id as orderItemId in full and partial selections', () => {
+    expect(orderHistoryModal.match(/orderItemId: item.id/g)).toHaveLength(2);
+    expect(orderHistoryModal).toContain('window.electronAPI.pos.orders.getRefundDetail(orderId)');
   });
 
   it('main IPC handler forwards lines to apiClient', () => {
@@ -878,7 +880,7 @@ describe('Refund payload passes lines[] end-to-end', () => {
     expect(orderHistoryModal).toContain("tOr(t, 'pos.refund.printReceipt', 'Print refund receipt')");
     expect(orderHistoryModal).toContain('onComplete({ keepRefundOpen: true })');
     expect(orderHistoryModal).toContain('const refreshLocalOrderDetail = async (orderId: string)');
-    expect(orderHistoryModal).toContain('refreshLocalOrderDetail(order.id).finally');
+    expect(orderHistoryModal).toContain('loadAuthoritativeRefundDetail(order).then((ready) =>');
     expect(orderHistoryModal).not.toContain('translations.pl');
     expect(orderHistoryModal).not.toContain('remainingUnits');
     expect(orderHistoryModal).not.toContain('refundedUnits');

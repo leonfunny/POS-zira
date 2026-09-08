@@ -934,6 +934,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.invoke(IPC_CHANNELS.POS_STAFF_UPDATE, id, input),
       setActive: (id: string, active: boolean) => ipcRenderer.invoke(IPC_CHANNELS.POS_STAFF_SET_ACTIVE, id, active),
     },
+    restaurantChecks: {
+      list: () => ipcRenderer.invoke('pos:restaurant-checks:list'),
+      saveCurrent: () => ipcRenderer.invoke('pos:restaurant-checks:save-current'),
+      open: (id: string) => ipcRenderer.invoke('pos:restaurant-checks:open', id),
+      beginPayment: (orderId: string, token: string) => ipcRenderer.invoke('pos:restaurant-checks:begin-payment', orderId, token),
+    },
     hold: {
       create: (id: string, title: string, payload: any) => ipcRenderer.invoke(IPC_CHANNELS.POS_HOLD_CREATE, id, title, payload),
       createCurrent: (id: string, title: string) => ipcRenderer.invoke('pos:hold:create-current', id, title),

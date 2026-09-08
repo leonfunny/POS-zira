@@ -42,6 +42,8 @@ export interface OrderRow {
   payment_tenders: string | null; // JSON array of {method, amount}
   sync_attempts: number;
   sync_error: string | null;
+  sync_payload_json?: string | null;
+  sync_metadata_eligible?: number;
   // Refund
   refund_amount: number | null;
   refund_reason: string | null;
@@ -75,6 +77,8 @@ export interface OrderItemRow {
   staff_name: string | null;
   notes: string | null;
   course: number | null;
+  /** Verified server order-item ↔ restaurant localLineId link; never a permission/refund key. */
+  restaurant_line_id?: string | null;
   billiard_json?: string | null;
   inventory_policy?: string | null;
   refund_policy?: string | null;
@@ -429,6 +433,22 @@ function incrementReason(result: ServerMirroredGrossItemRepairResult, reason: st
   result.skipped_reasons[reason] = (result.skipped_reasons[reason] ?? 0) + 1;
 }
 
+/** Revalidate the adapted batch at the persistence boundary. Only the adapter
+ * produces this marker; partial/ambiguous batches must not acquire provenance. */
+function verifiedRestaurantImportItems(order: any, items: OrderItemRow[]): OrderItemRow[] | null {
+  if (!order._restaurantHeader || order.mode !== 'restaurant' || !Array.isArray(items) || !items.length) return null;
+  const ids = new Set<string>(); const localIds = new Set<string>();
+  for (const item of items) {
+    if (item.order_id !== order.id || !item.id || ids.has(item.id) || !item.variant_id || item.billiard_json) return null;
+    const localId = item.restaurant_line_id;
+    if (typeof localId !== 'string' || !localId.trim() || localId.length > 128 || localIds.has(localId)) return null;
+    if (!Number.isInteger(item.course) || item.course! < 1 || item.course! > 99) return null;
+    if (item.notes != null && (typeof item.notes !== 'string' || item.notes.length > 4000)) return null;
+    ids.add(item.id); localIds.add(localId);
+  }
+  return items;
+}
+
 export const orderRepo = {
   create(
     order: OrderRow,
@@ -470,6 +490,9 @@ export const orderRepo = {
         ],
       );
 
+      // Only sales born on this version can negotiate a new upload envelope.
+      // Existing rows stay legacy, even after a manual retry counter reset.
+      database.run('UPDATE orders SET sync_metadata_eligible = 1 WHERE id = ?', [finalOrder.id]);
       for (const item of items) {
         database.run(
           `INSERT INTO order_items (id, order_id, variant_id, name, sku, price, quantity, sale_quantity, sale_unit, sell_by, total, vat_rate, staff_id, staff_name, notes, course, billiard_json, inventory_policy, refund_policy, allocated_discount, payable_total)
@@ -549,6 +572,7 @@ export const orderRepo = {
     if (order.synced === 2) {
       throw new Error('Order sync is in progress. Wait for sync to finish before deleting.');
     }
+    if (order.sync_payload_json) throw new Error('Order upload is frozen. Reconcile with the server before cancelling.');
 
     const items = orderRepo.getItemsByOrderId(id);
     let restocked = 0;
@@ -602,6 +626,7 @@ export const orderRepo = {
     if (order.synced === 2) {
       throw new Error('Order sync is in progress. Wait for sync to finish before editing.');
     }
+    if (order.sync_payload_json) throw new Error('Order upload is frozen. Reconcile with the server before editing.');
     if (order.status === 'REFUNDED' || order.status === 'PARTIAL_REFUND' || order.status === 'CANCELLED') {
       throw new Error('Refunded or cancelled orders cannot be edited locally.');
     }
@@ -1040,6 +1065,7 @@ export const orderRepo = {
     items: OrderItemRow[],
     options?: ServerOrderUpsertOptions,
   ): { inserted: boolean; localOrderId: string } {
+    const restaurantItems = verifiedRestaurantImportItems(adaptedOrder, items);
     const existing = orderRepo.getById(adaptedOrder.id);
     if (existing) {
       if (
@@ -1050,6 +1076,12 @@ export const orderRepo = {
         throw new Error('Server Billiard order origin conflicts with the local paid order journal.');
       }
       runServerOrderMutation(options, () => {
+        // Repair historical server mirrors only. A local paid row owns its
+        // table context and immutable upload; inbound history must not replace it.
+        if (existing.source === 'SERVER' && adaptedOrder._restaurantHeader) {
+          database.run('UPDATE orders SET table_id = ?, covers = ?, order_type = ? WHERE id = ? AND source = ?',
+            [adaptedOrder.table_id, adaptedOrder.covers, adaptedOrder.order_type, existing.id, 'SERVER']);
+        }
         database.run(
           `UPDATE orders
            SET client_attempt_id = COALESCE(client_attempt_id, ?),
@@ -1058,6 +1090,18 @@ export const orderRepo = {
           [adaptedOrder.client_attempt_id ?? null, adaptedOrder.billiard_origin_json ?? null, existing.id],
         );
         const localItems = orderRepo.getItemsByOrderId(existing.id);
+        if (existing.source === 'SERVER' && restaurantItems && localItems.length === restaurantItems.length) {
+          const exactMatches = restaurantItems.map(incoming => localItems.find(local =>
+            local.id === incoming.id && local.order_id === existing.id && local.variant_id === incoming.variant_id
+            && (!local.restaurant_line_id || local.restaurant_line_id === incoming.restaurant_line_id)));
+          if (exactMatches.every(Boolean)) {
+            for (const incoming of restaurantItems) {
+              database.run(`UPDATE order_items SET notes = ?, course = ?, restaurant_line_id = ?
+                WHERE id = ? AND order_id = ? AND variant_id = ?`,
+              [incoming.notes ?? null, incoming.course, incoming.restaurant_line_id, incoming.id, existing.id, incoming.variant_id]);
+            }
+          }
+        }
         for (const incoming of items) {
           if (!incoming.billiard_json) continue;
           let incomingLineKey = '';
@@ -1125,9 +1169,9 @@ export const orderRepo = {
           dbRow.customer_nip ?? null,
           dbRow.shift_id ?? null,
           'SERVER',
-          null, // table_id
-          null, // covers
-          'standard', // order_type
+          dbRow._restaurantHeader ? dbRow.table_id : null,
+          dbRow._restaurantHeader ? dbRow.covers : null,
+          dbRow._restaurantHeader ? dbRow.order_type : 'standard',
           dbRow.tip ?? 0,
           dbRow.mode ?? 'retail',
           dbRow.payment_tenders ?? null,
@@ -1146,6 +1190,10 @@ export const orderRepo = {
       database.run('DELETE FROM order_items WHERE order_id = ?', [dbRow.id]);
 
       for (const item of items) {
+        // Unlinked restaurant server lines have an unknown course, not course 1.
+        const restaurant = dbRow.mode === 'restaurant';
+        const course = restaurant ? (restaurantItems ? item.course : null) : (item.course ?? 1);
+        const notes = restaurant ? (restaurantItems ? item.notes : null) : item.notes;
         database.run(
           `INSERT INTO order_items (id, order_id, variant_id, name, sku, price, quantity, sale_quantity, sale_unit, sell_by, total, vat_rate, staff_id, staff_name, notes, course, billiard_json, inventory_policy, refund_policy, allocated_discount, payable_total)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1153,12 +1201,16 @@ export const orderRepo = {
             item.id, item.order_id, item.variant_id ?? null, item.name, item.sku ?? null,
             item.price, item.quantity, getLineSaleQuantity(item), getLineSaleUnit(item), getLineSellBy(item),
             item.total, item.vat_rate ?? 23,
-            item.staff_id ?? null, item.staff_name ?? null, item.notes ?? null, item.course ?? 1,
+            item.staff_id ?? null, item.staff_name ?? null, notes ?? null, course,
             item.billiard_json ?? null, item.inventory_policy ?? null,
             item.refund_policy ?? null, item.allocated_discount ?? 0,
             item.payable_total ?? item.total,
           ],
         );
+        if (restaurantItems) {
+          database.run('UPDATE order_items SET restaurant_line_id = ? WHERE id = ? AND order_id = ?',
+            [item.restaurant_line_id, item.id, dbRow.id]);
+        }
       }
     });
 

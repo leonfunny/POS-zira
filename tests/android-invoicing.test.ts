@@ -1,3 +1,4 @@
+import { MemoryAndroidPersistence } from './helpers/android-persistence';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { createRealTransport } from '../src/renderer/android-pos/shim/real-transport';
@@ -55,7 +56,7 @@ function build() {
   const transport = createRealTransport({
     configStore,
     tokenStore,
-    dbInit: { locateFile: NODE_LOCATE_FILE },
+    dbInit: { locateFile: NODE_LOCATE_FILE, persistence: new MemoryAndroidPersistence() },
   });
   return { configStore, tokenStore, tokenStorage, transport };
 }

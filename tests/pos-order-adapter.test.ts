@@ -15,6 +15,44 @@ import {
 } from '../src/main/sync/pos-order-adapter';
 
 describe('pos order adapter', () => {
+  it('restores linked duplicate-product notes while retaining server IDs and financial values', () => {
+    const server: any = { id: 'r1', posMode: 'restaurant', posOrderType: 'dine_in', subtotal: '20', discountAmount: '0', taxAmount: '0', total: '20', paidAmount: '20',
+      externalMetadata: { meta: { restaurant: { schemaVersion: 1, tableId: 'A', covers: 2, lines: [
+        { orderItemId: 'server-a', localLineId: 'local-a', productId: 'tea', lineIndex: 0, notes: 'No sugar', course: 2 },
+        { orderItemId: 'server-b', localLineId: 'local-b', productId: 'tea', lineIndex: 1, notes: 'Extra sugar', course: 3 },
+      ] } } }, items: [
+        { id: 'server-b', productId: 'tea', unitPrice: '10', totalPrice: '10', productName: 'Tea' },
+        { id: 'server-a', productId: 'tea', unitPrice: '10', totalPrice: '10', productName: 'Tea' },
+      ] };
+    const mapped = server.items.map((item: any) => adaptServerOrderItem(item, server.id, server));
+    expect(mapped[0]).toMatchObject({ id: 'server-b', order_id: 'r1', variant_id: 'tea', restaurant_line_id: 'local-b', notes: 'Extra sugar', course: 3, price: 1000, total: 1000 });
+    expect(mapped[1]).toMatchObject({ id: 'server-a', restaurant_line_id: 'local-a', notes: 'No sugar', course: 2 });
+    expect(adaptServerOrderItem(server.items[0], 'wrong-order', server)).not.toHaveProperty('restaurant_line_id');
+    server.externalMetadata.meta.restaurant.lines[1].orderItemId = 'server-a';
+    const invalid = server.items.map((item: any) => adaptServerOrderItem(item, server.id, server));
+    expect(invalid.every((item: any) => item.restaurant_line_id === undefined && item.notes === undefined && item.course === undefined)).toBe(true);
+    expect(invalid.map((item: any) => item.total)).toEqual([1000, 1000]);
+  });
+  it('restores proven restaurant order context without changing money', () => {
+    const server = { id: 'r1', subtotal: '20.00', discountAmount: '2.00', taxAmount: '0.00', total: '18.00', paidAmount: '18.00',
+      posMode: 'restaurant', posOrderType: 'dine_in', externalMetadata: { meta: { restaurant: { schemaVersion: 1, tableId: 'A', covers: 3 } } } };
+    expect(adaptServerOrder(server)).toMatchObject({ table_id: 'A', covers: 3, order_type: 'dine_in', subtotal: 2000, discount: 200, total: 1800 });
+    const legacy = adaptServerOrder({ ...server, externalMetadata: null });
+    expect(legacy).not.toHaveProperty('table_id'); expect(legacy).not.toHaveProperty('_restaurantHeader');
+    expect(legacy.total).toBe(1800);
+  });
+
+  it('does not assign unlinked snapshot notes/course to duplicate products by response index', () => {
+    const server = { id: 'r1', subtotal: '20.00', discountAmount: '0.00', taxAmount: '0.00', total: '20.00', paidAmount: '20.00',
+      posMode: 'restaurant', posOrderType: 'dine_in', externalMetadata: { meta: { restaurant: { schemaVersion: 1, tableId: 'A', covers: 2,
+        lines: [{ localLineId: 'local-1', productId: 'tea', lineIndex: 0, notes: 'No sugar', course: 1 },
+          { localLineId: 'local-2', productId: 'tea', lineIndex: 1, notes: 'Extra sugar', course: 2 }] } } } };
+    for (const id of ['server-2', 'server-1']) {
+      const line = adaptServerOrderItem({ id, productId: 'tea', productName: 'Tea', unitPrice: '10.00', totalPrice: '10.00', totalUnits: 1 }, server.id, server);
+      expect(line.id).toBe(id); expect(line).not.toHaveProperty('notes'); expect(line).not.toHaveProperty('course');
+    }
+  });
+
   it('preserves weighted refund identity and event metadata while converting money to grosze', () => {
     const refundedLines = [
       {

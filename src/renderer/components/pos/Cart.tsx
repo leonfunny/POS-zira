@@ -10,7 +10,8 @@ import { resolveName } from '../../../shared/catalog-names';
 
 interface CartProps {
   cart: CartState;
-  dispatch: (action: PosAction) => void;
+  dispatch: (action: PosAction) => void | Promise<void | { success: boolean; error?: string }>;
+  onNotesDraftStateChange?: (pending: boolean) => void;
   onPay: (prefillCashGrosze?: number) => void;
   t: (key: string) => string;
   shiftOpen?: boolean;
@@ -26,6 +27,8 @@ interface CartProps {
   onPrintItemLabel?: (item: CartItem) => void | CartItemLabelPrintResult | Promise<void | CartItemLabelPrintResult>;
   onEditProduct?: (item: CartItem) => void;
   showOrderActionChips?: boolean;
+  /** Restaurant check-style rows expand on tap; other modes keep their current controls. */
+  compactItems?: boolean;
 }
 
 interface OverflowMenuProps {
@@ -574,6 +577,8 @@ export default function Cart({
   onPrintItemLabel,
   onEditProduct,
   showOrderActionChips = true,
+  compactItems = false,
+  onNotesDraftStateChange,
 }: CartProps) {
   const currency = t('pos.currency');
   const { config } = useConfig();
@@ -587,6 +592,15 @@ export default function Cart({
   const itemsScrollRef = useRef<HTMLDivElement>(null);
   const previousItemQtyRef = useRef<Record<string, number> | null>(null);
   const freshItemTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const noteDraftsRef = useRef(new Set<string>());
+  const [notesWarning, setNotesWarning] = useState(false);
+  const handleNotesDraftChange = useCallback((id: string, pending: boolean) => {
+    if (pending) noteDraftsRef.current.add(id);
+    else noteDraftsRef.current.delete(id);
+    const hasDrafts = noteDraftsRef.current.size > 0;
+    onNotesDraftStateChange?.(hasDrafts);
+    if (!hasDrafts) setNotesWarning(false);
+  }, [onNotesDraftStateChange]);
 
   const tOr = useCallback((key: string, fallback: string) => {
     const value = t(key);
@@ -596,6 +610,7 @@ export default function Cart({
   const requestPayment = useCallback(
     (prefillCashGrosze?: number) => {
       if (cart.items.length === 0 || !shiftOpen) return;
+      if (noteDraftsRef.current.size > 0) { setNotesWarning(true); return; }
       onPay(prefillCashGrosze && prefillCashGrosze > 0 ? prefillCashGrosze : undefined);
     },
     [cart.items.length, onPay, shiftOpen],
@@ -786,6 +801,8 @@ export default function Cart({
   useEffect(() => {
     const el = itemsScrollRef.current;
     if (!el || cart.items.length === 0) return;
+    const previous = previousItemQtyRef.current;
+    if (previous && !cart.items.some(item => previous[item.id] == null)) return;
     const frame = requestAnimationFrame(() => {
       el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
     });
@@ -826,14 +843,14 @@ export default function Cart({
   }, []);
 
   return (
-    <div className="flex min-h-0 flex-col h-full bg-white">
+    <div className="pos-cart flex min-h-0 flex-col h-full bg-white">
       {/* ─── HEADER ───────────────────────────────────────────────
           Compact summary line replaces the old plain "Cart [N]"
           header so the cashier always sees count + subtotal at a
           glance. Held-cart count surfaces here too (sourced from
           RetailTemplate). Destructive actions live behind the
           overflow menu to keep the strip clean. */}
-      <div className="px-3 py-2 border-b border-slate-200 shrink-0 flex items-center justify-between gap-2">
+      <div className="pos-cart-header px-3 py-2 border-b border-slate-200 shrink-0 flex items-center justify-between gap-2">
         <div className="min-w-0 flex-1">
           <h2 className="flex min-w-0 items-baseline gap-1.5 text-sm font-extrabold text-slate-950">
             <span className="shrink-0">{t('pos.cart')}</span>
@@ -871,10 +888,13 @@ export default function Cart({
         />
       </div>
 
+      {notesWarning && <p role="alert" className="px-4 py-2 text-sm text-amber-700">
+        {tOr('pos.cart.saveNotesFirst', 'Save or cancel the edited notes before continuing.')}
+      </p>}
       {/* ─── ITEMS LIST ──────────────────────────────────────────── */}
       <div
         ref={itemsScrollRef}
-        className="min-h-0 flex-1 overflow-y-auto bg-white"
+        className="pos-cart-scroll min-h-0 flex-1 overflow-y-auto bg-white"
         onClick={(e) => {
           // Tap empty area inside the cart list deselects whichever field
           // the operator was editing so the numpad collapses.
@@ -900,7 +920,11 @@ export default function Cart({
                 item={item}
                 onUpdateQuantity={(id, qty) => dispatch({ type: 'cart/updateQuantity', payload: { id, quantity: qty } })}
                 onRemove={(id) => dispatch({ type: 'cart/removeItem', payload: { id } })}
-                onSetNotes={(id, notes) => dispatch({ type: 'cart/setItemNotes', payload: { id, notes } })}
+                onSetNotes={async (id, notes) => {
+                  const result = await dispatch({ type: 'cart/setItemNotes', payload: { id, notes } });
+                  if (result?.success === false) throw new Error(result.error || tOr('common.error', 'Could not save notes'));
+                }}
+                onNotesDraftChange={handleNotesDraftChange}
                 onPrintLabel={onPrintItemLabel}
                 onEditProduct={onEditProduct}
                 onSelectField={handleSelectField}
@@ -914,6 +938,7 @@ export default function Cart({
                 t={t}
                 lang={lang}
                 fresh={freshItemId === item.id}
+                compact={compactItems}
               />
               {renderItemExtra?.(item)}
             </div>
@@ -1046,7 +1071,7 @@ export default function Cart({
           sits in the same sticky shadow surface so the cashier's
           eye drops from total → button without re-scanning. */}
       {hasItems && (
-        <div className="shrink-0 border-t border-slate-200 bg-white px-3 pt-2 pb-2.5 shadow-[0_-8px_20px_-14px_rgba(15,23,42,0.16)]">
+        <div className="pos-cart-totals shrink-0 border-t border-slate-200 bg-white px-3 pt-2 pb-2.5 shadow-[0_-8px_20px_-14px_rgba(15,23,42,0.16)]">
           <div className="space-y-1 text-xs mb-2">
             <div className="flex justify-between text-slate-700">
               <span className="font-bold">{t('pos.cart.subtotal')}</span>
@@ -1113,7 +1138,7 @@ export default function Cart({
             type="button"
             onClick={handlePayClick}
             disabled={!hasItems || !shiftOpen}
-            className="w-full h-14 rounded-xl bg-slate-950 text-base font-black text-white shadow-xl shadow-slate-950/20 transition-colors hover:bg-black active:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-45 touch-manipulation cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2"
+            className="pos-pay-button w-full h-14 rounded-xl bg-slate-950 text-base font-black text-white shadow-xl shadow-slate-950/20 transition-colors hover:bg-black active:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-45 touch-manipulation cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2"
           >
             {tOr('pos.payCta', 'PAY')} {totalStr} {currency}
           </button>

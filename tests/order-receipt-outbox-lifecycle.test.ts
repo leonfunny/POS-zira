@@ -92,7 +92,8 @@ beforeEach(() => {
       tip INTEGER,
       synced INTEGER,
       backend_id TEXT,
-      billiard_origin_json TEXT
+      billiard_origin_json TEXT,
+      sync_payload_json TEXT
     );
     CREATE TABLE order_items (
       id TEXT PRIMARY KEY,
@@ -201,6 +202,13 @@ function enqueueCashReceipt(orderId: string) {
 }
 
 describe('order mutation receipt-outbox lifecycle', () => {
+  it('blocks local editing and deletion after an uncertain immutable upload', () => {
+    seedCashOrder('frozen');
+    dbState.db!.run('UPDATE orders SET sync_payload_json = ? WHERE id = ?', ['{"version":1}', 'frozen']);
+    expect(() => orderRepo.updateLocalUnsynced('frozen', { paymentMethod: 'CARD' })).toThrow('frozen');
+    expect(() => orderRepo.deleteLocalUnsynced('frozen')).toThrow('frozen');
+    expect(testDatabase.get<any>('SELECT total FROM orders WHERE id = ?', ['frozen'])?.total).toBe(1000);
+  });
   it('atomically cancels a stale CASH/drawer intent before CARD and item mutation', () => {
     seedCashOrder('order-card-edit');
     const queued = enqueueCashReceipt('order-card-edit');

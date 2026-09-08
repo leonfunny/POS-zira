@@ -1,3 +1,4 @@
+import { MemoryAndroidPersistence } from './helpers/android-persistence';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { PosApiClient } from '../src/renderer/android-pos/port/api-client';
@@ -121,7 +122,7 @@ async function buildCoordinator(overrides: {
   pollIntervalMs?: number;
   totalWaitMs?: number;
 } = {}): Promise<{ coordinator: RemotePrintCoordinator; fetchMock: ReturnType<typeof vi.fn> }> {
-  const db = await initAndroidDb({ locateFile: NODE_LOCATE_FILE });
+  const db = await initAndroidDb({ locateFile: NODE_LOCATE_FILE, persistence: new MemoryAndroidPersistence() });
   createOrderRepo(db).create(ORDER, ITEMS);
   const configStore = new ShimConfigStore({ seed: { salonName: 'Test Salon' } as never });
   const client = new PosApiClient({
@@ -412,7 +413,7 @@ describe('android fiscal-print real-transport wiring (E-FISCAL)', () => {
     const transport = createRealTransport({
       configStore,
       tokenStore,
-      dbInit: { locateFile: NODE_LOCATE_FILE },
+      dbInit: { locateFile: NODE_LOCATE_FILE, persistence: new MemoryAndroidPersistence() },
     });
     return { configStore, tokenStore, transport };
   }

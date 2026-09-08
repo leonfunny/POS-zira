@@ -23,7 +23,8 @@ describe('retail product grid layout', () => {
       'utf8',
     );
 
-    expect(cardSource).toContain('p-1.5 h-full min-h-[196px]');
+    expect(cardSource).toContain("restaurantColor ? 'restaurant-product' : 'bg-white rounded-lg p-1.5 min-h-[196px]'");
+    expect(cardSource).toContain('flex flex-col h-full select-none');
     expect(cardSource).not.toContain('p-2 h-full min-h-[190px]');
     expect(cardSource).toContain('className="w-11 h-11');
   });

@@ -904,9 +904,9 @@ interface ElectronAPI {
         refundRequestId?: string;
         reason?: string;
         amount?: number;
-        lines?: Array<{ billiardLineKey?: string; variantId?: string; sku?: string; name?: string; quantity: number; unit?: string; unitPrice: number; refundAmount: number; restock: boolean; vatRate?: number }>;
+        lines?: Array<{ orderItemId?: string; billiardLineKey?: string; variantId?: string; sku?: string; name?: string; quantity: number; unit?: string; unitPrice: number; refundAmount: number; restock: boolean; vatRate?: number }>;
         manualAdjustmentAmount?: number;
-      }) => Promise<{ success: boolean; receiptPrinted?: boolean; refundAmount?: number; totalRefundedAmount?: number; status?: string; restocked?: any[]; refundedLines?: any[]; stockMovementIds?: any[]; refundReason?: string; mutationDetected?: boolean; requiresRefresh?: boolean; overRefund?: boolean; backendSummary?: any; error?: string }>;
+      }) => Promise<{ success: boolean; receiptPrinted?: boolean; refundAmount?: number; totalRefundedAmount?: number; status?: string; restocked?: any[]; refundedLines?: any[]; stockMovementIds?: any[]; refundReason?: string; mutationDetected?: boolean; requiresRefresh?: boolean; requiresReconciliation?: boolean; refundRequestId?: string; stockRefreshRequired?: boolean; overRefund?: boolean; backendSummary?: any; error?: string }>;
       correctBilliard: (orderId: string, data: {
         correctionRequestId: string;
         reason: string;
@@ -952,7 +952,8 @@ interface ElectronAPI {
         page?: number;
         limit?: number;
       }) => Promise<{ orders: any[]; items: Record<string, any[]>; total: number; page: number; limit: number; source: 'server' | 'unconfigured' | 'network-error'; error?: string }>;
-      getRefundDetail: (orderId: string) => Promise<{ success: boolean; detail?: { order: any; items: any[] }; error?: string }>;
+      getRefundDetail: (orderId: string) => Promise<{ success: boolean; detail?: { order: any; items: any[] }; error?: string; reconciliation?: { requestId: string; status: string } }>;
+      reconcileRefund?: (orderId: string, requestId: string) => Promise<{ success: boolean; reconciled?: boolean; requiresReconciliation?: boolean; refundRequestId?: string; stockRefreshRequired?: boolean; error?: string }>;
       getTodayServer: () => Promise<{ success: boolean; orders?: any[]; count?: number; error?: string }>;
       mirrorFromServer: (orderId: string, kind: 'cash' | 'invoiced') => Promise<{ success: boolean; localOrderId?: string; error?: string; wasSplit?: boolean }>;
     };
@@ -1121,9 +1122,10 @@ interface ElectronAPI {
     tables: {
       getAll: () => Promise<PosTable[]>;
       getActive: () => Promise<PosTable[]>;
+      getSyncStatus?: () => Promise<{ source: 'local' | 'server' | 'cache'; syncedAt: string | null }>;
       updateStatus: (id: string, status: string, orderId?: string) => Promise<void>;
       clearTable: (id: string) => Promise<void>;
-      setCovers: (id: string, covers: number) => Promise<void>;
+      setCovers: (id: string, covers: number) => Promise<{ success: boolean; error?: string }>;
     };
     customers: {
       getAll: () => Promise<PosCustomer[]>;
@@ -1141,6 +1143,14 @@ interface ElectronAPI {
       create: (input: PosStaffWriteInput) => Promise<PosStaffWriteResult>;
       update: (id: string, input: PosStaffWriteInput) => Promise<PosStaffWriteResult>;
       setActive: (id: string, active: boolean) => Promise<PosStaffWriteResult>;
+    };
+    /** Explicit counter-only capability; absence preserves desktop table service. */
+    restaurantService?: 'counter-only';
+    restaurantChecks?: {
+      list: () => Promise<{ success: boolean; error?: string; checks?: import('./restaurant-check').RestaurantCheck[]; activeId?: string | null }>;
+      saveCurrent: () => Promise<{ success: boolean; error?: string; id?: string }>;
+      open: (id: string) => Promise<{ success: boolean; error?: string; check?: import('./restaurant-check').RestaurantCheck }>;
+      beginPayment: (orderId: string, token: string) => Promise<{ success: boolean; error?: string; checkId?: string }>;
     };
     hold: {
       create: (id: string, title: string, payload: any) => Promise<{ success: boolean }>;

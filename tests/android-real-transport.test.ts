@@ -69,7 +69,7 @@ function build(overrides: {
   const transport = createRealTransport({
     configStore,
     tokenStore,
-    dbInit: { locateFile: NODE_LOCATE_FILE, persistence: overrides.persistence },
+    dbInit: { locateFile: NODE_LOCATE_FILE, persistence: overrides.persistence ?? new MemoryDbPersistence() },
     // No-op agent: these auth/order tests use mockResolvedValueOnce sequences, so
     // the real login-time /print-agent/my-key fetch would desync them. The
     // login→connect→socket path is covered by tests/android-agent-connect.test.ts.
@@ -96,8 +96,17 @@ afterEach(() => {
 });
 
 describe('real transport auth', () => {
+  test('reads restaurant layout using the staff JWT and the existing read-only endpoint', async () => {
+    const { transport, tokenStore } = build();
+    await tokenStore.setTokens('layout-jwt', 'layout-refresh');
+    fetchMock.mockResolvedValueOnce(jsonResponse([]));
+    expect(await transport.getRestaurantLayout!()).toEqual([]);
+    expect(String(fetchMock.mock.calls[0][0])).toMatch(/\/api\/v1\/restaurant\/tables$/);
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'GET', headers: { Authorization: 'Bearer layout-jwt' } });
+  });
   test('loginWithEmail stores tokens, writes identity into the SHARED config store, returns the S1 shape', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(LOGIN_BODY));
+    fetchMock.mockResolvedValueOnce(jsonResponse({ salonId: 'salon-1', suggestedPosMode: null, features: {} }));
     const { configStore, tokenStore, transport } = build();
 
     const result = await transport.loginWithEmail!('staff@salon.pl', 'pw');
@@ -119,12 +128,42 @@ describe('real transport auth', () => {
     expect(config.salonSlug).toBe('test-salon');
     expect(config.posMode).toBe('salon'); // E2a: salon is the Windows default
 
-    // Exactly one HTTP call — the staff login. (The agent connection is stubbed
-    // no-op in build(); its real login-time /print-agent/my-key fetch is covered
-    // in tests/android-agent-connect.test.ts.)
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Resolve this salon's existing entitlement contract before mounting POS.
+    // The unrelated agent connection remains stubbed by build().
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     const [url] = fetchMock.mock.calls[0];
     expect(String(url)).toContain('/api/v1/auth/login');
+    expect(String(fetchMock.mock.calls[1][0])).toContain('/api/v1/admin/desktop/entitlements');
+  });
+
+  test.each([
+    [{ salonId: 'salon-1', posMode: 'salon' }, 'salon-1', 'restaurant'],
+    [{ salonId: 'salon-1', posMode: 'retail' }, 'salon-1', 'retail'],
+    [{ salonId: 'other', posMode: 'restaurant' }, 'salon-1', 'restaurant'],
+    [{ salonId: 'other', posMode: 'restaurant' }, 'wrong-salon', 'salon'],
+  ])('resolves restaurant entitlement without leaking the previous salon choice (%j)', async (seed, planSalon, expected) => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(LOGIN_BODY));
+    fetchMock.mockResolvedValueOnce(jsonResponse({ salonId: planSalon, suggestedPosMode: 'restaurant', features: {} }));
+    const { configStore, transport } = build({ seed });
+    expect((await transport.loginWithEmail!('staff@salon.pl', 'pw')).success).toBe(true);
+    expect(configStore.getConfig().posMode).toBe(expected);
+    expect(configStore.getConfig().posModeSalonId).toBe('salon-1');
+  });
+
+  test('ignores a late restaurant suggestion after logout', async () => {
+    let resolvePlan!: (value: Response) => void;
+    let planStarted!: () => void;
+    const started = new Promise<void>(resolve => { planStarted = resolve; });
+    fetchMock.mockResolvedValueOnce(jsonResponse(LOGIN_BODY));
+    fetchMock.mockImplementationOnce(() => { planStarted(); return new Promise<Response>(resolve => { resolvePlan = resolve; }); });
+    const { configStore, transport } = build();
+    const login = transport.loginWithEmail!('staff@salon.pl', 'pw');
+    await started;
+    await transport.logout!();
+    resolvePlan(jsonResponse({ salonId: 'salon-1', suggestedPosMode: 'restaurant', features: {} }));
+    expect((await login).success).toBe(false);
+    expect(configStore.getConfig().authUser).toBeUndefined();
+    expect(configStore.getConfig().posMode).not.toBe('restaurant');
   });
 
   test('login without an access token fails without storing anything', async () => {

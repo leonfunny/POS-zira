@@ -2544,6 +2544,12 @@ export class ApiClient {
    * Create POS order
    * POST /api/v1/b2b/pos/orders
    */
+  async getPosCapabilities(token: string): Promise<unknown> {
+    return this.request('GET', '/b2b/pos/capabilities', token);
+  }
+
+  getOrderUploadServerUrl(): string { return this.baseUrl; }
+
   async createPosOrder(token: string, order: any): Promise<{ id?: string; orderId?: string; [key: string]: any }> {
     // Use b2b/pos endpoint (the actual backend route)
     const url = `${this.baseUrl}/api/v1/b2b/pos/orders`;

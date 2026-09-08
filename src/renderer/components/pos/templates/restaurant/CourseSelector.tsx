@@ -21,6 +21,8 @@ export default function CourseSelector({ activeCourse, onChange, t }: CourseSele
         {COURSES.map((c) => (
           <button
             key={c.value}
+            type="button"
+            aria-pressed={activeCourse === c.value}
             onClick={() => onChange(c.value)}
             className={`
               px-2 py-1 text-xs rounded transition-colors

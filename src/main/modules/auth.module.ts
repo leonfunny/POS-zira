@@ -44,6 +44,8 @@ import {
 } from '../config/store';
 import { ensureReceiptPrinterEnabledOnBoot } from '../config/ensure-receipt-enabled';
 import { fetchEntitlementsFromBackend } from '../entitlements/entitlements-controller';
+import { hasActivePosCheckout, isPosMode, resolveSalonPosMode } from '../../shared/pos-mode';
+import type { PosStore } from '../pos/pos-store';
 import { database } from '../database/database';
 import type { BackupRunReason, LocalBackupService } from '../database/backup-service';
 import { localPrinterRepo } from '../database/repos/local-printer-repo';
@@ -240,6 +242,8 @@ export class AuthModule extends BaseModule {
         'salonId',          // Server-assigned
         'machineId',        // Server-assigned
         'entitlements',     // SuperAdmin-controlled, server-assigned
+        'posModeSalonId',   // Managed by the salon-specific mode resolver
+        'posModesBySalon',  // Renderer may only change the active salon's mode
         'authToken',        // Auth credential — set through login flow
         'encryptedRefreshToken', // Managed internally by safeStorage (refresh-on-401 flow)
         'authUser',         // Set through login flow
@@ -265,7 +269,28 @@ export class AuthModule extends BaseModule {
         return getRendererConfig(); // Nothing to set after filtering
       }
 
+      const current = getConfig();
+      const modeChanged = safeConfig.posMode !== undefined && safeConfig.posMode !== current.posMode;
+      const posStore = this.container.getOptional<PosStore>(SERVICE_TOKENS.POS_STORE);
+      if (safeConfig.posMode !== undefined) {
+        if (!isPosMode(safeConfig.posMode)) throw new Error('Invalid POS mode.');
+        if (modeChanged) {
+          if (posStore && hasActivePosCheckout(posStore.getState())) {
+            throw new Error('Finish or hold the current sale before changing POS mode.');
+          }
+          if (current.salonId) database.assertNoActiveReceiptPrintOutcomes(current.salonId);
+        }
+        if (current.salonId) {
+          safeConfig.posModeSalonId = current.salonId;
+          safeConfig.posModesBySalon = { ...current.posModesBySalon, [current.salonId]: safeConfig.posMode };
+        }
+      }
       setConfig(safeConfig);
+      if (modeChanged && posStore) {
+        posStore.dispatch({ type: 'cart/clear' });
+        posStore.dispatch({ type: 'table/setActive', payload: { tableId: null } });
+        posStore.dispatch({ type: 'customer/clear' });
+      }
       // Notify modules (hardware reinit, telegram restart, AI key change, etc.)
       if (this.eventBus) {
         this.eventBus.emit('config:changed', { changedKeys: Object.keys(safeConfig) });
@@ -390,7 +415,9 @@ export class AuthModule extends BaseModule {
         }
         socket?.disconnect();
         setSecureApiKey('');
+        const leavingConfig = getConfig();
         setConfig({
+          ...(leavingConfig.salonId ? resolveSalonPosMode(leavingConfig, leavingConfig.salonId, null) : {}),
           apiKey: '', agentId: '', salonId: '', salonName: '', salonSlug: '',
           isPaired: false,
         });
@@ -648,9 +675,7 @@ export class AuthModule extends BaseModule {
           });
 
           // New tenant ⇒ new POS template (must persist before any relaunch)
-          if (isSalonSwitchTg) {
-            await this.reconcilePosModeAfterSalonSwitch(newSalonId);
-          }
+          await this.reconcilePosModeAfterSalonSwitch(newSalonId, config);
 
           if (willRestartForSalonTg) {
             this.eventBus?.emit('salon:switching', { salonName: resolveAuthSalonName(result) });
@@ -731,6 +756,9 @@ export class AuthModule extends BaseModule {
           salonId: newSalonId,
           salonName: resolvedUser?.salonName || config.salonName || '',
         });
+        if (currentSalonId !== newSalonId || !config.posModesBySalon?.[newSalonId]) {
+          await this.reconcilePosModeAfterSalonSwitch(newSalonId, config);
+        }
       }
 
       return result;
@@ -813,9 +841,7 @@ export class AuthModule extends BaseModule {
           setConfig({ authUser, salonId: authUser.salonId || '', salonName: authUser.salonName || '', salonSlug: resolveAuthSalonSlug(result), posEnabled: true, customerDisplayEnabled: true });
 
           // New tenant ⇒ new POS template (must persist before any relaunch)
-          if (isSalonSwitch) {
-            await this.reconcilePosModeAfterSalonSwitch(newSalonId);
-          }
+          await this.reconcilePosModeAfterSalonSwitch(newSalonId, config);
 
           // Restoring a previously-archived salon needs a clean reload — the
           // pending restore was staged above; relaunch so it is applied at boot.
@@ -1178,26 +1204,30 @@ export class AuthModule extends BaseModule {
   }
 
   /**
-   * After logging into a DIFFERENT salon, fetch its entitlements and apply
-   * the server-suggested POS template (salon.niche → retail/salon/restaurant).
-   * Without this, posMode silently carried over between tenants — a grocery
-   * store inherited the previous tenant's nail-salon template and vice versa.
-   * Re-logins into the SAME salon never reach this path, so a user's explicit
-   * Settings choice for their own salon is never overridden. Must run BEFORE
-   * the restore-relaunch so the persisted config survives the restart.
+   * Resolve every login before any restore-relaunch: remembered tenant choice,
+   * then server suggestion, then a temporary counter-sales fallback. Never
+   * overwrite a sale already in progress while a suggestion is being fetched.
    */
-  private async reconcilePosModeAfterSalonSwitch(newSalonId: string): Promise<void> {
+  private async reconcilePosModeAfterSalonSwitch(newSalonId: string, previousConfig: AgentConfig = getConfig()): Promise<void> {
+    const posStore = this.container.getOptional<PosStore>(SERVICE_TOKENS.POS_STORE);
+    if (previousConfig.salonId === newSalonId && posStore && hasActivePosCheckout(posStore.getState())) return;
     try {
       const entitlements = await fetchEntitlementsFromBackend(newSalonId);
-      if (!entitlements) return;
-      setConfig({ entitlements });
-      const suggested = entitlements.suggestedPosMode;
-      if (suggested && getConfigValue('posMode') !== suggested) {
-        logger.info(`[AuthModule] Salon switch: posMode → ${suggested} (niche suggestion for new salon)`);
-        setConfig({ posMode: suggested });
-      }
+      // A slower request from a previous login must not overwrite the new tenant.
+      if (getConfig().salonId !== newSalonId) return;
+      if (previousConfig.salonId === newSalonId && posStore && hasActivePosCheckout(posStore.getState())) return;
+      const modeConfig = resolveSalonPosMode({
+        ...previousConfig, posModesBySalon: getConfig().posModesBySalon,
+      }, newSalonId, entitlements?.salonId === newSalonId ? entitlements.suggestedPosMode : null);
+      setConfig({ ...modeConfig, ...(entitlements?.salonId === newSalonId ? { entitlements } : {}) });
+      this.notifyConfigChanged(['posMode']);
     } catch (e: any) {
       logger.warn('[AuthModule] posMode reconcile after salon switch failed:', e?.message);
+      if (getConfig().salonId === newSalonId
+        && !(previousConfig.salonId === newSalonId && posStore && hasActivePosCheckout(posStore.getState()))) {
+        setConfig(resolveSalonPosMode({ ...previousConfig, posModesBySalon: getConfig().posModesBySalon }, newSalonId, null));
+        this.notifyConfigChanged(['posMode']);
+      }
     }
   }
 

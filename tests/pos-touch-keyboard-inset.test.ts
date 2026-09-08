@@ -7,6 +7,8 @@ const APP = fs.readFileSync(path.join(ROOT, 'src/renderer/App.tsx'), 'utf8');
 const TOUCH_KEYBOARD = fs.readFileSync(path.join(ROOT, 'src/renderer/components/shared/TouchKeyboard.tsx'), 'utf8');
 const KEYBOARD_MANAGER = fs.readFileSync(path.join(ROOT, 'src/renderer/hooks/useKeyboardManager.ts'), 'utf8');
 const POS_LAYOUT = fs.readFileSync(path.join(ROOT, 'src/renderer/components/pos/POSLayout.tsx'), 'utf8');
+const MANUAL_WEIGHT = fs.readFileSync(path.join(ROOT, 'src/renderer/components/pos/ManualWeightModal.tsx'), 'utf8');
+const MODAL = fs.readFileSync(path.join(ROOT, 'src/renderer/components/shared/Modal.tsx'), 'utf8');
 const SCAN_IMPORT_MODAL = fs.readFileSync(
   path.join(ROOT, 'src/renderer/components/pos/ScanImportModal.tsx'),
   'utf8',
@@ -36,9 +38,11 @@ describe('POS touch keyboard inset', () => {
   });
 
   it('lays out the manual weight modal above the measured keyboard inset', () => {
-    expect(POS_LAYOUT).toContain("paddingBottom: 'calc(var(--touch-keyboard-inset, 0px) + 1rem)'");
-    expect(POS_LAYOUT).toContain("maxHeight: 'calc(100dvh - var(--touch-keyboard-inset, 0px) - 2rem)'");
-    expect(POS_LAYOUT).toContain('overflow-y-auto');
+    expect(POS_LAYOUT).toContain('<ManualWeightModal');
+    expect(MANUAL_WEIGHT).toContain('keyboardAware');
+    expect(MODAL).toContain("bottom: 'var(--touch-keyboard-inset, 0px)'");
+    expect(MODAL).toContain("maxHeight: 'calc(100dvh - var(--touch-keyboard-inset, 0px) - 2rem)'");
+    expect(MODAL).toContain('overflow-y-auto');
   });
 
   it('keeps the scan-import modal and focused fields above the measured keyboard inset', () => {
