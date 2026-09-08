@@ -605,6 +605,8 @@ describe('Receipt lifecycle before external order mutation', () => {
       handler: 'pos:orders:mutate',
       args: ['order-cash', {
         type: 'payment',
+        mutationId: '11111111-1111-4111-8111-111111111111',
+        expectedVersion: 'payment-version-1',
         paymentMethod: 'CASH',
         paymentAmount: 1_000,
         changeAmount: 0,

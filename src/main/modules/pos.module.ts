@@ -809,7 +809,21 @@ export class PosModule extends BaseModule {
     return this.restaurantCheckController;
   }
 
+  private assertNoUnownedRestaurantCheck(): void {
+    // Restart clears controller ownership, not the durable payment boundary.
+    // Scope by register (not operator): another staff member's unresolved
+    // payment on this machine must be recovered before a fresh sale too.
+    const { scope } = this.capturePosAuthContext();
+    const active = database.get<{ id: string }>(`SELECT id FROM pos_restaurant_checks
+      WHERE salon_id = ? AND register_id = ? AND status IN ('OPEN','PAYMENT_PENDING','PAYMENT_UNCERTAIN')`,
+    [scope.salonId, scope.registerId]);
+    if (active && active.id !== this.restaurantCheckController?.activeId) {
+      throw new Error('Recover or reconcile the active restaurant check before starting another sale.');
+    }
+  }
+
   private assertRestaurantCheckReleased(): void {
+    this.assertNoUnownedRestaurantCheck();
     if (this.restaurantCheckController?.hasActive || this.restaurantCheckController?.busy || this.restaurantCheckController?.blocked) {
       throw new Error('Save the active restaurant check before switching workflows. If storage failed, restart POS.');
     }
@@ -883,6 +897,7 @@ export class PosModule extends BaseModule {
   }
 
   private async prepareOrdinaryPosPayment(orderId: string): Promise<{ token: string; expiresAt: number }> {
+    this.assertNoUnownedRestaurantCheck();
     if (this.restaurantCheckController?.busy || this.restaurantCheckController?.blocked) {
       throw new Error('Restaurant check storage is busy or blocked. Finish recovery before payment.');
     }
@@ -927,6 +942,7 @@ export class PosModule extends BaseModule {
     orderId: string,
     authContext: PosAuthContext,
   ): void {
+    this.assertNoUnownedRestaurantCheck();
     this.pruneOrdinaryPaymentPreflights();
     const entry = this.ordinaryPaymentPreflights.get(String(token || '').trim());
     if (!entry) {
@@ -2627,6 +2643,10 @@ export class PosModule extends BaseModule {
         const posStore = this.posStore;
         if (!posStore) return { success: false, error: 'POS is not ready.' };
         const before = posStore.getState();
+        if (action?.type !== 'display/setMode' && action?.type !== 'session/open') {
+          try { this.assertNoUnownedRestaurantCheck(); }
+          catch (error: any) { return { success: false, error: error?.message || String(error) }; }
+        }
         if ((this.restaurantCheckController?.busy || this.restaurantCheckController?.blocked) && action?.type !== 'display/setMode') {
           return { success: false, error: 'Restaurant check is still saving or storage is blocked.' };
         }
@@ -5776,6 +5796,7 @@ export class PosModule extends BaseModule {
         const queueInitialReceipt = receiptOptions?.queueInitialReceipt === true
           && (tenderMethods.has('CASH') || tenderMethods.has('BLIK'));
 
+        this.assertNoUnownedRestaurantCheck();
         restaurantCheckId = this.restaurantCheckController?.assertPaymentOrder(String(normalizedOrder.id || ''), normalizedOrder, normalizedItems) ?? null;
         const id = orderRepo.create(normalizedOrder, normalizedItems, (
           billiardRecord || restoredContext || queueInitialReceipt
@@ -6116,6 +6137,14 @@ export class PosModule extends BaseModule {
           }
           // Stable renderer request ID + server snapshot are required, including retries.
           if (!data.mutationId || !data.expectedVersion) return { success: false, code: 'REFRESH_REQUIRED' };
+          await this.prepareInitialReceiptForExternalOrderMutation(
+            orderId,
+            'Initial receipt cancelled before server payment mutation',
+          );
+          if (!this.isPosAuthContextCurrent(auth)) {
+            return { success: false, code: 'AUTH_CHANGED', requiresRefresh: true,
+              error: 'POS user changed while the receipt cancellation was being saved. No payment correction was submitted.' };
+          }
           const response = await apiClient.updateOrderPayment(token, order.backend_id, {
             mutationId: data.mutationId,
             expectedVersion: data.expectedVersion,
@@ -6421,7 +6450,7 @@ export class PosModule extends BaseModule {
       } catch (error: any) { return { success: false, error: error?.message || String(error) }; }
     });
     ipcMain.handle('pos:restaurant-checks:save-current', async () => {
-      try { return { success: true, ...await this.getRestaurantCheckController().saveCurrent() }; }
+      try { this.assertNoUnownedRestaurantCheck(); return { success: true, ...await this.getRestaurantCheckController().saveCurrent() }; }
       catch (error: any) { return { success: false, error: error?.message || String(error) }; }
     });
     ipcMain.handle('pos:restaurant-checks:open', async (_e, id: string) => {
